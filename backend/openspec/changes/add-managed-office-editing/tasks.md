@@ -18,4 +18,4 @@
 - [x] 3.1 Update wrapper architecture and deployment documentation.
 - [x] 3.2 Record that the repository has no local `openspec` validator executable.
 - [x] 3.3 Run backend focused tests, Desktop full tests, and the production build.
-- [ ] 3.4 Merge validated changes into local `qubits` branches and restart Desktop.
+- [x] 3.4 Merge validated changes into local `qubits` branches and restart Desktop.
