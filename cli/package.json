@@ -34,12 +34,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/puppyone-ai/puppyone.git",
+    "url": "git+https://github.com/puppyone-ai/puppyone-cloud.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/puppyone-ai/puppyone#readme",
+  "homepage": "https://github.com/puppyone-ai/puppyone-cloud#readme",
   "bugs": {
-    "url": "https://github.com/puppyone-ai/puppyone/issues"
+    "url": "https://github.com/puppyone-ai/puppyone-cloud/issues"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

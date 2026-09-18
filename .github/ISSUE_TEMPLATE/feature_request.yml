@@ -8,7 +8,7 @@ body:
         Thanks for suggesting a feature!
 
         Before submitting, please check:
-        - [Existing feature requests](https://github.com/puppyone-ai/puppyone/issues?q=label%3Aenhancement)
+        - [Existing feature requests](https://github.com/puppyone-ai/puppyone-cloud/issues?q=label%3Aenhancement)
         - [Documentation](https://www.puppyone.ai/doc)
 
   - type: checkboxes

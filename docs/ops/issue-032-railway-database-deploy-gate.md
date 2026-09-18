@@ -15,7 +15,7 @@ do not assume the display name equals `SERVICE_ROLE`.
 For every service in the Qubits Railway environment:
 
 1. Open **Service → Settings → Source**.
-2. Confirm the connected repository is `puppyone-ai/puppyone`.
+2. Confirm the connected repository is `puppyone-ai/puppyone-cloud`.
 3. Confirm the source branch is `qubits`.
 4. Set **Root Directory** to `backend` (Railway may display `/backend`).
 5. Enable **Wait for CI** under GitHub Autodeploys.

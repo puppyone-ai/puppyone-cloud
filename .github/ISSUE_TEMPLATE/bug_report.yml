@@ -9,7 +9,7 @@ body:
 
         Before submitting, please check:
         - [Documentation](https://www.puppyone.ai/doc)
-        - [Existing issues](https://github.com/puppyone-ai/puppyone/issues)
+        - [Existing issues](https://github.com/puppyone-ai/puppyone-cloud/issues)
 
   - type: checkboxes
     id: preflight

@@ -7,5 +7,5 @@ contact_links:
     url: https://discord.gg/zwJ9Y3Uvpd
     about: Ask questions and chat with the community.
   - name: Security Vulnerability
-    url: https://github.com/puppyone-ai/puppyone/security/advisories/new
+    url: https://github.com/puppyone-ai/puppyone-cloud/security/advisories/new
     about: Report security issues privately (do NOT use a public issue).
