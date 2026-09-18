@@ -680,6 +680,9 @@ def create_app() -> FastAPI:
     from src.platform.upload.router import router as upload_router
 
     app.include_router(upload_router, prefix="/api/v1", tags=["upload"])
+    from src.platform.office.router import router as office_router
+
+    app.include_router(office_router, prefix="/api/v1", tags=["managed-office"])
 
     app.include_router(project_router, prefix="/api/v1", tags=["projects"])
     app.include_router(template_registry_router, prefix="/api/v1", tags=["templates"])
