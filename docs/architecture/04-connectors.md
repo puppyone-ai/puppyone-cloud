@@ -430,9 +430,9 @@ repositories require authorization.
   "source": {
     "provider": "github",
     "resource_type": "repository",
-    "resource_id": "puppyone-ai/puppyone",
-    "resource_name": "puppyone-ai/puppyone",
-    "resource_url": "https://github.com/puppyone-ai/puppyone",
+    "resource_id": "puppyone-ai/puppyone-cloud",
+    "resource_name": "puppyone-ai/puppyone-cloud",
+    "resource_url": "https://github.com/puppyone-ai/puppyone-cloud",
     "account_label": "puppyone-ai"
   },
   "options": {

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "repository": "puppyone-ai/puppyone",
+  "repository": "puppyone-ai/puppyone-cloud",
   "branch": "qubits",
   "root_directory": "backend",
   "database_gate": {

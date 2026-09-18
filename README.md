@@ -46,7 +46,7 @@ Create an account at [puppyone.ai](https://www.puppyone.ai).
 Run the full stack locally with Docker. The only prerequisite is [Docker](https://www.docker.com/).
 
 ```bash
-git clone https://github.com/puppyone-ai/puppyone.git
+git clone https://github.com/puppyone-ai/puppyone-cloud.git
 cd puppyone/docker
 cp .env.example .env
 docker compose up -d
@@ -186,7 +186,7 @@ One Context Drive, many ways in. Your agents access it however they work best:
 We welcome issues, feature requests, and pull requests.
 
 - For small fixes, open a PR directly.
-- For larger changes, [file an issue](https://github.com/puppyone-ai/puppyone/issues/new/choose) first to discuss the design.
+- For larger changes, [file an issue](https://github.com/puppyone-ai/puppyone-cloud/issues/new/choose) first to discuss the design.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 

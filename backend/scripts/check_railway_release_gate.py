@@ -25,8 +25,8 @@ def validate_contract(repo_root: Path) -> list[str]:
 
     if manifest.get("schema_version") != 1:
         errors.append("Railway service manifest schema_version must be 1")
-    if manifest.get("repository") != "puppyone-ai/puppyone":
-        errors.append("Railway service manifest must target puppyone-ai/puppyone")
+    if manifest.get("repository") != "puppyone-ai/puppyone-cloud":
+        errors.append("Railway service manifest must target puppyone-ai/puppyone-cloud")
     if manifest.get("branch") != "qubits":
         errors.append("Railway service manifest must target qubits")
     if manifest.get("root_directory") not in {"backend", "/backend"}:

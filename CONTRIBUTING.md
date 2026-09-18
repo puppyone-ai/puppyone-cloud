@@ -53,12 +53,12 @@ rules (PR + required reviews + required status checks).
 1. Fork the repo on GitHub.
 2. Create a feature branch **from `qubits`** (not `main`):
    ```bash
-   git remote add upstream https://github.com/puppyone-ai/puppyone.git
+   git remote add upstream https://github.com/puppyone-ai/puppyone-cloud.git
    git fetch upstream
    git checkout -b feat/my-change upstream/qubits
    ```
 3. Commit, push to your fork, then open a Pull Request:
-   - **Base repository**: `puppyone-ai/puppyone`
+   - **Base repository**: `puppyone-ai/puppyone-cloud`
    - **Base branch**: `qubits` (not `main` — `main` is reserved for releases and hotfixes)
    - **Compare**: `your-fork:feat/my-change`
 4. CI does not run automatically on first-time external PRs. A maintainer will

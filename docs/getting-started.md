@@ -14,7 +14,7 @@ This guide is for people who clone the repo to **run PuppyOne locally** or **ope
 Fastest way to run everything without wiring cloud services manually:
 
 ```bash
-git clone https://github.com/puppyone-ai/puppyone.git
+git clone https://github.com/puppyone-ai/puppyone-cloud.git
 cd puppyone/docker
 cp .env.example .env
 docker compose up -d
@@ -103,7 +103,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#testing) for unit / integration / contr
 
 ## Opening your first PR
 
-1. Fork `puppyone-ai/puppyone` on GitHub (if you are an external contributor).
+1. Fork `puppyone-ai/puppyone-cloud` on GitHub (if you are an external contributor).
 2. Branch from **`qubits`**, not `main`:
 
    ```bash

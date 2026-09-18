@@ -1,7 +1,7 @@
 <!--
 Thanks for the PR! Please fill in the sections below so reviewers can move fast.
 See CONTRIBUTING.md for the full workflow:
-https://github.com/puppyone-ai/puppyone/blob/main/CONTRIBUTING.md
+https://github.com/puppyone-ai/puppyone-cloud/blob/main/CONTRIBUTING.md
 -->
 
 ## Summary
