@@ -15,7 +15,7 @@
     "never": "Never"
   },
   "nav": {
-    "home": "Home",
+    "home": "Cloud projects",
     "context": "Files",
     "changes": "Changes",
     "access": "Access",
@@ -40,7 +40,16 @@
     "noProjects": "No projects yet"
   },
   "home": {
-    "title": "Projects",
+    "title": "Cloud projects",
+    "startPrompt": "Which cloud project do you want to start with?",
+    "createProject": "Create cloud project",
+    "creatingProject": "Creating cloud project…",
+    "openProject": "Open cloud project {project}",
+    "previouslyUpdated": "Previously updated",
+    "loadErrorTitle": "Cloud projects could not be loaded",
+    "loadErrorDescription": "Check the Cloud service connection, then try again. Your projects have not been removed.",
+    "retry": "Try again",
+    "retrying": "Trying again…",
     "subtitle": "{count, plural, one {# project} other {# projects}} in your workspace",
     "emptyDescription": "Puppyone is your file workspace for multi-agent collaboration. Click below to start your first project.",
     "newProject": "New Project",

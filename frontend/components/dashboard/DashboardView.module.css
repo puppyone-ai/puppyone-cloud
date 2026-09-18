@@ -1,0 +1,446 @@
+.surface {
+  position: relative;
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 48px;
+  background: var(--po-canvas);
+  color: var(--po-text);
+}
+
+.homepage {
+  --section-gap: 30px;
+  --brand-content-gap: 64px;
+  display: grid;
+  width: min(680px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  margin: auto;
+  align-content: center;
+  justify-items: center;
+  gap: var(--section-gap);
+}
+
+.launcher {
+  display: contents;
+}
+
+.brandLockup {
+  display: flex;
+  width: min(440px, 100%);
+  max-width: 440px;
+  min-width: 0;
+  box-sizing: border-box;
+  align-items: center;
+  justify-self: center;
+  justify-content: flex-start;
+  gap: 12px;
+  margin-block-end: calc(var(--brand-content-gap) - var(--section-gap));
+  color: var(--po-text-muted);
+  text-align: start;
+  user-select: none;
+}
+
+.brandMark {
+  position: relative;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  color: var(--po-text-muted);
+}
+
+.brandArtwork {
+  display: block;
+  width: 28px;
+  max-width: 28px;
+  height: 28px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.brandArtworkDark {
+  display: none;
+}
+
+:global(.dark) .brandArtworkLight {
+  display: none;
+}
+
+:global(.dark) .brandArtworkDark {
+  display: block;
+  filter: grayscale(1) brightness(0.7);
+}
+
+.brandPrompt {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--po-text-muted);
+  font-family: var(--po-font-sans);
+  font-size: 18px;
+  font-weight: var(--po-text-weight-medium, 500);
+  letter-spacing: -0.035em;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectsLayout {
+  display: grid;
+  width: min(440px, 100%);
+  height: fit-content;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  justify-self: center;
+}
+
+.recentProjects {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-height: min(332px, calc(100vh - 380px));
+  box-sizing: border-box;
+  grid-template-rows: minmax(0, 1fr);
+  justify-self: center;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--po-border);
+  border-radius: 0;
+}
+
+.projectList {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: clamp(88px, calc(100vh - 428px), 284px);
+  align-content: start;
+  gap: 2px;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.projectRow {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--po-text-muted);
+  font-family: var(--po-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background 100ms ease,
+    color 100ms ease;
+}
+
+.projectRow:hover,
+.projectRow:focus-visible {
+  background: var(--po-hover);
+  color: var(--po-text);
+  outline: none;
+}
+
+.projectRow:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--po-accent) 36%, transparent);
+}
+
+.projectIcon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  color: inherit;
+}
+
+.projectIcon > svg {
+  width: 14px;
+  max-width: 14px;
+  height: 14px;
+  stroke-width: 1.85;
+}
+
+.projectBody {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.projectLabel {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: inherit;
+  font-family: var(--po-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectTrailing {
+  max-width: 112px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--po-text-subtle);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.projectSkeletonRow {
+  display: grid;
+  height: 30px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.primaryArea {
+  display: grid;
+  width: min(440px, 100%);
+  min-width: 0;
+  box-sizing: border-box;
+  justify-self: center;
+  justify-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.entryActions {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-self: center;
+  justify-items: start;
+  gap: 2px;
+  padding: 0 18px 18px;
+}
+
+.entryAction {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  height: 30px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--po-text-muted);
+  font-family: var(--po-font-sans);
+  font-size: 13px;
+  font-weight: var(--po-text-weight-medium, 500);
+  line-height: 18px;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color 130ms ease-out,
+    background 130ms ease-out,
+    color 130ms ease-out,
+    opacity 130ms ease-out;
+}
+
+.entryAction:hover:not(:disabled),
+.entryAction:focus-visible {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--po-text) 5%, transparent);
+  color: var(--po-text-muted);
+}
+
+.entryAction:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--po-accent) 36%, transparent);
+  outline-offset: 2px;
+}
+
+.entryAction:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--po-text-disabled);
+  cursor: default;
+}
+
+.entryIcon {
+  display: grid;
+  width: 18px;
+  max-width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+}
+
+.entryIcon > svg {
+  width: 14px;
+  max-width: 14px;
+  height: 14px;
+  stroke-width: 1.85;
+}
+
+.entryLabel {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--po-font-sans);
+  font-size: 13px;
+  font-weight: var(--po-text-weight-medium, 500);
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errorState {
+  display: grid;
+  width: min(420px, 100%);
+  margin: auto;
+  justify-items: start;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--po-border);
+  background: var(--po-panel);
+}
+
+.errorIcon {
+  width: 22px;
+  height: 22px;
+  color: var(--po-warning);
+  stroke-width: 1.7;
+}
+
+.errorCopy {
+  display: grid;
+  gap: 6px;
+}
+
+.errorTitle,
+.errorDescription {
+  margin: 0;
+  font-family: var(--po-font-sans);
+}
+
+.errorTitle {
+  color: var(--po-text);
+  font-size: 14px;
+  font-weight: var(--po-text-weight-semibold, 600);
+  line-height: 20px;
+}
+
+.errorDescription {
+  color: var(--po-text-muted);
+  font-size: 12px;
+  font-weight: var(--po-text-weight-regular, 400);
+  line-height: 18px;
+}
+
+.retryButton {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--po-border);
+  border-radius: 6px;
+  background: var(--po-panel-raised);
+  color: var(--po-text-muted);
+  font-family: var(--po-font-sans);
+  font-size: 12px;
+  font-weight: var(--po-text-weight-medium, 500);
+  cursor: pointer;
+}
+
+.retryButton:hover:not(:disabled),
+.retryButton:focus-visible {
+  border-color: var(--po-border-strong);
+  color: var(--po-text);
+}
+
+.retryButton:focus-visible {
+  outline: 2px solid var(--po-focus-ring);
+  outline-offset: 2px;
+}
+
+.retryButton:disabled {
+  color: var(--po-text-disabled);
+  cursor: default;
+}
+
+.retryButton > svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+}
+
+@media (max-width: 820px) {
+  .surface {
+    padding: 40px 28px;
+  }
+}
+
+@media (max-width: 520px) {
+  .surface {
+    padding: 28px 18px;
+  }
+
+  .brandLockup {
+    align-items: flex-start;
+  }
+
+  .brandPrompt {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .projectTrailing {
+    max-width: 76px;
+  }
+
+  .entryActions {
+    padding-inline: 0;
+  }
+}
+
+@media (max-height: 760px) {
+  .homepage {
+    --section-gap: 14px;
+    --brand-content-gap: 52px;
+  }
+
+  .projectList {
+    max-height: clamp(88px, calc(100vh - 418px), 260px);
+  }
+}

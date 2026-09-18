@@ -1,11 +1,21 @@
 'use client';
 
-import React, { useCallback, useEffect, Suspense, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  Suspense,
+  useRef,
+  useState,
+} from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { refreshProjects, useProjects } from '@/lib/hooks/useData';
 import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { DashboardLoadingSkeleton, DashboardView } from '@/components/dashboard/DashboardView';
+import {
+  DashboardLoadError,
+  DashboardLoadingSkeleton,
+  DashboardView,
+} from '@/components/dashboard/DashboardView';
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { nextUntitledProjectName } from '@/lib/projectNames';
 import { createProject } from '@/lib/projectsApi';
@@ -14,9 +24,21 @@ function DashboardPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isAuthReady } = useAuth();
-  const { orgs, currentOrg, isLoading: orgsLoading } = useOrganization();
-  const { projects, isLoading: projectsLoading } = useProjects(currentOrg?.id ?? null);
+  const {
+    orgs,
+    currentOrg,
+    isLoading: orgsLoading,
+    error: orgsError,
+    refreshOrgs,
+  } = useOrganization();
+  const {
+    projects,
+    isLoading: projectsLoading,
+    error: projectsError,
+    refresh: refreshProjectList,
+  } = useProjects(currentOrg?.id ?? null);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [isRetryingLoad, setIsRetryingLoad] = useState(false);
   const creatingProjectRef = useRef(false);
   const createOperationRef = useRef<{
     idempotencyKey: string;
@@ -90,21 +112,69 @@ function DashboardPageContent() {
     }
   }, [searchParams, projectsLoading, router, handleCreateProject]);
 
-  if (!isAuthReady || orgsLoading || (orgs.length > 0 && !currentOrg) || projectsLoading) {
+  const initialLoadError =
+    (orgs.length === 0 ? orgsError : null) ??
+    (projects.length === 0 ? projectsError : null);
+
+  const handleRetryLoad = useCallback(async () => {
+    if (isRetryingLoad) return;
+    setIsRetryingLoad(true);
+    try {
+      if (orgs.length === 0 && orgsError) {
+        await refreshOrgs();
+      } else {
+        await refreshProjectList();
+      }
+    } finally {
+      setIsRetryingLoad(false);
+    }
+  }, [isRetryingLoad, orgs.length, orgsError, refreshOrgs, refreshProjectList]);
+
+  if (initialLoadError) {
+    return (
+      <DashboardLoadError
+        retrying={isRetryingLoad}
+        onRetry={() => void handleRetryLoad()}
+      />
+    );
+  }
+
+  if (
+    !isAuthReady ||
+    orgsLoading ||
+    (orgs.length > 0 && !currentOrg) ||
+    projectsLoading
+  ) {
     return <DashboardLoadingSkeleton />;
   }
 
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%', backgroundColor: 'var(--po-canvas)' }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: 0, borderRadius: 0, border: 'none', background: 'var(--po-canvas)', overflow: 'hidden' }}>
+    <div
+      style={{
+        display: 'flex',
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'var(--po-canvas)',
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          margin: 0,
+          borderRadius: 0,
+          border: 'none',
+          background: 'var(--po-canvas)',
+          overflow: 'hidden',
+        }}
+      >
         <DashboardView
           projects={projects}
-          loading={projectsLoading}
           onProjectClick={projectId => {
             router.push(`/projects/${projectId}/data`);
           }}
           onCreateClick={handleCreateProject}
-          onBrowseTemplates={() => router.push('/templates')}
           creatingProject={isCreatingProject}
         />
       </div>

@@ -1,8 +1,23 @@
-# Project Dashboard Feature Contract
+# Cloud Project Launcher Feature Contract
 
-This file records product and engineering agreements for the project dashboard
-and project card creation flow. When project creation or project-list behavior
+This file records product and engineering agreements for the cloud project
+launcher and project creation flow. When project creation or project-list behavior
 changes, update this contract in the same patch.
+
+## Project List UX
+
+- The cloud home mirrors the Desktop project launcher: a compact, single-column
+  list instead of folder-shaped project cards.
+- Sort projects by `updated_at` descending without mutating the project array
+  owned by the data hook. Projects without a usable timestamp sort last.
+- Each row is a native button with an accessible project-specific label and a
+  relative last-updated value.
+- Keep the list scrollable inside the centered launcher so large project sets do
+  not move the create action off-screen.
+- The create action remains available when the list is empty and uses the same
+  local pending state as the populated launcher.
+- An organization or project-list request failure must render a retryable error
+  state. Never collapse a failed initial request into the empty-project state.
 
 ## Untitled Project Names
 
@@ -23,8 +38,8 @@ changes, update this contract in the same patch.
 
 ## Project Creation UX
 
-- Clicking create should put the create card/button into a local creating state.
-- Do not insert a fake project card into the grid before the backend returns.
+- Clicking create should put the create button into a local creating state.
+- Do not insert a fake project row before the backend returns.
 - After the backend create succeeds, navigate directly to the new project's data
   page.
 - If create fails, clear the local creating state and show the failure without
