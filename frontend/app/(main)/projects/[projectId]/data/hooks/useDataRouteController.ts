@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { usePathResolver } from './usePathResolver';
+import { useSessionValue } from '@/features/workspace/session';
 
 type FolderBreadcrumb = { id: string; name: string };
 
@@ -61,12 +62,16 @@ export function useDataRouteController({
   path,
 }: UseDataRouteControllerArgs) {
   const propPathKey = path.join('/');
+  const [, setFilesHref] = useSessionValue('filesHref');
   // Keep routine Data navigation inside this mounted client tree. Using the
   // app router for every file click remounts the catch-all page, which makes
   // the explorer sidebar replay its whole expansion tree.
   const [clientPath, setClientPath] = useState(path);
   const [clientTypeHint, setClientTypeHint] = useState(() => readDataLocation(projectId).typeHint);
   const routePathKey = clientPath.join('/');
+  useEffect(() => {
+    setFilesHref(buildDataUrl(projectId, clientPath, clientTypeHint));
+  }, [projectId, routePathKey, clientTypeHint, setFilesHref]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pendingFolderNavigation, setPendingFolderNavigation] =
     useState<PendingFolderNavigation | null>(null);
 
@@ -83,6 +88,8 @@ export function useDataRouteController({
     // editor draft comes from the editor save session and may differ while dirty.
     textContent: serverTextContent,
     isLoadingText,
+    readError,
+    retryRead,
     markdownViewMode,
     setMarkdownViewMode,
   } = usePathResolver(projectId, clientPath, clientTypeHint);
@@ -175,6 +182,8 @@ export function useDataRouteController({
     activeMimeType,
     serverTextContent,
     isLoadingText,
+    readError,
+    retryRead,
     markdownViewMode,
     setMarkdownViewMode,
     navigateTo,

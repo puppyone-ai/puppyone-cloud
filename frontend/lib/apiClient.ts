@@ -1,4 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr';
+import { createRequestScope, withAbort } from './requestScope';
 import { API_BASE_URL } from '@/config/api';
 import {
   REPOSITORY_TARGET_CONTRACT_HEADER,
@@ -13,7 +14,7 @@ import {
 const DEFAULT_API_TIMEOUT_MS = 30_000;
 const BROWSER_API_PROXY_PREFIX = '/api/backend';
 
-interface ApiRequestOptions extends RequestInit {
+export interface ApiRequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
@@ -241,12 +242,22 @@ interface ApiResponse<T> {
 /**
  * Authenticated API request.
  */
-export async function apiRequest<T>(
+export async function apiRequest<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
+  const scope = createRequestScope(fetchOptions.signal, timeoutMs);
+  try {
+    return await performRequest<T>(endpoint, { ...fetchOptions, timeoutMs, signal: scope.signal });
+  } finally {
+    scope.dispose();
+  }
+}
+
+async function performRequest<T>(
   endpoint: string,
-  options?: ApiRequestOptions,
-  _isRetry = false
+  options: ApiRequestOptions & { signal: AbortSignal },
+  _isRetry = false,
 ): Promise<T> {
-  const token = await getAuthToken();
+  const token = await withAbort(getAuthToken(), options.signal);
   const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
   const url = buildApiUrl(endpoint);
 
@@ -262,37 +273,29 @@ export async function apiRequest<T>(
   }
 
   let response: Response;
-  const controller =
-    !fetchOptions.signal && timeoutMs > 0 ? new AbortController() : null;
-  const timer =
-    controller && timeoutMs > 0
-      ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
-      : null;
   try {
     response = await fetch(url, {
       ...fetchOptions,
       headers,
-      signal: fetchOptions.signal ?? controller?.signal,
+      signal: options.signal,
     });
   } catch (cause) {
+    if (options.signal.aborted) throw options.signal.reason;
     throw new ApiNetworkError(
       getNetworkErrorMessage({ url, endpoint, cause, timeoutMs }),
       { endpoint, url, cause }
     );
-  } finally {
-    if (timer !== null) {
-      globalThis.clearTimeout(timer);
-    }
   }
 
   if (response.status === 401) {
+    void response.body?.cancel();
     // The access token likely expired. Try a one-time refresh + retry before
     // giving up — this is what stops a long-open tab from silently showing an
     // empty account once the ~1h token lapses.
     if (!_isRetry && typeof window !== 'undefined') {
-      const refreshed = await refreshAuthToken();
+      const refreshed = await withAbort(refreshAuthToken(), options.signal);
       if (refreshed) {
-        return apiRequest<T>(endpoint, options, true);
+        return performRequest<T>(endpoint, options, true);
       }
     }
     // Refresh failed (or we already retried) → the session is unrecoverable.
@@ -306,7 +309,9 @@ export async function apiRequest<T>(
   // Handle HTTP error status codes (4xx/5xx) — FastAPI HTTPException returns {"detail": ...}
   if (!response.ok) {
     let body: any = null;
-    try { body = JSON.parse(await response.text()); } catch {}
+    try { body = JSON.parse(await withAbort(response.text(), options.signal)); } catch (error) {
+      if (options.signal.aborted) throw options.signal.reason;
+    }
 
     // Puppyone custom format: {"code": N, "message": "...", "data": null}
     // FastAPI standard format: {"detail": "..." | {...}}
@@ -348,7 +353,7 @@ export async function apiRequest<T>(
     throw error;
   }
 
-  const data: ApiResponse<T> = await response.json();
+  const data: ApiResponse<T> = await withAbort(response.json(), options.signal);
 
   if (data.code !== 0) {
     const error: any = new Error(data.message || 'API request failed');
@@ -364,8 +369,8 @@ export async function apiRequest<T>(
 /**
  * GET request.
  */
-export function get<T>(endpoint: string): Promise<T> {
-  return apiRequest<T>(endpoint, { method: 'GET' });
+export function get<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  return apiRequest<T>(endpoint, { ...options, method: 'GET' });
 }
 
 /**

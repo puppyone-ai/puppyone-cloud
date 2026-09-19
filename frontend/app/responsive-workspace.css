@@ -1,0 +1,211 @@
+/* Frames consume the resolved workspace contract. Content/media rules below
+ * must not override pane widths or independently choose docked/overlay. */
+.workspace-root {
+  width: 100%;
+  min-width: 0;
+  position: relative;
+  top: var(--workspace-viewport-top, 0px);
+  height: var(--workspace-viewport-height, 100dvh);
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  box-sizing: border-box;
+  overscroll-behavior: none;
+}
+.workspace-main { height: 100%; min-height: 0; }
+.workspace-project-layout {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  position: relative;
+  overflow: hidden;
+  background: var(--po-canvas);
+  container: project-workspace / inline-size;
+}
+.workspace-project-layout > [data-workspace-header] { grid-column: 1; grid-row: 1; }
+.workspace-primary-body { grid-column: 1; grid-row: 2; }
+.workspace-project-layout > .workspace-auxiliary { grid-column: 2; grid-row: 1 / -1; }
+.workspace-data-content { min-width: 0; }
+.workspace-history-detail { display: contents; }
+.workspace-navigation-button, .workspace-files-button,
+.workspace-mobile-heading, .workspace-history-back, .workspace-account-close,
+.workspace-auxiliary-backdrop, .workspace-sidebar-swipe-edge { display: none; }
+
+/* A navigation region owns its positioning. The content simply fills the
+ * region. Variables switch presentation without replacing either wrapper. */
+.workspace-drawer {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+  position: var(--drawer-position, relative);
+  inset: var(--drawer-inset, auto);
+  z-index: var(--drawer-layer, auto);
+  transition: none;
+}
+.workspace-drawer[data-below-header='false'] { --drawer-width: var(--workspace-projects-width, 220px); }
+.workspace-drawer[data-below-header='true'] { --drawer-width: var(--workspace-files-width, 220px); }
+.workspace-drawer { --navigation-width: 100%; }
+.workspace-drawer[data-overlay='false'] { width: var(--drawer-width); }
+.workspace-drawer[data-overlay='false'] > .workspace-drawer-sheet { width: 100%; }
+.workspace-drawer[data-overlay='false']:not([data-motion='idle']) { transition: width 200ms ease; }
+.workspace-drawer[data-overlay='true'] {
+  --drawer-position: absolute;
+  --drawer-inset: 0;
+  --drawer-layer: 900;
+  --drawer-closed-visibility: hidden;
+  --drawer-closed-events: none;
+  --drawer-hidden-x: -100%;
+  --drawer-controls: flex;
+  --drawer-transition: transform 200ms ease;
+}
+.workspace-drawer[data-overlay='true'][data-motion='closing'] { visibility: visible; }
+.workspace-drawer[data-overlay='true'][data-below-header='true'] { --drawer-layer: 400; }
+.workspace-drawer[data-open='true'] { transition-delay: 0s; }
+.workspace-drawer[data-open='false'] { visibility: var(--drawer-closed-visibility, visible); pointer-events: var(--drawer-closed-events, auto); }
+.workspace-drawer-sheet {
+  display: flex;
+  flex-direction: column;
+  width: var(--drawer-width, auto);
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  background: var(--po-canvas);
+  transform: translateX(var(--sidebar-drag-x, 0px));
+  transition: var(--drawer-transition, none);
+}
+.workspace-drawer[data-open='false'] > .workspace-drawer-sheet { transform: translateX(var(--drawer-hidden-x, 0px)); }
+.workspace-drawer-sheet > [data-sidebar-column], .workspace-project-rail { min-height: 0; flex: 1; }
+.workspace-drawer-backdrop { display: var(--drawer-controls, none); position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: var(--po-backdrop); }
+.workspace-drawer-heading { display: var(--drawer-controls, none); align-items: center; justify-content: space-between; flex: 0 0 52px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--po-divider); color: var(--po-text); font-size: 14px; font-weight: 500; }
+.workspace-drawer-heading button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--po-text-muted); cursor: pointer; }
+.workspace-drawer-heading button:focus-visible { outline: 2px solid var(--po-focus-ring); outline-offset: -2px; }
+
+.workspace-navigation-button, .workspace-files-button {
+  align-items: center; justify-content: center; flex-shrink: 0;
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--po-text-muted); cursor: pointer; touch-action: manipulation;
+}
+.workspace-navigation-button:focus-visible, .workspace-files-button:focus-visible { outline: 2px solid var(--po-focus-ring); outline-offset: -2px; }
+.workspace-root[data-projects-layout='overlay'] .workspace-navigation-button,
+.workspace-root[data-files-layout='overlay'] .workspace-files-button { display: inline-flex; }
+.workspace-root[data-projects-layout='overlay'] .workspace-mobile-heading { display: flex; align-items: center; gap: 8px; min-height: 46px; background: var(--po-header); padding: 0 8px; }
+.workspace-root[data-shared-header='true'] .workspace-project-layout > [data-workspace-header] { grid-column: 1 / -1; }
+.workspace-root[data-shared-header='true'] .workspace-project-layout > .workspace-auxiliary { grid-row: 2; }
+.workspace-project-layout > .workspace-auxiliary, .workspace-root .workspace-inspector {
+  /* A cancelled swipe can return smoothly; pixel widths still settle at once. */
+  transition: transform 200ms ease;
+  transform: translateX(100%);
+}
+.workspace-project-layout > .workspace-auxiliary[data-visible='true'], .workspace-root .workspace-inspector[data-visible='true'] { transform: translateX(0); }
+.workspace-project-layout > .workspace-auxiliary:not([data-motion='idle']), .workspace-root .workspace-inspector:not([data-motion='idle']) { transition: width 200ms ease; }
+/* Keep the outgoing surface painted, but inert, until its exit finishes. */
+.workspace-project-layout > .workspace-auxiliary[data-motion='closing'], .workspace-root .workspace-inspector[data-motion='closing'] {
+  visibility: visible;
+  transform: translateX(0);
+}
+.workspace-auxiliary[data-motion='closing'] > [data-panel-content], .workspace-inspector[data-motion='closing'] > [data-panel-content] { opacity: 1; }
+.workspace-inspector[data-visible='true'] { width: var(--workspace-inspector-width, var(--panel-width)); }
+.workspace-root[data-inspector-layout='overlay'] .workspace-inspector { position: absolute; inset: 0; height: 100%; width: var(--workspace-inspector-width); transform: translateX(100%); transition: transform 200ms ease; }
+.workspace-root[data-inspector-layout='overlay'] .workspace-inspector[data-visible='true'] { transform: translateX(0); }
+.workspace-root[data-inspector-layout='overlay'] .workspace-inspector:not([data-motion='idle']) { transition: transform 200ms ease; }
+.workspace-project-layout > .workspace-auxiliary[data-visible='true'] { width: var(--workspace-auxiliary-width, var(--panel-width)); }
+.workspace-root[data-shared-header='true'] .workspace-auxiliary[data-visible='true'] { transform: translateX(var(--sidebar-drag-x, 0px)); }
+[data-sidebar-swipe-surface] { touch-action: pan-y pinch-zoom; }
+[data-swiping='true'] { transition: none !important; user-select: none; }
+.workspace-root[data-shared-header='true'] .workspace-sidebar-swipe-edge { display: block; position: absolute; z-index: 40; left: 0; top: 52px; bottom: 0; width: 12px; }
+.workspace-root[data-files-layout='overlay'] .workspace-data-content { z-index: auto !important; }
+.workspace-root[data-auxiliary-layout='overlay'] .workspace-project-layout { grid-template-columns: minmax(0, 1fr); }
+.workspace-root[data-auxiliary-layout='overlay'] .workspace-project-layout > .workspace-auxiliary {
+  grid-column: 1; grid-row: 2; position: absolute; inset: 0 0 0 auto;
+  width: var(--workspace-auxiliary-width); height: auto;
+  transform: translateX(100%); box-shadow: var(--po-menu-shadow);
+  transition: transform 200ms ease;
+}
+.workspace-root[data-auxiliary-layout='overlay'] .workspace-project-layout > .workspace-auxiliary:not([data-motion='idle']) { transition: transform 200ms ease; }
+.workspace-root[data-auxiliary-layout='overlay'] .workspace-project-layout > .workspace-auxiliary[data-visible='true'] { transform: translateX(var(--sidebar-drag-x, 0px)); }
+.workspace-root[data-auxiliary-layout='overlay'] .workspace-auxiliary-backdrop[data-open='true'] { display: block; position: absolute; grid-column: 1; grid-row: 2; inset: 0; z-index: 79; padding: 0; border: 0; background: var(--po-backdrop); }
+
+@media (max-width: 1023px) {
+  .workspace-history-back {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0; width: 32px; height: 32px; padding: 0; border: 0;
+    border-radius: 6px; background: transparent; color: var(--po-text-muted);
+    cursor: pointer; touch-action: manipulation;
+  }
+  .workspace-history-back:focus-visible { outline: 2px solid var(--po-focus-ring); outline-offset: -2px; }
+  .workspace-history-layout { min-width: 0; }
+  .workspace-history-list { width: 100% !important; }
+  .workspace-history-entry { height: 48px !important; }
+  .workspace-history-entry > div:first-child { height: 44px !important; }
+  .workspace-history-file { min-height: 44px; }
+  .workspace-history-detail { display: none; }
+  .workspace-history-layout[data-detail='true'] > .workspace-history-list { display: none; }
+  .workspace-history-layout[data-detail='true'] > .workspace-history-detail { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+  .workspace-history-back { width: auto; justify-content: flex-start; padding: 0 16px; gap: 8px; }
+
+  [data-dialog-root] { top: var(--workspace-viewport-top, 0px) !important; bottom: auto !important; height: var(--workspace-viewport-height, 100dvh); }
+  [data-dialog-surface] { max-height: calc(var(--workspace-viewport-height, 100dvh) - 32px) !important; min-height: 0; }
+  [data-dialog-surface] input, [data-dialog-surface] textarea, [data-dialog-surface] select { font-size: 16px !important; }
+  [data-dialog-surface] button { min-height: 44px; }
+  [data-dialog-surface] button[title^='Close'], [data-dialog-surface] button[aria-label^='Close'] { min-width: 44px; }
+  [data-dialog-body] { min-height: 0; overscroll-behavior: contain; }
+  .workspace-settings-row { flex-wrap: wrap; }
+  .workspace-settings-row > * { min-width: 0; max-width: 100%; }
+  .workspace-settings-row select, .workspace-settings-row input { max-width: 100%; }
+
+  .workspace-account-dialog { top: calc(var(--workspace-viewport-top, 0px) + var(--workspace-viewport-height, 100dvh) / 2) !important; max-height: calc(var(--workspace-viewport-height, 100dvh) - 24px); }
+  .workspace-account-content { min-width: 0; }
+  .workspace-account-dialog input, .workspace-account-dialog select, .workspace-account-dialog textarea { font-size: 16px !important; }
+  .workspace-account-dialog button { min-height: 44px; }
+  .workspace-account-close { position: absolute; top: 4px; right: 4px; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: var(--po-panel); color: var(--po-text-muted); }
+  [data-workspace-row-menu] { max-width: calc(100vw - 16px); max-height: calc(var(--workspace-viewport-height, 100dvh) - 16px); overflow: auto; }
+  .workspace-settings-member { flex-wrap: wrap; gap: 12px; }
+  .workspace-settings-member > div { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+}
+
+/* Content spacing does not choose a pane's presentation or width. */
+@media (max-width: 899px) {
+  .workspace-folder-content { padding: 16px !important; }
+  .workspace-root .markdown-codemirror-editor { --po-markdown-editor-gutter-min: 20px; --po-markdown-breakout-right-gutter: 20px; }
+  .workspace-root .markdown-codemirror-editor .cm-content { padding-top: 24px; padding-bottom: 40px; }
+  .workspace-root .markdown-codemirror-editor .cm-scroller { overscroll-behavior: contain; }
+}
+
+@media (max-width: 639px) {
+  [data-dialog-surface='project-settings'] { width: 100vw !important; max-width: 100vw !important; height: var(--workspace-viewport-height, 100dvh) !important; max-height: var(--workspace-viewport-height, 100dvh) !important; border: 0 !important; border-radius: 0 !important; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  [data-dialog-root]:has([data-dialog-surface='project-settings']) { padding: 0 !important; }
+  .workspace-settings-row { flex-direction: column; align-items: stretch !important; padding: 16px !important; }
+  .workspace-settings-body { padding: 16px !important; }
+  .workspace-account-dialog { width: calc(100vw - 16px) !important; height: min(680px, calc(var(--workspace-viewport-height, 100dvh) - 16px)) !important; }
+  .workspace-account-layout { flex-direction: column; }
+  .workspace-account-nav { width: 100% !important; height: auto !important; flex-shrink: 0; padding: 8px 52px 8px 8px !important; border-right: 0 !important; border-bottom: 1px solid var(--po-divider); }
+  .workspace-account-nav nav { flex-direction: row !important; overflow-x: auto; padding: 0 !important; }
+  .workspace-account-nav button { width: auto !important; min-width: max-content; min-height: 44px; }
+  .workspace-account-content { flex: 1; min-height: 0; }
+}
+
+/* Input capability enhances targets independently of window size. Desktop
+ * mouse density and desktop chrome geometry remain unchanged. */
+@media (pointer: coarse) {
+  .workspace-explorer-row { min-height: 44px !important; }
+  .workspace-row-actions, .workspace-row-actions > .hidden { display: flex !important; }
+  .workspace-row-actions button { min-height: 44px; min-width: 44px; }
+  [role='menu'] [role='menuitem'] { min-height: 44px; }
+  .workspace-explorer-row [data-explorer-label] { padding-right: var(--workspace-row-action-width, 6px) !important; }
+  .workspace-navigation-button, .workspace-files-button { width: 44px; height: 44px; }
+  .workspace-project-rail button { min-height: 44px; }
+  .workspace-project-rail > div:first-child { min-height: 52px; }
+  .workspace-project-rail > div:first-child button { min-width: 44px; }
+  .workspace-root .markdown-codemirror-editor .cm-editor { font-size: 16px; }
+}
+
+/* Native segment geometry is another allocator input, not a CSS override. */
+.workspace-root[data-workspace-segments='horizontal'] .workspace-project-layout { grid-template-columns: minmax(0, var(--workspace-segment-first)) minmax(0, var(--workspace-segment-second)); column-gap: var(--workspace-segment-gap); }
+.workspace-root[data-workspace-segments='vertical'] .workspace-project-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) var(--workspace-segment-gap) minmax(0, var(--workspace-segment-second)); }
+.workspace-root[data-workspace-segments='vertical'] .workspace-project-layout > .workspace-auxiliary { grid-column: 1; grid-row: 4; border-left: 0; border-top: 1px solid var(--po-divider); }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-root .workspace-drawer, .workspace-root .workspace-drawer-sheet,
+  .workspace-root .workspace-project-layout > .workspace-auxiliary, .workspace-root .workspace-inspector { transition: none !important; }
+}

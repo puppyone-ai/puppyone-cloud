@@ -68,6 +68,14 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     ("POST", "/api/v1/projects/{project_id}/git-credentials"): _human(ProjectAction.CONTENT_READ),
 
     # Content, History and conflict surfaces.
+    # Managed Office sessions are resource-owner operations, not project grants.
+    # Engine callbacks/source reads use scoped capability verification.
+    ("GET", "/api/v1/office/sessions/{session_id}"): _owner("office.session_owner"),
+    ("DELETE", "/api/v1/office/sessions/{session_id}"): _owner("office.session_owner"),
+    ("POST", "/api/v1/office/sessions/{session_id}/force-save"): _owner("office.session_owner"),
+    ("GET", "/api/v1/office/sessions/{session_id}/result"): _owner("office.session_owner"),
+    ("GET", "/api/v1/office/engine/sessions/{session_id}/source/{filename}"): _runtime("office.source_capability"),
+    ("POST", "/api/v1/office/engine/sessions/{session_id}/callback"): _runtime("office.callback_capability"),
     **{
         ("GET", f"/api/v1/content/{{project_id}}/{suffix}"): _human(action)
         for suffix, action in {
@@ -80,6 +88,7 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
             "tree": ProjectAction.CONTENT_READ,
             "commit-content": ProjectAction.HISTORY_READ,
             "commits": ProjectAction.HISTORY_READ,
+            "head": ProjectAction.HISTORY_READ,
             "conflicts/pending": ProjectAction.HISTORY_READ,
             "diff": ProjectAction.HISTORY_READ,
         }.items()

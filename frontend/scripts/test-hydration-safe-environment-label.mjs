@@ -7,20 +7,10 @@ const layout = await readFile(
   'utf8',
 );
 
-assert.match(
-  layout,
-  /useState<string \| undefined>\(undefined\)/,
-  'the environment label must be absent in both SSR and the first hydration render',
-);
-assert.match(
-  layout,
-  /useEffect\(\(\) => \{\s*setEnvironmentLabel\(getEnvironmentLabel\(\)\);\s*\}, \[\]\)/s,
-  'the browser-only environment label must be populated after hydration',
-);
 assert.doesNotMatch(
   layout,
-  /useMemo\(\(\) => getEnvironmentLabel\(\), \[\]\)/,
-  'do not render a window-dependent value during SSR',
+  /getEnvironmentLabel|environmentLabel/,
+  'the workspace rail must not render a browser-dependent environment label',
 );
 
-console.log('Hydration-safe environment label test passed.');
+console.log('Hydration-safe workspace rail test passed.');

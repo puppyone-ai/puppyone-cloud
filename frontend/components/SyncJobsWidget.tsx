@@ -10,10 +10,10 @@ import {
   activityHeaderStyle,
   activityTitleStyle,
 } from './activityStyles';
-import { useProjectActivity } from '@/lib/hooks/useActivity';
+import type { ActivityItem } from '@/lib/activityApi';
 
 type SyncJobsWidgetProps = {
-  projectId?: string;
+  activeItems: readonly ActivityItem[];
   inline?: boolean;
 };
 
@@ -25,11 +25,10 @@ type SyncJobsWidgetProps = {
  * same Activity stack as uploads and imports. Sync runs are not cancellable
  * from here (no close button) — the feed is display-only.
  */
-export function SyncJobsWidget({ projectId, inline = false }: SyncJobsWidgetProps) {
-  const { activeItems } = useProjectActivity(projectId, { kind: 'sync_run' });
+export function SyncJobsWidget({ activeItems, inline = false }: SyncJobsWidgetProps) {
   const runs = useMemo(() => activeItems.slice(0, 3), [activeItems]);
 
-  if (!projectId || activeItems.length === 0) return null;
+  if (activeItems.length === 0) return null;
 
   const title = activeItems.length === 1 ? 'Syncing' : `${activeItems.length} syncs`;
 

@@ -22,27 +22,21 @@ import {
 import { useDataLayout } from '../DataLayoutContext';
 import type { BreadcrumbSegment } from '@/components/ProjectsHeader';
 
-import {
-  type McpToolPermissions,
-} from '@/lib/mcpApi';
+import { type McpToolPermissions } from '@/lib/mcpApi';
 
 import { refreshProjects } from '@/lib/hooks/useData';
-import {
-  type AgentResource,
-} from '../components/views';
-import {
-  usePendingActiveId,
-} from '../components/explorer';
+import { type AgentResource } from '../components/views';
+import { usePendingActiveId } from '../components/explorer';
 
 import { useAgent } from '@/contexts/AgentContext';
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
-import { repositoryViewKey } from '@/lib/repoApi';
 
 // Extracted hooks
 import { useDataPanelController } from '../hooks/useDataPanelController';
 import { useDataGridController } from '../hooks/useDataGridController';
 import { useDataRouteController } from '../hooks/useDataRouteController';
 import { useDataViewPreferences } from '../hooks/useDataViewPreferences';
+import { confirmEditorNavigation } from '@/features/files/navigationGuard';
 import { useEditorSaveGuards } from '../hooks/useEditorSaveGuards';
 import { useEmptyProjectOpened } from '../hooks/useEmptyProjectOpened';
 import { useStructuredNodeData } from '../hooks/useStructuredNodeData';
@@ -59,7 +53,6 @@ import { isImportJobTerminal } from '@/lib/importApi';
 // Extracted components
 import { DataWorkspaceSurface } from '../components/DataWorkspaceSurface';
 import { ProjectUnavailableShell } from '../components/ProjectUnavailableShell';
-import { AccessPointsHeaderButton } from '../components/access-points';
 import { DataAccessModalHost } from '../components/access-points/DataAccessModalHost';
 import { DataSyncCreateModalHost } from '../components/DataSyncCreateModalHost';
 import type { EditorTarget } from '../components/right-panel';
@@ -68,8 +61,13 @@ import { useAccessPointEntries } from '../hooks/useAccessPointEntries';
 import { ProjectPageLoadingShell, SkeletonBlock } from '@/components/loading';
 import { isTextLikeCategory, resolveFormat } from '@/lib/fileFormats';
 import { writeFile } from '@/lib/contentTreeApi';
-import { DataHeaderActions, type DataHeaderActionTarget } from '../components/DataHeaderActions';
+import {
+  DataHeaderActions,
+  type DataHeaderActionTarget,
+} from '../components/DataHeaderActions';
 import { FileViewerHeaderActions } from '../components/FileViewerHeaderActions';
+import { ProjectHeaderContribution } from '@/components/project/ProjectWorkspaceShell';
+import { projectAllows } from '@/lib/projectsApi';
 
 interface DataPageProps {
   params: Promise<{ projectId: string; path?: string[] }>;
@@ -77,7 +75,11 @@ interface DataPageProps {
 
 function decodePath(segments: string[]): string[] {
   return segments.map(s => {
-    try { return decodeURIComponent(s); } catch { return s; }
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
   });
 }
 
@@ -95,16 +97,39 @@ export default function DataPage({ params }: DataPageProps) {
     isLoading: routeProjectLoading,
     error: routeProjectError,
   } = useProject(session ? projectId : null);
-  const { projects, isLoading: projectsLoading } = useProjects(currentOrg?.id ?? null);
+  const { projects } = useProjects(
+    currentOrg?.id ?? null
+  );
 
   // Project-level data from layout (sync status, tools, endpoints, scopes, connectors)
   const {
-    syncStatusData, mutateSyncStatus, projectTools, syncEndpoints, nodeEndpointMap,
-    scopes, connectorsByTarget, repoIdentity, repoIdentityLoading, mutateRepo,
+    syncStatusData,
+    mutateSyncStatus,
+    projectTools,
+    syncEndpoints,
+    nodeEndpointMap,
+    scopes,
+    connectorsByTarget,
+    repoIdentity,
+    repoIdentityLoading,
+    repoIdentityError,
+    mutateRepo,
   } = useDataLayout();
 
   // Agent context (needed early for syncEndpoints merge)
-  const { draftResources, currentAgentId, savedAgents, hoveredAgentId, openSyncSetting, editingAgentId, selectedSyncId, selectedSyncNodeId, hoveredSyncNodeId, selectAgent, refreshAgents } = useAgent();
+  const {
+    draftResources,
+    currentAgentId,
+    savedAgents,
+    hoveredAgentId,
+    openSyncSetting,
+    editingAgentId,
+    selectedSyncId,
+    selectedSyncNodeId,
+    hoveredSyncNodeId,
+    selectAgent,
+    refreshAgents,
+  } = useAgent();
 
   // Auto-complete onboarding steps
   const { completeStep } = useOnboarding();
@@ -132,14 +157,13 @@ export default function DataPage({ params }: DataPageProps) {
     }
   }, [hasWelcomeParam, projectId, router]);
 
-
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
   const [isEditorFullScreen, setIsEditorFullScreen] = useState(false);
-  const [hoverHighlightNodeId, setHoverHighlightNodeId] = useState<string | null>(null);
-  const {
-    emptyProjectOpened,
-    openEmptyProject: handleOpenEmptyProject,
-  } = useEmptyProjectOpened({ projectId, hasSetupParam });
+  const [hoverHighlightNodeId, setHoverHighlightNodeId] = useState<
+    string | null
+  >(null);
+  const { emptyProjectOpened, openEmptyProject: handleOpenEmptyProject } =
+    useEmptyProjectOpened({ projectId, hasSetupParam });
 
   // ───── Custom Hooks ─────
 
@@ -154,12 +178,19 @@ export default function DataPage({ params }: DataPageProps) {
     activeMimeType,
     serverTextContent,
     isLoadingText,
+    readError: fileReadError,
+    retryRead: retryFileRead,
     markdownViewMode,
     setMarkdownViewMode,
     navigateTo,
   } = useDataRouteController({ projectId, path });
 
-  const { nodes: contentNodes, isLoading: contentNodesLoading, refresh: refreshCurrentNodes } = useContentNodes(projectId, currentFolderId);
+  const {
+    nodes: contentNodes,
+    isLoading: contentNodesLoading,
+    error: contentNodesError,
+    refresh: refreshCurrentNodes,
+  } = useContentNodes(isResolvingPath ? '' : projectId, currentFolderId);
   const {
     activeJob: activeImportJob,
     latestJob: latestImportJob,
@@ -174,9 +205,11 @@ export default function DataPage({ params }: DataPageProps) {
   }, [activeNodeId, activeNodeType, activeMimeType]);
 
   const activeTextSaveNodeType: EditorSaveNodeType =
-    activeFormat?.id === 'markdown' ? 'markdown'
-    : activeFormat?.id === 'json' ? 'json'
-    : 'file';
+    activeFormat?.id === 'markdown'
+      ? 'markdown'
+      : activeFormat?.id === 'json'
+        ? 'json'
+        : 'file';
 
   // Manual-save hook: editor edits stay local until the user hits
   // Cmd+S / clicks Save. Replaces the older 1.5s-debounced
@@ -187,6 +220,7 @@ export default function DataPage({ params }: DataPageProps) {
     projectId,
     filePath: activeNodeId,
     serverContent: serverTextContent,
+    isContentReady: !isLoadingText && !isResolvingPath && !fileReadError,
     nodeType: activeTextSaveNodeType,
   });
   const {
@@ -203,19 +237,20 @@ export default function DataPage({ params }: DataPageProps) {
     keyboardEnabled: editorTarget === null,
   });
 
-  const navigateToWithEditorGuard = useCallback((nextPath: string[], typeHint?: string) => {
-    const nextPathKey = nextPath.join('/');
-    const currentPathKey = routePath.join('/');
-    if (
-      nextPathKey !== currentPathKey &&
-      editorDirty &&
-      typeof window !== 'undefined' &&
-      !window.confirm('You have unsaved changes. Leave this file and discard the local draft?')
-    ) {
-      return;
-    }
-    navigateTo(nextPath, typeHint);
-  }, [editorDirty, navigateTo, routePath]);
+  const navigateToWithEditorGuard = useCallback(
+    (nextPath: string[], typeHint?: string) => {
+      const nextPathKey = nextPath.join('/');
+      const currentPathKey = routePath.join('/');
+      if (
+        nextPathKey !== currentPathKey &&
+        !confirmEditorNavigation(editorDirty)
+      ) {
+        return;
+      }
+      navigateTo(nextPath, typeHint);
+    },
+    [editorDirty, navigateTo, routePath]
+  );
 
   const nodeActions = useNodeActions(projectId, currentFolderId);
   const fileImport = useFileImport(projectId, session?.access_token, {
@@ -239,13 +274,17 @@ export default function DataPage({ params }: DataPageProps) {
   //                       to the current folder so the file isn't
   //                       silently lost to a browser-default tab nav
   const externalDropTarget = useMemo(
-    () => (currentFolderId
-      ? { path: currentFolderId, name: folderBreadcrumbs.at(-1)?.name ?? 'Folder' }
-      : { path: null, name: 'Root' }),
-    [currentFolderId, folderBreadcrumbs],
+    () =>
+      currentFolderId
+        ? {
+            path: currentFolderId,
+            name: folderBreadcrumbs.at(-1)?.name ?? 'Folder',
+          }
+        : { path: null, name: 'Root' },
+    [currentFolderId, folderBreadcrumbs]
   );
   useExternalFileDropCatcher({
-    onDrop: (files) => {
+    onDrop: files => {
       fileImport.openFileImportForTarget(files, externalDropTarget);
     },
   });
@@ -259,16 +298,8 @@ export default function DataPage({ params }: DataPageProps) {
     panelState,
     openPanel,
     closePanel,
-    rightPanelWidth,
-    setRightPanelWidth,
     setAccessPanelNavigationGuard,
     activeSyncId,
-    isAccessPanelOpen,
-    accessListView,
-    accessHeaderScope,
-    accessHeaderTitle,
-    accessHeaderSubtitle,
-    showAccessHeaderBack,
     rootGitRemoteUrl,
     accessOverviewOpen,
     quickAccessScope,
@@ -277,12 +308,10 @@ export default function DataPage({ params }: DataPageProps) {
     syncCreateInitialPath,
     refreshRepoAndAgents,
     closeRightPanel,
-    handleAccessHeaderBack,
     openVersionHistoryPanel,
     openSyncCreatePanel,
     openRootGitRemotePanel,
     openShareWithAI,
-    openAccessOverviewModal,
     openQuickAccessModal,
     openCreateAccessModal,
     closeAccessOverviewModal,
@@ -305,11 +334,14 @@ export default function DataPage({ params }: DataPageProps) {
     setHoverHighlightNodeId,
   });
 
-  const handleSyncCreated = useCallback(async (nodeId: string) => {
-    await mutateSyncStatus();
-    refreshCurrentNodes();
-    openPanel({ type: 'sync_config', nodeId });
-  }, [mutateSyncStatus, refreshCurrentNodes, openPanel]);
+  const handleSyncCreated = useCallback(
+    async (nodeId: string) => {
+      await mutateSyncStatus();
+      refreshCurrentNodes();
+      openPanel({ type: 'sync_config', nodeId });
+    },
+    [mutateSyncStatus, refreshCurrentNodes, openPanel]
+  );
 
   const handleSyncCreatedInModal = useCallback(async () => {
     await mutateSyncStatus();
@@ -345,7 +377,9 @@ export default function DataPage({ params }: DataPageProps) {
   // Supabase connector
   const [supabaseConnectOpen, setSupabaseConnectOpen] = useState(false);
   const [supabaseSQLEditorOpen, setSupabaseSQLEditorOpen] = useState(false);
-  const [supabaseConnectionId, setSupabaseConnectionId] = useState<string | null>(null);
+  const [supabaseConnectionId, setSupabaseConnectionId] = useState<
+    string | null
+  >(null);
 
   const {
     createTableOpen,
@@ -381,28 +415,46 @@ export default function DataPage({ params }: DataPageProps) {
     if (hoveredSyncNodeId) return [{ path: hoveredSyncNodeId, readonly: true }];
     if (hoveredAgentId) {
       const agent = savedAgents.find(a => a.id === hoveredAgentId);
-      if (agent?.resources && agent.resources.length > 0) return agent.resources.map(toAgentResource);
+      if (agent?.resources && agent.resources.length > 0)
+        return agent.resources.map(toAgentResource);
     }
-    if (panelState.type === 'sync_create' || editingAgentId) return draftResources.map(toAgentResource);
+    if (panelState.type === 'sync_create' || editingAgentId)
+      return draftResources.map(toAgentResource);
     if (currentAgentId) {
       const agent = savedAgents.find(a => a.id === currentAgentId);
-      if (agent?.resources && agent.resources.length > 0) return agent.resources.map(toAgentResource);
+      if (agent?.resources && agent.resources.length > 0)
+        return agent.resources.map(toAgentResource);
     }
     if (selectedSyncId && selectedSyncNodeId) {
       return [{ path: selectedSyncNodeId, readonly: true }];
     }
     return [];
-  }, [draftResources, editingAgentId, currentAgentId, savedAgents, hoveredAgentId, selectedSyncId, selectedSyncNodeId, hoveredSyncNodeId, panelState.type]);
+  }, [
+    draftResources,
+    editingAgentId,
+    currentAgentId,
+    savedAgents,
+    hoveredAgentId,
+    selectedSyncId,
+    selectedSyncNodeId,
+    hoveredSyncNodeId,
+    panelState.type,
+  ]);
 
   const activeProject = useMemo(
     () => projects.find(p => p.id === projectId) ?? routeProject ?? null,
-    [projects, projectId, routeProject],
+    [projects, projectId, routeProject]
   );
 
   const scopedProjects = useMemo(() => {
     const projectsForCurrentRoute =
-      routeProject?.org_id && currentOrg?.id !== routeProject.org_id ? [] : projects;
-    if (!routeProject || projectsForCurrentRoute.some(p => p.id === routeProject.id)) {
+      routeProject?.org_id && currentOrg?.id !== routeProject.org_id
+        ? []
+        : projects;
+    if (
+      !routeProject ||
+      projectsForCurrentRoute.some(p => p.id === routeProject.id)
+    ) {
       return projectsForCurrentRoute;
     }
     return [routeProject, ...projectsForCurrentRoute];
@@ -420,10 +472,16 @@ export default function DataPage({ params }: DataPageProps) {
 
   // Refresh on external events (SaaS sync, ETL, etc.)
   useEffect(() => {
-    const handler = () => { refreshAllContentNodes(projectId); refreshProjects(currentOrg?.id ?? null); };
+    const handler = () => {
+      refreshAllContentNodes(projectId);
+      refreshProjects(currentOrg?.id ?? null);
+    };
     window.addEventListener('saas-task-completed', handler);
     window.addEventListener('etl-task-completed', handler);
-    return () => { window.removeEventListener('saas-task-completed', handler); window.removeEventListener('etl-task-completed', handler); };
+    return () => {
+      window.removeEventListener('saas-task-completed', handler);
+      window.removeEventListener('etl-task-completed', handler);
+    };
   }, [currentOrg?.id, projectId]);
 
   const { accessPointEntries, providerIcons } = useAccessPointEntries({
@@ -463,42 +521,75 @@ export default function DataPage({ params }: DataPageProps) {
 
   const pathSegments = useMemo<BreadcrumbSegment[]>(() => {
     const segments: BreadcrumbSegment[] = [];
-    const projectName =
-      activeProject?.name ?? <SkeletonBlock width={120} height={10} radius={3} />;
-    const hasSubContent = routePath.length > 0 || currentFolderId || activeNodeId;
+    const projectName = activeProject?.name ?? (
+      <SkeletonBlock width={120} height={10} radius={3} />
+    );
+    const hasSubContent =
+      routePath.length > 0 || currentFolderId || activeNodeId;
     segments.push({
       label: projectName,
       href: hasSubContent ? `/projects/${projectId}/data` : undefined,
       onClick: hasSubContent ? () => navigateToWithEditorGuard([]) : undefined,
     });
 
-    if (isResolvingPath && routePath.length > 0 && folderBreadcrumbs.length === 0) {
+    if (
+      isResolvingPath &&
+      routePath.length > 0 &&
+      folderBreadcrumbs.length === 0
+    ) {
       routePath.forEach(() => {
-        segments.push({ label: <SkeletonBlock width={72} height={10} radius={3} /> });
+        segments.push({
+          label: <SkeletonBlock width={72} height={10} radius={3} />,
+        });
       });
     } else {
       folderBreadcrumbs.forEach((folder, index) => {
         const isLast = index === folderBreadcrumbs.length - 1;
         // folder.id is the full path up to this folder segment
-        const folderUrlPath = folder.id.split('/').filter(Boolean).map(s => encodeURIComponent(s)).join('/');
+        const folderUrlPath = folder.id
+          .split('/')
+          .filter(Boolean)
+          .map(s => encodeURIComponent(s))
+          .join('/');
         segments.push({
           label: folder.name,
-          href: !isLast || activeNodeId ? `/projects/${projectId}/data/${folderUrlPath}` : undefined,
-          onClick: !isLast || activeNodeId
-            ? () => navigateToWithEditorGuard(folder.id.split('/').filter(Boolean), 'folder')
-            : undefined,
+          href:
+            !isLast || activeNodeId
+              ? `/projects/${projectId}/data/${folderUrlPath}`
+              : undefined,
+          onClick:
+            !isLast || activeNodeId
+              ? () =>
+                  navigateToWithEditorGuard(
+                    folder.id.split('/').filter(Boolean),
+                    'folder'
+                  )
+              : undefined,
         });
       });
       if (activeNodeId) {
-        segments.push({ label: currentTableData?.name ?? activeNodeDisplayName });
+        segments.push({
+          label: currentTableData?.name ?? activeNodeDisplayName,
+        });
       }
     }
     return segments;
-  }, [activeProject, projectId, folderBreadcrumbs, currentFolderId, activeNodeId, activeNodeDisplayName, currentTableData?.name, isResolvingPath, routePath, navigateToWithEditorGuard]);
+  }, [
+    activeProject,
+    projectId,
+    folderBreadcrumbs,
+    currentFolderId,
+    activeNodeId,
+    activeNodeDisplayName,
+    currentTableData?.name,
+    isResolvingPath,
+    routePath,
+    navigateToWithEditorGuard,
+  ]);
 
   const activeNodeListing = useMemo(
-    () => contentNodes.find((node) => node.path === activeNodeId),
-    [activeNodeId, contentNodes],
+    () => contentNodes.find(node => node.path === activeNodeId),
+    [activeNodeId, contentNodes]
   );
 
   const headerActionTarget = useMemo<DataHeaderActionTarget | null>(() => {
@@ -506,7 +597,10 @@ export default function DataPage({ params }: DataPageProps) {
 
     return {
       id: activeNodeId,
-      name: currentTableData?.name ?? activeNodeListing?.name ?? activeNodeDisplayName,
+      name:
+        currentTableData?.name ??
+        activeNodeListing?.name ??
+        activeNodeDisplayName,
       type: activeNodeType || activeNodeListing?.type || 'file',
       isFolder: false,
       isRoot: false,
@@ -523,37 +617,17 @@ export default function DataPage({ params }: DataPageProps) {
   ]);
 
   const activeUsesEditorSaveSession = Boolean(
-    activeFormat?.editable && isTextLikeCategory(activeFormat),
+    activeFormat?.editable && isTextLikeCategory(activeFormat)
   );
 
-  const headerCommandMenu = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {headerActionTarget && (
-        <DataHeaderActions
-          target={headerActionTarget}
-          onRename={nodeActions.handleRename}
-          onDelete={nodeActions.handleDelete}
-          onDownload={nodeActions.handleDownload}
-        />
-      )}
-      <AccessPointsHeaderButton
-        scopeCount={scopes.length}
-        isOpen={
-          isAccessPanelOpen ||
-          accessOverviewOpen ||
-          quickAccessScope !== null ||
-          createAccessInitialPath !== null
-        }
-        onClick={() => {
-          if (scopes.length > 0) {
-            openAccessOverviewModal();
-            return;
-          }
-          openCreateAccessModal(currentFolderId);
-        }}
-      />
-    </div>
-  );
+  const headerCommandMenu = headerActionTarget ? (
+    <DataHeaderActions
+      target={headerActionTarget}
+      onRename={nodeActions.handleRename}
+      onDelete={nodeActions.handleDelete}
+      onDownload={nodeActions.handleDownload}
+    />
+  ) : undefined;
 
   const headerActionSlot = activeFormat ? (
     <FileViewerHeaderActions
@@ -573,18 +647,25 @@ export default function DataPage({ params }: DataPageProps) {
       onCsvViewModeChange={setCsvViewMode}
       actionsSlot={headerCommandMenu}
     />
-  ) : headerCommandMenu;
+  ) : (
+    headerCommandMenu
+  );
 
   // View logic flags
   const isEditorView = !!activeNodeId;
   const isFolderView = !activeNodeId;
   const isLoading = isResolvingPath || contentNodesLoading;
-  const isProjectIdentityLoading = !isAuthReady || projectsLoading || routeProjectLoading;
+  const isProjectIdentityLoading =
+    !isAuthReady || (!activeProject && routeProjectLoading);
   const isProjectIdentityReady = Boolean(activeProject?.name);
   const projectIdentityError =
-    !routeProjectLoading && !activeProject && routeProjectError ? routeProjectError : null;
+    !routeProjectLoading && !activeProject && routeProjectError
+      ? routeProjectError
+      : null;
   const shouldBlockForProjectIdentity =
-    !projectIdentityError && !isProjectIdentityReady && isProjectIdentityLoading;
+    !projectIdentityError &&
+    !isProjectIdentityReady &&
+    isProjectIdentityLoading;
   const isRootFolderView = isFolderView && !currentFolderId;
   const hasRootItems = items.length > 0;
   const noFileSelectedMode =
@@ -595,18 +676,26 @@ export default function DataPage({ params }: DataPageProps) {
       : 'has-content';
   const currentFolderName = folderBreadcrumbs.at(-1)?.name;
   const projectHasContentCommit = repoIdentity?.content_initialized === true;
-  const latestFailedImportJob = latestImportJob?.status === 'failed' ? latestImportJob : null;
+  const latestFailedImportJob =
+    latestImportJob?.status === 'failed' ? latestImportJob : null;
   const latestEmptyImportJob = activeImportJob || latestFailedImportJob;
   const shouldSurfaceEmptyImportJob =
-    Boolean(latestEmptyImportJob) && items.length === 0 && !projectHasContentCommit;
+    Boolean(latestEmptyImportJob) &&
+    items.length === 0 &&
+    !projectHasContentCommit;
   const isRootEmptyDecisionLoading =
-    isRootFolderView && (isProjectIdentityLoading || isLoading || (!hasRootItems && repoIdentityLoading));
+    isRootFolderView &&
+    (isProjectIdentityLoading ||
+      isLoading ||
+      (!hasRootItems && repoIdentityLoading));
   const showEmptyWorkspace =
-    isRootFolderView && !isRootEmptyDecisionLoading && (
-      shouldSurfaceEmptyImportJob ||
-      (items.length === 0 && !projectHasContentCommit && !emptyProjectOpened)
-    );
-  const suppressExplorerSidebar = showEmptyWorkspace || isRootEmptyDecisionLoading;
+    isRootFolderView &&
+    !fileReadError && !contentNodesError && !repoIdentityError &&
+    !isRootEmptyDecisionLoading &&
+    (shouldSurfaceEmptyImportJob ||
+      (items.length === 0 && !projectHasContentCommit && !emptyProjectOpened));
+  const suppressExplorerSidebar =
+    showEmptyWorkspace;
 
   useEffect(() => {
     const job = latestImportJob;
@@ -617,11 +706,19 @@ export default function DataPage({ params }: DataPageProps) {
       void mutateSyncStatus();
       void mutateRepo();
       refreshCurrentNodes();
-      window.dispatchEvent(new CustomEvent('import-job-completed', {
-        detail: { jobId: job.id, projectId },
-      }));
+      window.dispatchEvent(
+        new CustomEvent('import-job-completed', {
+          detail: { jobId: job.id, projectId },
+        })
+      );
     }
-  }, [latestImportJob, mutateRepo, mutateSyncStatus, projectId, refreshCurrentNodes]);
+  }, [
+    latestImportJob,
+    mutateRepo,
+    mutateSyncStatus,
+    projectId,
+    refreshCurrentNodes,
+  ]);
 
   // ───── Render ─────
 
@@ -686,69 +783,95 @@ export default function DataPage({ params }: DataPageProps) {
     onFolderPickerChange: fileImport.handleFolderPickerChange,
   };
 
-  const editorAreaProps = activeProject ? {
-    activeNodeId,
-    activeNodeType,
-    activeMimeType,
-    activeProject,
-    currentTableData,
-    textContent: editorTextDraft,
-    isLoadingText,
-    markdownViewMode,
-    onTextChange: onEditorTextChange,
-    setMarkdownViewMode,
-    editorType,
-    htmlArtifactMode,
-    csvViewMode,
-    configuredAccessPoints,
-    onActiveTableChange: (nodePath: string) => {
-      navigateToWithEditorGuard(nodePath.split('/').filter(Boolean));
-    },
-    onAccessPointChange: (apPath: string, permissions: McpToolPermissions) => {
-      const hasAnyPermission = Object.values(permissions).some(Boolean);
-      setAccessPoints(prev => {
-        const existing = prev.find(ap => ap.path === apPath);
-        if (existing) {
-          if (!hasAnyPermission) return prev.filter(ap => ap.path !== apPath);
-          return prev.map(ap => ap.path === apPath ? { ...ap, permissions } : ap);
-        }
-        if (hasAnyPermission) {
-          return [...prev, { id: `ap-${Date.now()}`, path: apPath, permissions }];
-        }
-        return prev;
-      });
-      if (activeNodeId) {
-        syncToolsForPath({ versionPath: activeNodeId, path: apPath, permissions, existingTools: tableTools as any }).then(() => {
-          refreshToolsForActiveNode();
-        });
-      }
-    },
-    onAccessPointRemove: (apPath: string) => {
-      setAccessPoints(prev => prev.filter(ap => ap.path !== apPath));
-      if (activeNodeId) {
-        deleteAllToolsForPath({ versionPath: activeNodeId, path: apPath, existingTools: tableTools as any }).then(() => {
-          refreshToolsForActiveNode();
-        });
-      }
-    },
-    onOpenDocument: (docPath: string, value: string) => {
-      setEditorTarget({ path: docPath, value });
-      setIsEditorFullScreen(false);
-      closePanel();
-    },
-    onCreateTool: (path: string) => {
-      if (!activeNodeId) return;
-      nodeActions.handleCreateTool(
+  const editorAreaProps = activeProject
+    ? {
         activeNodeId,
-        `${currentTableData?.name || activeNodeDisplayName || 'File'}`,
-        'json',
-        path,
-      );
-    },
-  } : null;
+        activeNodeType,
+        activeMimeType,
+        activeProject,
+        currentTableData,
+        textContent: editorTextDraft,
+        isLoadingText,
+        markdownViewMode,
+        onTextChange: onEditorTextChange,
+        setMarkdownViewMode,
+        editorType,
+        htmlArtifactMode,
+        csvViewMode,
+        configuredAccessPoints,
+        onActiveTableChange: (nodePath: string) => {
+          navigateToWithEditorGuard(nodePath.split('/').filter(Boolean));
+        },
+        onAccessPointChange: (
+          apPath: string,
+          permissions: McpToolPermissions
+        ) => {
+          const hasAnyPermission = Object.values(permissions).some(Boolean);
+          setAccessPoints(prev => {
+            const existing = prev.find(ap => ap.path === apPath);
+            if (existing) {
+              if (!hasAnyPermission)
+                return prev.filter(ap => ap.path !== apPath);
+              return prev.map(ap =>
+                ap.path === apPath ? { ...ap, permissions } : ap
+              );
+            }
+            if (hasAnyPermission) {
+              return [
+                ...prev,
+                { id: `ap-${Date.now()}`, path: apPath, permissions },
+              ];
+            }
+            return prev;
+          });
+          if (activeNodeId) {
+            syncToolsForPath({
+              versionPath: activeNodeId,
+              path: apPath,
+              permissions,
+              existingTools: tableTools as any,
+            }).then(() => {
+              refreshToolsForActiveNode();
+            });
+          }
+        },
+        onAccessPointRemove: (apPath: string) => {
+          setAccessPoints(prev => prev.filter(ap => ap.path !== apPath));
+          if (activeNodeId) {
+            deleteAllToolsForPath({
+              versionPath: activeNodeId,
+              path: apPath,
+              existingTools: tableTools as any,
+            }).then(() => {
+              refreshToolsForActiveNode();
+            });
+          }
+        },
+        onOpenDocument: (docPath: string, value: string) => {
+          setEditorTarget({ path: docPath, value });
+          setIsEditorFullScreen(false);
+          closePanel();
+        },
+        onCreateTool: (path: string) => {
+          if (!activeNodeId) return;
+          nodeActions.handleCreateTool(
+            activeNodeId,
+            `${currentTableData?.name || activeNodeDisplayName || 'File'}`,
+            'json',
+            path
+          );
+        },
+      }
+    : null;
 
   return (
-    <DataWorkspaceSurface
+    <>
+      <ProjectHeaderContribution
+        canManageSettings={projectAllows(activeProject, 'project.settings.manage')}
+        pathSegments={pathSegments}
+        actions={headerActionSlot}
+      />
+      <DataWorkspaceSurface
       dialogsProps={dialogsProps}
       overlaysProps={{
         toast: nodeActions.toast,
@@ -773,32 +896,6 @@ export default function DataPage({ params }: DataPageProps) {
         busy: bulkDeleteSubmitting,
         shortcutHint: platformDeleteHint,
       }}
-      header={{
-        pathSegments,
-        projectId: activeProject?.id ?? null,
-        accessPointCount: scopes.length,
-        actionSlot: headerActionSlot,
-      }}
-      accessHeader={{
-        isOpen: isAccessPanelOpen,
-        width: rightPanelWidth,
-        title: accessHeaderTitle,
-        subtitle: accessHeaderSubtitle,
-        showBack: showAccessHeaderBack,
-        listView: accessListView,
-        scopeCount: scopes.length,
-        scope: accessHeaderScope,
-        onBack: handleAccessHeaderBack,
-        onOpenSettings: () => {
-          if (!accessHeaderScope) return;
-          openPanel({
-            type: 'access_list',
-            view: 'settings',
-            selectedTargetKey: repositoryViewKey(accessHeaderScope),
-          });
-        },
-        onClose: closeRightPanel,
-      }}
       explorer={{
         hidden: suppressExplorerSidebar,
         props: {
@@ -818,6 +915,7 @@ export default function DataPage({ params }: DataPageProps) {
           activeSyncNodeId:
             panelState.type === 'sync_config' ||
             panelState.type === 'agent_chat' ||
+            panelState.type === 'workspace_chat' ||
             panelState.type === 'mcp_config' ||
             panelState.type === 'sandbox_config'
               ? (panelState.nodeId ?? null)
@@ -830,12 +928,16 @@ export default function DataPage({ params }: DataPageProps) {
       }}
       content={{
         isResolvingPath,
+        fileReadError,
+        retryFileRead,
         isEditorView,
         isProjectIdentityLoading,
         editorAreaProps,
         isFolderView,
         isRootEmptyDecisionLoading,
         isLoading,
+        readError: contentNodesError || (isRootFolderView && !hasRootItems && repoIdentityError),
+        onRetryRead: () => { void Promise.all([refreshCurrentNodes(), mutateRepo()]).catch(() => {}); },
         showEmptyWorkspace,
         suppressExplorerSidebar,
         emptyWorkspaceProps: {
@@ -844,10 +946,13 @@ export default function DataPage({ params }: DataPageProps) {
           onOpenGitSetup: openRootGitRemotePanel,
           onImportFiles: createMenuActions.onImportFromFiles,
           onFilesDrop: (files: File[]) => {
-            fileImport.openFileImportForTarget(files, { path: null, name: 'Root' });
+            fileImport.openFileImportForTarget(files, {
+              path: null,
+              name: 'Root',
+            });
           },
           importJob: latestEmptyImportJob,
-          onImportJobCreated: async (job) => {
+          onImportJobCreated: async job => {
             await upsertImportJob(job);
             await refreshImportJobs();
           },
@@ -897,16 +1002,23 @@ export default function DataPage({ params }: DataPageProps) {
         currentScopePath: currentFolderId || '',
         repoIdentity,
         onClose: closeRightPanel,
-        onEditorClose: () => { setEditorTarget(null); setIsEditorFullScreen(false); },
-        onEditorSave: async (newValue) => {
+        onEditorClose: () => {
+          setEditorTarget(null);
+          setIsEditorFullScreen(false);
+        },
+        onEditorSave: async newValue => {
           const target = editorTarget;
           if (!target?.path) return;
           // Persist through the same explicit-save contract as the main editor.
           const lower = target.path.toLowerCase();
           const nodeType =
-            lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.mdx')
+            lower.endsWith('.md') ||
+            lower.endsWith('.markdown') ||
+            lower.endsWith('.mdx')
               ? 'markdown'
-              : lower.endsWith('.json') || lower.endsWith('.json5') || lower.endsWith('.jsonc')
+              : lower.endsWith('.json') ||
+                  lower.endsWith('.json5') ||
+                  lower.endsWith('.jsonc')
                 ? 'json'
                 : 'file';
           try {
@@ -918,12 +1030,13 @@ export default function DataPage({ params }: DataPageProps) {
           } catch (e) {
             nodeActions.showToast?.(
               `Save failed: ${e instanceof Error ? e.message : String(e)}`,
-              'error',
+              'error'
             );
             throw e;
           }
         },
-        onToggleEditorFullScreen: () => setIsEditorFullScreen(!isEditorFullScreen),
+        onToggleEditorFullScreen: () =>
+          setIsEditorFullScreen(!isEditorFullScreen),
         onRollbackComplete: () => {
           if (shouldLoadStructuredTableData) refreshTable();
           refreshCurrentNodes();
@@ -938,8 +1051,6 @@ export default function DataPage({ params }: DataPageProps) {
         onDataUpdate: async () => {
           if (shouldLoadStructuredTableData) await refreshTable();
         },
-        panelWidth: rightPanelWidth,
-        onPanelWidthChange: setRightPanelWidth,
         onAccessPanelNavigationGuardChange: setAccessPanelNavigationGuard,
       }}
       accessModalSlot={
@@ -969,6 +1080,7 @@ export default function DataPage({ params }: DataPageProps) {
           />
         </>
       }
-    />
+      />
+    </>
   );
 }

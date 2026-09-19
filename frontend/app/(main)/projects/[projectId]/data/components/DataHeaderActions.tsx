@@ -10,7 +10,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import { IconButton } from '@/components/ui/IconButton';
+import { DesktopChromeAction } from '@/components/chrome/DesktopChrome';
 import { APP_Z_INDEX } from '@/lib/zIndex';
 
 export type DataHeaderActionTarget = {
@@ -88,8 +88,11 @@ export function DataHeaderActions({
 
   return (
     <>
-      <IconButton
+      <DesktopChromeAction
         ref={buttonRef}
+        active={open}
+        icon={<EllipsisVertical size={15} strokeWidth={2} />}
+        label='Data actions'
         title="Data actions"
         aria-label="Data actions"
         aria-haspopup="menu"
@@ -98,17 +101,7 @@ export function DataHeaderActions({
           if (!open) updatePosition();
           setOpen((value) => !value);
         }}
-        style={{
-          ...(open
-            ? {
-                background: 'var(--po-hover)',
-                color: 'var(--po-text-muted)',
-              }
-            : {}),
-        }}
-      >
-        <EllipsisVertical size={16} strokeWidth={2} />
-      </IconButton>
+      />
 
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div

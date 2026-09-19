@@ -320,11 +320,12 @@ export async function listNodes(
  */
 export async function readFile(
   projectId: string,
-  path: string
+  path: string,
+  signal?: AbortSignal,
 ): Promise<TreeCatResponse> {
   const params = new URLSearchParams({ path });
   return treeRequest<TreeCatResponse>(
-    `/api/v1/content/${projectId}/cat?${params.toString()}`
+    `/api/v1/content/${projectId}/cat?${params.toString()}`, { signal },
   );
 }
 
@@ -427,11 +428,12 @@ export async function downloadNode(
  */
 export async function stat(
   projectId: string,
-  path: string
+  path: string,
+  signal?: AbortSignal,
 ): Promise<TreeStatResponse> {
   const params = new URLSearchParams({ path });
   return treeRequest<TreeStatResponse>(
-    `/api/v1/content/${projectId}/stat?${params.toString()}`
+    `/api/v1/content/${projectId}/stat?${params.toString()}`, { signal },
   );
 }
 
@@ -731,6 +733,7 @@ export interface FileVersionInfo {
  * file" placeholder branch on the History page.
  */
 export interface FileVersionDetail {
+  truncated?: boolean;
   path: string;
   commit_id: string;
   type: string;
@@ -790,14 +793,22 @@ export async function getVersionHistory(
 export async function getVersionContent(
   filePath: string,
   commitId: string,
-  projectId: string
+  projectId: string,
+  options?: { previewBytes?: number; signal?: AbortSignal },
 ): Promise<FileVersionDetail> {
   const params = new URLSearchParams({
     path: filePath,
     commit_id: commitId,
   });
+  if (options?.previewBytes) params.set('preview_bytes', String(options.previewBytes));
   return treeRequest<FileVersionDetail>(
-    `/api/v1/content/${projectId}/commit-content?${params}`
+    `/api/v1/content/${projectId}/commit-content?${params}`, { signal: options?.signal },
+  );
+}
+
+export function getProjectHead(projectId: string, signal?: AbortSignal) {
+  return treeRequest<{ project_id: string; head_commit_id: string }>(
+    `/api/v1/content/${encodeURIComponent(projectId)}/head`, { signal },
   );
 }
 

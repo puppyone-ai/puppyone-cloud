@@ -61,7 +61,10 @@ const T = {
 interface UserMenuPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: UserMenuTab;
 }
+
+export type UserMenuTab = 'account' | 'appearance' | 'integrations' | 'about';
 
 // Platform types for integrations tab
 type PlatformId = 'github' | 'google-sheets' | 'google-docs' | 'gmail' | 'google-calendar' | 'google-drive';
@@ -150,15 +153,18 @@ const getDefaultPlatformStates = (): Record<PlatformId, PlatformState> =>
     {} as Record<PlatformId, PlatformState>
   );
 
-export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
+export default function UserMenuPanel({
+  isOpen,
+  onClose,
+  initialTab = 'account',
+}: UserMenuPanelProps) {
+  const mobilePanelRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const { session, signOut, isAuthReady } = useAuth();
   const { currentOrg } = useOrganization();
   const [isRendered, setIsRendered] = React.useState(false);
   const [animateIn, setAnimateIn] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'account' | 'appearance' | 'integrations' | 'about'>(
-    'account'
-  );
+  const [activeTab, setActiveTab] = React.useState<UserMenuTab>(initialTab);
 
   const accountIdentityLoading = !isAuthReady || !session;
   const email = session?.user?.email ?? '';
@@ -443,6 +449,36 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || !isRendered) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = mobilePanelRef.current;
+    const firstVisible = Array.from(panel?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []).find(button => button.getClientRects().length);
+    firstVisible?.focus({ preventScroll: true });
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.defaultPrevented || !panel) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')).filter(item => item.getClientRects().length);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (first && (!panel.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last))) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener('keydown', trap);
+    return () => {
+      document.removeEventListener('keydown', trap);
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [isOpen, isRendered]);
+
+  // Each launcher owns the user's entry point: the avatar opens Account,
+  // while the gear opens Appearance. Reset only when the dialog opens so
+  // navigating between tabs inside the dialog remains stable.
+  React.useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+  }, [initialTab, isOpen]);
+
   // Animation handling
   React.useEffect(() => {
     if (isOpen) {
@@ -477,7 +513,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     label,
     icon,
   }: {
-    id: 'account' | 'appearance' | 'integrations' | 'about';
+    id: UserMenuTab;
     label: string;
     icon?: React.ReactNode;
   }) => {
@@ -615,6 +651,8 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           + a soft drop-shadow now matches the rest of the chrome
           (page cards, dropdown menus, dialogs). */}
       <div
+        className='workspace-account-dialog'
+        ref={mobilePanelRef}
         onClick={e => e.stopPropagation()}
         style={{
           position: 'fixed',
@@ -633,7 +671,11 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           transition: 'all 400ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       >
+        <button type='button' className='workspace-account-close' aria-label='Close account settings' onClick={onClose}>
+          <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='1.8' aria-hidden='true'><path d='m6 6 12 12M18 6 6 18' /></svg>
+        </button>
         <div
+          className='workspace-account-layout'
           style={{
             display: 'flex',
             height: '100%',
@@ -645,6 +687,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           {/* Left Navigation — uses the same border-alpha as every
               other rail divider in the product. */}
           <div
+            className='workspace-account-nav'
             style={{
               width: 176,
               height: '100%',
@@ -748,7 +791,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           </div>
 
           {/* Right Content */}
-          <div
+          <div className='workspace-account-content'
             style={{
               flex: 1,
               display: 'flex',
@@ -893,6 +936,68 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
                       Sign out
                     </button>
                   </div>
+                </div>
+
+                <div
+                  style={{
+                    border: `1px solid ${T.cardBorder}`,
+                    borderRadius: 10,
+                    background: T.cardBg,
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      marginBottom: 8,
+                      padding: '0 8px',
+                      color: T.text3,
+                      fontSize: 11,
+                      fontWeight: 500,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Workspace
+                  </div>
+                  {[
+                    { label: 'Team', path: '/team' },
+                    { label: 'Billing', path: '/billing' },
+                    { label: 'Templates', path: '/templates' },
+                  ].map(item => (
+                    <button
+                      key={item.path}
+                      type='button'
+                      onClick={() => {
+                        onClose();
+                        router.push(item.path);
+                      }}
+                      style={{
+                        width: '100%',
+                        height: 32,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 8px',
+                        border: 'none',
+                        borderRadius: 6,
+                        background: 'transparent',
+                        color: T.text2,
+                        cursor: 'pointer',
+                        fontFamily: T.fontSans,
+                        fontSize: 13,
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={event => {
+                        event.currentTarget.style.background = 'var(--po-hover)';
+                        event.currentTarget.style.color = T.text1;
+                      }}
+                      onMouseLeave={event => {
+                        event.currentTarget.style.background = 'transparent';
+                        event.currentTarget.style.color = T.text2;
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Subscription card — same surface treatment.

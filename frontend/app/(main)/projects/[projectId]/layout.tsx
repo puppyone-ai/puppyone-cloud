@@ -1,43 +1,20 @@
 'use client';
 
-import React, { use, useCallback } from 'react';
+import React, { use } from 'react';
 import { AgentProvider } from '@/contexts/AgentContext';
-import { VersionWebSocketProvider, useVersionNotifications } from '@/contexts/VersionWebSocketContext';
-import { WorkspaceProvider } from '@/contexts/WorkspaceContext';
+import { VersionWebSocketProvider } from '@/contexts/VersionWebSocketContext';
+import { ProjectSessionProvider } from '@/features/workspace/session';
+import { useProjectInvalidation } from '@/features/workspace/useProjectInvalidation';
+import { ProjectAuxiliarySidebar } from './_components/ProjectAuxiliarySidebar';
+import { ProjectWorkspaceShell } from '@/components/project/ProjectWorkspaceShell';
 
 
 function ProjectLayoutInner({ children, projectId }: { children: React.ReactNode; projectId: string }) {
-  // Keep the WebSocket open for the entire time the user is on any
-  // sub-page of this project, not just on the data / history pages.
-  //
-  // Background: ``subscribeVersionNotifications`` ref-counts handlers and
-  // tears the socket down when the count reaches zero. Without this
-  // layout-level no-op subscriber, navigating to settings / develop /
-  // toolkit (which don't call ``useCommitUpdates``) drops the count
-  // to zero, the socket closes, and re-entering data / history forces
-  // a full reconnect (visible as ``connected … disconnected`` pairs in
-  // the backend log every tab switch — see mixed_changes.md §10.2).
-  // A single permanent handler at the layout level holds count ≥ 1,
-  // turning every page-level subscription into "share an existing
-  // connection" instead of "open a new one".
-  const noop = useCallback(() => {}, []);
-  useVersionNotifications(noop);
-
+  useProjectInvalidation(projectId);
   return (
-    <div style={{ display: 'flex', width: '100%', height: '100%', background: 'var(--po-canvas)' }}>
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          background: 'var(--po-canvas)',
-          overflow: 'hidden',
-        }}
-      >
-        {children}
-      </div>
-    </div>
+    <ProjectWorkspaceShell projectId={projectId} auxiliary={<ProjectAuxiliarySidebar projectId={projectId} />}>
+      {children}
+    </ProjectWorkspaceShell>
   );
 }
 
@@ -53,12 +30,12 @@ export default function ProjectLayout({
   const { projectId } = use(params);
 
   return (
-    <AgentProvider projectId={projectId}>
-      <WorkspaceProvider>
+    <AgentProvider key={projectId} projectId={projectId}>
+      <ProjectSessionProvider projectId={projectId}>
         <VersionWebSocketProvider projectId={projectId}>
           <ProjectLayoutInner projectId={projectId}>{children}</ProjectLayoutInner>
         </VersionWebSocketProvider>
-      </WorkspaceProvider>
+      </ProjectSessionProvider>
     </AgentProvider>
   );
 }

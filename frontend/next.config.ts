@@ -19,6 +19,8 @@ function loadVersion(): string {
 }
 
 const nextConfig: NextConfig = {
+  // Run production verification without overwriting a live dev server's cache.
+  distDir: process.env.PUPPYONE_NEXT_DIST_DIR || '.next',
   reactStrictMode: true,
   transpilePackages: ['@puppyone/cloud-core'],
   output: 'standalone',

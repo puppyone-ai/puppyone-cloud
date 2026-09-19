@@ -13,10 +13,10 @@ import {
 } from './activityStyles';
 import { cancelImportJob } from '@/lib/importApi';
 import type { ActivityItem } from '@/lib/activityApi';
-import { useProjectActivity } from '@/lib/hooks/useActivity';
 
 type ImportJobsWidgetProps = {
-  projectId?: string;
+  activeItems: readonly ActivityItem[];
+  onRefresh: () => Promise<unknown>;
   inline?: boolean;
 };
 
@@ -29,16 +29,19 @@ type ImportJobsWidgetProps = {
  * Import items stay cancellable — an import activity item's `id` is its
  * import_job id, so `cancelImportJob(item.id)` targets the right row.
  */
-export function ImportJobsWidget({ projectId, inline = false }: ImportJobsWidgetProps) {
-  const { activeItems, refresh } = useProjectActivity(projectId, { kind: 'import' });
+export function ImportJobsWidget({
+  activeItems,
+  onRefresh,
+  inline = false,
+}: ImportJobsWidgetProps) {
   const runs = useMemo(() => activeItems.slice(0, 3), [activeItems]);
 
   const handleCancel = useCallback(async (item: ActivityItem) => {
     await cancelImportJob(item.id);
-    await refresh();
-  }, [refresh]);
+    await onRefresh();
+  }, [onRefresh]);
 
-  if (!projectId || activeItems.length === 0) return null;
+  if (activeItems.length === 0) return null;
 
   const primary = runs[0];
   const title = activeItems.length === 1 ? 'Importing' : `${activeItems.length} imports`;

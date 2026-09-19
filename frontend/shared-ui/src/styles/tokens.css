@@ -1,8 +1,277 @@
+/*
+ * PuppyOne cross-product color contract.
+ *
+ * Palette literals mirror Desktop's generated default-neutral theme. Product
+ * components consume only semantic --po-* tokens; Cloud-specific aliases below
+ * are derived from those shared primitives so light and dark cannot drift.
+ */
 :root {
   color-scheme: light;
+  --po-surface-canvas: #f5f4f0;
+  --po-surface-chrome: #ece9e2;
+  --po-surface-panel: #fafafa;
+  --po-surface-panel-raised: #ffffff;
+  --po-surface-overlay: #fffdf9;
+  --po-surface-inset: #e7e3db;
+  --po-surface-editor: #fafafa;
+  /* Must stay an opaque literal: the compiler derives synchronous first paint from it. */
+  --po-canvas: #fafafa;
+  --po-header: #ebebeb;
+  --po-sidebar: #ebebeb;
+  --po-project-card-tab: color-mix(
+    in srgb,
+    var(--po-inset) 52%,
+    var(--po-panel) 48%
+  );
+  --po-text: #292723;
+  --po-text-muted: #68645c;
+  --po-text-subtle: #928c83;
+  --po-text-disabled: #b8b1a8;
+  --po-text-inverse: #fffefa;
+  --po-border: rgba(45, 43, 38, 0.14);
+  --po-border-subtle: rgba(45, 43, 38, 0.075);
+  --po-border-strong: rgba(45, 43, 38, 0.24);
+  --po-divider: rgba(45, 43, 38, 0.105);
+  --po-skeleton-base: rgba(45, 43, 38, 0.055);
+  --po-skeleton-shimmer: rgba(255, 255, 255, 0.62);
+  --po-skeleton-edge: rgba(45, 43, 38, 0.035);
+  --po-hover: rgba(45, 43, 38, 0.065);
+  --po-active: rgba(45, 43, 38, 0.1);
+  --po-selected: rgba(45, 43, 38, 0.115);
+  --po-control: rgba(45, 43, 38, 0.075);
+  --po-control-hover: rgba(45, 43, 38, 0.12);
+  --po-switch-border-on: rgba(21, 128, 61, 0.28);
+  --po-switch-border-off: rgba(45, 43, 38, 0.12);
+  --po-switch-thumb: #fffdf9;
+  --po-switch-thumb-shadow: rgba(45, 43, 38, 0.18);
+  --po-access-active-bg: rgba(2, 132, 199, 0.28);
+  --po-access-active-hover: rgba(2, 132, 199, 0.36);
+  --po-access-active-border: rgba(2, 132, 199, 0.34);
+  --po-access-active-text: #075985;
+  --po-focus-ring: rgba(37, 99, 235, 0.34);
+  --po-shadow: rgba(33, 31, 28, 0.12);
+  --po-backdrop: rgba(41, 39, 35, 0.22);
+  --po-backdrop-strong: rgba(41, 39, 35, 0.32);
+  --po-accent: #2563eb;
+  --po-accent-text: #1d4ed8;
+  --po-success: #168145;
+  --po-success-contrast: #fffefa;
+  --po-warning: #b46b08;
+  --po-danger: #dc2626;
+  --po-notification: #d56c5e;
+  --po-notification-text: #fffaf8;
+  --po-info: #0277a8;
+  --po-purple: #7457a6;
+  --po-text-fill-hover: #22201d;
+  --po-git-brand: #ef4a37;
+  --po-git-brand-text: #d94939;
+  --po-cloud-titlebar-bg: #dbeaf1;
+  --po-cloud-titlebar-text: #263f4b;
+  --po-cloud-titlebar-text-muted: #516b77;
+  --po-cloud-titlebar-text-disabled: #80939b;
+  --po-cloud-titlebar-hover: rgba(255, 255, 255, 0.42);
+  --po-cloud-titlebar-active: rgba(38, 63, 75, 0.09);
+  --po-cloud-titlebar-focus: rgba(58, 124, 153, 0.34);
+  --po-filetree-rail: rgba(45, 43, 38, 0.14);
+  --po-tree-guide: color-mix(in srgb, var(--po-sidebar) 94%, var(--po-text));
+  --po-file-icon-body: #f0ede6;
+  --po-file-icon-fold: #e1ddd4;
+  --po-file-icon-stroke: rgba(45, 43, 38, 0.31);
+  --po-file-icon-shadow: rgba(45, 43, 38, 0.14);
+  --po-file-accent-default: #62736a;
+  --po-file-accent-markdown: #527391;
+  --po-file-accent-json: #91790b;
+  --po-file-accent-html: #b8662c;
+  --po-file-accent-pdf: #c44b55;
+  --po-file-accent-image: #8465a5;
+  --po-file-accent-audio: #8465a5;
+  --po-file-accent-video: #397c8f;
+  --po-file-accent-code: #397c8f;
+  --po-file-accent-word: #3f70a8;
+  --po-file-accent-sheet: #5f844a;
+  --po-file-accent-presentation: #bd5d34;
+  --po-diff-added-bg: rgba(22, 163, 74, 0.1);
+  --po-diff-added-text: #166534;
+  --po-diff-removed-bg: rgba(220, 38, 38, 0.1);
+  --po-diff-removed-text: #991b1b;
+  --po-editor-line: rgba(45, 43, 38, 0.07);
+  --po-json-key: #383631;
+  --po-json-string: #116329;
+  --po-json-number: #6d56b5;
+  --po-json-boolean: #b42318;
+  --po-json-null: #6f6a60;
+  --po-json-icon: #68645c;
+  --po-terminal-cursor: #80786d;
+  --po-terminal-selection: rgba(91, 82, 70, 0.14);
+  --po-terminal-black: #5d574f;
+  --po-terminal-red: #a66b65;
+  --po-terminal-green: #687a55;
+  --po-terminal-yellow: #98774b;
+  --po-terminal-blue: #687f9f;
+  --po-terminal-magenta: #86709a;
+  --po-terminal-cyan: #668789;
+  --po-terminal-white: #8f877c;
+  --po-terminal-bright-black: #9a9287;
+  --po-terminal-bright-red: #b77c75;
+  --po-terminal-bright-green: #778a62;
+  --po-terminal-bright-yellow: #a9895a;
+  --po-terminal-bright-blue: #7890ad;
+  --po-terminal-bright-magenta: #967faa;
+  --po-terminal-bright-cyan: #789799;
+  --po-terminal-bright-white: #766f65;
+  --po-scrollbar-thumb: rgba(45, 43, 38, 0.13);
+  --po-scrollbar-thumb-hover: rgba(45, 43, 38, 0.22);
+}
 
-  --po-font-sans: var(--font-geist-sans, "Geist Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-  --po-font-mono: var(--font-geist-mono, "Geist Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace);
+.dark {
+  color-scheme: dark;
+  --po-surface-canvas: #161616;
+  --po-surface-chrome: #202020;
+  --po-surface-panel: #1a1a1a;
+  --po-surface-panel-raised: #222222;
+  --po-surface-overlay: #2a2a2a;
+  --po-surface-inset: #0d0d0d;
+  --po-surface-editor: #161616;
+  /* Must stay an opaque literal: the compiler derives synchronous first paint from it. */
+  --po-canvas: #161616;
+  --po-header: var(--po-surface-chrome);
+  --po-sidebar: var(--po-surface-chrome);
+  --po-panel: var(--po-surface-panel);
+  --po-panel-raised: var(--po-surface-panel-raised);
+  --po-overlay: var(--po-surface-overlay);
+  --po-inset: var(--po-surface-inset);
+  --po-project-card-tab: color-mix(
+    in srgb,
+    var(--po-panel-raised) 84%,
+    var(--po-canvas) 16%
+  );
+  --po-project-card-hover-bg: color-mix(
+    in srgb,
+    var(--po-panel) 94%,
+    var(--po-text) 6%
+  );
+  --po-text: #fafafa;
+  --po-text-muted: #a1a1aa;
+  --po-text-subtle: #71717a;
+  --po-text-disabled: #52525b;
+  --po-text-inverse: #0a0a0a;
+  --po-border: rgba(255, 255, 255, 0.075);
+  --po-border-subtle: rgba(255, 255, 255, 0.052);
+  --po-border-strong: rgba(255, 255, 255, 0.13);
+  --po-divider: rgba(255, 255, 255, 0.075);
+  --po-skeleton-base: rgba(255, 255, 255, 0.055);
+  --po-skeleton-shimmer: rgba(255, 255, 255, 0.08);
+  --po-skeleton-edge: rgba(255, 255, 255, 0.025);
+  --po-hover: rgba(255, 255, 255, 0.052);
+  --po-active: rgba(255, 255, 255, 0.082);
+  --po-selected: rgba(255, 255, 255, 0.095);
+  --po-control: rgba(255, 255, 255, 0.044);
+  --po-control-hover: rgba(255, 255, 255, 0.082);
+  --po-switch-border-on: rgba(52, 211, 153, 0.34);
+  --po-switch-border-off: rgba(255, 255, 255, 0.1);
+  --po-switch-thumb: #f8fafc;
+  --po-switch-thumb-shadow: rgba(0, 0, 0, 0.42);
+  --po-access-active-bg: rgba(34, 211, 238, 0.2);
+  --po-access-active-hover: rgba(34, 211, 238, 0.3);
+  --po-access-active-border: rgba(34, 211, 238, 0.32);
+  --po-access-active-text: #67e8f9;
+  --po-focus-ring: rgba(96, 165, 250, 0.45);
+  --po-shadow: rgba(0, 0, 0, 0.45);
+  --po-backdrop: rgba(0, 0, 0, 0.65);
+  --po-backdrop-strong: rgba(0, 0, 0, 0.82);
+  --po-accent: #60a5fa;
+  --po-accent-text: #93c5fd;
+  --po-success: #34d399;
+  --po-success-contrast: #0a0a0a;
+  --po-warning: #fbbf24;
+  --po-danger: #f87171;
+  --po-notification: #d56c5e;
+  --po-notification-text: #fffaf8;
+  --po-info: #67e8f9;
+  --po-purple: #c084fc;
+  --po-text-fill-hover: #ffffff;
+  --po-cloud-titlebar-bg: #263a45;
+  --po-cloud-titlebar-text: #e4edf1;
+  --po-cloud-titlebar-text-muted: #afc1c9;
+  --po-cloud-titlebar-text-disabled: #738991;
+  --po-cloud-titlebar-hover: rgba(255, 255, 255, 0.07);
+  --po-cloud-titlebar-active: rgba(255, 255, 255, 0.12);
+  --po-cloud-titlebar-focus: rgba(119, 186, 217, 0.38);
+  --po-filetree-rail: rgba(255, 255, 255, 0.1);
+  --po-tree-guide: color-mix(in srgb, var(--po-sidebar) 90%, var(--po-text));
+  --po-file-icon-body: #222225;
+  --po-file-icon-fold: #2a2a2d;
+  --po-file-icon-stroke: rgba(255, 255, 255, 0.18);
+  --po-file-icon-shadow: rgba(0, 0, 0, 0.35);
+  --po-file-accent-default: #d4d7d6;
+  --po-file-accent-markdown: #a9b0ba;
+  --po-file-accent-json: #cbcb41;
+  --po-file-accent-html: #e37933;
+  --po-file-accent-pdf: #d85a62;
+  --po-file-accent-image: #a879c9;
+  --po-file-accent-audio: #a879c9;
+  --po-file-accent-video: #5aa2c0;
+  --po-file-accent-code: #5aa2c0;
+  --po-file-accent-word: #69a5e8;
+  --po-file-accent-sheet: #8dc149;
+  --po-file-accent-presentation: #f07a43;
+  --po-diff-added-bg: rgba(34, 197, 94, 0.13);
+  --po-diff-added-text: #86efac;
+  --po-diff-removed-bg: rgba(239, 68, 68, 0.14);
+  --po-diff-removed-text: #fca5a5;
+  --po-editor-line: rgba(255, 255, 255, 0.065);
+  --po-json-key: #cbd5e1;
+  --po-json-string: #7dd3fc;
+  --po-json-number: #c084fc;
+  --po-json-boolean: #fb7185;
+  --po-json-null: #94a3b8;
+  --po-json-icon: #cbd5e1;
+  --po-terminal-cursor: #d1cec6;
+  --po-terminal-selection: rgba(211, 208, 197, 0.16);
+  --po-terminal-black: #626059;
+  --po-terminal-red: #bd8581;
+  --po-terminal-green: #9ba67b;
+  --po-terminal-yellow: #c2a46c;
+  --po-terminal-blue: #92a9be;
+  --po-terminal-magenta: #b19bbd;
+  --po-terminal-cyan: #8fb2ad;
+  --po-terminal-white: #b9b6ae;
+  --po-terminal-bright-black: #807d76;
+  --po-terminal-bright-red: #cc9692;
+  --po-terminal-bright-green: #aab78b;
+  --po-terminal-bright-yellow: #d0b47d;
+  --po-terminal-bright-blue: #a2b8ca;
+  --po-terminal-bright-magenta: #c1aacb;
+  --po-terminal-bright-cyan: #9fc1bc;
+  --po-terminal-bright-white: #d2cec5;
+  --po-scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --po-scrollbar-thumb-hover: rgba(255, 255, 255, 0.16);
+}
+
+/*
+ * Shared semantic aliases and geometry. Keep these outside the palette blocks:
+ * they derive from the active light/dark primitives and are not a third theme.
+ */
+:root {
+  --po-font-sans: var(
+    --font-geist-sans,
+    'Geist Sans',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif
+  );
+  --po-font-mono: var(
+    --font-geist-mono,
+    'Geist Mono',
+    'SFMono-Regular',
+    'SF Mono',
+    Consolas,
+    'Liberation Mono',
+    monospace
+  );
 
   --po-text-size-micro: 10px;
   --po-text-size-caption: 10px;
@@ -22,156 +291,88 @@
   --po-line-height-body: 1.45;
   --po-line-height-relaxed: 1.6;
 
-  --po-canvas: #f1eadf;
-  --po-sidebar: #e8dfd2;
-  --po-header: #f1eadf;
-  --po-panel: #fbf6ed;
-  --po-panel-raised: #fffaf1;
-  --po-overlay: #fff8ee;
-  --po-inset: #e6ded1;
+  --po-font-size-chrome: var(--po-text-size-body);
+  --po-font-weight-chrome: var(--po-text-weight-medium);
 
-  --po-text: #2f2a23;
-  --po-text-muted: #70685e;
-  --po-text-subtle: #958b7f;
-  --po-text-disabled: #b9afa3;
-  --po-text-inverse: #fffaf2;
+  --po-surface-editor: var(--po-surface-panel);
+  --po-canvas: var(--po-surface-editor);
+  --po-chrome: var(--po-surface-chrome);
+  --po-panel: var(--po-surface-panel);
+  --po-panel-raised: var(--po-surface-panel-raised);
+  --po-overlay: var(--po-surface-overlay);
+  --po-inset: var(--po-surface-inset);
+  --po-editor-bg: var(--po-surface-editor);
+  --po-project-card-bg: var(--po-panel);
+  --po-project-card-hover-bg: var(--po-overlay);
+  --po-tree-guide: color-mix(in srgb, var(--po-sidebar) 94%, var(--po-text));
 
-  --po-border: rgba(73, 55, 35, 0.22);
-  --po-border-subtle: rgba(73, 55, 35, 0.15);
-  --po-border-strong: rgba(73, 55, 35, 0.36);
-  --po-divider: rgba(73, 55, 35, 0.17);
+  --po-shell-divider: color-mix(in srgb, var(--po-text) 10%, transparent);
+  --po-sidebar-divider: color-mix(in srgb, var(--po-text) 7.5%, transparent);
+  --po-header-divider: var(--po-shell-divider);
+  --po-cloud-titlebar-divider: var(--po-shell-divider);
+  --po-menu-bg: color-mix(in srgb, var(--po-overlay) 92%, var(--po-panel) 8%);
+  --po-menu-border: color-mix(in srgb, var(--po-border) 82%, transparent);
+  --po-elevation-low: 0 2px 4px -2px
+    color-mix(in srgb, var(--po-shadow) 32%, transparent);
+  --po-elevation-popover: 0 3px 8px -4px
+    color-mix(in srgb, var(--po-shadow) 64%, transparent);
+  --po-menu-shadow-compact: var(--po-elevation-low);
+  --po-menu-shadow: var(--po-elevation-popover);
 
-  --po-hover: rgba(73, 55, 35, 0.095);
-  --po-active: rgba(73, 55, 35, 0.15);
-  --po-selected: rgba(73, 55, 35, 0.17);
-  --po-control: rgba(73, 55, 35, 0.10);
-  --po-control-hover: rgba(73, 55, 35, 0.15);
-  --po-focus-ring: rgba(37, 99, 235, 0.35);
-  --po-shadow: rgba(73, 55, 35, 0.16);
+  --po-switch-track-on: var(--po-success);
+  --po-switch-track-off: var(--po-control-hover);
+  --po-access-action: var(--po-success);
+  --po-access-action-hover: color-mix(
+    in srgb,
+    var(--po-success) 88%,
+    var(--po-panel) 12%
+  );
+  --po-access-action-border: color-mix(
+    in srgb,
+    var(--po-success) 38%,
+    transparent
+  );
+  --po-access-action-contrast: var(--po-success-contrast);
+  --po-access-action-shadow: color-mix(
+    in srgb,
+    var(--po-success) 14%,
+    transparent
+  );
 
-  --po-accent: #2563eb;
-  --po-accent-text: #1d4ed8;
-  --po-success: #15803d;
-  --po-success-contrast: #fffaf2;
-  --po-warning: #b45309;
-  --po-danger: #dc2626;
-  --po-info: #0284c7;
-  --po-purple: #8057a8;
+  --po-jsoneditor-bg: var(--po-editor-bg);
+  --po-jsoneditor-toolbar-bg: var(--po-panel);
 
-  --po-filetree-rail: rgba(73, 55, 35, 0.26);
-  --po-tree-guide: color-mix(in srgb, var(--po-sidebar) 87%, var(--po-text));
-  --po-file-icon-body: #eee5d8;
-  --po-file-icon-fold: #dfd4c6;
-  --po-file-icon-stroke: rgba(73, 55, 35, 0.36);
-  --po-file-icon-shadow: rgba(73, 55, 35, 0.18);
-  --po-file-accent-default: #5f7068;
-  --po-file-accent-markdown: #3f6f9e;
-  --po-file-accent-json: #a16207;
-  --po-file-accent-html: #bf6b2e;
-  --po-file-accent-pdf: #c44b55;
-  --po-file-accent-image: #8f69b0;
-  --po-file-accent-audio: #8f69b0;
-  --po-file-accent-video: #0f766e;
-  --po-file-accent-code: #0f766e;
-  --po-file-accent-sheet: #2f7d4f;
-
-  --po-diff-added-bg: rgba(22, 163, 74, 0.10);
-  --po-diff-added-text: #166534;
-  --po-diff-removed-bg: rgba(220, 38, 38, 0.10);
-  --po-diff-removed-text: #991b1b;
-
-  --po-editor-bg: #f4ede3;
-  --po-editor-line: rgba(73, 55, 35, 0.14);
   --po-editor-padding-block: 40px;
   --po-editor-padding-inline: 48px;
   --po-editor-padding-bottom: 72px;
   --po-editor-code-padding-block: 24px;
   --po-editor-code-padding-inline: 28px;
   --po-editor-code-padding-bottom: 56px;
-  --po-jsoneditor-bg: var(--po-editor-bg);
-  --po-jsoneditor-toolbar-bg: var(--po-panel);
-  --po-json-key: #3f3a33;
-  --po-json-string: #116329;
-  --po-json-number: #8250df;
-  --po-json-boolean: #b42318;
-  --po-json-null: #6f6a60;
-  --po-json-icon: #70685e;
-
-  --po-scrollbar-thumb: rgba(73, 55, 35, 0.14);
-  --po-scrollbar-thumb-hover: rgba(73, 55, 35, 0.24);
+  --po-editor-compact-padding-block: 24px;
+  --po-editor-compact-padding-inline: 28px;
+  --po-editor-compact-padding-bottom: 44px;
 }
 
 .dark {
-  color-scheme: dark;
-
-  --po-canvas: #0e0e0e;
-  --po-sidebar: #121212;
-  --po-header: #0e0e0e;
-  --po-panel: #161616;
-  --po-panel-raised: #1a1a1a;
-  --po-overlay: #1f1f23;
-  --po-inset: #0a0a0a;
-
-  --po-text: #fafafa;
-  --po-text-muted: #a1a1aa;
-  --po-text-subtle: #71717a;
-  --po-text-disabled: #52525b;
-  --po-text-inverse: #0a0a0a;
-
-  --po-border: rgba(255, 255, 255, 0.08);
-  --po-border-subtle: rgba(255, 255, 255, 0.06);
-  --po-border-strong: rgba(255, 255, 255, 0.14);
-  --po-divider: rgba(255, 255, 255, 0.07);
-
-  --po-hover: rgba(255, 255, 255, 0.04);
-  --po-active: rgba(255, 255, 255, 0.07);
-  --po-selected: rgba(255, 255, 255, 0.08);
-  --po-control: rgba(255, 255, 255, 0.04);
-  --po-control-hover: rgba(255, 255, 255, 0.08);
-  --po-focus-ring: rgba(96, 165, 250, 0.45);
-  --po-shadow: rgba(0, 0, 0, 0.45);
-
-  --po-accent: #60a5fa;
-  --po-accent-text: #93c5fd;
-  --po-success: #34d399;
-  --po-success-contrast: #0a0a0a;
-  --po-warning: #fbbf24;
-  --po-danger: #f87171;
-  --po-info: #67e8f9;
-  --po-purple: #c084fc;
-
+  --po-project-card-hover-bg: color-mix(
+    in srgb,
+    var(--po-panel) 94%,
+    var(--po-text) 6%
+  );
+  --po-access-action-shadow: color-mix(
+    in srgb,
+    var(--po-success) 16%,
+    transparent
+  );
   --po-tree-guide: color-mix(in srgb, var(--po-sidebar) 90%, var(--po-text));
-  --po-file-icon-body: #222225;
-  --po-file-icon-fold: #2a2a2d;
-  --po-file-icon-stroke: rgba(255, 255, 255, 0.18);
-  --po-file-icon-shadow: rgba(0, 0, 0, 0.35);
-  --po-file-accent-default: #b8c8c0;
-  --po-file-accent-markdown: #9ac7f0;
-  --po-file-accent-json: #facc15;
-  --po-file-accent-html: #fb923c;
-  --po-file-accent-pdf: #fb7185;
-  --po-file-accent-image: #c084fc;
-  --po-file-accent-audio: #c084fc;
-  --po-file-accent-video: #5eead4;
-  --po-file-accent-code: #5eead4;
-  --po-file-accent-sheet: #86efac;
-
-  --po-diff-added-bg: rgba(34, 197, 94, 0.13);
-  --po-diff-added-text: #86efac;
-  --po-diff-removed-bg: rgba(239, 68, 68, 0.14);
-  --po-diff-removed-text: #fca5a5;
-
-  --po-editor-bg: #101010;
-  --po-editor-line: rgba(255, 255, 255, 0.08);
-  --po-jsoneditor-bg: var(--po-editor-bg);
-  --po-jsoneditor-toolbar-bg: var(--po-panel);
-  --po-json-key: #cbd5e1;
-  --po-json-string: #7dd3fc;
-  --po-json-number: #c084fc;
-  --po-json-boolean: #fb7185;
-  --po-json-null: #94a3b8;
-  --po-json-icon: #cbd5e1;
-
-  --po-scrollbar-thumb: rgba(255, 255, 255, 0.08);
-  --po-scrollbar-thumb-hover: rgba(255, 255, 255, 0.16);
+  --po-menu-bg: color-mix(
+    in srgb,
+    var(--po-overlay) 92%,
+    var(--po-panel-raised) 8%
+  );
+  --po-menu-border: color-mix(in srgb, var(--po-border) 88%, transparent);
+  --po-elevation-low: 0 2px 4px -2px
+    color-mix(in srgb, var(--po-shadow) 28%, transparent);
+  --po-elevation-popover: 0 3px 8px -4px
+    color-mix(in srgb, var(--po-shadow) 36%, transparent);
 }

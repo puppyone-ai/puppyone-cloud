@@ -9,17 +9,18 @@ commits with an exclusive cursor.
 
 from __future__ import annotations
 
-import asyncio
 import json as _json
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.concurrency import run_in_threadpool
 
 from src.common_schemas import ApiResponse
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.service import AuthorizationService
+from src.platform.authorization.models import ProjectAction
 from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 from src.version_engine.admission.validation import validate_path
 from src.version_engine.bootstrap.dependencies import (
@@ -53,6 +54,18 @@ from src.version_engine.read.history_models import (
 )
 
 history_router = APIRouter()
+
+
+@history_router.get("/{project_id}/head", summary="Canonical project history head")
+async def get_project_head(
+    project_id: str,
+    version_admin: VersionAdminService = Depends(get_version_admin_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    await run_in_threadpool(authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ)
+    head = await version_admin.get_project_head_commit_id(project_id)
+    return ApiResponse.success(data={"project_id": project_id, "head_commit_id": head})
 
 
 @history_router.get(
@@ -89,7 +102,7 @@ async def get_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    ensure_project_access(authorization, current_user, project_id)
+    await run_in_threadpool(ensure_project_access, authorization, current_user, project_id)
 
     if cursor and since_commit_id:
         raise HTTPException(
@@ -182,7 +195,7 @@ async def get_commits(
     if not head_commit_id and commits:
         head_commit_id = commits[0].commit_id if graph_mode else commits[-1].commit_id
 
-    root_hash = await asyncio.to_thread(ops.get_root_hash, project_id) or ""
+    root_hash = await run_in_threadpool(ops.get_root_hash, project_id) or ""
 
     return ApiResponse.success(data=VersionHistoryResponse(
         project_id=project_id,
@@ -209,17 +222,23 @@ async def get_commit_content(
     project_id: str,
     path: str = Query(..., description="File path"),
     commit_id: str = Query(..., description="Commit id (40-hex SHA-1)"),
+    preview_bytes: Annotated[int | None, Query(ge=1, le=1_048_576)] = None,
     version_admin: VersionAdminService = Depends(get_version_admin_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    ensure_project_access(authorization, current_user, project_id)
+    await run_in_threadpool(ensure_project_access, authorization, current_user, project_id)
 
     clean_path = validate_path(path)
     try:
         content = await version_admin.get_commit_content(project_id, clean_path, commit_id)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    return await run_in_threadpool(_format_commit_content, clean_path, commit_id, content, preview_bytes)
+
+
+def _format_commit_content(clean_path: str, commit_id: str, content: bytes, preview_bytes: int | None):
 
     from src.version_engine.read.tree_reader import detect_mime, detect_type
     from src.version_engine.read.text_detection import is_binary_content
@@ -233,6 +252,11 @@ async def get_commit_content(
         "mime_type": mime_type,
         "size_bytes": len(content),
     }
+
+    # Preview reads are additive. Full-content clients retain their contract;
+    # a large preview must not transfer/parse an entire JSON document in the UI.
+    if preview_bytes is not None and len(content) > preview_bytes:
+        return ApiResponse.success(data={**base, "truncated": True})
 
     if node_type == "json":
         try:
@@ -267,7 +291,7 @@ async def diff_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    ensure_project_access(authorization, current_user, project_id)
+    await run_in_threadpool(ensure_project_access, authorization, current_user, project_id)
 
     try:
         changes = await version_admin.compute_diff(project_id, from_commit_id, to_commit_id)
@@ -305,7 +329,7 @@ async def rollback(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    ensure_write_access(authorization, current_user, project_id)
+    await run_in_threadpool(ensure_write_access, authorization, current_user, project_id)
 
     from src.version_engine.write_engine.engine import VersionWriteEngine
     from src.version_engine.domain.intents import RollbackIntent

@@ -160,7 +160,7 @@ export function ExplorerRowActions({
 
   return (
     <div
-      className={`${hasAccessButton ? 'flex' : peerVisibility} absolute top-1/2 z-20 -translate-y-1/2 items-center gap-0.5`}
+      className={`workspace-row-actions ${hasAccessButton ? 'flex' : peerVisibility} absolute top-1/2 z-20 -translate-y-1/2 items-center gap-0.5`}
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       style={{ right: 4 }}

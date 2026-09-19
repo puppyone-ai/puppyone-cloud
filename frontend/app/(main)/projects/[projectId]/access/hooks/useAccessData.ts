@@ -1,5 +1,7 @@
 'use client';
 
+import { useSessionValue } from '@/features/workspace/session';
+
 /**
  * useAccessData — single hook owning every piece of state the access
  * page reads from the network.
@@ -104,7 +106,7 @@ export function useAccessData(projectId: string): UseAccessDataResult {
     { refreshInterval: 30000, revalidateOnFocus: false, dedupingInterval: 60000 },
   );
 
-  const [selectedTargetKey, setSelectedTargetKey] = useState<string | null>(null);
+  const [selectedTargetKey, setSelectedTargetKey] = useSessionValue('accessTarget');
   const [pendingConnectorIds, setPendingConnectorIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const accessConnectors = useMemo(() => {
@@ -180,7 +182,7 @@ export function useAccessData(projectId: string): UseAccessDataResult {
     ) return;
     const first = sortedScopes[0];
     if (first) setSelectedTargetKey(repositoryViewKey(first));
-  }, [sortedScopes, selectedTargetKey]);
+  }, [sortedScopes, selectedTargetKey, setSelectedTargetKey]);
 
   const selectedScope = useMemo(
     () => sortedScopes.find((view) => repositoryViewKey(view) === selectedTargetKey) ?? sortedScopes[0],
@@ -285,7 +287,7 @@ export function useAccessData(projectId: string): UseAccessDataResult {
   // meaningful instead of a dead detail pane.
   const clearScopeSelection = useCallback(() => {
     setSelectedTargetKey(null);
-  }, []);
+  }, [setSelectedTargetKey]);
 
   return {
     loading,

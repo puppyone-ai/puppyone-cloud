@@ -5,22 +5,29 @@ const ROOT = process.cwd();
 const SCAN_DIRS = ['app', 'components', 'lib'];
 const SOURCE_EXT = new Set(['.ts', '.tsx', '.css']);
 
-const RAW_COLOUR = /#[0-9a-fA-F]{3,8}\b|rgba\(|(?:background|color|border(?:Color)?):\s*['"](?:black|white)['"]|\b(?:fill|stroke)=['"](?:black|white)['"]|bg-\[#|text-\[#|border-\[#/;
-const TAILWIND_NAMED_COLOUR = /\b(?:bg|text|border|ring|from|to|via|shadow|fill|stroke)-(?:black|white|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-(?:50|100|200|300|400|500|600|700|800|900|950))?(?:\/\d+)?\b/;
-const TOKEN_ALPHA_SUFFIX = /\$\{[^}]+\}(?:[a-fA-F0-9]{2})\b|var\(--po-[^)]+\)[a-fA-F0-9]{2}\b/;
-const DISALLOWED = new RegExp(`${RAW_COLOUR.source}|${TAILWIND_NAMED_COLOUR.source}|${TOKEN_ALPHA_SUFFIX.source}`);
+const RAW_COLOUR =
+  /#[0-9a-fA-F]{3,8}\b|rgba\(|(?:background|color|border(?:Color)?):\s*['"](?:black|white)['"]|\b(?:fill|stroke)=['"](?:black|white)['"]|bg-\[#|text-\[#|border-\[#/;
+const TAILWIND_NAMED_COLOUR =
+  /\b(?:bg|text|border|ring|from|to|via|shadow|fill|stroke)-(?:black|white|slate|gray|zinc|neutral|stone|red|orange|amber|yellow|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-(?:50|100|200|300|400|500|600|700|800|900|950))?(?:\/\d+)?\b/;
+const TOKEN_ALPHA_SUFFIX =
+  /\$\{[^}]+\}(?:[a-fA-F0-9]{2})\b|var\(--po-[^)]+\)[a-fA-F0-9]{2}\b/;
+const DISALLOWED = new RegExp(
+  `${RAW_COLOUR.source}|${TAILWIND_NAMED_COLOUR.source}|${TOKEN_ALPHA_SUFFIX.source}`
+);
 
 // Explicit brand/icon colours. Product surfaces should not be added here.
 const ALLOWED_BRAND = [
-  '#4285f4', '#34a853', '#fbbc04', '#ea4335',
-  '#3ECF8E', '#249361', '#06130c',
+  '#4285f4',
+  '#34a853',
+  '#fbbc04',
+  '#ea4335',
+  '#3ECF8E',
+  '#249361',
+  '#06130c',
   '#4599DF',
 ];
 
-const ALLOWED_PATH_PARTS = [
-  'app/dev/',
-  'lib/theme/monacoThemes.ts',
-];
+const ALLOWED_PATH_PARTS = ['app/dev/', 'lib/theme/monacoThemes.ts'];
 
 function isSource(path) {
   return SOURCE_EXT.has(path.slice(path.lastIndexOf('.')));
@@ -55,9 +62,13 @@ function isCommentOnly(line) {
 function hasOnlyAllowedBrand(line) {
   const withoutAllowed = ALLOWED_BRAND.reduce(
     (next, color) => next.replaceAll(color, ''),
-    line,
+    line
   );
-  return !RAW_COLOUR.test(withoutAllowed) && !TAILWIND_NAMED_COLOUR.test(line) && !TOKEN_ALPHA_SUFFIX.test(line);
+  return (
+    !RAW_COLOUR.test(withoutAllowed) &&
+    !TAILWIND_NAMED_COLOUR.test(line) &&
+    !TOKEN_ALPHA_SUFFIX.test(line)
+  );
 }
 
 const failures = [];
@@ -80,11 +91,42 @@ for (const dir of SCAN_DIRS) {
   }
 }
 
-const tokenSource = readFileSync(join(ROOT, 'app/globals.css'), 'utf8');
+const tokenSource = readFileSync(
+  join(ROOT, 'shared-ui/src/styles/tokens.css'),
+  'utf8'
+);
+
+// Pixel anchors shared with Desktop's default-neutral theme. Keep these as
+// final shell values: remixing header/sidebar from the warmer chrome primitive
+// makes Cloud visibly yellow and breaks cross-product parity.
+const REQUIRED_DESKTOP_ANCHORS = [
+  '--po-surface-panel: #fafafa;',
+  '--po-surface-panel: #1a1a1a;',
+  '--po-surface-panel-raised: #ffffff;',
+  '--po-surface-panel-raised: #222222;',
+  '--po-header: #ebebeb;',
+  '--po-sidebar: #ebebeb;',
+  '--po-surface-chrome: #202020;',
+];
+
+for (const anchor of REQUIRED_DESKTOP_ANCHORS) {
+  if (!tokenSource.includes(anchor)) {
+    failures.push(
+      `shared-ui/src/styles/tokens.css: missing Desktop theme anchor ${anchor}`
+    );
+  }
+}
+
+if (/--po-(?:header|sidebar)\s*:\s*color-mix\(/.test(tokenSource)) {
+  failures.push(
+    'shared-ui/src/styles/tokens.css: header/sidebar must use Desktop final neutral values, not color-mix()'
+  );
+}
+
 const definedTokens = new Set(
   [...tokenSource.matchAll(/--po-[a-z0-9-]+\s*:/g)].map(match =>
-    match[0].slice(0, -1).trim(),
-  ),
+    match[0].slice(0, -1).trim()
+  )
 );
 const usedTokens = new Map();
 

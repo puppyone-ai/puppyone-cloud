@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { usePendingItems } from '@/features/history/pendingConflicts';
 import { PulseGrid } from '@/components/loading';
 import { CountBadge } from '@/components/ui/CountBadge';
 import {
@@ -22,6 +23,7 @@ export interface NeedsActionSelection {
 
 export interface NeedsActionSectionProps {
   projectId: string;
+  seedItemsByKind?: Readonly<Record<string, readonly NeedsActionItem[] | undefined>>;
   selected: NeedsActionSelection | null;
   onSelect: (selection: NeedsActionSelection, item: NeedsActionItem) => void;
   onItemRemoved: (selection: NeedsActionSelection, result: ResolvedResult) => void;
@@ -56,6 +58,7 @@ type FlatNeedsActionItem = {
 
 export function NeedsActionSection({
   projectId,
+  seedItemsByKind,
   selected,
   onSelect,
   onItemRemoved: _onItemRemoved,
@@ -172,6 +175,7 @@ export function NeedsActionSection({
       <KindDataSubscriptions
         kinds={kinds}
         projectId={projectId}
+        seedItemsByKind={seedItemsByKind}
         snoozeTick={snoozeTick}
         onSnapshot={handleSnapshot}
       />
@@ -215,11 +219,13 @@ export function NeedsActionSection({
 function KindDataSubscriptions({
   kinds,
   projectId,
+  seedItemsByKind,
   snoozeTick,
   onSnapshot,
 }: {
   kinds: readonly NeedsActionKindDef[];
   projectId: string;
+  seedItemsByKind?: Readonly<Record<string, readonly NeedsActionItem[] | undefined>>;
   snoozeTick: number;
   onSnapshot: (kind: string, snapshot: KindSnapshot) => void;
 }) {
@@ -230,6 +236,7 @@ function KindDataSubscriptions({
           key={def.kind}
           def={def}
           projectId={projectId}
+          seedItems={seedItemsByKind?.[def.kind]}
           snoozeTick={snoozeTick}
           onSnapshot={onSnapshot}
         />
@@ -241,39 +248,46 @@ function KindDataSubscriptions({
 function KindDataContainer({
   def,
   projectId,
+  seedItems,
   snoozeTick,
   onSnapshot,
 }: {
   def: NeedsActionKindDef;
   projectId: string;
+  seedItems?: readonly NeedsActionItem[];
   snoozeTick: number;
   onSnapshot: (kind: string, snapshot: KindSnapshot) => void;
 }) {
-  const { data, error } = useSWR<NeedsActionItem[]>(
-    [`needs-action:${def.kind}`, projectId],
+  const sharedKind = def.kind === 'conflict' || def.kind === 'pending-review';
+  const pending = usePendingItems(projectId, def.kind, sharedKind && seedItems === undefined);
+  const query = useSWR<NeedsActionItem[]>(
+    seedItems === undefined && !sharedKind ? [`needs-action:${def.kind}`, projectId] : null,
     () => def.fetchItems(projectId) as Promise<NeedsActionItem[]>,
     {
       refreshInterval: def.refreshIntervalMs ?? DEFAULT_REFRESH_MS,
       refreshWhenHidden: false,
-      keepPreviousData: true,
+      keepPreviousData: false,
     },
   );
 
+  const { data, error } = sharedKind ? pending : query;
+
   const visibleItems = useMemo(() => {
-    if (!data) return [] as NeedsActionItem[];
-    return data.filter(
+    const source = seedItems ?? data;
+    if (!source) return [] as NeedsActionItem[];
+    return source.filter(
       (item) => !isSnoozed({ projectId, kind: def.kind, id: item.id }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, def.kind, projectId, snoozeTick]);
+  }, [data, def.kind, projectId, seedItems, snoozeTick]);
 
   useEffect(() => {
     onSnapshot(def.kind, {
       items: visibleItems,
-      loading: !data && !error,
+      loading: seedItems === undefined && !data && !error,
       error: Boolean(error),
     });
-  }, [data, def.kind, error, onSnapshot, visibleItems]);
+  }, [data, def.kind, error, onSnapshot, seedItems, visibleItems]);
 
   return null;
 }

@@ -59,8 +59,8 @@ function parseTextWithPathMentions(text: string): ReactNode[] {
 const DEFAULT_STYLES: Record<string, CSSProperties> = {
   p: {
     margin: '8px 0',
-    lineHeight: '1.6',
-    fontSize: '13px',
+    lineHeight: '1.5',
+    fontSize: '14px',
     wordBreak: 'break-word',
     overflowWrap: 'break-word',
   },
@@ -82,8 +82,8 @@ const DEFAULT_STYLES: Record<string, CSSProperties> = {
     lineHeight: '1.6',
     margin: '16px 0 8px 0',
   },
-  ul: { margin: '8px 0', paddingLeft: '20px', fontSize: '13px' },
-  ol: { margin: '8px 0', paddingLeft: '20px', fontSize: '13px' },
+  ul: { margin: '8px 0', paddingLeft: '20px', fontSize: '14px', listStyleType: 'disc' },
+  ol: { margin: '8px 0', paddingLeft: '20px', fontSize: '14px', listStyleType: 'decimal' },
   li: { margin: '4px 0' },
   link: {
     color: 'var(--po-accent)',
@@ -96,7 +96,7 @@ const DEFAULT_STYLES: Record<string, CSSProperties> = {
     overflowWrap: 'break-word',
     display: 'inline',
     maxWidth: '100%',
-    fontSize: '13px',
+    fontSize: 'inherit',
   },
   table: {
     borderCollapse: 'separate',

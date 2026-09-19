@@ -23,7 +23,7 @@
  */
 
 import { getApiAccessToken } from './apiClient';
-import { getProjectHistory, type VersionCommitInfo } from './contentTreeApi';
+import { getProjectHead, getProjectHistory, type VersionCommitInfo } from './contentTreeApi';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9090';
 
@@ -40,7 +40,8 @@ const _TOKEN_REFRESH_MARGIN_SECS = 60;
  *  ``exp`` (or we fail to decode it), don't schedule a 30-day timer. */
 const _MAX_TOKEN_LIFETIME_MS = 60 * 60 * 1000; // 1h
 const _MAX_SEEN_EVENT_IDS = 2_048;
-const _CATCH_UP_PAGE_SIZE = 500;
+// Keep within the HTTP contract (1..100); larger pages receive 422 forever.
+const _CATCH_UP_PAGE_SIZE = 100;
 
 /**
  * Server → client commit_update frame. Mirrors
@@ -195,7 +196,7 @@ async function _reconcileCanonicalHistory(
     // the last confirmed head until caught up; never silently truncate a long
     // disconnect window.
     if (!anchor) {
-      const snapshot = await getProjectHistory(projectId, 1);
+      const snapshot = await getProjectHead(projectId);
       if (conn.generation !== generation) return;
       conn.canonicalHead = snapshot.head_commit_id || '';
       if (conn.canonicalHead) {
@@ -203,6 +204,7 @@ async function _reconcileCanonicalHistory(
       }
     } else {
       for (;;) {
+        const previousAnchor = anchor;
         const page = await getProjectHistory(projectId, _CATCH_UP_PAGE_SIZE, anchor);
         if (conn.generation !== generation) return;
         for (const commit of page.commits) {
@@ -210,7 +212,7 @@ async function _reconcileCanonicalHistory(
           anchor = commit.commit_id || anchor;
         }
         if (page.commits.length < _CATCH_UP_PAGE_SIZE) break;
-        if (!page.commits.length || anchor === startingHead) {
+        if (!page.commits.length || anchor === previousAnchor) {
           throw new Error('canonical history pagination made no progress');
         }
       }
@@ -304,16 +306,20 @@ async function _connect(projectId: string, conn: ProjectConnection): Promise<voi
     return;
   }
 
-  const token = await getApiAccessToken();
+  // Claim the connection before awaiting auth: concurrent subscribers must not
+  // open parallel sockets, and teardown during auth must invalidate this task.
+  const myGen = ++conn.generation;
+  conn.state = 'connecting';
+  let token: string | null;
+  try { token = await getApiAccessToken(); }
+  catch { token = null; }
+  if (conn.generation !== myGen || conn.handlers.size === 0) return;
   if (!token) {
     // Without a token the upgrade will be 1008'd. Schedule a retry —
     // user may be in the middle of a session refresh.
     _scheduleReconnect(projectId, conn);
     return;
   }
-
-  const myGen = ++conn.generation;
-  conn.state = 'connecting';
 
   let socket: WebSocket;
   try {

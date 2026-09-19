@@ -72,6 +72,7 @@ export function ScopeDetailPanel({
   enablingStandardAccess,
   enableStandardAccessError,
   onEnableStandardAccess,
+  onNavigationGuardChange,
 }: {
   readonly scope: RepositoryView | undefined;
   readonly connectors: readonly Connector[];
@@ -91,6 +92,7 @@ export function ScopeDetailPanel({
   readonly enablingStandardAccess: boolean;
   readonly enableStandardAccessError: string | null;
   readonly onEnableStandardAccess: () => void;
+  readonly onNavigationGuardChange?: (guard: (() => boolean) | null) => void;
 }) {
   // Track the currently-expanded access point. Defaults to collapsed
   // so first-time users see the compact access point list before drilling
@@ -103,6 +105,16 @@ export function ScopeDetailPanel({
   // navigates to a different scope so dirty edits don't ride along.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
+
+  const canLeave = useCallback(() => {
+    if (!settingsOpen || !settingsDirty) return true;
+    return globalThis.confirm('Discard unsaved scope edits?');
+  }, [settingsDirty, settingsOpen]);
+
+  useEffect(() => {
+    onNavigationGuardChange?.(settingsOpen && settingsDirty ? canLeave : null);
+    return () => onNavigationGuardChange?.(null);
+  }, [canLeave, onNavigationGuardChange, settingsDirty, settingsOpen]);
 
   useEffect(() => {
     setSettingsOpen(false);
@@ -132,10 +144,11 @@ export function ScopeDetailPanel({
   }, [canManage, settingsOpen, settingsDirty]);
 
   const handleScopeDeleted = useCallback(() => {
+    onNavigationGuardChange?.(null);
     setSettingsOpen(false);
     setSettingsDirty(false);
     onScopeDeleted();
-  }, [onScopeDeleted]);
+  }, [onNavigationGuardChange, onScopeDeleted]);
 
   const visibleConnectors = connectors;
   const hasStandardAccess = visibleConnectors.some(
@@ -620,9 +633,9 @@ function RemoteWorkspaceSettingsRow({ isFirst }: { readonly isFirst: boolean }) 
             height: 34,
             width: 34,
             borderRadius: 8,
-            background: '#4a4a4a',
-            border: '1px solid color-mix(in srgb, #4a4a4a 72%, var(--po-border-subtle) 28%)',
-            color: '#f4efe5',
+            background: 'var(--po-text)',
+            border: '1px solid color-mix(in srgb, var(--po-text) 72%, var(--po-border-subtle) 28%)',
+            color: 'var(--po-text-inverse)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

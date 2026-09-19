@@ -1,0 +1,105 @@
+.path {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  white-space: nowrap;
+  color: var(--po-text-muted);
+}
+
+@container project-header (max-width: 600px) {
+  .path { height: 32px !important; }
+  .settings, .settingsSpace, .more { width: 32px !important; height: 32px !important; flex-basis: 32px !important; }
+  .separator { margin: 0 4px !important; }
+  .menu { max-width: min(320px, calc(100cqw - 24px)); }
+  .menu a, .menu button { min-height: 44px; }
+}
+
+.measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.measuredSegment,
+.project,
+.ancestor,
+.current,
+.disclosure {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.project { flex: 0 1 auto; }
+.path[data-collapsed] .project[data-has-tail] {
+  flex-shrink: 0;
+  max-width: 45%;
+}
+.ancestor, .disclosure { flex: 0 0 auto; }
+.current { flex: 1 1 auto; }
+.path[data-collapsed] .current { flex-basis: 0; }
+
+.label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
+}
+
+.label[aria-current] { color: var(--po-text); }
+a.label:hover { color: var(--po-text); }
+.separator { flex: 0 0 auto; margin: 0 8px; color: var(--po-text-disabled); }
+
+.settingsSpace, .settings { flex: 0 0 24px; width: 24px; margin-left: 4px; }
+.settings, .more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--po-text-muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.more { width: 24px; padding: 0; font: inherit; }
+.settings:hover, .more:hover, .more[aria-expanded='true'] {
+  background: var(--po-hover);
+  color: var(--po-text);
+}
+.settings:focus-visible, .more:focus-visible, .label:focus-visible {
+  outline: 2px solid var(--po-accent);
+  outline-offset: 2px;
+}
+
+.disclosure { position: relative; }
+.menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 1;
+  min-width: 160px;
+  width: max-content;
+  max-width: min(320px, 50vw);
+  max-height: min(320px, 60vh);
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--po-menu-border);
+  border-radius: 8px;
+  background: var(--po-menu-bg);
+  box-shadow: var(--po-menu-shadow);
+}
+.menu .label { padding: 6px 8px; border-radius: 4px; }
+.menu .label:hover, .menu .label:focus-visible { background: var(--po-hover); }

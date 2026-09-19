@@ -38,6 +38,7 @@ export interface DataLayoutContextValue {
   /** Repo identity (URL + prompt_template + per-scope keys) — fetched once per project. */
   repoIdentity: RepoIdentity | undefined;
   repoIdentityLoading: boolean;
+  repoIdentityError: unknown;
   mutateRepo: () => Promise<unknown>;
 }
 

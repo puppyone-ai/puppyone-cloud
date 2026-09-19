@@ -91,8 +91,9 @@ export const CHROME_LABEL_TYPOGRAPHY: CSSProperties = {
 };
 
 export const SIDEBAR_ROW_TYPOGRAPHY: CSSProperties = {
-  ...TYPOGRAPHY.chromeLabel,
-  fontSize: '13px',
+  ...TYPOGRAPHY.body,
+  fontSize: '14px',
+  fontWeight: TEXT_WEIGHT.regular,
 };
 
 export const SIDEBAR_META_TYPOGRAPHY: CSSProperties = {

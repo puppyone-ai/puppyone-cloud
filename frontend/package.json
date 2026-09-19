@@ -11,6 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:unit": "vitest run",
     "test:bff-contract": "node scripts/test-bff-contract-forwarding.mjs",
     "test:hydration-contract": "node scripts/test-hydration-safe-environment-label.mjs",
     "test:deployment-contract": "node scripts/test-deployment-package-boundaries.mjs",
@@ -20,7 +21,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@puppyone/cloud-core": "file:packages/cloud-core",
     "@anthropic-ai/claude-agent-sdk": "^0.1.76",
     "@anthropic-ai/sdk": "^0.71.2",
     "@codemirror/commands": "^6.10.0",
@@ -31,6 +31,7 @@
     "@codemirror/view": "^6.38.8",
     "@lezer/highlight": "^1.2.3",
     "@monaco-editor/react": "^4.7.0",
+    "@puppyone/cloud-core": "file:packages/cloud-core",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.46.1",
     "@tanstack/react-virtual": "^3.13.12",
@@ -63,6 +64,8 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.3",
     "@types/node": "^22.7.5",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^18.3.8",
@@ -70,8 +73,10 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^9.12.0",
     "eslint-config-next": "^15.0.0",
+    "jsdom": "26.1.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "4.1.11"
   }
 }

@@ -1,8 +1,39 @@
 # PuppyOne Color Mode Architecture
 
-Status: proposal
+Status: implemented for the shared theme contract; surface migration remains ongoing
 Owner: Frontend
 Scope: Light mode, dark mode, and system appearance support for the PuppyOne web app
+Last verified: 2026-09-19
+
+## 0. Implemented Cross-Product Contract
+
+Cloud and Desktop share one visual contract even though they ship from separate
+repositories. The Desktop `default-neutral` theme is the visual reference. Cloud
+owns its consumable copy in
+`frontend/shared-ui/src/styles/tokens.css`; `frontend/app/globals.css` imports that
+file and must not maintain a second palette.
+
+The shell anchor colors are final rendered values, not intermediate colors that a
+feature may remix:
+
+| Role | Light | Dark |
+| --- | --- | --- |
+| Main canvas | `#fafafa` | `#1a1a1a` |
+| Header | `#ebebeb` | `#202020` |
+| Sidebar | `#ebebeb` | `#202020` |
+| Raised panel | `#ffffff` | `#222222` |
+
+In particular, header and sidebar must consume `--po-header` and `--po-sidebar`
+directly. Do not derive them again from `--po-surface-chrome` with `color-mix()`:
+that creates a warm/yellow gray in light mode and breaks pixel parity with
+Desktop. Product components consume semantic tokens only. Brand colors are also
+named tokens; raw brand literals do not belong in feature components.
+
+`next-themes` owns Light / Dark / System selection and the root `.dark` class.
+`npm run theme:audit` enforces token usage and verifies that every used product
+token is defined by the shared contract. Visual acceptance covers the home shell,
+sidebar, settings appearance dialog, and a project workspace in both resolved
+modes.
 
 ## 1. Why This Needs an Architecture
 
@@ -671,4 +702,3 @@ The first implementation should be intentionally narrow:
 6. Run visual QA on shell pages.
 
 This gives PuppyOne a real theme foundation without touching every editor and page at once. After the shell passes review, migrate the core workspace and editors in separate follow-up slices.
-
