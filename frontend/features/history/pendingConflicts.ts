@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
-import useSWR from 'swr';
 import { listPendingConflicts, type PendingConflictSummary } from '@/lib/conflictApi';
 import type { ConflictItem, PendingReviewItem } from '@/lib/needsActionRegistry';
 import { workspaceKeys } from '@/lib/queryKeys';
+import { useMemo } from 'react';
+import useSWR from 'swr';
 
 export function selectPendingItems(rows: PendingConflictSummary[], kind: string): (ConflictItem | PendingReviewItem)[] {
   return rows.filter(row => row.status === 'pending' && (kind === 'conflict'

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { use } from 'react';
-import Link from 'next/link';
+import { WorkspaceLink as Link } from '@/features/workspace/navigation';
 import { usePathname } from 'next/navigation';
 import { CHROME_LABEL_TYPOGRAPHY } from '@/lib/uiTypography';
 

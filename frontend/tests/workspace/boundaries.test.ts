@@ -26,7 +26,7 @@ it('the project layout is the single persistent auxiliary-sidebar owner', () => 
   expect(headerShell).toContain('<ProjectsHeader');
   expect(headerShell).toContain('<ProjectAuxiliaryActions');
   expect(readFileSync(resolve(project, 'history/page.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
-  expect(readFileSync(resolve(project, 'data/components/DataWorkspaceSurface.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
+  expect(readFileSync(resolve('features/files/components/DataWorkspaceSurface.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
   expect(readFileSync(resolve('components/ProjectsHeader.tsx'), 'utf8')).toContain("flex: '0 0 auto'");
   for (const view of ['history', 'access']) expect(readFileSync(resolve(project, view, 'page.tsx'), 'utf8')).not.toContain('<ProjectChatSidebar');
   expect(readFileSync(resolve(project, 'access/page.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
@@ -44,4 +44,14 @@ it('the avatar opens global settings without a duplicate rail settings button', 
   const userMenu = readFileSync(resolve('components/UserMenuPanel.tsx'), 'utf8');
   expect(userMenu).toContain("initialTab = 'account'");
   expect(userMenu).toContain('if (isOpen) setActiveTab(initialTab)');
+});
+
+it('workspace features delegate navigation instead of maintaining a second history router', () => {
+  for (const path of files(resolve('features'))) {
+    const source = readFileSync(path, 'utf8');
+    expect(source, path).not.toMatch(/history\.(?:pushState|replaceState)|addEventListener\(['"]popstate/);
+    if (!path.includes('/workspace/navigation/')) {
+      expect(source, path).not.toMatch(/import\s*\{[^}]*\buseRouter\b[^}]*\}\s*from\s*['"]next\/navigation/);
+    }
+  }
 });

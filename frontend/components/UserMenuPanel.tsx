@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '../app/supabase/SupabaseAuthProvider';
+import { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import {
   getGithubStatus,
   disconnectGithub,

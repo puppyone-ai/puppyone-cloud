@@ -1,6 +1,6 @@
 # Web 工作区导航与状态重构设计
 
-日期：2026-09-20。状态：目标架构与实施方案，尚未实施。
+日期：2026-09-20。状态：目标架构；导航、稳定 Files 容器、领域模块迁移及编辑会话已实施，具体交付与验证边界见[实施记录](./2026-09-20-workspace-refactor-implementation.md)。
 
 依据：[导航调查](./2026-09-20-navigation-architecture-audit.md)、[项目切换调查](./2026-09-20-project-switch-investigation.md)与用户确认的现有交互。作用范围为 `puppyone-cloud/frontend`；桌面项目仅作为既有视觉参考。
 

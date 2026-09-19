@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import Link from 'next/link';
+import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { WorkspaceLink as Link, usePendingNavigation, returnToFiles } from '@/features/workspace/navigation';
 import { useRouter } from 'next/navigation';
-import { Files, GitBranch } from 'lucide-react';
+import { Files, GitBranch, LoaderCircle } from 'lucide-react';
 import { APP_Z_INDEX } from '@/lib/zIndex';
 import { ProjectHeaderBreadcrumbs, type BreadcrumbSegment } from './project/ProjectHeaderBreadcrumbs';
 export { ProjectHeaderBreadcrumbs, type BreadcrumbSegment } from './project/ProjectHeaderBreadcrumbs';
@@ -44,17 +44,12 @@ export function ProjectsHeader({
   const router = useRouter();
   const regions = useWorkspaceRegions();
   const [filesHref] = useSessionValue('filesHref');
-  const [pendingView, setPendingView] = useState<ProjectView | null>(null);
-  const displayedView = pendingView ?? activeView;
+  const pendingHref = usePendingNavigation();
   const hasPathContent = pathContent !== undefined || pathSegments.length > 0;
-
-  useEffect(() => {
-    setPendingView(null);
-  }, [activeView, projectId]);
 
   // Warm the primary project route chunks after the current view has painted.
   // Next route prefetch runs in production only; it is not a development
-  // latency fix. The pending selection below acknowledges a real navigation.
+  // latency fix. Pending feedback is independent of the committed selection.
   useEffect(() => {
     if (!projectId) return;
     const timer = window.setTimeout(() => {
@@ -139,9 +134,9 @@ export function ProjectsHeader({
           <nav aria-label='Project views' style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
             {activeView === 'files' && <WorkspaceFilesButton />}
             {PROJECT_VIEWS.map(([view, label, route, Icon]) => {
-              const href = view === 'files' && filesHref ? filesHref : `/projects/${projectId}/${route}`;
-              const selected = displayedView === view;
-              const pending = pendingView === view && activeView !== view;
+              const href = view === 'files' ? returnToFiles(projectId, filesHref) : `/projects/${projectId}/${route}`;
+              const selected = activeView === view;
+              const pending = pendingHref === href && activeView !== view;
               return (
                 <Link
                   key={view}
@@ -153,23 +148,11 @@ export function ProjectsHeader({
                   aria-busy={pending || undefined}
                   onPointerEnter={() => router.prefetch(href)}
                   onFocus={() => router.prefetch(href)}
-                  onClick={event => {
-                    if (event.defaultPrevented) return;
-                    if (
-                      !event.metaKey &&
-                      !event.ctrlKey &&
-                      !event.shiftKey &&
-                      !event.altKey &&
-                      view !== activeView
-                    ) {
-                      setPendingView(view);
-                    }
-                  }}
                   className={selected
                     ? 'inline-flex h-6 items-center gap-1.5 rounded-[5px] bg-[var(--po-selected)] px-2 text-[12px] font-medium text-[var(--po-text)] no-underline'
                     : 'inline-flex h-6 w-8 items-center justify-center rounded-[5px] text-[var(--po-text-muted)] no-underline transition-colors hover:bg-[var(--po-hover)] hover:text-[var(--po-text)]'}
                 >
-                  <Icon size={15} strokeWidth={1.8} aria-hidden='true' />
+                  {pending ? <LoaderCircle size={15} strokeWidth={1.8} className='animate-spin motion-reduce:animate-none' aria-hidden='true' /> : <Icon size={15} strokeWidth={1.8} aria-hidden='true' />}
                   {selected && <span className={styles.viewLabel}>{label}</span>}
                 </Link>
               );

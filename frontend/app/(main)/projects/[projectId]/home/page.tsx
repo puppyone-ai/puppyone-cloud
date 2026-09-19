@@ -1,7 +1,8 @@
 'use client';
+import { useProjectSession } from '@/features/workspace/session';
 
 import { use, useMemo, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { get } from '@/lib/apiClient';
 import useSWR from 'swr';
@@ -101,6 +102,7 @@ export default function HomePage({
 }) {
   const { projectId } = use(params);
   const router = useRouter();
+  const openPanel = useProjectSession(state => state.openPanel);
 
   // Shared hover key for the Data ApChip ↔ AccessPointsListCard
   // handshake.  When the user mouses over either side, this stores
@@ -544,7 +546,7 @@ export default function HomePage({
 
               <Sep />
               <button
-                onClick={() => router.push(`/projects/${projectId}/history`)}
+                onClick={() => router.push(`/projects/${projectId}/changes`)}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -575,7 +577,7 @@ export default function HomePage({
 
               <Sep />
               <button
-                onClick={() => router.push(`/projects/${projectId}/access`)}
+                onClick={() => openPanel({ type: 'access_list', view: 'overview' })}
                 style={{
                   background: 'none',
                   border: 'none',

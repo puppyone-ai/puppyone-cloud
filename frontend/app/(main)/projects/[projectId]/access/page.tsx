@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useEffect } from 'react';
+import { use, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { returnToFiles } from '@/features/workspace/navigation/routes';
 import { PageLoading } from '@/components/loading';
 import { useProjectSession, useSessionValue } from '@/features/workspace/session';
 
@@ -21,7 +22,10 @@ export default function AccessRouteAdapter({
   const [filesHref] = useSessionValue('filesHref');
   const openPanel = useProjectSession(state => state.openPanel);
 
+  const handled = useRef(false);
   useEffect(() => {
+    if (handled.current) return;
+    handled.current = true;
     const target = searchParams?.get('target') ?? undefined;
     const endpoint = searchParams?.get('ap') ?? undefined;
     const create = searchParams?.get('create');
@@ -36,7 +40,7 @@ export default function AccessRouteAdapter({
       accessEndpointId: endpoint,
       nodeId: path,
     });
-    router.replace(filesHref || `/projects/${projectId}/data`, { scroll: false });
+    router.replace(returnToFiles(projectId, filesHref), { scroll: false });
   }, [filesHref, openPanel, projectId, router, searchParams]);
 
   return <PageLoading variant='fill' label='Opening access' />;

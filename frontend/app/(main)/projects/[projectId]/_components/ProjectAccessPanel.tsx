@@ -14,11 +14,11 @@ import {
   repositoryViewKey,
   type RepositoryView,
 } from '@/lib/repoApi';
-import { useAccessData } from '../access/hooks/useAccessData';
-import { CreateAccessModal } from '../access/components/CreateAccessModal';
-import { ScopeSidebar } from '../access/components/ScopeSidebar';
-import { ScopeDetailPanel } from '../access/components/ScopeDetailPanel';
-import { AccessLoadError, NoConnectorsState } from '../access/components/page-shell';
+import { useAccessData } from '@/features/access/hooks/useAccessData';
+import { CreateAccessModal } from '@/features/access/components/CreateAccessModal';
+import { ScopeSidebar } from '@/features/access/components/ScopeSidebar';
+import { ScopeDetailPanel } from '@/features/access/components/ScopeDetailPanel';
+import { AccessLoadError, NoConnectorsState } from '@/features/access/components/page-shell';
 
 export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const panel = useProjectSession(state => state.panel);

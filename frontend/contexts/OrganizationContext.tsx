@@ -8,7 +8,7 @@ import {
   type OrganizationInfo,
   type OrgMember,
 } from '@/lib/organizationsApi';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 
 interface OrganizationContextValue {
   orgs: OrganizationInfo[];

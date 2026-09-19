@@ -1,3 +1,4 @@
+import { WorkspaceNavigationProvider } from '@/features/workspace/navigation';
 import { ResponsiveWorkspaceProvider } from '@/features/workspace/responsive';
 import { useState } from 'react';
 import { fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react';
@@ -13,9 +14,9 @@ const fixture = vi.hoisted(() => ({
   segment: 'data',
   loading: false,
 }));
-vi.mock('next/navigation', () => ({ useRouter: () => fixture.router, useSelectedLayoutSegment: () => fixture.segment }));
+vi.mock('next/navigation', () => ({ useRouter: () => fixture.router, useSelectedLayoutSegment: () => fixture.segment, usePathname: () => `/projects/p/${fixture.segment}`, useSearchParams: () => new URLSearchParams() }));
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
-vi.mock('@/app/supabase/SupabaseAuthProvider', () => ({ useAuth: () => ({ session: { user: { id: 'u' } }, isAuthReady: true }) }));
+vi.mock('@/contexts/SupabaseAuthProvider', () => ({ useAuth: () => ({ session: { user: { id: 'u' } }, isAuthReady: true }) }));
 vi.mock('@/contexts/OrganizationContext', () => ({ useOrganization: () => ({ currentOrg: { id: 'org', name: 'Team' }, members: [{ user_id: 'teammate', display_name: 'Teammate', role: 'member' }], isMembersLoading: false }) }));
 vi.mock('@/lib/hooks/useData', () => ({
   useProject: () => ({ project: fixture.project, isLoading: fixture.loading }),
@@ -139,4 +140,4 @@ it('can dismiss while loading and preserves the project permission check', async
   expect(screen.queryByRole('button', { name: 'Delete Project' })).toBeNull();
 });
 
-function render(ui: React.ReactElement) { return renderUI(ui, { wrapper: ResponsiveWorkspaceProvider }); }
+function render(ui: React.ReactElement) { return renderUI(ui, { wrapper: ({ children }) => <WorkspaceNavigationProvider><ResponsiveWorkspaceProvider>{children}</ResponsiveWorkspaceProvider></WorkspaceNavigationProvider> }); }

@@ -1,10 +1,12 @@
 'use client';
 
+import { useWorkspaceRouter } from '@/features/workspace/navigation';
+
 import { useState, useEffect, useMemo } from 'react';
 import type { CSSProperties } from 'react';
-import { useRouter } from 'next/navigation';
+
 import useSWR from 'swr';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useProject, useProjects, refreshProjects } from '@/lib/hooks/useData';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { PROJECT_CONTENT_RAIL_WIDTH } from '@/lib/layout';
@@ -129,7 +131,7 @@ export default function ProjectSettingsDialog({ projectId, onClose }: {
   projectId: string;
   onClose: () => void;
 }) {
-  const router = useRouter();
+  const router = useWorkspaceRouter();
   const { session, isAuthReady } = useAuth();
   const {
     currentOrg,

@@ -1,11 +1,12 @@
 'use client';
 
+import { useWorkspaceRouter, usePendingNavigation, parseWorkspaceLocation } from '@/features/workspace/navigation';
+
 import clsx from 'clsx';
-import { Cloud, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Cloud, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectInfo } from '@/lib/projectsApi';
-import { rememberLastProject } from '@/lib/lastProject';
 import UserMenuPanel from '@/components/UserMenuPanel';
 import { SkeletonBlock } from '@/components/loading';
 import { useWorkspaceActions } from '@/features/workspace/responsive';
@@ -47,7 +48,9 @@ export const WorkspaceProjectRail = memo(function WorkspaceProjectRail({
   maxResizeWidth = MAX_WIDTH,
   resizable = true,
 }: WorkspaceProjectRailProps) {
-  const router = useRouter();
+  const router = useWorkspaceRouter();
+  const pendingHref = usePendingNavigation();
+  const pendingProject = pendingHref ? parseWorkspaceLocation(pendingHref.split('?')[0])?.projectId : null;
   const { setProjectsOpen } = useWorkspaceActions();
   const workspaceShell = useWorkspaceShell();
   const railRef = useRef<HTMLElement>(null);
@@ -57,9 +60,7 @@ export const WorkspaceProjectRail = memo(function WorkspaceProjectRail({
 
   const openProject = useCallback(
     (projectId: string) => {
-      setProjectsOpen(false);
-      rememberLastProject(projectId);
-      router.push(`/projects/${projectId}/data`);
+      if (router.push(`/projects/${projectId}/data`)) setProjectsOpen(false);
     },
     [router, setProjectsOpen]
   );
@@ -191,6 +192,7 @@ export const WorkspaceProjectRail = memo(function WorkspaceProjectRail({
               ))
             : projects.map(project => {
                 const active = project.id === activeProjectId;
+                const pending = pendingProject === project.id && !active;
                 return (
                   <button
                     key={project.id}
@@ -202,8 +204,9 @@ export const WorkspaceProjectRail = memo(function WorkspaceProjectRail({
                     }
                     title={project.name}
                     aria-current={active ? 'page' : undefined}
+                    aria-busy={pending || undefined}
                   >
-                    <ProjectMark name={project.name} compact={isCollapsed} />
+                    {pending ? <LoaderCircle size={15} className='animate-spin motion-reduce:animate-none shrink-0' aria-hidden='true' /> : <ProjectMark name={project.name} compact={isCollapsed} />}
                     {!isCollapsed && (
                       <span className='truncate text-[14px] font-normal leading-5'>
                         {project.name}
@@ -219,7 +222,7 @@ export const WorkspaceProjectRail = memo(function WorkspaceProjectRail({
           <button
             type='button'
             className={rowClass(false)}
-            onClick={() => { setProjectsOpen(false); router.push('/home?create=true'); }}
+            onClick={() => { if (router.push('/home?create=true')) setProjectsOpen(false); }}
             title='Create new project'
             disabled={projectsLoading || Boolean(projectsError)}
           >

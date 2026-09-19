@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useAuth } from '../app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { batchGetETLTaskStatus, isTerminalStatus } from '../lib/etlApi';
 
 // 使用 sessionStorage，刷新后自动清空

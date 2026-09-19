@@ -9,7 +9,7 @@ import React, {
 } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { refreshProjects, useProjects } from '@/lib/hooks/useData';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import {
   DashboardLoadError,
