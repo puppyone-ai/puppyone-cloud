@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerApiBaseUrl } from '@/lib/server-env';
 import { forwardBackendRequestHeaders } from '@/lib/backendProxyHeaders';
+import { createRequestScope, withAbort } from '@/lib/requestScope';
+import { scopedResponseBody } from '@/lib/responseStream';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -18,6 +20,8 @@ const RESPONSE_HEADERS_TO_FORWARD = [
   'content-type',
   'etag',
   'last-modified',
+  'x-request-id',
+  'server-timing',
 ] as const;
 const UPSTREAM_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_UPSTREAM_REDIRECTS = 4;
@@ -85,10 +89,13 @@ async function proxy(request: NextRequest, method: string): Promise<Response> {
     );
   }
 
+  const scope = createRequestScope(request.signal, 270_000);
+  const requestHeaders = forwardRequestHeaders(request);
+  const requestId = requestHeaders.get('x-request-id') || crypto.randomUUID();
+  requestHeaders.set('x-request-id', requestId);
   try {
     const hasBody = method !== 'GET' && method !== 'HEAD';
-    const requestHeaders = forwardRequestHeaders(request);
-    const requestBody = hasBody ? await request.arrayBuffer() : undefined;
+    const requestBody = hasBody ? await withAbort(request.arrayBuffer(), scope.signal) : undefined;
     let currentUrl = backendUrl;
     let currentMethod = method;
     let response: Response | null = null;
@@ -100,10 +107,12 @@ async function proxy(request: NextRequest, method: string): Promise<Response> {
         body: currentMethod !== 'GET' && currentMethod !== 'HEAD' ? requestBody : undefined,
         cache: 'no-store',
         redirect: 'manual',
+        signal: scope.signal,
       });
 
       const redirectUrl = resolveUpstreamRedirect(response, currentUrl);
       if (!redirectUrl) break;
+      await response.body?.cancel();
       if (redirects === MAX_UPSTREAM_REDIRECTS) {
         throw new Error(`Backend redirect limit exceeded while proxying ${backendUrl}.`);
       }
@@ -119,12 +128,18 @@ async function proxy(request: NextRequest, method: string): Promise<Response> {
       throw new Error('Backend proxy did not receive a response.');
     }
 
-    return new NextResponse(response.body, {
+    const headers = forwardResponseHeaders(response);
+    if (!headers.has('x-request-id')) headers.set('x-request-id', requestId);
+    if (!response.body) scope.dispose();
+    return new NextResponse(response.body ? scopedResponseBody(response.body, scope) : null, {
       status: response.status,
-      headers: forwardResponseHeaders(response),
+      headers,
     });
   } catch (error: any) {
-    console.error(`[backend proxy] ${method} ${backendUrl} failed:`, error?.message || error);
+    scope.dispose();
+    const status = scope.signal.aborted ? (request.signal.aborted ? 499 : 504) : 502;
+    // Correlation without query strings, cookies, capabilities or signed URLs.
+    console.error(`[backend proxy] ${requestId} ${method} ${new URL(backendUrl).pathname} failed (${status})`);
     let upstreamOrigin = backendUrl;
     try {
       upstreamOrigin = new URL(backendUrl).origin;
@@ -134,19 +149,20 @@ async function proxy(request: NextRequest, method: string): Promise<Response> {
     const usingDefault = upstreamOrigin.includes('localhost:9090');
     return NextResponse.json(
       {
-        code: 502,
+        code: status,
         message:
           `Unable to reach the backend API at ${upstreamOrigin} from the web app proxy` +
           (usingDefault
             ? ' — this is the localhost fallback, so API_INTERNAL_URL / NEXT_PUBLIC_API_URL is not set in the frontend deployment. Set API_INTERNAL_URL to the backend URL and redeploy.'
             : '. Check the backend is up and reachable from the frontend (API_INTERNAL_URL).'),
         detail: {
-          upstream: backendUrl,
-          reason: error?.message || 'Unknown error',
+          upstream: upstreamOrigin,
+          request_id: requestId,
+          reason: scope.signal.aborted ? 'Request cancelled or deadline exceeded' : 'Upstream request failed',
         },
         data: null,
       },
-      { status: 502 },
+      { status, headers: { 'x-request-id': requestId } },
     );
   }
 }

@@ -1,0 +1,39 @@
+.group { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.controls { display: inline-flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.trigger { display: none; }
+
+/* Keep one mounted set of editing controls. Only their placement changes. */
+@container project-header (max-width: 600px) {
+  .group[data-compact-menu='true'] > .trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--po-text-muted);
+    cursor: pointer;
+  }
+  .trigger:hover, .trigger[aria-expanded='true'] { background: var(--po-hover); color: var(--po-text); }
+  .trigger:focus-visible { outline: 2px solid var(--po-focus-ring); outline-offset: -2px; }
+  .group[data-compact-menu='true'] > .controls { display: none; }
+  .group[data-compact-menu='true'][data-open='true'] > .controls {
+    display: inline-flex;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: max-content;
+    max-width: calc(100cqw - 24px);
+    padding: 6px;
+    gap: 6px;
+    border: 1px solid var(--po-menu-border);
+    border-radius: 8px;
+    background: var(--po-menu-bg);
+    box-shadow: var(--po-menu-shadow);
+  }
+  .controls button { min-height: 32px; min-width: 32px; }
+}

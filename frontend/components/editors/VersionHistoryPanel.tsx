@@ -281,7 +281,7 @@ export function VersionHistoryPanel({
     } finally {
       setIsRollingBack(false);
     }
-  }, [nodeId, projectId, refreshHistory, onRollbackComplete]);
+  }, [projectId, refreshHistory, onRollbackComplete]);
 
   const commits = history?.commits ?? [];
   const headCommitId = history?.head_commit_id ?? '';
@@ -389,7 +389,7 @@ export function VersionHistoryPanel({
               re-applied later.
             </p>
             {rollbackError && (
-              <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--po-danger, #d64545)', lineHeight: 1.5 }}>
+              <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--po-danger)', lineHeight: 1.5 }}>
                 {rollbackError}
               </p>
             )}

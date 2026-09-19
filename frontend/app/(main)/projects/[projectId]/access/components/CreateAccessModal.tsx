@@ -675,13 +675,13 @@ function SectionHeading({ children }: { readonly children: ReactNode }) {
 
 function providerTileBg(provider: string, active: boolean): string {
   if (provider === 'cli') return active ? 'color-mix(in srgb, var(--po-accent) 92%, var(--po-panel) 8%)' : 'color-mix(in srgb, var(--po-accent) 14%, var(--po-panel) 86%)';
-  if (provider === 'git_remote') return active ? 'color-mix(in srgb, #ef4a37 18%, var(--po-panel) 82%)' : 'color-mix(in srgb, #ef4a37 9%, var(--po-panel) 91%)';
+  if (provider === 'git_remote') return active ? 'color-mix(in srgb, var(--po-git-brand) 18%, var(--po-panel) 82%)' : 'color-mix(in srgb, var(--po-git-brand) 9%, var(--po-panel) 91%)';
   return active ? 'var(--po-panel)' : 'color-mix(in srgb, var(--po-control) 70%, var(--po-panel) 30%)';
 }
 
 function providerTileColor(provider: string, active: boolean): string {
   if (provider === 'cli') return active ? 'var(--po-text-inverse)' : 'var(--po-accent)';
-  if (provider === 'git_remote') return '#d94939';
+  if (provider === 'git_remote') return 'var(--po-git-brand-text)';
   return active ? T.text1 : T.text2;
 }
 

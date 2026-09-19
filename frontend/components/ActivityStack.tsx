@@ -1,9 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import { TaskStatusWidget } from './TaskStatusWidget';
 import { ImportJobsWidget } from './ImportJobsWidget';
 import { UploadJobsWidget } from './UploadJobsWidget';
 import { SyncJobsWidget } from './SyncJobsWidget';
+import { useProjectActivity } from '@/lib/hooks/useActivity';
 
 interface ActivityStackProps {
   projectId?: string;
@@ -20,6 +22,19 @@ interface ActivityStackProps {
 export function ActivityStack({
   projectId,
 }: Readonly<ActivityStackProps>) {
+  // One unified active-only request replaces three parallel reads of the same
+  // activity view. The shell stays mounted across project sub-routes, so this
+  // cache and polling loop also survive Files / Git / Access navigation.
+  const { activeItems, refresh } = useProjectActivity(projectId, {
+    activeOnly: true,
+    limit: 30,
+  });
+  const itemsByKind = useMemo(() => ({
+    upload: activeItems.filter(item => item.kind === 'upload'),
+    import: activeItems.filter(item => item.kind === 'import'),
+    sync: activeItems.filter(item => item.kind === 'sync_run'),
+  }), [activeItems]);
+
   return (
     <div
       aria-label="Activity"
@@ -36,15 +51,19 @@ export function ActivityStack({
       }}
     >
       <div style={{ pointerEvents: 'auto' }}>
-        <UploadJobsWidget projectId={projectId} inline />
+        <UploadJobsWidget activeItems={itemsByKind.upload} inline />
       </div>
 
       <div style={{ pointerEvents: 'auto' }}>
-        <ImportJobsWidget projectId={projectId} inline />
+        <ImportJobsWidget
+          activeItems={itemsByKind.import}
+          onRefresh={refresh}
+          inline
+        />
       </div>
 
       <div style={{ pointerEvents: 'auto' }}>
-        <SyncJobsWidget projectId={projectId} inline />
+        <SyncJobsWidget activeItems={itemsByKind.sync} inline />
       </div>
 
       <div style={{ pointerEvents: 'auto' }}>

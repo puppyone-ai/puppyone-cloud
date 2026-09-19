@@ -9,7 +9,7 @@ def project_to_out(
     project: Project,
     grant: ProjectGrant,
     *,
-    access_point_count: int = 0,
+    access_point_count: int | None = 0,
 ) -> ProjectOut:
     """Project metadata only; content remains in the Content API."""
 

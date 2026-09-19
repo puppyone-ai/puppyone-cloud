@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Children, useEffect, useId, useRef, useState } from 'react';
 import type { FC, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { EditorSaveButton } from '@/components/editors/EditorSaveButton';
@@ -12,6 +12,7 @@ import type { CsvViewMode } from '@/components/editors/spreadsheet/CsvTableViewe
 import type { EditorType } from '@/components/ProjectsHeader';
 import { downloadNode } from '@/lib/contentTreeApi';
 import { APP_Z_INDEX } from '@/lib/zIndex';
+import styles from './FileViewerHeaderActions.module.css';
 
 type HeaderViewerId = GenericViewerId | SpecialViewerId;
 
@@ -150,17 +151,40 @@ export function FileViewerHeaderActions({
 }
 
 function HeaderActionGroup({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const groupRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const controlsId = useId();
+  const compactMenu = Children.toArray(children).length > 1;
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!groupRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
   return (
-    <div
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        gap: 10,
-        minWidth: 0,
-      }}
-    >
-      {children}
+    <div ref={groupRef} className={styles.group} data-compact-menu={compactMenu} data-open={open}>
+      {compactMenu && (
+        <button ref={triggerRef} type='button' className={styles.trigger} title='File controls'
+          aria-label='File controls' aria-expanded={open} aria-controls={controlsId}
+          onClick={() => setOpen(value => !value)}>
+          <MoreIcon />
+        </button>
+      )}
+      <div id={controlsId} className={styles.controls}>{children}</div>
     </div>
   );
 }

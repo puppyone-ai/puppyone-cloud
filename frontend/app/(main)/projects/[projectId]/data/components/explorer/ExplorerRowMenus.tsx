@@ -110,7 +110,19 @@ export function ItemContextMenu({
     const hostRect =
       triggerEl.closest('[data-menu-host="true"]')?.getBoundingClientRect() ?? triggerRect;
 
-    setPos({ x: triggerRect.left, y: hostRect.bottom - 1 });
+    {
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft ?? 0;
+      const top = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      const menu = menuRef.current?.getBoundingClientRect();
+      setPos({
+        x: Math.max(left + 8, Math.min(triggerRect.left, left + width - (menu?.width || 160) - 8)),
+        y: Math.max(top + 8, Math.min(hostRect.bottom - 1, top + height - (menu?.height || 240) - 8)),
+      });
+      return;
+    }
   }, []);
 
   useEffect(() => {
@@ -125,13 +137,22 @@ export function ItemContextMenu({
     };
 
     const handleReposition = () => updatePosition();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      btnRef.current?.focus();
+    };
 
     document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown, true);
     window.addEventListener('resize', handleReposition);
     window.addEventListener('scroll', handleReposition, true);
 
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('resize', handleReposition);
       window.removeEventListener('scroll', handleReposition, true);
     };
@@ -200,6 +221,7 @@ export function ItemContextMenu({
       {open && pos && typeof document !== 'undefined' && createPortal(
         <div
           ref={menuRef}
+          data-workspace-row-menu=''
           role="menu"
           onPointerDown={(e) => {
             e.stopPropagation();

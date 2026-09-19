@@ -15,7 +15,7 @@ router = APIRouter(prefix="/activity", tags=["activity"])
 
 
 @router.get("", response_model=ApiResponse[ActivityListResponse])
-async def list_activity(
+def list_activity(
     project_id: str = Query(..., description="Project ID"),
     kind: str | None = Query(
         None, description="Filter by kind: upload | import | sync_run"
@@ -28,7 +28,9 @@ async def list_activity(
     """Unified upload / import / sync_run activity for a project.
 
     Read-only aggregation over the ``context_activity_items`` view. Each item
-    keeps its own ``kind`` and lifecycle; this endpoint never writes.
+    keeps its own ``kind`` and lifecycle; this endpoint never writes. The
+    service uses synchronous PostgREST, so FastAPI runs this complete read
+    (including authorization) in its bounded AnyIO worker pool.
     """
     items = service.list_for_project(
         project_id,

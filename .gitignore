@@ -43,6 +43,7 @@ mypy.ini
 
 # next.js
 **/.next/
+**/.next-check/
 **/.next.broken-*/
 /out/
 

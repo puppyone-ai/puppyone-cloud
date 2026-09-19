@@ -16,7 +16,7 @@ export type ProjectInfo = {
    *  field yet, hence optional on the wire. */
   bound_git_branch?: string;
   updated_at?: string;
-  access_point_count?: number;
+  access_point_count?: number | null;
   /** Server-resolved human authorization. Missing fields fail closed in UI. */
   effective_role?: 'admin' | 'editor' | 'viewer';
   grant_source?: 'org_owner' | 'project_member' | 'org_visibility';
@@ -56,7 +56,8 @@ export type TableData = {
 
 // 项目相关API
 export async function getProjects(orgId?: string): Promise<ProjectInfo[]> {
-  const params = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
+  // Navigation needs project metadata/grants, never access statistics or trees.
+  const params = `?include_access_counts=false${orgId ? `&org_id=${encodeURIComponent(orgId)}` : ''}`;
   return apiRequest<ProjectInfo[]>(`/api/v1/projects/${params}`);
 }
 

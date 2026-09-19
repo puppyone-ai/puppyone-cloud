@@ -270,6 +270,7 @@ function CopyPromptButton({
 }
 
 export function AccessPointsListPanel({
+  projectId,
   entries,
   providerIcons,
   expandedEndpointId,
@@ -277,6 +278,7 @@ export function AccessPointsListPanel({
   onEndpointClick,
   onEndpointHover,
 }: {
+  projectId: string;
   entries: EndpointEntry[];
   providerIcons: ProviderIconLookup;
   expandedEndpointId?: string | null;
@@ -321,7 +323,7 @@ export function AccessPointsListPanel({
                     key={`access-panel-${ep.syncId}`}
                     onMouseEnter={() => {
                       setHoveredEndpoint(ep.syncId);
-                      ensureExpandedBatch(getAncestorPaths(nodeId));
+                      ensureExpandedBatch(projectId, getAncestorPaths(nodeId));
                       onEndpointHover?.(nodeId);
                     }}
                     onMouseLeave={() => {

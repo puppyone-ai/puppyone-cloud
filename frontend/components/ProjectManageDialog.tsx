@@ -23,6 +23,7 @@ const ACCENT = 'var(--po-success)';
 type DialogMode = 'create' | 'edit' | 'delete';
 
 type ProjectManageDialogProps = {
+  layer?: 'modal' | 'modalNested';
   mode: DialogMode;
   projectId: string | null;
   projects: ProjectInfo[];
@@ -32,6 +33,7 @@ type ProjectManageDialogProps = {
 };
 
 export function ProjectManageDialog({
+  layer = 'modal',
   mode,
   projectId,
   projects,
@@ -137,7 +139,7 @@ export function ProjectManageDialog({
   };
 
   return (
-    <DialogRoot onClose={onClose}>
+    <DialogRoot onClose={onClose} layer={layer}>
       <DialogSurface width={surfaceWidth}>
         {mode === 'delete' ? (
           <DeleteBody

@@ -25,7 +25,7 @@ import { PROJECT_CONTENT_RAIL_WIDTH } from '@/lib/layout';
  */
 
 const KIND_LABEL = 'Failed sync';
-const ACCENT_VAR = 'var(--po-danger, #d14545)';
+const ACCENT_VAR = 'var(--po-danger)';
 
 async function fetchItems(projectId: string): Promise<FailedSyncItem[]> {
   const rows = await listFailedSyncRuns(projectId);

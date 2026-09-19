@@ -1,6 +1,6 @@
 'use client';
 
-import { ResizableSidebarColumn } from '@/components/sidebar/ResizableSidebarColumn';
+import { WorkspaceFileColumn } from '@/components/sidebar/WorkspaceFileColumn';
 import { ExplorerSidebar } from './ExplorerSidebar';
 import type { ExplorerSidebarProps } from './types';
 
@@ -29,16 +29,7 @@ export function DataExplorerPane({
   ...sidebarProps
 }: DataExplorerPaneProps) {
   return (
-    <ResizableSidebarColumn
-      storageKey="explorer-sidebar:data"
-      defaultWidth={220}
-      minWidth={220}
-      maxWidth={480}
-      style={{
-        borderRight: '1px solid var(--po-divider)',
-        background: 'var(--po-canvas)',
-      }}
-    >
+    <WorkspaceFileColumn>
       <ExplorerSidebar
         {...sidebarProps}
         currentPath={folderBreadcrumbs.map((f) => ({ id: f.id, name: f.name }))}
@@ -48,6 +39,6 @@ export function DataExplorerPane({
         highlightVariant={hoverHighlightNodeId !== null ? 'access-point' : 'default'}
         style={{ flex: 1, width: '100%', background: 'transparent', minHeight: 0 }}
       />
-    </ResizableSidebarColumn>
+    </WorkspaceFileColumn>
   );
 }

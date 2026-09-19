@@ -24,7 +24,7 @@ class ProjectOut(BaseModel):
     visibility: str = "org"
     bound_git_branch: str = "main"
     updated_at: str | None = None
-    access_point_count: int = 0
+    access_point_count: int | None = 0
     effective_role: Literal["admin", "editor", "viewer"]
     grant_source: Literal["org_owner", "project_member", "org_visibility"]
     capabilities: list[str]

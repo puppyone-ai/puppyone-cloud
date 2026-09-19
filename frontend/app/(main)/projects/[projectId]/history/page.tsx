@@ -2,13 +2,17 @@
 
 import { use, useState, useMemo, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import useSWR from 'swr';
+import { workspaceKeys } from '@/lib/queryKeys';
+import { useDiffPreview } from '@/features/history/useDiffPreview';
+import { useHistoryReconciliation } from '@/features/history/useHistoryReconciliation';
+import type { DiffLine } from '@/features/history/diffModel';
 import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useProject } from '@/lib/hooks/useData';
 import {
   getProjectHistory,
   getVersionContent,
   type VersionCommitInfo,
   type VersionCommitChange,
-  type FileVersionDetail,
 } from '@/lib/contentTreeApi';
 import { PROJECT_CONTENT_RAIL_WIDTH } from '@/lib/layout';
 import { SIDEBAR_ROW_TYPOGRAPHY } from '@/lib/uiTypography';
@@ -17,8 +21,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { CountBadge } from '@/components/ui/CountBadge';
 import { ResizableSidebarColumn } from '@/components/sidebar/ResizableSidebarColumn';
-import { useCommitUpdates } from '@/contexts/VersionWebSocketContext';
-import { Clock3, GitCommitHorizontal } from 'lucide-react';
+import { ChevronRight, Clock3, GitCommitHorizontal } from 'lucide-react';
 import {
   NeedsActionSection,
   getKind as getNeedsActionKind,
@@ -27,10 +30,14 @@ import {
 } from './components/NeedsActionSection';
 import { HistoryDetailViewport } from './components/HistoryDetailViewport';
 import type { NeedsActionSelection } from './components/NeedsActionSection';
+import { buildRiskyDeleteItems } from './components/items/riskyDeleteKind';
 import type {
   NeedsActionRenderContext,
   ResolvedResult,
 } from '@/lib/needsActionRegistry';
+import { useSessionValue } from '@/features/workspace/session';
+import { ProjectHeaderContribution } from '@/components/project/ProjectWorkspaceShell';
+import { projectAllows } from '@/lib/projectsApi';
 
 // ─── Needs Action detail-pane router ────────────────────────────────
 //
@@ -76,148 +83,12 @@ function NeedsActionDetailPane({
 // patch. O(m*n) memory — safe for typical file sizes (<10k lines);
 // guarded by a hard length cap below to avoid pathological pages.
 
-type DiffLineKind = 'add' | 'remove' | 'context' | 'hunk';
-interface DiffLine {
-  kind: DiffLineKind;
-  text: string;
-  oldLine?: number;
-  newLine?: number;
-}
-
-const DIFF_MAX_LINES = 4000;
 const HISTORY_DIFF_HEADER_BG = 'color-mix(in srgb, var(--po-canvas) 84%, var(--po-text) 4%)';
 const HISTORY_ROW_ITEM_HEIGHT = 30;
 const HISTORY_ROW_MARGIN_Y = 1;
 const HISTORY_ROW_HEIGHT = HISTORY_ROW_ITEM_HEIGHT + HISTORY_ROW_MARGIN_Y * 2;
 const HISTORY_GRAPH_WIDTH = 20;
 const HISTORY_LINE_X = HISTORY_GRAPH_WIDTH / 2;
-
-function lineDiff(a: string[], b: string[]): DiffLine[] {
-  if (a.length + b.length > DIFF_MAX_LINES) {
-    return [
-      ...a.map((text) => ({ kind: 'remove' as const, text })),
-      ...b.map((text) => ({ kind: 'add' as const, text })),
-    ];
-  }
-
-  const m = a.length;
-  const n = b.length;
-  const dp: Uint16Array = new Uint16Array((m + 1) * (n + 1));
-  const idx = (i: number, j: number) => i * (n + 1) + j;
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[idx(i, j)] =
-        a[i - 1] === b[j - 1]
-          ? dp[idx(i - 1, j - 1)] + 1
-          : Math.max(dp[idx(i - 1, j)], dp[idx(i, j - 1)]);
-    }
-  }
-
-  const out: DiffLine[] = [];
-  let i = m;
-  let j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      out.push({ kind: 'context', text: a[i - 1] });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[idx(i, j - 1)] >= dp[idx(i - 1, j)])) {
-      out.push({ kind: 'add', text: b[j - 1] });
-      j--;
-    } else {
-      out.push({ kind: 'remove', text: a[i - 1] });
-      i--;
-    }
-  }
-  out.reverse();
-  return out;
-}
-
-function addLineNumbers(lines: DiffLine[]): DiffLine[] {
-  let oldLine = 1;
-  let newLine = 1;
-  return lines.map((line) => {
-    if (line.kind === 'remove') {
-      return { ...line, oldLine: oldLine++ };
-    }
-    if (line.kind === 'add') {
-      return { ...line, newLine: newLine++ };
-    }
-    if (line.kind === 'context') {
-      return { ...line, oldLine: oldLine++, newLine: newLine++ };
-    }
-    return line;
-  });
-}
-
-function compactDiffLines(lines: DiffLine[], contextRadius = 3): DiffLine[] {
-  const changedIndexes = lines
-    .map((line, index) => (line.kind === 'add' || line.kind === 'remove' ? index : -1))
-    .filter((index) => index >= 0);
-
-  if (changedIndexes.length === 0) return lines;
-
-  const ranges: Array<{ start: number; end: number }> = [];
-  for (const index of changedIndexes) {
-    const start = Math.max(0, index - contextRadius);
-    const end = Math.min(lines.length - 1, index + contextRadius);
-    const last = ranges[ranges.length - 1];
-    if (last && start <= last.end + 1) {
-      last.end = Math.max(last.end, end);
-    } else {
-      ranges.push({ start, end });
-    }
-  }
-
-  const compacted: DiffLine[] = [];
-  let cursor = 0;
-  for (const range of ranges) {
-    const hiddenCount = range.start - cursor;
-    if (hiddenCount > 0) {
-      compacted.push({
-        kind: 'hunk',
-        text: hiddenCount === 1 ? '@@ 1 unchanged line @@' : `@@ ${hiddenCount} unchanged lines @@`,
-      });
-    }
-    compacted.push(...lines.slice(range.start, range.end + 1));
-    cursor = range.end + 1;
-  }
-
-  const trailingHidden = lines.length - cursor;
-  if (trailingHidden > 0) {
-    compacted.push({
-      kind: 'hunk',
-      text: trailingHidden === 1 ? '@@ 1 unchanged line @@' : `@@ ${trailingHidden} unchanged lines @@`,
-    });
-  }
-
-  return compacted;
-}
-
-// Pull lines out of the commit-content response. Backend returns
-// either `content_text` (raw decoded text — markdown / yaml / source)
-// or `content` (already-parsed JSON for JSON files). The earlier
-// version of this fn looked at `content_json`, which the endpoint
-// never returns — so JSON-file diffs always silently fell through to
-// the "Binary file" placeholder. Keep both fallbacks so the function
-// stays robust if the wire shape ever shifts.
-function fileToLines(detail: FileVersionDetail): string[] | null {
-  if (detail.is_binary) {
-    return null;
-  }
-  if (detail.content_text != null) {
-    return detail.content_text.split('\n');
-  }
-  if (detail.content != null) {
-    try {
-      return JSON.stringify(detail.content, null, 2).split('\n');
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 function fileExtClass(path: string): 'json' | 'markdown' | 'plain' {
   if (path.endsWith('.json')) return 'json';
@@ -438,7 +309,7 @@ function VerticalCommitNode({
   const markerSize = 6;
 
   return (
-    <div style={{ position: 'relative', height: HISTORY_ROW_HEIGHT }}>
+    <div className='workspace-history-entry' style={{ position: 'relative', height: HISTORY_ROW_HEIGHT }}>
       {/* ExplorerSidebar TreeItem Style Row */}
       <div
         ref={rowRef}
@@ -777,9 +648,17 @@ interface FileDiffBlockProps {
   projectId: string;
   commitId: string;
   parentCommitId: string | null;
+  defaultExpanded?: boolean;
 }
 
-function FileDiffBlock({ change, projectId, commitId, parentCommitId }: FileDiffBlockProps) {
+function FileDiffBlock({
+  change,
+  projectId,
+  commitId,
+  parentCommitId,
+  defaultExpanded = false,
+}: FileDiffBlockProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const op = change.op;
   const tone = OP_TONE[op] ?? OP_TONE.modified;
   const ext = fileExtClass(change.path);
@@ -791,42 +670,26 @@ function FileDiffBlock({ change, projectId, commitId, parentCommitId }: FileDiff
   const needsParent = (op === 'modified' || op === 'deleted') && !!parentCommitId;
 
   const { data: currentDetail, error: currentErr } = useSWR(
-    needsCurrent ? ['ver-content', projectId, change.path, commitId] : null,
-    () => getVersionContent(change.path, commitId, projectId),
+    expanded && needsCurrent ? ['version-preview', projectId, change.path, commitId] : null,
+    () => getVersionContent(change.path, commitId, projectId, { previewBytes: 256_000 }),
     { revalidateOnFocus: false, dedupingInterval: 60000 },
   );
   const { data: parentDetail, error: parentErr } = useSWR(
-    needsParent ? ['ver-content', projectId, change.path, parentCommitId] : null,
-    () => getVersionContent(change.path, parentCommitId!, projectId),
+    expanded && needsParent ? ['version-preview', projectId, change.path, parentCommitId] : null,
+    () => getVersionContent(change.path, parentCommitId!, projectId, { previewBytes: 256_000 }),
     { revalidateOnFocus: false, dedupingInterval: 60000 },
   );
 
-  const isLoading =
+  const isFetching =
     (needsCurrent && !currentDetail && !currentErr) ||
     (needsParent && !parentDetail && !parentErr);
-
-  let lines: DiffLine[] | null = null;
-  let placeholder: string | null = null;
-
-  if (currentErr || parentErr) {
-    placeholder = 'Failed to load diff';
-  } else if (!isLoading) {
-    if (op === 'added') {
-      const cur = currentDetail ? fileToLines(currentDetail) : null;
-      if (cur) lines = cur.map((text, index) => ({ kind: 'add' as const, text, newLine: index + 1 }));
-      else placeholder = 'Binary file or unchanged metadata';
-    } else if (op === 'deleted') {
-      const prev = parentDetail ? fileToLines(parentDetail) : null;
-      if (prev) lines = prev.map((text, index) => ({ kind: 'remove' as const, text, oldLine: index + 1 }));
-      else if (!parentCommitId) placeholder = 'No previous version available';
-      else placeholder = 'Binary file or unchanged metadata';
-    } else {
-      const prev = parentDetail ? fileToLines(parentDetail) : null;
-      const cur = currentDetail ? fileToLines(currentDetail) : null;
-      if (prev && cur) lines = compactDiffLines(addLineNumbers(lineDiff(prev, cur)));
-      else placeholder = 'Binary file or unchanged metadata';
-    }
-  }
+  const request = useMemo(() => expanded && !isFetching && !currentErr && !parentErr
+    ? { op, current: currentDetail, previous: parentDetail } : null,
+    [expanded, isFetching, currentErr, parentErr, op, currentDetail, parentDetail]);
+  const preview = useDiffPreview(request);
+  const isLoading = isFetching || Boolean(request && !preview);
+  const lines = preview?.lines ?? null;
+  const placeholder = currentErr || parentErr ? 'Failed to load diff' : preview?.placeholder ?? null;
 
   return (
     <div
@@ -840,8 +703,13 @@ function FileDiffBlock({ change, projectId, commitId, parentCommitId }: FileDiff
       }}
     >
       {/* File header */}
-      <div
+      <button
+        className='workspace-history-file'
+        type='button'
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
         style={{
+          width: '100%',
           height: 32,
           padding: '0 12px',
           display: 'flex',
@@ -849,9 +717,24 @@ function FileDiffBlock({ change, projectId, commitId, parentCommitId }: FileDiff
           minWidth: 0,
           gap: 8,
           background: HISTORY_DIFF_HEADER_BG,
-          borderBottom: '1px solid var(--po-border-subtle)',
+          border: 0,
+          borderBottom: expanded ? '1px solid var(--po-border-subtle)' : 'none',
+          color: 'inherit',
+          cursor: 'pointer',
+          textAlign: 'left',
         }}
       >
+        <ChevronRight
+          size={13}
+          strokeWidth={1.8}
+          aria-hidden='true'
+          style={{
+            flexShrink: 0,
+            color: 'var(--po-text-subtle)',
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 120ms ease',
+          }}
+        />
         <svg
           width='14'
           height='14'
@@ -895,10 +778,10 @@ function FileDiffBlock({ change, projectId, commitId, parentCommitId }: FileDiff
         >
           {op}
         </span>
-      </div>
+      </button>
 
       {/* Diff body */}
-      {isLoading ? (
+      {!expanded ? null : isLoading ? (
         <div
           style={{
             height: 56,
@@ -1051,6 +934,7 @@ function CommitDetail({
               projectId={projectId}
               commitId={commit.commit_id}
               parentCommitId={parentCommitId}
+              defaultExpanded={i === 0}
             />
           ))}
         </>
@@ -1097,26 +981,13 @@ function CommitDetail({
 export default function HistoryPage({ params }: HistoryPageProps) {
   const { projectId } = use(params);
   const { session } = useAuth();
+  const { project } = useProject(session ? projectId : null);
 
   const { data: history, error, mutate: mutateHistory } = useSWR(
-    session ? ['project-history', projectId] : null,
+    session ? workspaceKeys.history(projectId) : null,
     () => getProjectHistory(projectId, 100),
     { revalidateOnFocus: false },
   );
-
-  // Refetch the commit list whenever the server pushes a commit_update
-  // for this project. Replaces the old "wait for the user to refocus
-  // the tab" behaviour — pushes/imports/exports from any other client
-  // (sandbox, agent, GitHub webhook) now show up live.
-  //
-  // The per-commit content cache (``['ver-content', projectId, path,
-  // commitId]``) is content-addressable and immutable: a specific
-  // commit at a specific path doesn't change when a *newer* commit
-  // lands, so we deliberately don't invalidate it here.
-  const onCommitUpdate = useCallback(() => {
-    void mutateHistory();
-  }, [mutateHistory]);
-  useCommitUpdates(onCommitUpdate);
 
   // We deliberately ignore SWR's `isLoading` here: it's only true
   // *while a fetch is in flight*. Before the SWR key becomes truthy
@@ -1132,14 +1003,18 @@ export default function HistoryPage({ params }: HistoryPageProps) {
   const isInitialLoading = !error && history === undefined;
 
   const commits = useMemo(() => history?.commits ?? [], [history]);
+  const seedNeedsActionItems = useMemo(
+    () => ({ 'risky-delete': buildRiskyDeleteItems(commits) }),
+    [commits],
+  );
   // Reverse commits so newest is on top
   const sortedCommits = useMemo(() => [...commits].reverse(), [commits]);
 
-  const [activeScopeFilter, setActiveScopeFilter] = useState<string>('');
-  const [activeActorFilter, setActiveActorFilter] = useState<string | null>(null);
+  const [activeScopeFilter, setActiveScopeFilter] = useSessionValue('historyScope');
+  const [activeActorFilter, setActiveActorFilter] = useSessionValue('historyActor');
   const [filterMenuOpen, setFilterMenuOpen] = useState<'filters' | null>(null);
-  const [historySectionOpen, setHistorySectionOpen] = useState(true);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historySectionOpen, setHistorySectionOpen] = useSessionValue('historySectionOpen');
+  const [historyExpanded, setHistoryExpanded] = useSessionValue('historyExpanded');
   const [needsActionSummary, setNeedsActionSummary] = useState<NeedsActionSummary>({
     count: 0,
     loading: true,
@@ -1203,20 +1078,6 @@ export default function HistoryPage({ params }: HistoryPageProps) {
   );
 
   useEffect(() => {
-    if (!activeScopeFilter) return;
-    if (!scopeOptions.some(option => option.scope === activeScopeFilter)) {
-      setActiveScopeFilter('');
-    }
-  }, [activeScopeFilter, scopeOptions]);
-
-  useEffect(() => {
-    if (!activeActorFilter) return;
-    if (!actorOptions.some(option => option.type === activeActorFilter)) {
-      setActiveActorFilter(null);
-    }
-  }, [activeActorFilter, actorOptions]);
-
-  useEffect(() => {
     if (!filterMenuOpen) return;
 
     function closeOnOutside(event: MouseEvent) {
@@ -1254,10 +1115,6 @@ export default function HistoryPage({ params }: HistoryPageProps) {
   const hiddenHistoryCount = Math.max(0, filteredCommits.length - visibleHistoryCommits.length);
   const showsHistoryMoreRow = filteredCommits.length > collapsedHistoryLimit;
 
-  useEffect(() => {
-    setHistoryExpanded(false);
-  }, [activeScopeFilter, activeActorFilter]);
-
   const handleNeedsActionSummaryChange = useCallback((summary: NeedsActionSummary) => {
     setNeedsActionSummary((current) => {
       if (
@@ -1271,41 +1128,24 @@ export default function HistoryPage({ params }: HistoryPageProps) {
     });
   }, []);
 
-  const [selectedCommitId, setSelectedCommitId] = useState<string | null>(null);
-  // The right pane shows EITHER a commit detail OR a needs-action item
-  // detail. Holding both selections in parallel state (rather than a
-  // discriminated union) keeps the existing commit-selection effects
-  // untouched — they auto-select HEAD when the project changes, and
-  // I don't want to entangle that with the new flow. When a
-  // needs-action item is selected we clear the commit selection, and
-  // vice versa.
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [selectedCommitId, setSelectedCommitId] = useSessionValue('historyCommit');
+  // Commit selection is project-owned; needs-action detail is view-local.
+  // Selecting either clears the other. Reconciliation waits for a real
+  // history snapshot and never steals an active needs-action selection.
   const [selectedNeedsAction, setSelectedNeedsAction] = useState<NeedsActionSelection | null>(null);
   const [selectedNeedsActionItem, setSelectedNeedsActionItem] = useState<NeedsActionItem | null>(null);
 
   const headCommitId = history?.head_commit_id ?? '';
 
-  // Auto-select the HEAD commit when history first lands (or switches projects).
-  useEffect(() => {
-    if (selectedNeedsAction) return;
-    if (!selectedCommitId) {
-      if (headCommitId) {
-        setSelectedCommitId(headCommitId);
-      } else if (commits.length > 0) {
-        setSelectedCommitId(commits[0].commit_id);
-      }
-    }
-  }, [commits, selectedCommitId, headCommitId, selectedNeedsAction]);
-
-  useEffect(() => {
-    if (selectedNeedsAction) return;
-    if (filteredCommits.length === 0) {
-      if (selectedCommitId) setSelectedCommitId(null);
-      return;
-    }
-    if (!selectedCommitId || !filteredCommits.some(commit => commit.commit_id === selectedCommitId)) {
-      setSelectedCommitId(filteredCommits[0].commit_id);
-    }
-  }, [filteredCommits, selectedCommitId, selectedNeedsAction]);
+  useHistoryReconciliation({
+    loaded: history !== undefined,
+    scopeOptions,
+    actorOptions,
+    filteredCommits,
+    headCommitId,
+    needsActionSelected: selectedNeedsAction !== null,
+  });
 
   const selectedCommit = useMemo(
     () => commits.find(c => c.commit_id === selectedCommitId) ?? null,
@@ -1327,11 +1167,12 @@ export default function HistoryPage({ params }: HistoryPageProps) {
   // we drop the commit selection so the views never both render.
   const handleNeedsActionSelect = useCallback(
     (selection: NeedsActionSelection, item: NeedsActionItem) => {
+      setMobileDetailOpen(true);
       setSelectedNeedsAction(selection);
       setSelectedNeedsActionItem(item);
       setSelectedCommitId(null);
     },
-    [],
+    [setSelectedCommitId],
   );
 
   // Item removed (resolved / rejected / dismissed). If a real commit
@@ -1362,17 +1203,18 @@ export default function HistoryPage({ params }: HistoryPageProps) {
         setSelectedCommitId(headCommitId);
       }
     },
-    [mutateHistory, selectedNeedsAction, selectedCommitId, headCommitId],
+    [mutateHistory, selectedNeedsAction, selectedCommitId, headCommitId, setSelectedCommitId],
   );
 
   // When the user clicks a commit, we drop the needs-action selection
   // so the right pane re-renders CommitDetail instead of the item
   // detail.
   const selectCommit = useCallback((commitId: string) => {
+    setMobileDetailOpen(true);
     setSelectedCommitId(commitId);
     setSelectedNeedsAction(null);
     setSelectedNeedsActionItem(null);
-  }, []);
+  }, [setSelectedCommitId]);
 
   const activeFilterCount =
     (activeScopeFilter ? 1 : 0) + (activeActorFilter ? 1 : 0);
@@ -1389,43 +1231,18 @@ export default function HistoryPage({ params }: HistoryPageProps) {
         : 'empty:no-selection';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--po-canvas)' }}>
-
-      {/* ── Header ── */}
-      <div style={{
-        height: 46, minHeight: 46, flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 16px',
-        borderBottom: '1px solid var(--po-divider)',
-        background: 'var(--po-canvas)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--po-text)' }}>
-            Changes
+    <>
+      <ProjectHeaderContribution
+        canManageSettings={projectAllows(project, 'project.settings.manage')}
+        pathSegments={[{ label: project?.name ?? 'Project' }]}
+        actions={history ? (
+          <span style={{ padding: '0 5px', color: 'var(--po-text-subtle)', fontSize: 11 }}>
+            {history.total} commit{history.total === 1 ? '' : 's'}
           </span>
-          {history && (
-            <span style={{ fontSize: 12, color: 'var(--po-text-disabled)' }}>
-              {history.total} commit{history.total !== 1 ? 's' : ''}
-              {history.head_commit_id && (
-                <> · <span
-                  title={history.head_commit_id}
-                  style={{ fontFamily: 'var(--po-font-sans)' }}
-                >
-                  {history.head_commit_id.slice(0, 12)}
-                </span></>
-              )}
-            </span>
-          )}
-        </div>
-        {history?.root_hash && (
-          <span style={{
-            fontSize: 10, color: 'var(--po-text-subtle)',
-            fontFamily: 'var(--po-font-sans)',
-          }}>
-            tree {history.root_hash.slice(0, 12)}
-          </span>
-        )}
-      </div>
+        ) : undefined}
+      />
+      <div style={{ display: 'flex', height: '100%', minWidth: 0, overflow: 'hidden', background: 'var(--po-canvas)' }}>
+      <div style={{ display: 'flex', flex: 1, minWidth: 0, flexDirection: 'column', overflow: 'hidden' }}>
 
       {/* ── Loading / Error / Empty ── */}
       {isInitialLoading && (
@@ -1442,7 +1259,7 @@ export default function HistoryPage({ params }: HistoryPageProps) {
 
       {/* ── Main Layout (Left/Right Split) ── */}
       {!isInitialLoading && !error && (
-        <div className="flex flex-1 min-h-0">
+        <div className="workspace-history-layout flex flex-1 min-h-0" data-detail={mobileDetailOpen}>
           {/* Left: Timeline List — wrapped in `ResizableSidebarColumn`
               so users can widen the timeline when commit messages or
               author IDs would otherwise truncate aggressively. Starts
@@ -1452,10 +1269,11 @@ export default function HistoryPage({ params }: HistoryPageProps) {
             defaultWidth={260}
             minWidth={260}
             maxWidth={520}
-            className="border-r border-[var(--po-divider)] bg-[var(--po-canvas)] z-10"
+            className="workspace-history-list border-r border-[var(--po-divider)] bg-[var(--po-canvas)] z-10"
           >
             <NeedsActionSection
               projectId={projectId}
+              seedItemsByKind={seedNeedsActionItems}
               selected={selectedNeedsAction}
               onSelect={handleNeedsActionSelect}
               onItemRemoved={handleNeedsActionRemoved}
@@ -1707,6 +1525,8 @@ export default function HistoryPage({ params }: HistoryPageProps) {
               commit detail. Needs Action wins when an item is
               selected (the page's selection handlers keep at most
               one of {commit, item} active). */}
+          <div className="workspace-history-detail">
+          <button type="button" className="workspace-history-back" onClick={() => setMobileDetailOpen(false)}><span aria-hidden="true">←</span>Back to history</button>
           <HistoryDetailViewport activeKey={activeDetailKey}>
             {selectedNeedsAction && selectedNeedsActionItem ? (
               <NeedsActionDetailPane
@@ -1737,8 +1557,11 @@ export default function HistoryPage({ params }: HistoryPageProps) {
               />
             )}
           </HistoryDetailViewport>
+          </div>
         </div>
       )}
-    </div>
+      </div>
+      </div>
+    </>
   );
 }

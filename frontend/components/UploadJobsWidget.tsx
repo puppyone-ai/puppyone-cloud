@@ -10,10 +10,10 @@ import {
   activityHeaderStyle,
   activityTitleStyle,
 } from './activityStyles';
-import { useProjectActivity } from '@/lib/hooks/useActivity';
+import type { ActivityItem } from '@/lib/activityApi';
 
 type UploadJobsWidgetProps = {
-  projectId?: string;
+  activeItems: readonly ActivityItem[];
   inline?: boolean;
 };
 
@@ -26,11 +26,10 @@ type UploadJobsWidgetProps = {
  * TaskStatusWidget tracks the same-tab client-side upload notifier for instant
  * feedback; the two can coexist until that one is retired.
  */
-export function UploadJobsWidget({ projectId, inline = false }: UploadJobsWidgetProps) {
-  const { activeItems } = useProjectActivity(projectId, { kind: 'upload' });
+export function UploadJobsWidget({ activeItems, inline = false }: UploadJobsWidgetProps) {
   const runs = useMemo(() => activeItems.slice(0, 3), [activeItems]);
 
-  if (!projectId || activeItems.length === 0) return null;
+  if (activeItems.length === 0) return null;
 
   const title = activeItems.length === 1 ? 'Uploading' : `${activeItems.length} uploads`;
 

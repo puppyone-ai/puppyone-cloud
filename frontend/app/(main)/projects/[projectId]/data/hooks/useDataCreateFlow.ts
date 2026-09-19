@@ -576,7 +576,7 @@ export function useDataCreateFlow({
           }),
         );
         optimisticSeedEmptyDirectory(projectId, folderPath);
-        if (targetFolderPath) ensureExpanded(targetFolderPath);
+        if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
 
         let keepPendingForRecovery = false;
         try {
@@ -631,7 +631,7 @@ export function useDataCreateFlow({
             projectId, path: filePath, name: fileName, type: 'json',
           }),
         );
-        if (targetFolderPath) ensureExpanded(targetFolderPath);
+        if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
         highlightCreatedNode(filePath);
 
         try {
@@ -670,7 +670,7 @@ export function useDataCreateFlow({
             projectId, path: filePath, name: fileName, type: 'markdown',
           }),
         );
-        if (targetFolderPath) ensureExpanded(targetFolderPath);
+        if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
         highlightCreatedNode(filePath);
 
         try {

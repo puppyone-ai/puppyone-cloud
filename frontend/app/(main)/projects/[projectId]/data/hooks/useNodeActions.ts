@@ -296,7 +296,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
       const name = movedNode.name;
       const newPath = cleanTargetPath ? `${cleanTargetPath}/${name}` : name;
       const nodeForTarget = { ...movedNode, path: newPath, id: newPath, parent_id: cleanTargetPath };
-      if (cleanTargetPath) ensureExpanded(cleanTargetPath);
+      if (cleanTargetPath) ensureExpanded(projectId, cleanTargetPath);
       for (const targetKey of dataDirectoryCacheKeys(projectId, cleanTargetPath)) {
         mutate(
           targetKey,

@@ -137,6 +137,7 @@ def list_projects(
     project_service: ProjectService = Depends(get_project_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
+    include_access_counts: bool = True,
 ):
     # Sync handler: FastAPI runs it in a threadpool, so the blocking (sync)
     # Supabase calls below don't stall the event loop. No `await` in this body.
@@ -151,7 +152,7 @@ def list_projects(
     # Batch-fetch entry-point counts only for authorized Projects. Count user-created
     # integrations; CLI / Agent / Filesystem / Git Remote are built-in methods.
     project_ids = [str(project.id) for project, _grant in accessible]
-    conn_counts = _count_user_access_points(project_ids)
+    conn_counts = _count_user_access_points(project_ids) if include_access_counts else {}
 
     result = []
     for p, grant in accessible:
@@ -159,7 +160,7 @@ def list_projects(
             project_to_out(
                 p,
                 grant,
-                access_point_count=conn_counts.get(str(p.id), 0),
+                access_point_count=conn_counts.get(str(p.id), 0) if include_access_counts else None,
             )
         )
     return ApiResponse.success(data=result, message="Project list retrieved successfully")

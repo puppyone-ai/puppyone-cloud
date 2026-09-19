@@ -1,6 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { EditorView } from '@codemirror/view';
+import { preserveMarkdownScroll } from '@/features/files/editor/preserveMarkdownScroll';
 import { MarkdownCodeMirrorEditor } from '@/shared-ui/src/editor/markdown/MarkdownCodeMirrorEditor';
 
 export type MarkdownViewMode = 'wysiwyg' | 'source';
@@ -24,6 +26,7 @@ export function MarkdownEditor({
   viewMode: controlledViewMode,
   onViewModeChange,
 }: MarkdownEditorProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const [internalViewMode, setInternalViewMode] = useState<MarkdownViewMode>(defaultMode);
   const [localContent, setLocalContent] = useState(content);
   const isControlled = controlledViewMode !== undefined;
@@ -42,8 +45,17 @@ export function MarkdownEditor({
     if (onChange && !readOnly) onChange(newContent);
   }, [onChange, readOnly]);
 
+  useLayoutEffect(() => {
+    // CodeMirror exposes its view via the public DOM lookup API. Keep this
+    // cloud-only layout adapter outside the shared Cloud/Desktop editor.
+    const editor = hostRef.current?.querySelector<HTMLElement>('.cm-editor');
+    const view = editor ? EditorView.findFromDOM(editor) : null;
+    if (view) return preserveMarkdownScroll(view);
+  }, [documentKey, viewMode]);
+
   return (
     <div
+      ref={hostRef}
       style={{
         height: '100%',
         width: '100%',

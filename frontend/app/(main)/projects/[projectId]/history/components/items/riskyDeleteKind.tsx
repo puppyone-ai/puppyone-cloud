@@ -33,7 +33,7 @@ import { StatusDot } from '@/components/ui/StatusDot';
  */
 
 const KIND_LABEL = 'Risky delete';
-const ACCENT_VAR = 'var(--po-warning, #c08a2e)';
+const ACCENT_VAR = 'var(--po-warning)';
 
 // Flag a commit when it removes at least this many files. PUP-5 used
 // "50 files" as the illustrative example; 10 is a deliberately
@@ -62,10 +62,19 @@ function deletedPathsFromCommit(commit: {
   return [];
 }
 
-async function fetchItems(projectId: string): Promise<RiskyDeleteItem[]> {
-  const history = await getProjectHistory(projectId, HISTORY_LOOKBACK);
+export function buildRiskyDeleteItems(commits: ReadonlyArray<{
+  commit_id: string;
+  who: string;
+  message: string;
+  changes?: Array<{ path: string; op?: string }>;
+  conflicts?: unknown[];
+  root_hash: string;
+  scope_path: string;
+  created_at: string | null;
+  audit_detail?: Record<string, unknown> | null;
+}>): RiskyDeleteItem[] {
   const items: RiskyDeleteItem[] = [];
-  for (const commit of history.commits || []) {
+  for (const commit of commits) {
     const deletedPaths = deletedPathsFromCommit(commit);
     if (deletedPaths.length < RISKY_DELETE_THRESHOLD) continue;
     items.push({
@@ -84,6 +93,11 @@ async function fetchItems(projectId: string): Promise<RiskyDeleteItem[]> {
     });
   }
   return items;
+}
+
+async function fetchItems(projectId: string): Promise<RiskyDeleteItem[]> {
+  const history = await getProjectHistory(projectId, HISTORY_LOOKBACK);
+  return buildRiskyDeleteItems(history.commits || []);
 }
 
 function renderRow(item: RiskyDeleteItem, ctx: NeedsActionRenderContext): React.ReactNode {

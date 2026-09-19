@@ -1,0 +1,27 @@
+.header { container: project-header / inline-size; white-space: nowrap; }
+.pathSlot { display: contents; }
+.left { gap: 12px; }
+.actions { padding-left: 16px; }
+
+/* This reacts to the actual header width, including a docked Agent. */
+@container project-header (max-width: 600px) {
+  .left { gap: 6px; }
+  .actions { padding-left: 6px; }
+  .viewLabel, .header [data-chrome-label] { display: none; }
+  .header [data-chrome-action] { width: 32px; gap: 0; padding: 0; }
+  .pathSlot { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; }
+  .pathSlot > div { min-width: 0; }
+  .left > span { display: none; }
+  .left > nav { gap: 0 !important; }
+  .left > nav > a { height: 32px; width: 32px; padding: 0; justify-content: center; }
+  .actions :global(.workspace-header-utilities),
+  .actions :global(.workspace-project-utilities) { gap: 0 !important; height: 32px !important; }
+  .actions [data-chrome-action] { height: 32px; flex-shrink: 0; }
+  .actions span[aria-hidden='true']:not(:has(svg)) { display: none; }
+  /* Browse files already identifies and opens the active Files surface. */
+  :global(.workspace-root[data-files-layout='overlay']) .left [data-project-view='files'][aria-current='page'] { display: none; }
+}
+
+@container project-workspace (max-width: 639px) {
+  .header { --project-header-padding: 8px; }
+}

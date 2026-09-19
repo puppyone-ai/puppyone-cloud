@@ -1,6 +1,7 @@
 import './globals.css';
 import '../shared-ui/src/styles/editor.css';
 import '@xyflow/react/dist/style.css';
+import type { Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
@@ -11,6 +12,13 @@ import { BackgroundTaskNotifier } from '../components/BackgroundTaskNotifier';
 import { SWRGlobalProvider } from './SWRProvider';
 import { ThemeProvider } from '../components/theme/ThemeProvider';
 import { ScrollbarActivity } from '../components/ScrollbarActivity';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  interactiveWidget: 'resizes-content',
+};
 
 export const metadata = {
   title: 'puppyone | Context base for AI agents',

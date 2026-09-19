@@ -1,22 +1,14 @@
 'use client';
 
 import { use, useCallback, useMemo } from 'react';
-import useSWR from 'swr';
-import { get } from '@/lib/apiClient';
 import {
   isMcpProvider,
   isSandboxProvider,
 } from '@/lib/accessProviderRegistry';
-import { useProjectTools, refreshFolderNodes } from '@/lib/hooks/useData';
+import { useFileWorkspaceQueries } from '@/features/files/useFileWorkspaceQueries';
 import { useAgent } from '@/contexts/AgentContext';
-import { useCommitUpdates } from '@/contexts/VersionWebSocketContext';
-import { listMcpEndpoints } from '@/lib/mcpEndpointsApi';
-import { listSandboxEndpoints } from '@/lib/sandboxEndpointsApi';
 import {
-  getRepoIdentity,
   isAccessSurfaceConnector,
-  listConnectors,
-  listScopes,
   normalizeAccessSurfaceConnectors,
   projectRootRepositoryView,
   repositoryScopeView,
@@ -26,40 +18,7 @@ import {
 import {
   DataLayoutContext,
   type SyncEndpointInfo,
-  type SyncStatusSync,
 } from './DataLayoutContext';
-
-/** Normalize a path from commit_update into project-root-relative form.
- *
- * The current backend sends changed_files as project-root-relative paths. The
- * scope fallback keeps older frames safe if they ever carried scope-relative
- * paths.
- */
-function _toRootRelative(scope: string, changedPath: string): string {
-  const file = changedPath.replaceAll(/^\/+|\/+$/g, '');
-  const cleanScope = normalizeEndpointPath(scope);
-  if (!cleanScope || !file) return file;
-  if (file === cleanScope || file.startsWith(`${cleanScope}/`)) return file;
-  return `${cleanScope}/${file}`;
-}
-
-/** Parent folder of a root-relative path (root = empty string). */
-function _parentFolder(rootRelativePath: string): string {
-  const idx = rootRelativePath.lastIndexOf('/');
-  return idx >= 0 ? rootRelativePath.slice(0, idx) : '';
-}
-
-function _ancestorFolders(folderPath: string): string[] {
-  const clean = normalizeEndpointPath(folderPath);
-  const out = [''];
-  if (!clean) return out;
-
-  const parts = clean.split('/').filter(Boolean);
-  for (let i = 1; i <= parts.length; i += 1) {
-    out.push(parts.slice(0, i).join('/'));
-  }
-  return out;
-}
 
 interface DataLayoutProps {
   children: React.ReactNode;
@@ -75,68 +34,15 @@ export default function DataLayout({ children, params }: DataLayoutProps) {
   const { projectId } = use(params);
 
   const { savedAgents } = useAgent();
-  const { tools: projectTools } = useProjectTools(projectId);
-
-  // Auto-refresh affected folder listings when *any* client (sandbox,
-  // agent, GitHub webhook, another browser tab) lands a commit. Replaces
-  // the manual "user must refocus the tab" revalidation flow and closes
-  // the §六 "侧栏永不刷新" bug class once and for all.
-  //
-  // ``changed_files`` is project-root-relative. Refresh the changed file's
-  // parent folder plus its ancestors so external Git/CLI pushes that create a
-  // new nested folder reveal the folder in the sidebar as soon as the event
-  // lands.
-  const onCommitUpdate = useCallback((event: { scope: string; changed_files: string[] }) => {
-    const folders = new Set<string>();
-    for (const rel of event.changed_files || []) {
-      const root = _toRootRelative(event.scope || '', rel);
-      for (const folder of _ancestorFolders(_parentFolder(root))) {
-        folders.add(folder);
-      }
-    }
-    if (folders.size === 0) {
-      // Commit had no path-bearing changes (e.g. metadata-only). Refresh
-      // the root sidebar anyway so the user's view of HEAD stays fresh.
-      folders.add('');
-    }
-    void refreshFolderNodes(projectId, ...folders);
-  }, [projectId]);
-  useCommitUpdates(onCommitUpdate);
-
-  const { data: syncStatusData, mutate: mutateSyncStatus } = useSWR<{
-    syncs: SyncStatusSync[];
-  }>(
-    projectId ? ['sync-status', projectId] : null,
-    () => get(`/api/v1/integrations/status?project_id=${projectId}`),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
-  const { data: mcpEndpoints } = useSWR(
-    projectId ? ['mcp-endpoints', projectId] : null,
-    () => listMcpEndpoints(projectId),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
-  const { data: sandboxEndpoints } = useSWR(
-    projectId ? ['sandbox-endpoints', projectId] : null,
-    () => listSandboxEndpoints(projectId),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
-
-  // Redesign (2026-05-02): scopes + connectors via the new repo endpoints.
-  const { data: scopes, mutate: mutateScopes } = useSWR(
-    projectId ? ['repo-scopes', projectId] : null,
-    () => listScopes(projectId),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
-  const { data: connectorsList, mutate: mutateConnectors } = useSWR(
-    projectId ? ['repo-connectors', projectId] : null,
-    () => listConnectors(projectId),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
-  const { data: repoIdentity, isLoading: repoIdentityLoading, mutate: mutateIdentity } = useSWR(
-    projectId ? ['repo-identity', projectId] : null,
-    () => getRepoIdentity(projectId),
-    { revalidateOnFocus: false, dedupingInterval: 60000 },
-  );
+  const reads = useFileWorkspaceQueries(projectId);
+  const { root } = reads;
+  const { tools: projectTools } = reads.tools;
+  const { data: syncStatusData, mutate: mutateSyncStatus } = reads.sync;
+  const { data: mcpEndpoints } = reads.mcp;
+  const { data: sandboxEndpoints } = reads.sandbox;
+  const { data: scopes, mutate: mutateScopes } = reads.scopes;
+  const { data: connectorsList, mutate: mutateConnectors } = reads.connectors;
+  const { data: repoIdentity, error: repoIdentityError, isLoading: repoIdentityLoading, mutate: mutateIdentity } = reads.identity;
 
   const accessConnectorsForDataView = useMemo(
     () =>
@@ -164,9 +70,9 @@ export default function DataLayout({ children, params }: DataLayoutProps) {
     return m;
   }, [accessConnectorsForDataView]);
 
-  const mutateRepo = async () => {
+  const mutateRepo = useCallback(async () => {
     await Promise.all([mutateScopes(), mutateConnectors(), mutateIdentity()]);
-  };
+  }, [mutateScopes, mutateConnectors, mutateIdentity]);
 
   const nodeEndpointMap = useMemo(() => {
     const map = new Map<string, SyncEndpointInfo[]>();
@@ -290,7 +196,8 @@ export default function DataLayout({ children, params }: DataLayoutProps) {
       scopes: repositoryViews,
       connectorsByTarget,
       repoIdentity,
-      repoIdentityLoading,
+      repoIdentityError,
+      repoIdentityLoading: !root.hasLoaded && !root.error || repoIdentityLoading,
       mutateRepo,
     }),
     [
@@ -302,7 +209,10 @@ export default function DataLayout({ children, params }: DataLayoutProps) {
       repositoryViews,
       connectorsByTarget,
       repoIdentity,
+      repoIdentityError,
       repoIdentityLoading,
+      root.hasLoaded,
+      root.error,
       mutateRepo,
     ],
   );

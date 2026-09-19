@@ -9,7 +9,7 @@ import type { AcceptedNodeType } from '@/components/agent/views/configs/SyncPrev
 import { SyncPreview } from '@/components/agent/views/configs/SyncPreview';
 import { PanelShell } from './PanelShell';
 import { GithubIntegrationPanel } from './github-integration/GithubIntegrationPanel';
-import { usePanelStore } from '../usePanelStore';
+import { useProjectSession } from '@/features/workspace/session';
 import type { SaasType } from '@/lib/oauthApi';
 import { useConnectorSpecs } from '@/lib/hooks/useData';
 import { resolveProviderIconUrl } from '@/lib/providerIcons';
@@ -306,7 +306,7 @@ function CreateView({
   };
 
   // Deploy agent
-  const { openPanel } = usePanelStore();
+  const openPanel = useProjectSession(state => state.openPanel);
   const handleAgentDeploy = useCallback(async () => {
     if (!selectedAgentType || deploying) return;
     setDeploying(true);

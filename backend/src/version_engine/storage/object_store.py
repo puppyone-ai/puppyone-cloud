@@ -137,7 +137,10 @@ class ObjectStore:
     def get_object(self, sha1: str) -> tuple[str, bytes]:
         if sha1 == EMPTY_TREE_SHA1:
             return "tree", EMPTY_TREE_CONTENT
-        loose = self._backend.get(sha1)
+        return self._decode_verified(sha1, self._backend.get(sha1))
+
+    @staticmethod
+    def _decode_verified(sha1: str, loose: bytes) -> tuple[str, bytes]:
         try:
             obj_type, content = decode_object(loose)
         except Exception as exc:
@@ -146,6 +149,13 @@ class ObjectStore:
         if actual != sha1:
             raise ObjectNotFoundError(f"object corrupt: expected {sha1}, got {actual}")
         return obj_type, content
+
+    def get_objects_many(self, sha1s: list[str]) -> dict[str, tuple[str, bytes]]:
+        """Batch transport only; identical hash verification to single reads."""
+        return {
+            sha1: self._decode_verified(sha1, loose)
+            for sha1, loose in self.get_loose_many(sha1s).items()
+        }
 
     def put_loose(self, sha1: str, loose_bytes: bytes) -> None:
         if sha1 == EMPTY_TREE_SHA1:

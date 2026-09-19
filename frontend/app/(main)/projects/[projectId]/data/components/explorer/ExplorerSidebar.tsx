@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
+import { Plus } from 'lucide-react';
 import { useExplorerRootNodes } from '@/lib/hooks/useData';
 import { useNodeDrop } from '@/lib/hooks/useNodeDrop';
 import {
@@ -12,27 +13,21 @@ import type { ContentType } from '../views/GridView';
 import type { FileImportTarget } from '../../hooks/useFileImport';
 import { ensureExpandedBatch, usePendingActiveId } from './explorerState';
 import {
-  EXPLORER_TREE_CONTENT_INSET,
   EXPLORER_TREE_ROW_HEIGHT,
   EXPLORER_TREE_ROW_MARGIN_X,
   EXPLORER_TREE_ROW_MARGIN_Y,
   ExplorerTreeMetaRow,
   ExplorerTreeRow,
 } from './ExplorerTreeRow';
-import {
-  ExplorerRowActions,
-  getExplorerRowActionLayerWidth,
-} from './ExplorerRowActions';
 import type { ExplorerSidebarProps, MillerColumnItem } from './types';
-import { Dots } from '@/components/loading';
-import { SIDEBAR_META_TYPOGRAPHY, SIDEBAR_ROW_TYPOGRAPHY } from '@/lib/uiTypography';
+import { DirectoryLoadingState } from '@/components/loading/DirectoryLoadingState';
+import { ReadErrorState } from '@/components/loading/ReadErrorState';
+import { SIDEBAR_META_TYPOGRAPHY } from '@/lib/uiTypography';
 
-const FILE_DROP_TARGET_BG = 'var(--po-active)';
 const FILE_DROP_ROOT_SCOPE_BG = 'var(--po-hover)';
 const FILE_DROP_TARGET_BORDER = 'var(--po-border-strong)';
 const FILE_DROP_SCOPE_BORDER = 'var(--po-border)';
 const ROOT_DROP_TARGET: FileImportTarget = { path: null, name: 'Root' };
-const ROOT_HEADER_TOP_PADDING = 5;
 
 function hasExternalFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer.types).includes('Files');
@@ -64,26 +59,30 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
     rootNodes,
     isLoading: loading,
     error: rootLoadError,
+    refresh,
   } = useExplorerRootNodes(projectId);
   const sidebarFileDragCounterRef = useRef(0);
-  const [isExternalFileDraggingInSidebar, setIsExternalFileDraggingInSidebar] = useState(false);
-  const [activeFileDropTarget, setActiveFileDropTarget] = useState<FileImportTarget | null>(null);
-  const { isDropTarget: isRootDropTarget, dropHandlers: rootDropHandlers } = useNodeDrop({
-    targetFolderId: null,
-    onMoveNode,
-  });
+  const [isExternalFileDraggingInSidebar, setIsExternalFileDraggingInSidebar] =
+    useState(false);
+  const [activeFileDropTarget, setActiveFileDropTarget] =
+    useState<FileImportTarget | null>(null);
+  const { isDropTarget: isRootDropTarget, dropHandlers: rootDropHandlers } =
+    useNodeDrop({
+      targetFolderId: null,
+      onMoveNode,
+    });
 
-  const currentPathIds = currentPath.map((p) => p.id);
+  const currentPathIds = currentPath.map(p => p.id);
   const currentPathKey = currentPathIds.join('\0');
 
   useEffect(() => {
     if (currentPathIds.length > 0) {
-      ensureExpandedBatch(currentPathIds);
+      ensureExpandedBatch(projectId, currentPathIds);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPathKey]);
+  }, [projectId, currentPathKey]);
 
-  const rootItems: MillerColumnItem[] = rootNodes.map((node) => ({
+  const rootItems: MillerColumnItem[] = rootNodes.map(node => ({
     id: node.id,
     name: node.name,
     type: node.type as ContentType,
@@ -95,69 +94,80 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
 
   const pendingId = usePendingActiveId();
   const activeId = pendingId || activeNodeId || null;
-  const isRootHighlighted = highlightNodeId === '';
-  const isRootAccessPointHighlight = isRootHighlighted && highlightVariant === 'access-point';
-  const rootOpenMenuAction = createMenuOpenForId === '__root__' ? createMenuOpenAction ?? null : null;
-  const rootEndpoints = endpointByNodeId?.get('') ?? [];
-  const rootHasConfiguredAccess = rootEndpoints.length > 0 && !!onOpenAccess;
-  const isRootFileDropTarget = isExternalFileDraggingInSidebar && activeFileDropTarget?.path === null;
-  const showRootLoadError = !!rootLoadError && rootItems.length === 0 && !loading;
+  const isRootFileDropTarget =
+    isExternalFileDraggingInSidebar && activeFileDropTarget?.path === null;
+  const isRootCreateMenuOpen = createMenuOpenForId === '__root__';
 
-  const handleSidebarDragEnterCapture = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!hasExternalFiles(event)) return;
-    sidebarFileDragCounterRef.current += 1;
-    setIsExternalFileDraggingInSidebar(true);
-    setActiveFileDropTarget((current) => current ?? ROOT_DROP_TARGET);
-  }, []);
+  const handleSidebarDragEnterCapture = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!hasExternalFiles(event)) return;
+      sidebarFileDragCounterRef.current += 1;
+      setIsExternalFileDraggingInSidebar(true);
+      setActiveFileDropTarget(current => current ?? ROOT_DROP_TARGET);
+    },
+    []
+  );
 
-  const handleSidebarDragLeaveCapture = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!hasExternalFiles(event)) return;
-    sidebarFileDragCounterRef.current -= 1;
-    if (sidebarFileDragCounterRef.current <= 0) {
+  const handleSidebarDragLeaveCapture = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!hasExternalFiles(event)) return;
+      sidebarFileDragCounterRef.current -= 1;
+      if (sidebarFileDragCounterRef.current <= 0) {
+        sidebarFileDragCounterRef.current = 0;
+        setIsExternalFileDraggingInSidebar(false);
+        setActiveFileDropTarget(null);
+      }
+    },
+    []
+  );
+
+  const handleSidebarDropCapture = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!hasExternalFiles(event)) return;
       sidebarFileDragCounterRef.current = 0;
       setIsExternalFileDraggingInSidebar(false);
       setActiveFileDropTarget(null);
-    }
-  }, []);
+    },
+    []
+  );
 
-  const handleSidebarDropCapture = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!hasExternalFiles(event)) return;
-    sidebarFileDragCounterRef.current = 0;
-    setIsExternalFileDraggingInSidebar(false);
-    setActiveFileDropTarget(null);
-  }, []);
+  const activateRootDropTarget = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      if (!hasExternalFiles(event)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'copy';
+      setIsExternalFileDraggingInSidebar(true);
+      setActiveFileDropTarget(ROOT_DROP_TARGET);
+      return true;
+    },
+    []
+  );
 
-  const activateRootDropTarget = useCallback((event: DragEvent<HTMLElement>) => {
-    if (!hasExternalFiles(event)) return false;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'copy';
-    setIsExternalFileDraggingInSidebar(true);
-    setActiveFileDropTarget(ROOT_DROP_TARGET);
-    return true;
-  }, []);
+  const handleRootFileDrop = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      if (!hasExternalFiles(event)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      sidebarFileDragCounterRef.current = 0;
+      setIsExternalFileDraggingInSidebar(false);
+      setActiveFileDropTarget(null);
 
-  const handleRootFileDrop = useCallback((event: DragEvent<HTMLElement>) => {
-    if (!hasExternalFiles(event)) return false;
-    event.preventDefault();
-    event.stopPropagation();
-    sidebarFileDragCounterRef.current = 0;
-    setIsExternalFileDraggingInSidebar(false);
-    setActiveFileDropTarget(null);
-
-    // Snapshot the DataTransfer SYNCHRONOUSLY — see lib/dropFiles.ts.
-    // Reading items after this handler returns yields null entries
-    // in Safari/Firefox, which would silently drop folder contents.
-    const snapshot = snapshotDataTransfer(event.nativeEvent);
-    void resolveDataTransferSnapshot(snapshot).then((files) => {
-      if (files.length > 0) onFilesDrop?.(files, ROOT_DROP_TARGET);
-    });
-    return true;
-  }, [onFilesDrop]);
+      // Snapshot the DataTransfer SYNCHRONOUSLY — see lib/dropFiles.ts.
+      // Reading items after this handler returns yields null entries
+      // in Safari/Firefox, which would silently drop folder contents.
+      const snapshot = snapshotDataTransfer(event.nativeEvent);
+      void resolveDataTransferSnapshot(snapshot).then(files => {
+        if (files.length > 0) onFilesDrop?.(files, ROOT_DROP_TARGET);
+      });
+      return true;
+    },
+    [onFilesDrop]
+  );
 
   return (
     <div
-      data-explorer-sidebar-root="true"
+      data-explorer-sidebar-root='true'
       className={className}
       onDragEnterCapture={handleSidebarDragEnterCapture}
       onDragLeaveCapture={handleSidebarDragLeaveCapture}
@@ -170,123 +180,20 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
         minWidth: 0,
       }}
     >
-      {/* Header used to live here as its own "Workspace" label bar.
-          That created two stacked headers on the data page (this one
-          + the page-level ProjectsHeader to the right). The unified
-          design now hoists ProjectsHeader to span the full column row,
-          so this sidebar starts directly with the file tree — no
-          duplicate label, no broken hairline at the boundary. */}
       <div
-        onDragOver={activateRootDropTarget}
-        onDrop={handleRootFileDrop}
-        style={{
-          flexShrink: 0,
-          boxSizing: 'border-box',
-          paddingTop: ROOT_HEADER_TOP_PADDING,
-          background: isRootFileDropTarget ? FILE_DROP_ROOT_SCOPE_BG : 'var(--po-canvas)',
-          boxShadow: isRootFileDropTarget
-            ? `inset 0 0 0 1px ${FILE_DROP_SCOPE_BORDER}`
-            : 'none',
-          transition: 'background 0.12s ease, box-shadow 0.12s ease',
+        data-explorer-scroll='true'
+        onDragEnter={event => {
+          if (!activateRootDropTarget(event))
+            rootDropHandlers.onDragEnter(event);
         }}
-      >
-        <div
-          className="group/row"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            margin: `${EXPLORER_TREE_ROW_MARGIN_Y}px ${EXPLORER_TREE_ROW_MARGIN_X}px`,
-            height: EXPLORER_TREE_ROW_HEIGHT,
-            boxSizing: 'border-box',
-            borderRadius: 6,
-            background: isRootDropTarget || isRootFileDropTarget
-              ? FILE_DROP_TARGET_BG
-              : isRootAccessPointHighlight
-                ? 'color-mix(in srgb, var(--po-success) 14%, transparent)'
-              : rootOpenMenuAction
-                // Translucent — see ExplorerTreeRow for the full
-                // rationale. tldr: opaque var(--po-border) was visually
-                // indistinguishable from the tree-line colour
-                // var(--po-tree-guide), so selecting a row "ate" the guide.
-                ? 'var(--po-selected)'
-                : 'transparent',
-            color: isRootDropTarget || isRootFileDropTarget
-              ? 'var(--po-text)'
-              : isRootAccessPointHighlight ? 'var(--po-success)' : rootOpenMenuAction ? 'var(--po-text)' : 'var(--po-text-muted)',
-            transition: 'background 0.1s, color 0.1s',
-            boxShadow: isRootDropTarget || isRootFileDropTarget
-              ? `inset 0 0 0 1px ${FILE_DROP_TARGET_BORDER}`
-              : isRootAccessPointHighlight
-              ? 'inset 2px 0 0 0 color-mix(in srgb, var(--po-success) 90%, transparent)'
-              : 'none',
-            position: 'relative',
-            cursor: 'default',
-          }}
-          onDragEnter={(e) => {
-            if (!activateRootDropTarget(e)) rootDropHandlers.onDragEnter(e);
-          }}
-          onDragOver={(e) => {
-            if (!activateRootDropTarget(e)) rootDropHandlers.onDragOver(e);
-          }}
-          onDragLeave={(e) => {
-            rootDropHandlers.onDragLeave(e);
-          }}
-          onDrop={(e) => {
-            if (!handleRootFileDrop(e)) rootDropHandlers.onDrop(e);
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              height: '100%',
-              boxSizing: 'border-box',
-              paddingLeft: EXPLORER_TREE_CONTENT_INSET,
-              paddingRight: (onCreate || onCreateSync || rootHasConfiguredAccess)
-                ? getExplorerRowActionLayerWidth(rootHasConfiguredAccess) + 6
-                : 6,
-            }}
-          >
-            <span
-              style={{
-                ...SIDEBAR_ROW_TYPOGRAPHY,
-                flex: 1,
-                minWidth: 0,
-                color: 'inherit',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Root
-            </span>
-
-            {(onCreate || onCreateSync || rootHasConfiguredAccess) && (
-              <ExplorerRowActions
-                nodeId=""
-                createParentId={null}
-                accessPath=""
-                isFolder
-                endpoints={rootEndpoints}
-                openMenuAction={rootOpenMenuAction}
-                alwaysVisible
-                itemName="Root"
-                onCreate={onCreate}
-                onCreateSync={onCreateSync}
-                onOpenAccess={onOpenAccess}
-              />
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div
-        data-explorer-scroll="true"
-        onDragOver={activateRootDropTarget}
-        onDrop={handleRootFileDrop}
+        onDragOver={event => {
+          if (!activateRootDropTarget(event))
+            rootDropHandlers.onDragOver(event);
+        }}
+        onDragLeave={rootDropHandlers.onDragLeave}
+        onDrop={event => {
+          if (!handleRootFileDrop(event)) rootDropHandlers.onDrop(event);
+        }}
         style={{
           flex: 1,
           minHeight: 0,
@@ -294,29 +201,29 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
           overflowX: 'hidden',
           scrollbarGutter: 'auto',
           position: 'relative',
-          background: isRootFileDropTarget ? FILE_DROP_ROOT_SCOPE_BG : 'transparent',
-          transition: 'background 0.12s ease',
+          background:
+            isRootFileDropTarget || isRootDropTarget
+              ? FILE_DROP_ROOT_SCOPE_BG
+              : 'transparent',
+          boxShadow:
+            isRootFileDropTarget || isRootDropTarget
+              ? `inset 0 0 0 1px ${isRootFileDropTarget ? FILE_DROP_SCOPE_BORDER : FILE_DROP_TARGET_BORDER}`
+              : 'none',
+          transition: 'background 0.12s ease, box-shadow 0.12s ease',
         }}
       >
         <div
           style={{
             width: '100%',
-            padding: '0 0 6px 0',
+            padding: '6px 0',
             position: 'relative',
             boxSizing: 'border-box',
           }}
         >
-          {showRootLoadError ? (
-            <ExplorerTreeMetaRow depth={0}>
-              <span title={rootLoadError instanceof Error ? rootLoadError.message : undefined}>
-                Unable to load folders. Retrying...
-              </span>
-            </ExplorerTreeMetaRow>
-          ) : loading && rootItems.length === 0 ? (
-            <ExplorerTreeMetaRow depth={0}>
-              <Dots size="xs" />
-            </ExplorerTreeMetaRow>
-          ) : rootItems.length === 0 ? (
+          {rootLoadError ? <ReadErrorState label='Could not load files.' onRetry={() => { void refresh().catch(() => {}); }} /> : null}
+          {loading && rootItems.length === 0 ? (
+            <DirectoryLoadingState />
+          ) : rootItems.length === 0 && !rootLoadError ? (
             <ExplorerTreeMetaRow depth={0}>
               <span
                 style={{
@@ -328,9 +235,9 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
               </span>
             </ExplorerTreeMetaRow>
           ) : (
-            rootItems.map((item) => (
+            rootItems.map(item => (
               <ExplorerTreeRow
-                key={item.id}
+                key={`${projectId}:${item.id}`}
                 item={item}
                 depth={0}
                 projectId={projectId}
@@ -354,6 +261,63 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
                 createMenuOpenAction={createMenuOpenAction}
               />
             ))
+          )}
+
+          {onCreate && (
+            <button
+              type='button'
+              onClick={event => onCreate(event, null)}
+              className='group/row'
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                width: `calc(100% - ${EXPLORER_TREE_ROW_MARGIN_X * 2}px)`,
+                height: EXPLORER_TREE_ROW_HEIGHT,
+                margin: `${EXPLORER_TREE_ROW_MARGIN_Y}px ${EXPLORER_TREE_ROW_MARGIN_X}px`,
+                padding: '0 8px',
+                boxSizing: 'border-box',
+                border: 0,
+                borderRadius: 6,
+                background: isRootCreateMenuOpen
+                  ? 'var(--po-selected)'
+                  : 'transparent',
+                color: isRootCreateMenuOpen
+                  ? 'var(--po-text)'
+                  : 'var(--po-text-muted)',
+                fontFamily: 'var(--po-font-sans)',
+                fontSize: 14,
+                fontWeight: 400,
+                lineHeight: 1.25,
+                textAlign: 'left',
+                cursor: 'pointer',
+                transition: 'background 0.1s, color 0.1s',
+              }}
+              onMouseEnter={event => {
+                if (!isRootCreateMenuOpen)
+                  event.currentTarget.style.background = 'var(--po-hover)';
+                event.currentTarget.style.color = 'var(--po-text)';
+              }}
+              onMouseLeave={event => {
+                if (!isRootCreateMenuOpen)
+                  event.currentTarget.style.background = 'transparent';
+                if (!isRootCreateMenuOpen)
+                  event.currentTarget.style.color = 'var(--po-text-muted)';
+              }}
+            >
+              <span
+                style={{
+                  display: 'flex',
+                  width: 18,
+                  height: 18,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Plus size={14} strokeWidth={2.2} />
+              </span>
+              <span>Create new</span>
+            </button>
           )}
         </div>
       </div>

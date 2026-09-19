@@ -14,7 +14,12 @@ function notifyExpanded() {
   expandedListeners.forEach((cb) => cb());
 }
 
-export function toggleExpanded(id: string) {
+function expansionKey(projectId: string, path: string) {
+  return JSON.stringify([projectId, path]);
+}
+
+export function toggleExpanded(projectId: string, path: string) {
+  const id = expansionKey(projectId, path);
   if (expandedSet.has(id)) {
     expandedSet.delete(id);
   } else {
@@ -23,17 +28,19 @@ export function toggleExpanded(id: string) {
   notifyExpanded();
 }
 
-export function ensureExpanded(id: string) {
+export function ensureExpanded(projectId: string, path: string) {
+  const id = expansionKey(projectId, path);
   if (!expandedSet.has(id)) {
     expandedSet.add(id);
     notifyExpanded();
   }
 }
 
-export function ensureExpandedBatch(ids: string[]) {
+export function ensureExpandedBatch(projectId: string, paths: string[]) {
   let changed = false;
 
-  for (const id of ids) {
+  for (const path of paths) {
+    const id = expansionKey(projectId, path);
     if (!expandedSet.has(id)) {
       expandedSet.add(id);
       changed = true;
@@ -43,7 +50,8 @@ export function ensureExpandedBatch(ids: string[]) {
   if (changed) notifyExpanded();
 }
 
-export function useIsExpanded(id: string): boolean {
+export function useIsExpanded(projectId: string, path: string): boolean {
+  const id = expansionKey(projectId, path);
   const getSnapshot = useCallback(() => expandedSet.has(id), [id]);
   return useSyncExternalStore(expandedSubscribe, getSnapshot, getSnapshot);
 }

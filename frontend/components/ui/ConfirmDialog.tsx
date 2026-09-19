@@ -13,6 +13,7 @@ import {
 type ConfirmTone = 'danger' | 'warning';
 
 type ConfirmDialogProps = {
+  layer?: 'modal' | 'modalNested';
   open?: boolean;
   title: ReactNode;
   description?: ReactNode;
@@ -25,6 +26,7 @@ type ConfirmDialogProps = {
 };
 
 export function ConfirmDialog({
+  layer = 'modal',
   open = true,
   title,
   description,
@@ -38,7 +40,7 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <DialogRoot onClose={onCancel} dismissOnBackdrop={!loading}>
+    <DialogRoot onClose={onCancel} dismissOnBackdrop={!loading} layer={layer}>
       <DialogSurface width={420}>
         <DialogHeader title={title} onClose={loading ? undefined : onCancel} />
         {description && (

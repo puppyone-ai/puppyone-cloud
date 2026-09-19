@@ -19,6 +19,7 @@ import {
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { nextUntitledProjectName } from '@/lib/projectNames';
 import { createProject } from '@/lib/projectsApi';
+import { getLastProjectId, rememberLastProject } from '@/lib/lastProject';
 
 function DashboardPageContent() {
   const router = useRouter();
@@ -102,6 +103,7 @@ function DashboardPageContent() {
   useEffect(() => {
     if (
       searchParams?.get('create') === 'true' &&
+      isAuthReady && currentOrg && !orgsLoading && !orgsError && !projectsError &&
       !projectsLoading &&
       !creatingProjectRef.current &&
       !handledCreateParamRef.current
@@ -110,7 +112,45 @@ function DashboardPageContent() {
       router.replace('/home');
       void handleCreateProject();
     }
-  }, [searchParams, projectsLoading, router, handleCreateProject]);
+  }, [searchParams, isAuthReady, currentOrg, orgsLoading, orgsError, projectsError, projectsLoading, router, handleCreateProject]);
+
+  // The project list is persistent navigation now, not a destination.
+  // Returning users resume the last accessible project; when that project
+  // no longer exists, fall back to the most recently updated one.
+  useEffect(() => {
+    if (
+      !isAuthReady ||
+      orgsLoading ||
+      projectsLoading ||
+      isCreatingProject ||
+      searchParams?.get('create') === 'true' ||
+      projects.length === 0
+    ) {
+      return;
+    }
+
+    const rememberedId = getLastProjectId();
+    const rememberedProject = projects.find(project => project.id === rememberedId);
+    const fallbackProject = [...projects].sort((left, right) => {
+      const leftTime = left.updated_at ? Date.parse(left.updated_at) : 0;
+      const rightTime = right.updated_at ? Date.parse(right.updated_at) : 0;
+      return rightTime - leftTime;
+    })[0];
+    const destination = rememberedProject ?? fallbackProject;
+
+    if (destination) {
+      rememberLastProject(destination.id);
+      router.replace(`/projects/${destination.id}/data`);
+    }
+  }, [
+    isAuthReady,
+    isCreatingProject,
+    orgsLoading,
+    projects,
+    projectsLoading,
+    router,
+    searchParams,
+  ]);
 
   const initialLoadError =
     (orgs.length === 0 ? orgsError : null) ??
@@ -145,6 +185,10 @@ function DashboardPageContent() {
     (orgs.length > 0 && !currentOrg) ||
     projectsLoading
   ) {
+    return <DashboardLoadingSkeleton />;
+  }
+
+  if (projects.length > 0 && searchParams?.get('create') !== 'true') {
     return <DashboardLoadingSkeleton />;
   }
 

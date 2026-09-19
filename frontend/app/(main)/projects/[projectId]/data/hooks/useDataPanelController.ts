@@ -10,7 +10,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { getApiBase } from '../components/access-points/labels';
 import type { AccessPanelNavigationGuard, EditorTarget } from '../components/right-panel';
-import { usePanelStore } from '../usePanelStore';
+import { selectFilePanel, useProjectSession, useProjectSessionApi } from '@/features/workspace/session';
 import {
   matchRepositoryViewForPath,
   repositoryViewKey,
@@ -53,8 +53,10 @@ export function useDataPanelController({
   setHoverHighlightNodeId: Dispatch<SetStateAction<string | null>>;
 }) {
   const router = useRouter();
-  const { panel: panelState, openPanel, closePanel } = usePanelStore();
-  const [rightPanelWidth, setRightPanelWidth] = useState(450);
+  const session = useProjectSessionApi();
+  const panelState = useProjectSession(selectFilePanel);
+  const openPanel = useProjectSession(state => state.openPanel);
+  const closePanel = useProjectSession(state => state.closePanel);
   const [accessPanelNavigationGuard, setAccessPanelNavigationGuard] =
     useState<AccessPanelNavigationGuard | null>(null);
   const [accessOverviewOpen, setAccessOverviewOpen] = useState(false);
@@ -67,36 +69,6 @@ export function useDataPanelController({
   const activeSyncId = activeSyncNodeId !== null
     ? (syncEndpoints.get(activeSyncNodeId)?.syncId ?? null)
     : null;
-
-  const isAccessPanelOpen = panelState.type === 'access_list';
-  const accessPanelScopePath = currentFolderId || '';
-  const accessDrilledScope = isAccessPanelOpen && panelState.selectedTargetKey
-    ? scopes.find((scope) => repositoryViewKey(scope) === panelState.selectedTargetKey) ?? null
-    : null;
-  const accessFolderScope = matchRepositoryViewForPath(accessPanelScopePath, scopes);
-  const accessResolvedScope = accessDrilledScope ?? accessFolderScope;
-  const accessListView: 'overview' | 'detail' | 'settings' =
-    isAccessPanelOpen && panelState.view === 'settings' && accessResolvedScope
-      ? 'settings'
-      : isAccessPanelOpen && panelState.view === 'overview'
-        ? 'overview'
-        : accessResolvedScope
-          ? 'detail'
-          : 'overview';
-  const accessHeaderScope =
-    isAccessPanelOpen && (accessListView === 'detail' || accessListView === 'settings')
-      ? accessResolvedScope
-      : null;
-  const accessHeaderTitle =
-    accessListView === 'settings'
-        ? 'Settings'
-        : accessHeaderScope
-          ? accessHeaderScope.name
-          : 'Access';
-  const accessHeaderSubtitle = undefined;
-  const showAccessHeaderBack =
-    isAccessPanelOpen &&
-    (accessListView === 'detail' || accessListView === 'settings');
 
   const rootScope = useMemo(() => matchRepositoryViewForPath('', scopes), [scopes]);
   const rootGitRemoteUrl = useMemo(() => {
@@ -125,19 +97,6 @@ export function useDataPanelController({
     setIsEditorFullScreen(false);
     closePanel();
   }, [accessPanelNavigationGuard, closePanel, setEditorTarget, setIsEditorFullScreen]);
-
-  const handleAccessHeaderBack = useCallback(() => {
-    if (accessPanelNavigationGuard && !accessPanelNavigationGuard.canLeave()) return;
-    if (accessListView === 'settings' && accessHeaderScope) {
-      openPanel({
-        type: 'access_list',
-        view: 'detail',
-        selectedTargetKey: repositoryViewKey(accessHeaderScope),
-      });
-      return;
-    }
-    openPanel({ type: 'access_list', view: 'overview' });
-  }, [accessHeaderScope, accessListView, accessPanelNavigationGuard, openPanel]);
 
   const openVersionHistoryPanel = useCallback(() => {
     if (!effectiveNodeId) return;
@@ -177,8 +136,8 @@ export function useDataPanelController({
     setQuickAccessScopeFallback(null);
     setCreateAccessInitialPath(null);
     setAccessOverviewOpen(true);
-    if (panelState.type === 'access_list') closePanel();
-  }, [closePanel, panelState.type, setEditorTarget, setIsEditorFullScreen]);
+    if (session.getState().panel.type === 'access_list') closePanel();
+  }, [closePanel, session, setEditorTarget, setIsEditorFullScreen]);
 
   const openRootGitRemotePanel = useCallback(() => {
     setEditorTarget(null);
@@ -203,11 +162,17 @@ export function useDataPanelController({
     const normalizedPath = normalizeAccessPath(folderPath);
     const existingScope = matchRepositoryViewForPath(normalizedPath, scopes);
     if (existingScope) {
-      openQuickAccessModal(existingScope);
+      setEditorTarget(null);
+      setIsEditorFullScreen(false);
+      openPanel({
+        type: 'access_list',
+        view: 'detail',
+        selectedTargetKey: repositoryViewKey(existingScope),
+      });
       return;
     }
     openCreateAccessModal(normalizedPath);
-  }, [openCreateAccessModal, openQuickAccessModal, scopes]);
+  }, [openCreateAccessModal, openPanel, scopes, setEditorTarget, setIsEditorFullScreen]);
 
   const closeAccessOverviewModal = useCallback(() => {
     setAccessOverviewOpen(false);
@@ -244,17 +209,9 @@ export function useDataPanelController({
     panelState,
     openPanel,
     closePanel,
-    rightPanelWidth,
-    setRightPanelWidth,
     setAccessPanelNavigationGuard,
     activeSyncNodeId,
     activeSyncId,
-    isAccessPanelOpen,
-    accessListView,
-    accessHeaderScope,
-    accessHeaderTitle,
-    accessHeaderSubtitle,
-    showAccessHeaderBack,
     rootGitRemoteUrl,
     accessOverviewOpen,
     quickAccessScope,
@@ -263,7 +220,6 @@ export function useDataPanelController({
     syncCreateInitialPath,
     refreshRepoAndAgents,
     closeRightPanel,
-    handleAccessHeaderBack,
     openVersionHistoryPanel,
     openSyncCreatePanel,
     openRootGitRemotePanel,

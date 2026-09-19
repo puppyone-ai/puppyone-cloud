@@ -18,11 +18,11 @@ export function getProviderTileStyle(provider: string, selected: boolean) {
   if (isGitRemoteProvider(provider)) {
     return {
       background: selected
-        ? 'color-mix(in srgb, #ef4a37 16%, var(--po-panel) 84%)'
-        : 'color-mix(in srgb, #ef4a37 9%, var(--po-panel) 91%)',
-      border: selected ? 'color-mix(in srgb, #ef4a37 34%, var(--po-border-strong) 66%)' : 'color-mix(in srgb, #ef4a37 22%, var(--po-border-subtle) 78%)',
-      color: '#d94939',
-      shadow: selected ? '0 1px 2px color-mix(in srgb, #ef4a37 18%, transparent)' : 'none',
+        ? 'color-mix(in srgb, var(--po-git-brand) 16%, var(--po-panel) 84%)'
+        : 'color-mix(in srgb, var(--po-git-brand) 9%, var(--po-panel) 91%)',
+      border: selected ? 'color-mix(in srgb, var(--po-git-brand) 34%, var(--po-border-strong) 66%)' : 'color-mix(in srgb, var(--po-git-brand) 22%, var(--po-border-subtle) 78%)',
+      color: 'var(--po-git-brand-text)',
+      shadow: selected ? '0 1px 2px color-mix(in srgb, var(--po-git-brand) 18%, transparent)' : 'none',
     };
   }
   if (isMcpProvider(provider)) {
@@ -53,10 +53,10 @@ export function getConnectorCardChrome(provider: string, selected: boolean) {
   }
   if (isGitRemoteProvider(provider)) {
     return {
-      accent: '#ef4a37',
-      border: selected ? 'color-mix(in srgb, #ef4a37 30%, var(--po-border-strong) 70%)' : T.cardBorder,
+      accent: 'var(--po-git-brand)',
+      border: selected ? 'color-mix(in srgb, var(--po-git-brand) 30%, var(--po-border-strong) 70%)' : T.cardBorder,
       background: selected
-        ? 'color-mix(in srgb, #ef4a37 4%, var(--po-panel) 96%)'
+        ? 'color-mix(in srgb, var(--po-git-brand) 4%, var(--po-panel) 96%)'
         : 'var(--po-panel)',
     };
   }

@@ -45,19 +45,30 @@ def resolve_project_history_head(repo) -> str:
 
 def read_commit_parent_ids(repo, commit_ids: list[str]) -> dict[str, list[str]]:
     parents_by_commit: dict[str, list[str]] = {}
+    objects: dict[str, tuple[str, bytes]] = {}
+    batch_reader = getattr(repo.store, "get_objects_many", None)
+    valid_ids = [oid for oid in dict.fromkeys(commit_ids) if is_git_object_id(oid)]
+    if callable(batch_reader):
+        # Bound each batch, and preserve partial/degraded semantics if an
+        # object is missing or corrupt. No second cache or unverified decoder.
+        for offset in range(0, len(valid_ids), 100):
+            try:
+                objects.update(batch_reader(valid_ids[offset:offset + 100]))
+            except Exception:  # noqa: BLE001 - individual reads report failures
+                pass
     for commit_id in dict.fromkeys(commit_ids):
-        node = read_graph_commit(repo, commit_id)
+        node = read_graph_commit(repo, commit_id, object_data=objects.get(commit_id))
         parents_by_commit[commit_id] = list(node.parent_ids) if node else []
     return parents_by_commit
 
 
-def read_graph_commit(repo, commit_id: str) -> GraphCommit | None:
+def read_graph_commit(repo, commit_id: str, *, object_data: tuple[str, bytes] | None = None) -> GraphCommit | None:
     """Decode one immutable commit object without consulting history metadata."""
 
     if not is_git_object_id(commit_id):
         return None
     try:
-        obj_type, content = repo.store.get_object(commit_id)
+        obj_type, content = object_data if object_data is not None else repo.store.get_object(commit_id)
         if obj_type != "commit":
             raise ValueError(f"expected commit object, got {obj_type}")
         info = decode_commit(content)

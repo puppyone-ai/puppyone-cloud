@@ -3,9 +3,8 @@ name: Frontend Build
 # Verifies that `frontend/` compiles cleanly. Required status check on `main`
 # and `qubits` so no PR can land code that breaks the production build.
 #
-# This is intentionally lightweight (no tests, no e2e) — those run separately
-# in the `E2E Visual Tests` workflow. The point of this job is fast PR feedback
-# on whether `next build` still succeeds.
+# Run deterministic React/unit regressions before compiling. Browser/e2e
+# coverage remains separate from this fast PR gate.
 
 on:
   # This workflow is a required status check on protected branches. It must run
@@ -61,6 +60,10 @@ jobs:
       - name: Verify deployable package boundaries
         working-directory: frontend
         run: npm run test:deployment-contract
+
+      - name: Run frontend behavioral regressions
+        working-directory: frontend
+        run: npm run test:unit
 
       # `next build` does TypeScript type-checking and webpack compilation, so
       # this single step catches both type errors and missing dependencies.
