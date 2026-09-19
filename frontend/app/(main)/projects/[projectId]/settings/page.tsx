@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useEffect } from 'react';
+import { use, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { returnToFiles } from '@/features/workspace/navigation/routes';
 import { PageLoading } from '@/components/loading';
 import { useOpenProjectSettings } from '@/components/project/ProjectWorkspaceShell';
 import { useSessionValue } from '@/features/workspace/session';
@@ -15,9 +16,12 @@ export default function ProjectSettingsRoute({ params }: {
   const openSettings = useOpenProjectSettings();
   const [filesHref] = useSessionValue('filesHref');
 
+  const handled = useRef(false);
   useEffect(() => {
+    if (handled.current) return;
+    handled.current = true;
     openSettings();
-    router.replace(filesHref || `/projects/${projectId}/data`, { scroll: false });
+    router.replace(returnToFiles(projectId, filesHref), { scroll: false });
   }, [filesHref, openSettings, projectId, router]);
 
   return <PageLoading variant='fill' label='Opening project settings' />;

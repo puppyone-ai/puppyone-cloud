@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { isGitRemoteProvider } from '@/lib/accessProviderRegistry';
 import { canonicalProjectGitUrl } from '@/lib/gitRemote';
 import { uploadFiles as uploadFilesApi } from '@/lib/uploadApi';
@@ -21,7 +21,7 @@ import { applyPolicy, collectIgnoreRulesFromDrop } from '@/lib/uploadPolicy';
 import { FileImportDialog } from '@/components/FileImportDialog';
 import { T } from '../lib/tokens';
 import type { DashboardConnection } from '../lib/types';
-import { GitCredentialIssuePanel } from '../../data/components/access-points/connect-methods/GitCredentialIssuePanel';
+import { GitCredentialIssuePanel } from '@/features/files/components/access-points/connect-methods/GitCredentialIssuePanel';
 
 // =====================================================================
 // GetStartedPanel — empty-state for a freshly created project's Home.

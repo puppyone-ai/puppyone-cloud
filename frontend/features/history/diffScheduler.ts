@@ -1,4 +1,4 @@
-import { buildDiffPreview, type DiffRequest, type DiffPreview } from './diffModel';
+import { buildDiffPreview, type DiffPreview, type DiffRequest } from './diffModel';
 
 type Job = { id: number; request: DiffRequest; done: (result: DiffPreview) => void };
 const jobs: Job[] = [];

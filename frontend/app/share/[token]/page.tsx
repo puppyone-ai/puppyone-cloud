@@ -2,7 +2,7 @@
 
 import React, { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import {
   joinProjectViaShareToken,
   type ProjectShareJoinResult,

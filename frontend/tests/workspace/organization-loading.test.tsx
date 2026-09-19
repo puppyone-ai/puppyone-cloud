@@ -6,7 +6,7 @@ import { OrganizationProvider, useOrganization } from '@/contexts/OrganizationCo
 import { getOrganizations, getMembers, type OrganizationInfo } from '@/lib/organizationsApi';
 
 const auth = vi.hoisted(() => ({ session: {}, userId: 'alice', isAuthReady: true }));
-vi.mock('@/app/supabase/SupabaseAuthProvider', () => ({ useAuth: () => auth }));
+vi.mock('@/contexts/SupabaseAuthProvider', () => ({ useAuth: () => auth }));
 vi.mock('@/lib/organizationsApi', () => ({ getOrganizations: vi.fn(), getMembers: vi.fn() }));
 
 function wrapper() {

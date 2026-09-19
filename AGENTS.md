@@ -270,6 +270,15 @@ Railway multi-service deployment (shared codebase, differentiated by `SERVICE_RO
 
 ## Frontend
 
+Workspace navigation and lifetime ownership are documented in
+[`docs/frontend/2026-09-20-workspace-refactor-design.md`](docs/frontend/2026-09-20-workspace-refactor-design.md).
+Route entries compose domain features; features must not import app route implementations.
+Workspace navigation uses `features/workspace/navigation` so links and command
+actions share leave protection. Next owns project/view/path identity; do not
+reintroduce a page-local history router. Files DOM lifetime belongs to its
+layout, editor drafts/writes to editor sessions, and pane geometry to the layout
+store. Preserve the existing desktop appearance during responsive changes.
+
 - **Framework**: Next.js 15 (App Router)
 - **Language**: TypeScript
 - **UI**: React 18 + Tailwind CSS

@@ -1,7 +1,7 @@
 import { StrictMode, type ReactNode } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useStructuredNodeData } from '@/app/(main)/projects/[projectId]/data/hooks/useStructuredNodeData';
+import { useStructuredNodeData } from '@/features/files/hooks/useStructuredNodeData';
 import type { Tool } from '@/lib/mcpApi';
 import type { NodeInfo } from '@/lib/contentTreeApi';
 

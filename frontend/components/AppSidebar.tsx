@@ -15,7 +15,7 @@ import { SidebarLayout, type NavItem } from './sidebar/SidebarLayout';
 
 // Side-effect import: populate the same Needs Action registry used by
 // the Changes page before the sidebar summary reads it.
-import '@/app/(main)/projects/[projectId]/history/components/items';
+import '@/features/history/components/items';
 
 type AppSidebarProps = {
   projects: ProjectInfo[];

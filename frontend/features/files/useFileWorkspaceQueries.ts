@@ -1,11 +1,11 @@
 'use client';
 
-import useSWR from 'swr';
 import { get } from '@/lib/apiClient';
 import { useProjectTools, useTreeDir } from '@/lib/hooks/useData';
 import { listMcpEndpoints } from '@/lib/mcpEndpointsApi';
-import { listSandboxEndpoints } from '@/lib/sandboxEndpointsApi';
 import { getRepoIdentity, listConnectors, listScopes } from '@/lib/repoApi';
+import { listSandboxEndpoints } from '@/lib/sandboxEndpointsApi';
+import useSWR from 'swr';
 
 type SyncStatus = { syncs: Array<{
   id: string; path: string | null; provider: string; direction: string;

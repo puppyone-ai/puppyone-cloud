@@ -1,3 +1,5 @@
-'use client';
+import GitWorkspace from '@/features/history/GitWorkspace';
 
-export { default } from '../history/page';
+export default async function GitRoute({ params }: { params: Promise<{ projectId: string }> }) {
+  return <GitWorkspace projectId={(await params).projectId} />;
+}

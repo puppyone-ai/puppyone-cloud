@@ -1,7 +1,7 @@
 'use client';
 
 import { useId } from 'react';
-import type { useRouter } from 'next/navigation';
+import type { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { CountBadge } from '@/components/ui/CountBadge';
 import { T } from '../lib/tokens';
 import { formatRelative } from '../lib/format';
@@ -266,7 +266,7 @@ export function HistoryCard({
           />
         </div>
         <button
-          onClick={() => router.push(`/projects/${projectId}/history`)}
+          onClick={() => router.push(`/projects/${projectId}/changes`)}
           style={{
             background: 'none',
             border: 'none',
@@ -333,7 +333,7 @@ export function HistoryCard({
                 <button
                   key={c.commit_id}
                   onClick={() =>
-                    router.push(`/projects/${projectId}/history`)
+                    router.push(`/projects/${projectId}/changes`)
                   }
                   title={c.message || '(no message)'}
                   style={{

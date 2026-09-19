@@ -293,9 +293,11 @@ contract in the same patch.
 - The explorer sidebar lifecycle is driven by project/content refresh events,
   not by ordinary file selection.
 - Sidebar, grid, Miller-column item, and Data breadcrumb clicks should update
-  Data's client route state and browser URL together. Avoid `router.push` for
-  routine in-page Data item selection when it would remount `[[...path]]/page.tsx`
-  and collapse/replay the sidebar tree.
+  the canonical Next URL through the workspace navigation adapter. The Files
+  layout owns the stable workspace and explorer, so path navigation does not
+  remount the file tree. Do not maintain a second client path or call native
+  history from the Files feature.
+
 - Browser back/forward must still restore the Data route state from the URL.
 
 ## Workspace Views

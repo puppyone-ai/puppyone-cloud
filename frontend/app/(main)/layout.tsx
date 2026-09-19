@@ -5,7 +5,7 @@ import { useSelectedLayoutSegments } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ProjectNavigationRegion } from '@/components/sidebar/ProjectNavigationRegion';
 import { useProject, useProjects } from '@/lib/hooks/useData';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import {
   OrganizationProvider,
   useOrganization,
@@ -21,6 +21,9 @@ import { WorkspaceLayoutFrame } from '@/features/workspace/WorkspaceLayoutFrame'
 import { useWorkspaceRegions } from '@/features/workspace/regions';
 import { WorkspaceNavigationButton } from '@/components/sidebar/WorkspaceNavigationButton';
 import '@/app/responsive-workspace.css';
+import { EditorSessionProvider } from '@/features/files/editor/EditorSessionProvider';
+import { ExplorerSessionsProvider } from '@/features/files/explorerSession';
+import { WorkspaceNavigationProvider } from '@/features/workspace/navigation';
 
 // Lazy-loaded — don't affect the initial app shell bundle
 const WelcomeModal = dynamic(
@@ -150,11 +153,12 @@ const MainLayoutInner = memo(function MainLayoutInner({
 export default function MainLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const { userId } = useAuth();
   return (
-    <OrganizationProvider>
+    <EditorSessionProvider key={userId ?? 'anonymous'} scope={userId ?? 'anonymous'}><ExplorerSessionsProvider><OrganizationProvider>
       <OnboardingProvider>
-        <ResponsiveWorkspaceProvider><MainLayoutInner>{children}</MainLayoutInner></ResponsiveWorkspaceProvider>
+        <WorkspaceNavigationProvider><ResponsiveWorkspaceProvider><MainLayoutInner>{children}</MainLayoutInner></ResponsiveWorkspaceProvider></WorkspaceNavigationProvider>
       </OnboardingProvider>
-    </OrganizationProvider>
+    </OrganizationProvider></ExplorerSessionsProvider></EditorSessionProvider>
   );
 }

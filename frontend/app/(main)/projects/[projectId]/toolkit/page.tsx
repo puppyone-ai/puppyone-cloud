@@ -11,7 +11,7 @@
  */
 
 import React, { use, useEffect, useState, useMemo, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import {
   getToolsByProjectId,
   deleteTool,

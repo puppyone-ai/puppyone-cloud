@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useState, type ReactNode, type SetStateAction } from 'react';
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
+import { parseWorkspaceLocation, useNavigationGuard } from './navigation';
 import { ActiveFileProvider } from './activeFile';
 
 // Transient UI only: server facts remain in SWR; drafts keep their save-session owner.
@@ -135,13 +136,20 @@ export const createProjectSession = () => createStore<ProjectSession>((set, get)
 
 const SessionContext = createContext<ReturnType<typeof createProjectSession> | null>(null);
 
-function SessionOwner({ children }: { children: ReactNode }) {
+function SessionOwner({ children, projectId }: { children: ReactNode; projectId: string }) {
   const [store] = useState(createProjectSession);
+  useNavigationGuard(target => {
+    const next = parseWorkspaceLocation(target.split('?')[0]);
+    // Project-level Access persists across Files/Git; only leaving the project
+    // destroys that form. Its local panel controls retain their own guard.
+    return store.getState().panelNavigationGuard && next?.projectId !== projectId
+      ? 'You have unsaved Access settings. Leave this project?' : true;
+  });
   return <SessionContext.Provider value={store}><ActiveFileProvider>{children}</ActiveFileProvider></SessionContext.Provider>;
 }
 
 export function ProjectSessionProvider({ projectId, children }: { projectId: string; children: ReactNode }) {
-  return <SessionOwner key={projectId}>{children}</SessionOwner>;
+  return <SessionOwner key={projectId} projectId={projectId}>{children}</SessionOwner>;
 }
 
 export function useProjectSessionApi() {

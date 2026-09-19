@@ -4,13 +4,13 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ResponsiveWorkspaceProvider, useWorkspaceActions } from '@/features/workspace/responsive';
 import { createWorkspaceLayoutStore } from '@/features/workspace/layoutStore';
 import { DEFAULT_WORKSPACE_INPUT } from '@/features/workspace/paneLayout';
-import { DataWorkspaceSurface } from '@/app/(main)/projects/[projectId]/data/components/DataWorkspaceSurface';
+import { DataWorkspaceSurface } from '@/features/files/components/DataWorkspaceSurface';
 
 const measurements = vi.hoisted(() => ({ editorRenders: 0, editorMounts: 0, editorUnmounts: 0, actionConsumerRenders: 0 }));
 // Exercise the real responsive provider, data surface and drawer wrappers.
 // Replace I/O-bearing leaves with a stateful editor probe; this measures the
 // layout boundary, not CodeMirror/Monaco internals or browser paint duration.
-vi.mock('@/app/(main)/projects/[projectId]/data/components/EditorArea', () => ({
+vi.mock('@/features/files/components/EditorArea', () => ({
   EditorArea: function EditorProbe() {
     measurements.editorRenders++;
     const [draft, setDraft] = useState('draft');
@@ -18,13 +18,13 @@ vi.mock('@/app/(main)/projects/[projectId]/data/components/EditorArea', () => ({
     return <textarea aria-label='Editor probe' value={draft} onChange={event => setDraft(event.target.value)} />;
   },
 }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/DataPageDialogs', () => ({ DataPageDialogs: () => null }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/DataPageOverlays', () => ({ DataPageOverlays: () => null }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/BulkDeleteDialog', () => ({ BulkDeleteDialog: () => null }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/SelectionActionBar', () => ({ SelectionActionBar: () => null }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/explorer', () => ({ DataExplorerPane: () => <nav>Directory probe</nav> }));
-vi.mock('@/app/(main)/projects/[projectId]/data/components/right-panel', () => ({ DataPageRightPanel: () => null }));
-vi.mock('@/app/(main)/projects/components/EmptyWorkspaceState', () => ({ EmptyWorkspaceState: () => null }));
+vi.mock('@/features/files/components/DataPageDialogs', () => ({ DataPageDialogs: () => null }));
+vi.mock('@/features/files/components/DataPageOverlays', () => ({ DataPageOverlays: () => null }));
+vi.mock('@/features/files/components/BulkDeleteDialog', () => ({ BulkDeleteDialog: () => null }));
+vi.mock('@/features/files/components/SelectionActionBar', () => ({ SelectionActionBar: () => null }));
+vi.mock('@/features/files/components/explorer', () => ({ DataExplorerPane: () => <nav>Directory probe</nav> }));
+vi.mock('@/features/files/components/right-panel', () => ({ DataPageRightPanel: () => null }));
+vi.mock('@/features/projects/components/EmptyWorkspaceState', () => ({ EmptyWorkspaceState: () => null }));
 
 const surfaceProps = {
   dialogsProps: {}, overlaysProps: {}, bulkDeleteProps: {}, selectionProps: {},

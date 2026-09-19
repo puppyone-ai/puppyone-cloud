@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useCommitUpdates } from '@/contexts/VersionWebSocketContext';
-import { useSearchParams } from 'next/navigation';
-import { stat, readFile } from '@/lib/contentTreeApi';
-import { isFolderType } from '@/lib/nodeTypeConfig';
-import { resolveFormat, isTextLikeCategory, UNKNOWN_FORMAT } from '@/lib/fileFormats';
 import type { MarkdownViewMode } from '@/components/editors/markdown';
+import { useCommitUpdates } from '@/contexts/VersionWebSocketContext';
+import { readFile, stat } from '@/lib/contentTreeApi';
+import { isTextLikeCategory, resolveFormat, UNKNOWN_FORMAT } from '@/lib/fileFormats';
+import { isFolderType } from '@/lib/nodeTypeConfig';
+import { useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * Seed the `activeNodeType` (the *node* type, not the file format)

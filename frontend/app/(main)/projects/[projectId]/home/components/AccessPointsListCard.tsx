@@ -1,7 +1,8 @@
 'use client';
+import { useProjectSession } from '@/features/workspace/session';
 
 import React, { useState } from 'react';
-import type { useRouter } from 'next/navigation';
+import type { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { ArrowRight, ArrowLeft, ArrowLeftRight } from 'lucide-react';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { CountBadge } from '@/components/ui/CountBadge';
@@ -315,6 +316,7 @@ function ApListRow({
   copiedKey: string | null;
   onCopy: (text: string, key: string) => void;
 }) {
+  const openPanel = useProjectSession(state => state.openPanel);
   const [isMouseOver, setIsMouseOver] = useState(false);
 
   const direction = getApDirection(conn);
@@ -475,7 +477,7 @@ function ApListRow({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              router.push(`/projects/${projectId}/access?ap=${conn.id}`);
+              openPanel({ type: 'access_list', view: 'detail', accessEndpointId: conn.id });
             }}
             title="Open integration details"
             aria-label="Open integration details"

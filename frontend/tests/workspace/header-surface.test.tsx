@@ -1,12 +1,13 @@
+import { WorkspaceNavigationProvider } from '@/features/workspace/navigation';
 import { ResponsiveWorkspaceProvider } from '@/features/workspace/responsive';
 import { act, fireEvent, render as renderUI, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ProjectHeaderBreadcrumbs, ProjectsHeader } from '@/components/ProjectsHeader';
 import { ProjectSessionProvider } from '@/features/workspace/session';
-import { FileViewerHeaderActions } from '@/app/(main)/projects/[projectId]/data/components/FileViewerHeaderActions';
+import { FileViewerHeaderActions } from '@/features/files/components/FileViewerHeaderActions';
 
-const router = { prefetch: vi.fn() };
-vi.mock('next/navigation', () => ({ useRouter: () => router }));
+const router = { push: vi.fn(), prefetch: vi.fn() };
+vi.mock('next/navigation', () => ({ useRouter: () => router, usePathname: () => '/projects/p/data', useSearchParams: () => new URLSearchParams() }));
 
 let notifyResize: () => void;
 beforeEach(() => {
@@ -44,11 +45,10 @@ it('collapses parent folders as space shrinks, preserves guarded navigation, and
     const width = this.getAttribute('aria-label') === 'Project path' ? availableWidth : 600;
     return { width, height: 24, top: 0, left: 0, bottom: 24, right: width, x: 0, y: 0, toJSON() {} };
   });
-  const navigate = vi.fn();
   const openSettings = vi.fn();
   render(<ProjectHeaderBreadcrumbs onOpenSettings={openSettings} pathSegments={[
     { label: '中文项目名称', href: '/projects/p/data' },
-    { label: '合同资料', href: '/projects/p/data/contracts', onClick: navigate },
+    { label: '合同资料', href: '/projects/p/data/contracts' },
     { label: '2026', href: '/projects/p/data/contracts/2026' },
     { label: '非常长的当前文件名称.md' },
   ]} />);
@@ -69,7 +69,7 @@ it('collapses parent folders as space shrinks, preserves guarded navigation, and
   const folder = screen.getByRole('link', { name: '合同资料' });
   expect(document.activeElement).toBe(folder);
   fireEvent.click(folder);
-  expect(navigate).toHaveBeenCalledOnce();
+  expect(router.push).toHaveBeenCalledExactlyOnceWith('/projects/p/data/contracts', { scroll: false });
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
   fireEvent.click(trigger);
   fireEvent.keyDown(screen.getByRole('link', { name: '合同资料' }), { key: 'Escape' });
@@ -109,4 +109,4 @@ it('keeps save and view-mode controls functional in the header', () => {
   expect(screen.getByRole('banner').style.height).toBe('var(--project-header-height, 46px)');
 });
 
-function render(ui: React.ReactElement) { return renderUI(ui, { wrapper: ResponsiveWorkspaceProvider }); }
+function render(ui: React.ReactElement) { return renderUI(ui, { wrapper: ({ children }) => <WorkspaceNavigationProvider><ResponsiveWorkspaceProvider>{children}</ResponsiveWorkspaceProvider></WorkspaceNavigationProvider> }); }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
+import { WorkspaceLink as Link } from '@/features/workspace/navigation';
 import { Settings } from 'lucide-react';
 import { CHROME_LABEL_TYPOGRAPHY } from '@/lib/uiTypography';
 import styles from './ProjectHeaderBreadcrumbs.module.css';
@@ -9,7 +9,6 @@ import styles from './ProjectHeaderBreadcrumbs.module.css';
 export type BreadcrumbSegment = {
   label: ReactNode;
   href?: string;
-  onClick?: () => void;
 };
 
 function labelTitle(label: ReactNode) {
@@ -29,10 +28,6 @@ function Segment({ segment, current = false, onNavigate }: {
     <Link {...props} href={segment.href} onClick={event => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       onNavigate?.();
-      if (segment.onClick) {
-        event.preventDefault();
-        segment.onClick();
-      }
     }}>
       {segment.label}
     </Link>

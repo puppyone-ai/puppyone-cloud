@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { DiffPreview, DiffRequest } from './diffModel';
 import { scheduleDiff } from './diffScheduler';
-import type { DiffRequest, DiffPreview } from './diffModel';
 
 // Fixed-size LRU: SWR itself may retain many immutable response objects, so
 // weak keys alone would not bound the number of derived previews we retain.

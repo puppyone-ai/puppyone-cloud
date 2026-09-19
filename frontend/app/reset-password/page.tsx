@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter } from 'next/navigation';
 import { InlineLoading } from '@/components/loading';
 

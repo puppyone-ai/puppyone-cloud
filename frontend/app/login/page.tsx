@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react';
-import { useAuth } from '../supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PulseGrid, Dots } from '@/components/loading';
 

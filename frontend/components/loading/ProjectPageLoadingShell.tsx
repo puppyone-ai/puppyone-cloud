@@ -35,7 +35,7 @@ export function HeaderedPageLoadingShell({ title }: HeaderedPageLoadingShellProp
 export type ProjectPageLoadingShellProps = HeaderedPageLoadingShellProps;
 
 export function ProjectPageLoadingShell(props: ProjectPageLoadingShellProps) {
-  return <HeaderedPageLoadingShell {...props} />;
+  return <PageLoading variant="fill" label={props.title} />;
 }
 
 const shellStyle: CSSProperties = {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ResponsiveWorkspaceProvider as Provider, useWorkspaceActions, useWorkspaceNavigation } from '@/features/workspace/responsive';
 import { useWorkspaceRegions } from '@/features/workspace/regions';
 import { ResponsiveDrawer } from '@/components/sidebar/ResponsiveDrawer';
-import { ItemContextMenu } from '@/app/(main)/projects/[projectId]/data/components/explorer/ExplorerRowMenus';
+import { ItemContextMenu } from '@/features/files/components/explorer/ExplorerRowMenus';
 
 import { createWorkspaceLayoutStore, useWorkspaceLayout, type WorkspaceLayoutStore } from '@/features/workspace/layoutStore';
 import { DEFAULT_WORKSPACE_INPUT } from '@/features/workspace/paneLayout';

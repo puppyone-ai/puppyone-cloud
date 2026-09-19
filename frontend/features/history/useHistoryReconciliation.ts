@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useSessionValue } from '@/features/workspace/session';
+import { useEffect } from 'react';
 
 interface HistorySnapshot {
   loaded: boolean;

@@ -9,7 +9,7 @@ import type { ProjectInfo } from '../lib/projectsApi';
 import { updateTable, deleteTable } from '../lib/projectsApi';
 import { refreshProjects } from '../lib/hooks/useData';
 import { useOrganization } from '@/contexts/OrganizationContext';
-import { useAuth } from '../app/supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { ImportModal } from './editors/table/components/ImportModal';
 import { uploadFiles } from '../lib/uploadApi';
 import { Dots } from './loading';
