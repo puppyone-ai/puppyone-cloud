@@ -103,6 +103,17 @@ async def purchase(
     )
 
 
+@router.get("/usage/{reservation_id}")
+async def usage_receipt(
+    reservation_id: UUID,
+    user=Depends(require_person),
+    gateway: PuppyPayGateway = Depends(get_billing_gateway),
+):
+    return await call(
+        gateway, "GET", f"/api/v1/ai/usage/{reservation_id}", actor_user_id=user.user_id
+    )
+
+
 @router.post("/chat/completions")
 async def completion(
     request: Request,

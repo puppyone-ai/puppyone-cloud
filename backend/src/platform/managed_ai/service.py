@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-from decimal import Decimal
 
 import anyio
 import httpx
@@ -13,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from src.config import settings
 from src.platform.billing.gateway import BillingGatewayError, PuppyPayGateway
+from src.platform.managed_ai.openrouter_usage import normalize_usage, public_frame
 from src.platform.managed_ai.schemas import CompletionRequest
 
 PROVIDER_BASE = "https://openrouter.ai/api/v1"
@@ -92,6 +92,14 @@ class ManagedAIService:
             },
         )
         path = f"/internal/v1/ai/reservations/{reservation['reservation_id']}"
+        route = reservation.get("provider_route") or {
+            "provider": "openrouter",
+            "provider_account_ref": "managed-default",
+            "provider_model_id": body.model,
+        }
+        if route["provider"] != "openrouter" or route["provider_account_ref"] != "managed-default":
+            raise failure(503, "ai_route_unavailable", "Agent model route is unavailable")
+        provider_identity = {key: route[key] for key in ("provider", "provider_account_ref")}
 
         async def mutate(action, values=None, *, retry=True):
             return await self.gateway.request(
@@ -106,6 +114,7 @@ class ManagedAIService:
             # A start claim must never be transparently replayed after a lost
             # response: the second attempt is not permission to generate again.
             await mutate("start", retry=False)
+            payload["model"] = route["provider_model_id"]
             payload["user"] = provider_user(user_id)
             payload["stream_options"] = {"include_usage": True}
             response = await client.send(
@@ -150,16 +159,23 @@ class ManagedAIService:
                             if not generation_id:
                                 # Durable recovery identity before exposing the
                                 # first content/tool frame to the local Agent.
-                                await mutate("provider", {"provider_request_id": event_id})
+                                await mutate(
+                                    "provider",
+                                    {"provider_request_id": event_id, **provider_identity},
+                                )
                                 generation_id = event_id
                         if not generation_id:
                             raise ValueError("Missing provider generation identity")
                         if event.get("usage") is not None:
                             usage = event["usage"]
-                        yield f"data: {json.dumps(event)}\n\n".encode()
-                    if not complete or not generation_id or not usage or "cost" not in usage:
+                        yield f"data: {json.dumps(public_frame(event))}\n\n".encode()
+                    if not complete or not generation_id or usage is None:
                         raise ValueError("Provider usage is incomplete")
-                    await mutate("settle", usage_payload(generation_id, usage))
+                    await mutate(
+                        "settle", {**normalize_usage(generation_id, usage), **provider_identity}
+                    )
+                    # Desktop reads the receipt identified by the response
+                    # header; preserve the provider SDK's standard SSE format.
                     yield b"data: [DONE]\n\n"
             except Exception:
                 # The durable reservation survives cancellation, crashes and
@@ -173,7 +189,11 @@ class ManagedAIService:
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                "X-PuppyOne-Reservation-ID": reservation["reservation_id"],
+            },
         )
 
     async def recover_usage(self, generation_id: str, user_id: str) -> dict:
@@ -186,24 +206,9 @@ class ManagedAIService:
         data = response.json()["data"]
         if data.get("id") != generation_id or data.get("external_user") != provider_user(user_id):
             raise failure(409, "ai_generation_mismatch", "Provider usage identity does not match")
-        if data.get("total_cost") is None or not (
-            data.get("finish_reason") or data.get("cancelled")
-        ):
+        if not (data.get("finish_reason") or data.get("cancelled")):
             raise failure(503, "ai_usage_pending", "Provider usage is not final")
-        return {
-            "provider_request_id": generation_id,
-            "provider_cost_usd": str(Decimal(str(data["total_cost"]))),
-            "input_tokens": data["native_tokens_prompt"],
-            "output_tokens": data["native_tokens_completion"],
-            "cached_tokens": data.get("native_tokens_cached") or 0,
-        }
-
-
-def usage_payload(generation_id: str, usage: dict) -> dict:
-    return {
-        "provider_request_id": generation_id,
-        "provider_cost_usd": str(Decimal(str(usage["cost"]))),
-        "input_tokens": usage["prompt_tokens"],
-        "output_tokens": usage["completion_tokens"],
-        "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0,
-    }
+        try:
+            return normalize_usage(generation_id, data, recovered=True)
+        except ValueError:
+            raise failure(503, "ai_usage_pending", "Provider token usage is incomplete") from None
