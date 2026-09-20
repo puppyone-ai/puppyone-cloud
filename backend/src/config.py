@@ -145,6 +145,20 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def enforce_managed_ai_safety(self):
+        if self.MANAGED_AI_ENABLED:
+            if self.SKIP_AUTH:
+                raise ValueError("Managed AI requires authenticated users; SKIP_AUTH must be false")
+            if not self.PUPPYPAY_BASE_URL or len(self.PUPPYPAY_INTERNAL_API_SECRET) < 32:
+                raise ValueError("Managed AI requires the private PuppyPay gateway")
+            if self.APP_ENV in {"staging", "production"}:
+                if not self.PUPPYPAY_BASE_URL.startswith("https://"):
+                    raise ValueError("Managed AI requires HTTPS for PuppyPay")
+                if len(self.INTERNAL_API_SECRET) < 32 or self.INTERNAL_API_SECRET == self.PUPPYPAY_INTERNAL_API_SECRET:
+                    raise ValueError("Managed AI requires distinct service credentials")
+        return self
+
+    @model_validator(mode="after")
     def enforce_entitlements_safety(self):
         """Fail closed on contradictory hosted billing configuration."""
         if self.BILLING_ENFORCEMENT != "disabled" and self.ENTITLEMENTS_MODE == "disabled":
@@ -530,6 +544,8 @@ class Settings(BaseSettings):
     ENTITLEMENTS_MODE: Literal["disabled", "local", "db"] = "disabled"
     BILLING_ENFORCEMENT: Literal["disabled", "shadow", "required"] = "disabled"
     LOCAL_ENTITLEMENTS_FILE: str | None = None
+    MANAGED_AI_ENABLED: bool = False
+    MANAGED_AI_OPENROUTER_KEY: str = ""
     BILLING_UI_ENABLED: bool = False
     BILLING_WRITES_ENABLED: bool = False
     SEAT_BILLING_MODE: Literal["disabled", "shadow", "required"] = "disabled"

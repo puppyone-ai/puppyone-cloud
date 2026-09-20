@@ -284,6 +284,7 @@ function LoginPageInner() {
   }, [desktopAuthState, supabase]);
 
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
+    if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
     clearFeedback();
     setLoading(provider);
     try {
@@ -310,6 +311,7 @@ function LoginPageInner() {
 
   useEffect(() => {
     const provider = searchParams?.get('provider');
+    if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
     if (provider !== 'google' && provider !== 'github') return;
     if (autoOAuthProviderRef.current === provider) return;
 
@@ -594,7 +596,7 @@ function LoginPageInner() {
                 <h1 className="text-2xl font-semibold text-[var(--po-text)]">Sign in or sign up</h1>
               </div>
 
-              <div className="flex flex-col gap-3">
+              {process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY !== 'true' && <><div className="flex flex-col gap-3">
                 <ProviderButton
                   icon={<GoogleIcon />}
                   label="Continue with Google"
@@ -613,7 +615,7 @@ function LoginPageInner() {
                 />
               </div>
 
-              <AuthDivider />
+              <AuthDivider /></>}
 
               <div>
                 <form onSubmit={handleContinue} className="flex flex-col gap-3">
