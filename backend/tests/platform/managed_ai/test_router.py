@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
-from src.platform.billing.gateway import get_billing_gateway
+from src.platform.billing.gateway import PuppyPayGateway, get_billing_gateway
 from src.platform.managed_ai.router import internal_router, router
 
 
@@ -28,6 +28,41 @@ def user():
     return SimpleNamespace(
         user_id="user-one", email="test@example.com", role="authenticated", is_anonymous=False
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("POST", "/api/v1/ai/trial", {}),
+        ("GET", "/api/v1/ai/usage/11111111-1111-4111-8111-111111111111", None),
+    ],
+)
+async def test_trial_and_receipt_cross_real_gateway_allowlist(app, method, path, body):
+    calls = []
+
+    def payment(request):
+        calls.append(request)
+        return httpx.Response(200, json={"accepted": True})
+
+    gateway = PuppyPayGateway(
+        base_url="https://pay.example.test",
+        internal_secret="s" * 32,
+        transport=httpx.MockTransport(payment),
+    )
+    app.dependency_overrides[get_billing_gateway] = lambda: gateway
+    app.dependency_overrides[get_current_user] = user
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.request(
+            method, path, json=body, headers={"X-PuppyOne-User-ID": "victim"}
+        )
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0].url.path == path
+    assert calls[0].headers["x-puppyone-user-id"] == "user-one"
+    assert calls[0].headers["x-internal-secret"] == "s" * 32
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,9 @@ class BillingGatewayError(Exception):
 
 
 _ALLOWED_PATHS = (
-    re.compile(r"^/api/v1/ai/(?:catalog|balance|checkouts|purchases/[a-f0-9-]{36})$"),
+    re.compile(
+        r"^/api/v1/ai/(?:catalog|balance|trial|checkouts|(?:purchases|usage)/[a-f0-9-]{36})$"
+    ),
     re.compile(r"^/internal/v1/ai/reservations$"),
     re.compile(r"^/internal/v1/ai/reservations/[a-f0-9-]{36}/(?:start|provider|settle|release)$"),
     re.compile(r"^/api/v1/billing/catalog$"),
