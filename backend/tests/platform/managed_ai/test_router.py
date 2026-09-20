@@ -104,3 +104,42 @@ async def test_validation_does_not_echo_prompt_and_rejects_oversized_body(app):
         assert (
             await client.post("/api/v1/ai/chat/completions", headers=headers, content=b"x" * 524289)
         ).status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_trial_uses_authenticated_identity_while_hosting_is_disabled(app):
+    calls = []
+
+    class Gateway:
+        async def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return {"available_micro_usd": 1_000_000}
+
+    app.dependency_overrides[get_billing_gateway] = lambda: Gateway()
+    app.dependency_overrides[get_current_user] = user
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/ai/trial", json={}, headers={"X-PuppyOne-User-ID": "victim"}
+        )
+        assert response.status_code == 200
+        assert calls == [
+            (
+                "POST",
+                "/api/v1/ai/trial",
+                {"actor_user_id": "user-one", "actor_email": "test@example.com", "body": {}},
+            )
+        ]
+        assert (
+            await client.post("/api/v1/ai/trial", json={"user_id": "victim", "amount": 100})
+        ).status_code == 422
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            user_id="anonymous", email="fake@example.com", role="authenticated", is_anonymous=True
+        )
+        assert (await client.post("/api/v1/ai/trial", json={})).status_code == 401
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            user_id="phone", email=None, role="authenticated", is_anonymous=False
+        )
+        assert (await client.post("/api/v1/ai/trial", json={})).status_code == 403
+        assert len(calls) == 1

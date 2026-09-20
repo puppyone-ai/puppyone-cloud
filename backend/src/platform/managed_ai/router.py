@@ -10,7 +10,7 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.billing.gateway import BillingGatewayError, PuppyPayGateway, get_billing_gateway
-from src.platform.managed_ai.schemas import CheckoutRequest, CompletionRequest
+from src.platform.managed_ai.schemas import CheckoutRequest, CompletionRequest, TrialClaimRequest
 from src.platform.managed_ai.service import ManagedAIService
 
 
@@ -54,6 +54,24 @@ async def balance(
     user=Depends(require_person), gateway: PuppyPayGateway = Depends(get_billing_gateway)
 ):
     return await call(gateway, "GET", "/api/v1/ai/balance", actor_user_id=user.user_id)
+
+
+@router.post("/trial")
+async def claim_trial(
+    body: TrialClaimRequest,
+    user=Depends(require_person),
+    gateway: PuppyPayGateway = Depends(get_billing_gateway),
+):
+    if not user.email:
+        raise HTTPException(403, "Email sign-in is required")
+    return await call(
+        gateway,
+        "POST",
+        "/api/v1/ai/trial",
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        body={},
+    )
 
 
 @router.post("/checkouts")

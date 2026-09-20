@@ -7,6 +7,10 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TrialClaimRequest(StrictModel):
+    pass
+
+
 class TextPart(StrictModel):
     type: Literal["text"]
     text: str
