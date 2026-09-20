@@ -4,6 +4,7 @@ import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PulseGrid, Dots } from '@/components/loading';
+import { DesktopAICreditOffer } from '@/components/auth/DesktopAICreditOffer';
 
 const URL_ERROR_MESSAGES: Record<string, string> = {
   signup_link_deprecated:
@@ -588,6 +589,8 @@ function LoginPageInner() {
               className="opacity-95"
             />
           </div>
+
+          {desktopAuthState && <DesktopAICreditOffer />}
 
           {/* ── Main View ── */}
           {view === 'main' && (
