@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -12,6 +11,7 @@ from src.config import settings
 from src.exception_handler import http_exception_handler
 from src.platform.auth.dependencies import get_current_user
 from src.platform.billing.gateway import PuppyPayGateway, get_billing_gateway
+from src.platform.managed_ai.contracts import InferenceDone, InferenceRun
 from src.platform.managed_ai.router import internal_router, router
 from src.platform.managed_ai.service import ManagedAIService
 from src.utils.middleware import RequestContextMiddleware
@@ -222,7 +222,14 @@ async def test_pi_continuation_accepts_assistant_reasoning_context(app, monkeypa
 
     async def completion(_self, user_id, request_id, body):
         captured.append((user_id, body.model_dump(exclude_none=True)))
-        return StreamingResponse(iter([b"data: [DONE]\n\n"]), media_type="text/event-stream")
+
+        async def events():
+            yield InferenceDone()
+
+        async def close():
+            pass
+
+        return InferenceRun("synthetic-reservation", events(), close)
 
     monkeypatch.setattr(ManagedAIService, "completion", completion)
     app.dependency_overrides[get_current_user] = user

@@ -10,7 +10,10 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.billing.gateway import BillingGatewayError, PuppyPayGateway, get_billing_gateway
+from src.platform.managed_ai.contracts import InferenceError
+from src.platform.managed_ai.dependencies import get_inference_service
 from src.platform.managed_ai.protocol import InferenceRoute, log_validation_failure
+from src.platform.managed_ai.response import completion_response
 from src.platform.managed_ai.schemas import CheckoutRequest, CompletionRequest, TrialClaimRequest
 from src.platform.managed_ai.service import ManagedAIService
 
@@ -121,7 +124,7 @@ async def completion(
     request: Request,
     idempotency_key: str | None = Header(default=None),
     user=Depends(require_person),
-    gateway: PuppyPayGateway = Depends(get_billing_gateway),
+    service: ManagedAIService = Depends(get_inference_service),
 ):
     request_id = key(idempotency_key)
     raw = bytearray()
@@ -136,8 +139,8 @@ async def completion(
         log_validation_failure(error)
         raise HTTPException(422, "Invalid text/tool inference request") from None
     try:
-        return await ManagedAIService(gateway).completion(user.user_id, request_id, body)
-    except BillingGatewayError as error:
+        return completion_response(await service.completion(user.user_id, request_id, body))
+    except (BillingGatewayError, InferenceError) as error:
         return JSONResponse(error.payload, status_code=error.status_code)
 
 
@@ -145,12 +148,22 @@ router.include_router(inference_router)
 
 
 @internal_router.get("/generations/{generation_id}")
-async def generation(generation_id: str, user_id: str, x_internal_secret: str = Header(default="")):
+async def generation(
+    generation_id: str,
+    user_id: str,
+    provider: str = "openrouter",
+    provider_account_ref: str = "managed-default",
+    x_internal_secret: str = Header(default=""),
+    service: ManagedAIService = Depends(get_inference_service),
+):
     if not settings.INTERNAL_API_SECRET or not hmac.compare_digest(
         x_internal_secret, settings.INTERNAL_API_SECRET
     ):
         raise HTTPException(403, "Invalid service credential")
     try:
-        return await ManagedAIService(get_billing_gateway()).recover_usage(generation_id, user_id)
-    except BillingGatewayError as error:
+        # Defaults only preserve old Pay Worker requests during a rolling update.
+        return await service.recover_usage(
+            generation_id, user_id, provider=provider, provider_account_ref=provider_account_ref
+        )
+    except (BillingGatewayError, InferenceError) as error:
         return JSONResponse(error.payload, status_code=error.status_code)

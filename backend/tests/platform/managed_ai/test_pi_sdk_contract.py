@@ -13,7 +13,9 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.managed_ai import router as routes
-from src.platform.managed_ai.service import ManagedAIService
+from src.platform.managed_ai.dependencies import get_provider_registry
+from src.platform.managed_ai.providers.openrouter import OpenRouterProvider
+from src.platform.managed_ai.providers.registry import ProviderRegistry
 from tests.platform.managed_ai.test_router import user
 from tests.platform.managed_ai.test_service import Ledger, event
 
@@ -53,12 +55,12 @@ async def test_pinned_desktop_sdk_roundtrips_through_real_gateway(monkeypatch):
             + "data: [DONE]\n\n",
         )
 
-    monkeypatch.setattr(
-        routes,
-        "ManagedAIService",
-        lambda gateway: ManagedAIService(
-            gateway, key="synthetic", transport=httpx.MockTransport(provider)
-        ),
+    app.dependency_overrides[get_provider_registry] = lambda: ProviderRegistry(
+        {
+            ("openrouter", "managed-default"): OpenRouterProvider(
+                key="synthetic", transport=httpx.MockTransport(provider)
+            ),
+        }
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

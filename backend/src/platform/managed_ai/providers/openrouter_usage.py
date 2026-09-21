@@ -2,25 +2,7 @@
 
 from decimal import Decimal, InvalidOperation
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class StandardUsage(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    input_tokens: int = Field(ge=0, le=1_000_000, strict=True)
-    output_tokens: int = Field(ge=0, le=1_000_000, strict=True)
-    cached_tokens: int = Field(ge=0, le=1_000_000, strict=True)
-    reasoning_tokens: int | None = Field(default=None, ge=0, le=1_000_000, strict=True)
-    cache_write_tokens: int | None = Field(default=None, ge=0, le=1_000_000, strict=True)
-
-    @model_validator(mode="after")
-    def subsets(self):
-        if self.cached_tokens + (self.cache_write_tokens or 0) > self.input_tokens:
-            raise ValueError("Invalid cached input")
-        if (self.reasoning_tokens or 0) > self.output_tokens:
-            raise ValueError("Invalid reasoning subset")
-        return self
+from src.platform.managed_ai.contracts import StandardUsage
 
 
 def normalize_usage(generation_id: str, data: dict, *, recovered: bool = False) -> dict:

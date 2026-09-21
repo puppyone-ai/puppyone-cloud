@@ -5,8 +5,23 @@ import httpx
 import pytest
 
 from src.platform.billing.gateway import BillingGatewayError
+from src.platform.managed_ai.contracts import InferenceError
+from src.platform.managed_ai.providers.openrouter import OpenRouterProvider, provider_user
+from src.platform.managed_ai.providers.registry import ProviderRegistry
+from src.platform.managed_ai.response import completion_response
 from src.platform.managed_ai.schemas import CompletionRequest
-from src.platform.managed_ai.service import ManagedAIService, provider_user
+from src.platform.managed_ai.service import ManagedAIService
+
+
+def openrouter_service(ledger, *, key, transport):
+    return ManagedAIService(
+        ledger,
+        providers=ProviderRegistry(
+            {
+                ("openrouter", "managed-default"): OpenRouterProvider(key=key, transport=transport),
+            }
+        ),
+    )
 
 
 class Ledger:
@@ -24,7 +39,14 @@ class Ledger:
         if path.endswith("reservations"):
             if self.insufficient:
                 raise BillingGatewayError(402, {"error": {"code": "ai_balance_insufficient"}})
-            return {"reservation_id": str(uuid4())}
+            return {
+                "reservation_id": str(uuid4()),
+                "provider_route": {
+                    "provider": "openrouter",
+                    "provider_account_ref": "managed-default",
+                    "provider_model_id": "test/model",
+                },
+            }
         if path.endswith("start"):
             assert kwargs["idempotency_key"] is None
             if self.started:
@@ -83,10 +105,12 @@ async def test_tool_stream_persists_identity_before_content_and_reports_metered_
             + "data: [DONE]\n\n",
         )
 
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger, key="server-only-key", transport=httpx.MockTransport(provider)
     )
-    response = await service.completion("user-one", "unique-request-0001", body())
+    response = completion_response(
+        await service.completion("user-one", "unique-request-0001", body())
+    )
     chunks = []
     async for chunk in response.body_iterator:
         if not chunks:
@@ -138,8 +162,10 @@ async def test_pi_tool_continuation_forwards_context_and_settles_its_own_usage()
             + "data: [DONE]\n\n",
         )
 
-    service = ManagedAIService(ledger, key="key", transport=httpx.MockTransport(provider))
-    response = await service.completion("user-one", "pi-tool-continuation", body(messages=messages))
+    service = openrouter_service(ledger, key="key", transport=httpx.MockTransport(provider))
+    response = completion_response(
+        await service.completion("user-one", "pi-tool-continuation", body(messages=messages))
+    )
     result = b"".join([chunk async for chunk in response.body_iterator])
     assert captured["messages"] == messages
     assert b"Read complete." in result
@@ -168,14 +194,16 @@ async def test_complete_tokens_settle_without_supplier_cost(cost):
     }
     if cost is not None:
         usage["cost"] = cost
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, text=event(usage=usage) + "data: [DONE]\n\n")
         ),
     )
-    response = await service.completion("user", "cost-optional-request", body())
+    response = completion_response(
+        await service.completion("user", "cost-optional-request", body())
+    )
     result = b"".join([chunk async for chunk in response.body_iterator])
     assert result.endswith(b"data: [DONE]\n\n")
     payload = ledger.calls[-1][1]["body"]
@@ -191,7 +219,7 @@ async def test_complete_tokens_settle_without_supplier_cost(cost):
 
 @pytest.mark.asyncio
 async def test_stream_and_recovery_use_identical_native_tokens_without_cost():
-    from src.platform.managed_ai.openrouter_usage import normalize_usage
+    from src.platform.managed_ai.providers.openrouter_usage import normalize_usage
 
     stream = normalize_usage(
         "gen-test",
@@ -213,14 +241,18 @@ async def test_stream_and_recovery_use_identical_native_tokens_without_cost():
         "tokens_prompt": 999,
         "tokens_completion": 999,
     }
-    service = ManagedAIService(
+    service = openrouter_service(
         Ledger(),
         key="key",
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": data})),
     )
-    recovered = await service.recover_usage("gen-test", "user")
+    recovered = await service.recover_usage(
+        "gen-test", "user", provider="openrouter", provider_account_ref="managed-default"
+    )
     assert {k: v for k, v in stream.items() if k != "cost_source"} == {
-        k: v for k, v in recovered.items() if k != "cost_source"
+        k: v
+        for k, v in recovered.items()
+        if k not in {"cost_source", "provider", "provider_account_ref"}
     }
 
 
@@ -243,14 +275,16 @@ async def test_stream_and_recovery_use_identical_native_tokens_without_cost():
 )
 async def test_incomplete_or_invalid_usage_never_becomes_zero_cost_success(invalid):
     ledger = Ledger()
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, text=event(usage=invalid) + "data: [DONE]\n\n")
         ),
     )
-    response = await service.completion("user", "invalid-meter-request", body())
+    response = completion_response(
+        await service.completion("user", "invalid-meter-request", body())
+    )
     result = b"".join([chunk async for chunk in response.body_iterator])
     assert b"ai_usage_pending" in result and b"[DONE]" not in result
     assert not any(path.endswith("/settle") for path, _ in ledger.calls)
@@ -263,7 +297,7 @@ async def test_insufficient_funds_and_replayed_start_never_invoke_provider():
     def forbidden(_request):
         pytest.fail("Provider must not be invoked")
 
-    service = ManagedAIService(ledger, key="key", transport=httpx.MockTransport(forbidden))
+    service = openrouter_service(ledger, key="key", transport=httpx.MockTransport(forbidden))
     ledger.insufficient = True
     with pytest.raises(BillingGatewayError) as failure:
         await service.completion("user", "unique-request-0001", body())
@@ -279,14 +313,14 @@ async def test_insufficient_funds_and_replayed_start_never_invoke_provider():
 @pytest.mark.parametrize("status,released", [(429, True), (400, True), (500, False)])
 async def test_only_confirmed_provider_rejections_release_reservation(status, released):
     ledger = Ledger()
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(
             lambda _: httpx.Response(status, json={"error": "private provider detail"})
         ),
     )
-    with pytest.raises(BillingGatewayError) as failure:
+    with pytest.raises(InferenceError) as failure:
         await service.completion("user", "unique-request-0001", body())
     assert "private" not in str(failure.value.payload)
     assert any(path.endswith("release") for path, _ in ledger.calls) is released
@@ -295,14 +329,14 @@ async def test_only_confirmed_provider_rejections_release_reservation(status, re
 @pytest.mark.asyncio
 async def test_missing_usage_holds_credit_and_does_not_report_success():
     ledger = Ledger()
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, text=event(choices=[]) + "data: [DONE]\n\n")
         ),
     )
-    response = await service.completion("user", "unique-request-0001", body())
+    response = completion_response(await service.completion("user", "unique-request-0001", body()))
     result = b"".join([chunk async for chunk in response.body_iterator])
     assert b"ai_usage_pending" in result and b"[DONE]" not in result
     assert not any(path.endswith(("release", "settle")) for path, _ in ledger.calls)
@@ -311,14 +345,14 @@ async def test_missing_usage_holds_credit_and_does_not_report_success():
 @pytest.mark.asyncio
 async def test_disconnect_retains_durable_generation_for_recovery():
     ledger = Ledger()
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, text=event(choices=[]) + "data: [DONE]\n\n")
         ),
     )
-    response = await service.completion("user", "unique-request-0001", body())
+    response = completion_response(await service.completion("user", "unique-request-0001", body()))
     await anext(response.body_iterator)
     await response.body_iterator.aclose()
     assert ledger.calls[-1][0].endswith("provider")
@@ -336,14 +370,23 @@ async def test_recovery_requires_same_user_and_final_provider_usage():
         "native_tokens_completion": 10,
         "native_tokens_cached": 0,
     }
-    service = ManagedAIService(
+    service = openrouter_service(
         ledger,
         key="key",
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": result})),
     )
-    assert (await service.recover_usage("gen-test", "user"))["provider_cost_usd"] == "0.000021"
-    with pytest.raises(BillingGatewayError):
-        await service.recover_usage("gen-test", "another-user")
+    assert (
+        await service.recover_usage(
+            "gen-test", "user", provider="openrouter", provider_account_ref="managed-default"
+        )
+    )["provider_cost_usd"] == "0.000021"
+    with pytest.raises(InferenceError):
+        await service.recover_usage(
+            "gen-test",
+            "another-user",
+            provider="openrouter",
+            provider_account_ref="managed-default",
+        )
 
 
 @pytest.mark.parametrize(
