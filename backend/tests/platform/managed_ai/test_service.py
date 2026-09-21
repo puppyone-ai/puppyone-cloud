@@ -103,6 +103,60 @@ async def test_tool_stream_persists_identity_before_content_and_reports_metered_
 
 
 @pytest.mark.asyncio
+async def test_pi_tool_continuation_forwards_context_and_settles_its_own_usage():
+    ledger = Ledger()
+    captured = {}
+    messages = [
+        {"role": "user", "content": "Read the fixture."},
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "Synthetic context.",
+            "tool_calls": [
+                {
+                    "id": "call-read",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": '{"path":"fixture.txt"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-read", "content": "Synthetic tool result."},
+    ]
+
+    def provider(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text=event(choices=[{"delta": {"content": "Read complete."}}])
+            + event(
+                usage={
+                    "prompt_tokens": 80,
+                    "completion_tokens": 6,
+                    "prompt_tokens_details": {"cached_tokens": 0},
+                }
+            )
+            + "data: [DONE]\n\n",
+        )
+
+    service = ManagedAIService(ledger, key="key", transport=httpx.MockTransport(provider))
+    response = await service.completion("user-one", "pi-tool-continuation", body(messages=messages))
+    result = b"".join([chunk async for chunk in response.body_iterator])
+    assert captured["messages"] == messages
+    assert b"Read complete." in result
+    assert b"Synthetic context." not in result
+    assert result.endswith(b"data: [DONE]\n\n")
+    assert [path.rsplit("/", 1)[-1] for path, _ in ledger.calls] == [
+        "catalog",
+        "reservations",
+        "start",
+        "provider",
+        "settle",
+    ]
+    assert ledger.calls[-1][1]["body"]["input_tokens"] == 80
+    assert ledger.calls[-1][1]["body"]["output_tokens"] == 6
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cost", [None, "not-a-cost", 0.99])
 async def test_complete_tokens_settle_without_supplier_cost(cost):
     ledger = Ledger()

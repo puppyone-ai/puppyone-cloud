@@ -3,11 +3,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.billing.gateway import PuppyPayGateway, get_billing_gateway
 from src.platform.managed_ai.router import internal_router, router
+from src.platform.managed_ai.service import ManagedAIService
 
 
 @pytest.fixture
@@ -139,6 +141,78 @@ async def test_validation_does_not_echo_prompt_and_rejects_oversized_body(app):
         assert (
             await client.post("/api/v1/ai/chat/completions", headers=headers, content=b"x" * 524289)
         ).status_code == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_tool", [False, True])
+async def test_pi_continuation_accepts_assistant_reasoning_context(app, monkeypatch, with_tool):
+    """Shape captured from the pinned Pi SDK after a reasoning response."""
+    captured = []
+
+    async def completion(_self, user_id, request_id, body):
+        captured.append((user_id, body.model_dump(exclude_none=True)))
+        return StreamingResponse(iter([b"data: [DONE]\n\n"]), media_type="text/event-stream")
+
+    monkeypatch.setattr(ManagedAIService, "completion", completion)
+    app.dependency_overrides[get_current_user] = user
+    app.dependency_overrides[get_billing_gateway] = lambda: object()
+    assistant = {"role": "assistant", "content": "", "reasoning_content": "Synthetic context."}
+    if with_tool:
+        assistant["tool_calls"] = [
+            {
+                "id": "call-read",
+                "type": "function",
+                "function": {"name": "read", "arguments": '{"path":"fixture.txt"}'},
+            }
+        ]
+    messages = [{"role": "user", "content": "Read the fixture."}, assistant]
+    messages.append(
+        {"role": "tool", "tool_call_id": "call-read", "content": "Synthetic tool result."}
+        if with_tool
+        else {"role": "user", "content": "Continue."}
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/ai/chat/completions",
+            headers={"Idempotency-Key": "pi-continuation-0001"},
+            json={
+                "model": "test/model",
+                "messages": messages,
+                "stream": True,
+                "max_completion_tokens": 4096,
+            },
+        )
+    assert response.status_code == 200
+    assert captured[0][0] == "user-one"
+    assert captured[0][1]["messages"] == messages
+    assert "Synthetic context" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"reasoning_content": {}},
+        {"reasoning_content": "private", "role": "user"},
+        {"provider_override": "untrusted"},
+    ],
+)
+async def test_reasoning_compatibility_keeps_request_validation_strict(app, change):
+    app.dependency_overrides[get_current_user] = user
+    app.dependency_overrides[get_billing_gateway] = lambda: object()
+    message = {"role": "assistant", "content": "private prompt", **change}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/ai/chat/completions",
+            headers={"Idempotency-Key": "pi-invalid-request-0001"},
+            json={"model": "test/model", "messages": [message]},
+        )
+    assert response.status_code == 422
+    assert "private" not in response.text
 
 
 @pytest.mark.asyncio

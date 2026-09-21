@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -33,6 +33,15 @@ class Message(StrictModel):
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = Field(default=None, max_length=256)
     name: str | None = Field(default=None, max_length=128)
+    # Pi replays the provider's reasoning alongside assistant tool calls and
+    # subsequent turns. Keep it in model context, never as a transcript event.
+    reasoning_content: str | None = None
+
+    @model_validator(mode="after")
+    def assistant_reasoning(self):
+        if self.reasoning_content is not None and self.role != "assistant":
+            raise ValueError("Reasoning context requires an assistant message")
+        return self
 
 
 class FunctionDefinition(StrictModel):
