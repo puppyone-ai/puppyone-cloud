@@ -1,15 +1,20 @@
+import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from loguru import logger
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.config import settings
+from src.exception_handler import http_exception_handler
 from src.platform.auth.dependencies import get_current_user
 from src.platform.billing.gateway import PuppyPayGateway, get_billing_gateway
 from src.platform.managed_ai.router import internal_router, router
 from src.platform.managed_ai.service import ManagedAIService
+from src.utils.middleware import RequestContextMiddleware
 
 
 @pytest.fixture
@@ -21,6 +26,8 @@ def app(monkeypatch):
     monkeypatch.setattr(settings, "BILLING_WRITES_ENABLED", False)
     monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "disabled")
     instance = FastAPI()
+    instance.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    instance.add_middleware(RequestContextMiddleware)
     instance.include_router(router, prefix="/api/v1")
     instance.include_router(internal_router)
     return instance
@@ -138,9 +145,73 @@ async def test_validation_does_not_echo_prompt_and_rejects_oversized_body(app):
             },
         )
         assert response.status_code == 422 and "private customer" not in response.text
+        payload = response.json()["error"]
+        assert payload["code"] == "ai_request_invalid"
+        assert payload["request_id"] == response.headers["x-request-id"]
+        assert payload["request_id"] in payload["message"]
         assert (
             await client.post("/api/v1/ai/chat/completions", headers=headers, content=b"x" * 524289)
         ).status_code == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 503])
+async def test_dependency_errors_use_model_protocol_without_private_details(app, status):
+    def rejected():
+        raise HTTPException(status, "private auth diagnostics", headers={"Retry-After": "3"})
+
+    app.dependency_overrides[get_current_user] = rejected
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/ai/chat/completions", json={}, headers={"X-Request-Id": "contract-request-123"}
+        )
+    assert response.status_code == status
+    assert response.json()["error"]["message"]
+    assert response.json()["error"]["request_id"] == "contract-request-123"
+    assert response.headers["retry-after"] == "3"
+    assert "private auth" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_validation_diagnostics_log_only_schema_paths_and_categories(app, monkeypatch):
+    app.dependency_overrides[get_current_user] = user
+    app.dependency_overrides[get_billing_gateway] = lambda: object()
+    invoked = []
+    monkeypatch.setattr(ManagedAIService, "completion", lambda *args: invoked.append(args))
+    records = []
+    sink = logger.add(
+        lambda message: records.append(message.record),
+        filter=lambda record: record["message"] == "managed_ai_request_rejected",
+    )
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/ai/chat/completions",
+                json={
+                    "model": "test/model",
+                    "messages": [
+                        {
+                            "role": "assistant",
+                            "content": "private-prompt",
+                            "reasoning_content": {"secret-value": "private-context"},
+                            "private-field-name": "private-value",
+                        }
+                    ],
+                },
+                headers={"Idempotency-Key": "invalid-protocol-request"},
+            )
+        assert response.status_code == 422
+        assert not invoked
+        issues = records[0]["extra"]["validation_issues"]
+        assert {"type": "string_type", "path": ["messages", 0, "reasoning_content"]} in issues
+        assert {"type": "extra_forbidden", "path": ["messages", 0, "<field>"]} in issues
+        assert "private" not in json.dumps(issues) + response.text
+    finally:
+        logger.remove(sink)
 
 
 @pytest.mark.asyncio

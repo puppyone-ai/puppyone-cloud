@@ -10,6 +10,7 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.billing.gateway import BillingGatewayError, PuppyPayGateway, get_billing_gateway
+from src.platform.managed_ai.protocol import InferenceRoute, log_validation_failure
 from src.platform.managed_ai.schemas import CheckoutRequest, CompletionRequest, TrialClaimRequest
 from src.platform.managed_ai.service import ManagedAIService
 
@@ -39,6 +40,7 @@ async def call(gateway, method, path, **kwargs):
 
 
 router = APIRouter(prefix="/ai", tags=["desktop-ai"], dependencies=[Depends(require_enabled)])
+inference_router = APIRouter(route_class=InferenceRoute)
 internal_router = APIRouter(
     prefix="/internal/ai", tags=["desktop-ai-internal"], dependencies=[Depends(require_enabled)]
 )
@@ -114,7 +116,7 @@ async def usage_receipt(
     )
 
 
-@router.post("/chat/completions")
+@inference_router.post("/chat/completions")
 async def completion(
     request: Request,
     idempotency_key: str | None = Header(default=None),
@@ -129,13 +131,17 @@ async def completion(
             raise HTTPException(413, "Agent request is too large")
     try:
         body = CompletionRequest.model_validate_json(raw)
-    except ValidationError:
+    except ValidationError as error:
         # Validation details may contain private prompts. Do not echo them.
+        log_validation_failure(error)
         raise HTTPException(422, "Invalid text/tool inference request") from None
     try:
         return await ManagedAIService(gateway).completion(user.user_id, request_id, body)
     except BillingGatewayError as error:
         return JSONResponse(error.payload, status_code=error.status_code)
+
+
+router.include_router(inference_router)
 
 
 @internal_router.get("/generations/{generation_id}")

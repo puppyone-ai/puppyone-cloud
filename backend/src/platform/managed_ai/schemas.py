@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
@@ -27,6 +27,28 @@ class ToolCall(StrictModel):
     function: FunctionCall
 
 
+class ReasoningDetail(StrictModel):
+    id: str | None = None
+    format: str | None = None
+    index: int | None = Field(default=None, ge=0, strict=True)
+
+
+class ReasoningText(ReasoningDetail):
+    type: Literal["reasoning.text"]
+    text: str
+    signature: str | None = None
+
+
+class ReasoningSummary(ReasoningDetail):
+    type: Literal["reasoning.summary"]
+    summary: str
+
+
+class ReasoningEncrypted(ReasoningDetail):
+    type: Literal["reasoning.encrypted"]
+    data: str
+
+
 class Message(StrictModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str | list[TextPart] | None = None
@@ -36,10 +58,26 @@ class Message(StrictModel):
     # Pi replays the provider's reasoning alongside assistant tool calls and
     # subsequent turns. Keep it in model context, never as a transcript event.
     reasoning_content: str | None = None
+    reasoning: str | None = None
+    reasoning_text: str | None = None
+    reasoning_details: (
+        list[
+            Annotated[
+                ReasoningText | ReasoningSummary | ReasoningEncrypted, Field(discriminator="type")
+            ]
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def assistant_reasoning(self):
-        if self.reasoning_content is not None and self.role != "assistant":
+        context = (
+            self.reasoning_content,
+            self.reasoning,
+            self.reasoning_text,
+            self.reasoning_details,
+        )
+        if any(value is not None for value in context) and self.role != "assistant":
             raise ValueError("Reasoning context requires an assistant message")
         return self
 
