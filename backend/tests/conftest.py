@@ -14,6 +14,9 @@ os.environ.setdefault("SUPABASE_KEY", "test-key-for-unit-tests")
 os.environ.setdefault("INTERNAL_API_SECRET", "test-secret-for-unit-tests")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SKIP_AUTH", "true")
+# Tests opt into managed inference explicitly; a developer's .env must not
+# combine a paid gateway with the collection-time test authentication bypass.
+os.environ.setdefault("MANAGED_AI_ENABLED", "false")
 # Unit tests must never write transport caches into the developer's home.
 # PID isolation also prevents concurrent pytest workers from sharing locks or
 # stale refs while still allowing cache behavior to be exercised.

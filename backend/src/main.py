@@ -23,7 +23,9 @@ APP_START_TIME = time.time()
 from dotenv import load_dotenv
 
 dotenv_start = time.time()
-load_dotenv(override=True)
+# Explicit launch/deployment configuration takes precedence over local defaults.
+# Overriding it can silently redirect Desktop auth or billing to another origin.
+load_dotenv(override=False)
 dotenv_duration = time.time() - dotenv_start
 
 # Initialize Loguru + intercept standard logging (including uvicorn.*)
