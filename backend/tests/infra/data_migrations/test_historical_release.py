@@ -73,3 +73,36 @@ def test_continuity_rejects_missing_customer_facts_and_credentials():
     modified["members"][0]["role"] = "viewer"
     with pytest.raises(ValueError, match="downgraded"):
         verify_continuity(original, modified)
+
+
+def test_resume_uses_encrypted_original_snapshot_and_rejects_other_keys(monkeypatch):
+    from src.infra.data_migrations import historical_release as release
+
+    class Database:
+        saved = None
+
+        def receipt(self, name):
+            return self.saved
+
+        def scalar(self, sql, variables):
+            self.saved = json.loads(variables["summary"])
+
+    db = Database()
+    source = {
+        "SUPABASE_PROJECT_ID": "production",
+        "ACCESS_CREDENTIAL_HASH_SECRET": "original-secret",
+    }
+    original = {"projects": ["original-project"], "expected_hashes": ["original-credential-hash"]}
+    monkeypatch.setattr(release, "snapshot", lambda *args: original)
+    assert release.original_snapshot(db, {"id": "release"}, source) == original
+    assert "original-credential-hash" not in json.dumps(db.saved)
+    monkeypatch.setattr(
+        release, "snapshot", lambda *args: pytest.fail("must reuse original checkpoint")
+    )
+    assert release.original_snapshot(db, {"id": "release"}, source) == original
+    from cryptography.exceptions import InvalidTag
+
+    with pytest.raises(InvalidTag):
+        release.original_snapshot(
+            db, {"id": "release"}, {**source, "ACCESS_CREDENTIAL_HASH_SECRET": "different"}
+        )

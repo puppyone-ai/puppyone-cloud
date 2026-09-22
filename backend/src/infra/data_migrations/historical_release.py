@@ -6,6 +6,7 @@ artifacts. An already upgraded database is a no-op. No storage operations.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import importlib.util
@@ -16,6 +17,8 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .catalog import DataMigrationCatalog
 from .database import PsqlClient
@@ -59,6 +62,7 @@ def bind(root: Path, source: dict[str, str]) -> tuple[PsqlClient, dict[str, str]
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     values = module.connection_environment(source)
+    source.update(values)
     env = {**source, **values}
     db = PsqlClient(values["DATABASE_URL"], base_environment=env)
     db.assert_supabase_target(
@@ -135,25 +139,61 @@ def verify_continuity(before: dict, after: dict) -> dict:
     }
 
 
+def checkpoint_cipher(secret: str, ref: str, plan_id: str) -> tuple[AESGCM, bytes]:
+    if not secret:
+        raise ValueError("Credential continuity secret is required")
+    context = ("puppyone-release-checkpoint-v1:" + ref + ":" + plan_id).encode()
+    return AESGCM(hmac.new(secret.encode(), context, hashlib.sha256).digest()), context
+
+
+def original_snapshot(db: PsqlClient, plan: dict, source: dict[str, str]) -> dict:
+    name = plan["id"] + "_checkpoint"
+    cipher, context = checkpoint_cipher(
+        source.get("ACCESS_CREDENTIAL_HASH_SECRET", ""), source["SUPABASE_PROJECT_ID"], plan["id"]
+    )
+    saved = db.receipt(name)
+    if saved:
+        encoded = base64.b64decode(saved["encrypted_snapshot"])
+        return json.loads(cipher.decrypt(encoded[:12], encoded[12:], context))
+    before = snapshot(db, source["ACCESS_CREDENTIAL_HASH_SECRET"])
+    nonce = os.urandom(12)
+    encrypted = nonce + cipher.encrypt(nonce, json.dumps(before).encode(), context)
+    db.scalar(
+        "INSERT INTO public.migration_log(name, applied_at, summary) VALUES (:'name', now(), :'summary'::jsonb)",
+        variables={
+            "name": name,
+            "summary": json.dumps(
+                {
+                    "encrypted_snapshot": base64.b64encode(encrypted).decode(),
+                    "source_sha": source.get("GITHUB_SHA", "local-rehearsal"),
+                }
+            ),
+        },
+    )
+    return before
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[4]
     plan = load_plan(root)
     source = dict(os.environ)
     db, env = bind(root, source)
     versions = db.applied_schema_versions()
-    if plan["through_version"] in versions:
+    checkpoint_exists = db.receipt(plan["id"] + "_checkpoint") is not None
+    completed = db.receipt(plan["id"])
+    if plan["through_version"] in versions and (completed or not checkpoint_exists):
         print("Historical production catch-up already complete; no writes.")
         return
     if plan["from_version"] not in versions:
         raise ValueError("Unsupported starting schema; historical upgrade refused")
     assert_authorized(plan, source["SUPABASE_PROJECT_ID"], source)
-    before = snapshot(db, source.get("ACCESS_CREDENTIAL_HASH_SECRET", ""))
     catalog = DataMigrationCatalog(root)
     # Prevent a second runner from interleaving another historical upgrade.
     with (
         db.advisory_lock(plan["id"]),
         tempfile.TemporaryDirectory(prefix="puppyone-history-") as work,
     ):
+        before = original_snapshot(db, plan, source)
         for step in plan["phases"]:
             db, env = bind(root, source)
             versions = db.applied_schema_versions()
@@ -195,7 +235,22 @@ def main() -> None:
         db, env = bind(root, source)
         after = snapshot(db, "")
         result = verify_continuity(before, after)
-        db.verify(root / "supabase/tests/_support/schema_contracts.inc", timeout=120)
+        db.command(
+            [
+                "-q",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-f",
+                str(root / "supabase/tests/_support/schema_contracts.inc"),
+            ],
+            timeout=120,
+        )
+        db.record_receipt(
+            migration_id=plan["id"],
+            checksum=hashlib.sha256((root / HISTORICAL_RELEASE).read_bytes()).hexdigest(),
+            source_sha=source.get("GITHUB_SHA", "local-rehearsal"),
+            legacy=True,
+        )
         result.update(
             plan_id=plan["id"],
             source_sha=source.get("GITHUB_SHA", "local-rehearsal"),

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.request import Request, urlopen
 
@@ -16,7 +17,8 @@ def connection_environment(source: dict[str, str]) -> dict[str, str]:
         raise ValueError("A protected Supabase project ref is required")
     uri = source.get("DATABASE_URL", "")
     temporary = not uri or source.get("DATABASE_TEMPORARY") == "1"
-    if temporary:
+    expires_at = float(source.get("DATABASE_CREDENTIAL_EXPIRES_AT", "0"))
+    if not uri or (temporary and expires_at < time.time() + 90):
         token = source.get("SUPABASE_ACCESS_TOKEN", "")
         if not token:
             raise ValueError(
@@ -48,6 +50,7 @@ def connection_environment(source: dict[str, str]) -> dict[str, str]:
             "password"
         ):
             raise ValueError("Unexpected expiring CLI role")
+        expires_at = time.time() + login["ttl_seconds"]
         uri = (
             f"postgresql://{quote(role + '.' + ref, safe='')}:"
             f"{quote(login['password'], safe='')}@{host}:5432/postgres?sslmode=require"
@@ -74,6 +77,7 @@ def connection_environment(source: dict[str, str]) -> dict[str, str]:
         "DATABASE_URL": uri,
         "DATA_MIGRATION_DATABASE_URL": uri,
         "DATABASE_TEMPORARY": "1" if temporary else "0",
+        "DATABASE_CREDENTIAL_EXPIRES_AT": str(expires_at),
         "SUPABASE_URL": f"https://{ref}.supabase.co",
         "PGHOST": parsed.hostname,
         "PGPORT": "5432",

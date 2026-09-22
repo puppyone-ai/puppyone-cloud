@@ -53,3 +53,21 @@ def test_expiring_cli_login_must_match_same_protected_project(monkeypatch):
         client.assert_supabase_target(
             project_ref="b" * 20, api_url="https://" + "b" * 20 + ".supabase.co"
         )
+
+
+def test_unexpired_official_credentials_are_reused_without_network(monkeypatch):
+    import time
+
+    monkeypatch.setattr(
+        module, "urlopen", lambda *args, **kwargs: pytest.fail("unexpected renewal")
+    )
+    result = module.connection_environment(
+        {
+            "SUPABASE_PROJECT_ID": REF,
+            "DATABASE_URL": f"postgresql://cli_login_abc.{REF}:secret@aws-0.pooler.supabase.com:5432/postgres",
+            "DATABASE_TEMPORARY": "1",
+            "DATABASE_CREDENTIAL_EXPIRES_AT": str(time.time() + 250),
+        }
+    )
+    assert result["PGUSER"] == "cli_login_abc." + REF
+    assert result["DATABASE_TEMPORARY"] == "1"
