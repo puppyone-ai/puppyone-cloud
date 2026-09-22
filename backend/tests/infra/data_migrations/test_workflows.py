@@ -264,6 +264,21 @@ def test_schema_drift_is_scoped_to_puppyone_owned_public_schema() -> None:
     assert "PuppyPay's `puppypay`" in schema
 
 
+def test_legacy_credential_readiness_is_checked_before_schema_writes() -> None:
+    workflow = yaml.safe_load((WORKFLOWS / "_schema-deploy.yml").read_text())
+    steps = workflow["jobs"]["deploy_schema"]["steps"]
+    guard_index = next(
+        i
+        for i, step in enumerate(steps)
+        if "supabase/releases/legacy_credential_preflight.sql" in step.get("run", "")
+    )
+    push_index = next(i for i, step in enumerate(steps) if step.get("id") == "push")
+    assert guard_index < push_index
+    assert "if" not in steps[guard_index]
+    assert "continue-on-error" not in steps[guard_index]
+    assert "ON_ERROR_STOP=1" in steps[guard_index]["run"]
+
+
 def test_only_historical_upgrade_harness_can_insert_missing_older_migrations() -> None:
     schema = (WORKFLOWS / "_schema-deploy.yml").read_text()
     upgrade_harness = (REPOSITORY / "scripts" / "test-repository-target-migration.sh").read_text()

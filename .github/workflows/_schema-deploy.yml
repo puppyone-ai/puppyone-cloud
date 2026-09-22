@@ -87,6 +87,11 @@ jobs:
       - name: Show pending schema plan
         run: supabase db push --dry-run
 
+      - name: Check legacy credential readiness before any schema write
+        run: >-
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1
+          -f supabase/releases/legacy_credential_preflight.sql
+
       - name: Apply pending schema migrations
         id: push
         shell: bash
