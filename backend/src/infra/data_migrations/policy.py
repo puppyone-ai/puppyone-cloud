@@ -32,6 +32,34 @@ CONTRACT_CHECKSUM_RE = re.compile(
     re.MULTILINE,
 )
 
+HISTORICAL_RELEASE = Path("supabase/releases/20260923_production_catchup.json")
+
+
+def historical_compatibility(repository: Path) -> set[str]:
+    """Admit only unchanged, explicitly reviewed Qubits history for promotion."""
+    path = repository / HISTORICAL_RELEASE
+    if not path.exists():
+        return set()
+    try:
+        plan = json.loads(path.read_text())
+        if plan["api_version"] != 1 or plan["id"] != "20260923_production_catchup":
+            raise ValueError("unsupported historical release")
+        hashes = plan["schema_sha256"]
+        names = set(plan["policy_compatibility"])
+        if names != {"20260716000000_remove_workspace_binding.sql"}:
+            raise ValueError("unreviewed compatibility entry")
+        for name, checksum in hashes.items():
+            if SCHEMA_MIGRATION_NAME_RE.fullmatch(name) is None:
+                raise ValueError("invalid schema filename")
+            source = repository / "supabase/migrations" / name
+            if hashlib.sha256(source.read_bytes()).hexdigest() != checksum:
+                raise ValueError(f"historical schema checksum changed: {name}")
+        if not names <= hashes.keys():
+            raise ValueError("compatibility entry must have a pinned checksum")
+        return names
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        raise ManifestError(f"invalid historical release: {error}") from error
+
 
 @dataclass(frozen=True, slots=True)
 class ChangedPath:
@@ -73,6 +101,7 @@ def git_changed_paths(repository_root: Path, base_ref: str) -> list[ChangedPath]
             "--",
             "supabase/migrations",
             "supabase/data_migrations",
+            "supabase/releases",
         ],
         cwd=repository_root,
         check=False,
@@ -100,6 +129,7 @@ def validate_repository_policy(
     artifacts = {item.manifest.id: item for item in catalog.load_all()}
     violations: list[str] = []
     baseline = _schema_history_baseline(catalog)
+    historical = historical_compatibility(catalog.repository_root)
 
     versions: dict[str, list[str]] = {}
     for migration_path in sorted(
@@ -129,6 +159,8 @@ def validate_repository_policy(
     for change in changes:
         path = change.path
         status = change.status[0]
+        if path == HISTORICAL_RELEASE.as_posix() and status != "A":
+            violations.append("historical release plan is immutable after adoption")
         if path.startswith("supabase/migrations/") and path.endswith(".sql"):
             relative_schema_path = Path(path)
             if len(relative_schema_path.parts) != 3:
@@ -145,7 +177,7 @@ def validate_repository_policy(
             if full_path.is_symlink():
                 violations.append(f"schema migrations cannot be symlinks: {path}")
                 continue
-            if full_path.name in baseline:
+            if full_path.name in baseline or full_path.name in historical:
                 # Pre-governance files may contain legacy patterns, but the
                 # baseline permits only their exact, already-shared bytes.
                 continue
@@ -171,8 +203,7 @@ def validate_repository_policy(
                     violations.append(f"contract must pin its data migration checksum: {path}")
                 elif checksum_marker.group(1) != artifacts[marker.group(1)].checksum:
                     violations.append(
-                        f"contract checksum does not match data migration "
-                        f"{marker.group(1)}: {path}"
+                        f"contract checksum does not match data migration {marker.group(1)}: {path}"
                     )
                 else:
                     reviewed_contract = (

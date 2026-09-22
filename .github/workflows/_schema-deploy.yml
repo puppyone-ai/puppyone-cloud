@@ -38,7 +38,6 @@ jobs:
     env:
       TARGET_ENVIRONMENT: ${{ inputs.environment }}
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ALLOW_DATA_MIGRATION_PAUSE: ${{ inputs.allow_data_migration_pause }}
@@ -65,31 +64,17 @@ jobs:
         run: |
           set -euo pipefail
           : "${SUPABASE_ACCESS_TOKEN:?supabase_access_token is required}"
-          : "${SUPABASE_DB_PASSWORD:?supabase_db_password is required}"
           : "${SUPABASE_PROJECT_ID:?supabase_project_id is required}"
-          : "${DATABASE_URL:?database_url is required}"
 
-          case "$DATABASE_URL" in
-            postgresql://*@db.${SUPABASE_PROJECT_ID}.supabase.co:5432/*|\
-            postgres://*@db.${SUPABASE_PROJECT_ID}.supabase.co:5432/*|\
-            postgresql://postgres.${SUPABASE_PROJECT_ID}:*@*.pooler.supabase.com:5432/*|\
-            postgres://postgres.${SUPABASE_PROJECT_ID}:*@*.pooler.supabase.com:5432/*)
-              ;;
-            *)
-              echo "::error::database_url must be the protected project's direct or session-pooler URL."
-              exit 1
-              ;;
-          esac
-
-      - name: Link protected Supabase project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Bind protected PostgreSQL connection
+        run: python3 supabase/releases/connection.py
 
       - name: Show pending schema plan
-        run: supabase db push --dry-run
+        run: supabase db push --db-url "$SUPABASE_DATABASE_URL" --dry-run
 
       - name: Check legacy credential readiness before any schema write
         run: >-
-          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1
+          psql -X -v ON_ERROR_STOP=1 -c "SET SESSION ROLE postgres;"
           -f supabase/releases/legacy_credential_preflight.sql
 
       - name: Apply pending schema migrations
@@ -98,7 +83,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          supabase db push 2>&1 | tee /tmp/schema-push.log
+          supabase db push --db-url "$SUPABASE_DATABASE_URL" --yes 2>&1 | tee /tmp/schema-push.log
           status=${PIPESTATUS[0]}
           set -e
 
@@ -125,8 +110,12 @@ jobs:
       - name: Run database smoke contracts
         if: steps.push.outputs.schema_state == 'deployed'
         run: >-
-          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1
+          psql -X -v ON_ERROR_STOP=1 -c "SET SESSION ROLE postgres;"
           -f supabase/tests/_support/schema_contracts.inc
+
+      - name: Refresh expiring connection before drift check
+        if: steps.push.outputs.schema_state == 'deployed'
+        run: python3 supabase/releases/connection.py
 
       - name: Fail on post-deploy schema drift
         if: steps.push.outputs.schema_state == 'deployed'
@@ -136,7 +125,7 @@ jobs:
           # PuppyOne owns public. A protected database may also host schemas
           # owned by another service (for example PuppyPay's `puppypay`), which
           # must not be adopted into or deleted by PuppyOne migrations.
-          if ! diff_output=$(supabase db diff --linked --schema public 2>&1); then
+          if ! diff_output=$(supabase db diff --db-url "$SUPABASE_DATABASE_URL" --schema public 2>&1); then
             echo "::error::Could not evaluate post-deploy schema drift."
             echo "$diff_output"
             exit 1
@@ -161,6 +150,6 @@ jobs:
             echo "- Migration bundle SHA-256: $bundle_checksum"
             echo
             echo '```text'
-            supabase migration list --linked
+            supabase migration list --db-url "$SUPABASE_DATABASE_URL"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

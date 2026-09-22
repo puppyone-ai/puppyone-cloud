@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import selectors
 import shutil
 import subprocess
@@ -35,6 +36,14 @@ class PsqlClient:
         self._database_url = database_url
         self.environment = dict(os.environ if base_environment is None else base_environment)
         self._bind_libpq_environment(database_url)
+        # Supabase session poolers do not reliably forward startup PGOPTIONS.
+        # The official expiring login is a member of postgres, but starts with
+        # its own restricted role until explicitly switched in the session.
+        self.session_prefix = (
+            "SET SESSION ROLE postgres;\n"
+            if self.environment.get("PGUSER", "").startswith("cli_login_")
+            else ""
+        )
 
     def _bind_libpq_environment(self, database_url: str) -> None:
         """Translate a PostgreSQL URI into discrete libpq environment fields.
@@ -119,7 +128,10 @@ class PsqlClient:
         direct_match = database_host == f"db.{project_ref}.supabase.co" and database_port == 5432
         pooler_match = (
             database_host.endswith(".pooler.supabase.com")
-            and database_user == f"postgres.{project_ref}"
+            and (
+                database_user == f"postgres.{project_ref}"
+                or re.fullmatch(r"cli_login_[a-z0-9_]+\." + re.escape(project_ref), database_user)
+            )
             and database_port == 5432
         )
         if not direct_match and not pooler_match:
@@ -135,6 +147,11 @@ class PsqlClient:
         timeout: int = 60,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        if self.session_prefix:
+            if input_text is not None:
+                input_text = self.session_prefix + input_text
+            else:
+                arguments = ["-c", self.session_prefix, *arguments]
         try:
             result = subprocess.run(
                 [self.executable, "-X", *arguments],
@@ -308,7 +325,7 @@ class PsqlClient:
                 ) from error
             raise
 
-    def advisory_lock(self, migration_id: str, *, timeout: int = 30) -> "PsqlAdvisoryLock":
+    def advisory_lock(self, migration_id: str, *, timeout: int = 30) -> PsqlAdvisoryLock:
         return PsqlAdvisoryLock(self, migration_id, timeout=timeout)
 
 
@@ -342,7 +359,7 @@ class PsqlAdvisoryLock(AbstractContextManager[None]):
         assert self.process.stdin is not None
         assert self.process.stdout is not None
         self.process.stdin.write(
-            "SELECT CASE WHEN pg_try_advisory_lock("
+            self.client.session_prefix + "SELECT CASE WHEN pg_try_advisory_lock("
             "hashtextextended(:'migration_id', 0)) "
             "THEN 'LOCKED' ELSE 'BUSY' END;\n"
         )

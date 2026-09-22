@@ -327,3 +327,31 @@ normal operation. An incident exception requires an incident record, reviewed
 SQL in Git, recoverable backup/PITR, bounded transaction/timeouts, captured
 output, and a follow-up forward migration. A database hotfix PR to `main`
 requires the `database-break-glass` label.
+
+## Historical production catch-up (2026-09-23)
+
+The deployed June production history can catch up to the already deployed July
+Qubits history through `supabase/releases/20260923_production_catchup.json`.
+This immutable plan pins every schema byte and data-artifact checksum and lists
+all intermediate boundaries. The single July 16 legacy filename receives an
+exact-checksum policy compatibility entry; new destructive SQL still requires
+the normal Contract metadata. The original baseline and SQL files stay unchanged.
+
+`historical_release.py` runs before ordinary production schema admission. It is
+a no-op after the July terminal version. Earlier databases require unexpired,
+project-bound `LEGACY_UPGRADE_AUTHORIZATION` containing the plan ID, a verified
+restore point, and verified write-freeze evidence. Official `supabase db push`
+applies unchanged prefixes; the portable runner executes each required data job.
+Final continuity checks preserve users, profiles, projects, commits, existing
+organization/project memberships, original credential hashes, and derived legacy
+credential hashes. No external storage operation runs in this job. The existing
+operator-local storage inventory and final public-schema diff still gate release.
+
+The connection adapter validates a protected project's direct/session-pooler URI.
+When `DATABASE_URL` is absent, it obtains short-lived official Supabase CLI login
+credentials with `SUPABASE_ACCESS_TOKEN`; it does not reset the database password.
+Connections are refreshed between phases and before the final drift check. The
+password travels through libpq environment variables, not process arguments.
+`SUPABASE_DB_PASSWORD` is no longer required by the hosted schema adapter. API
+backfills still require the matching service-role key and the original effective
+application HMAC key. These keys never appear in release evidence.
