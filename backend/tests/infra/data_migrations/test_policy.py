@@ -212,3 +212,30 @@ def test_policy_accepts_exact_reviewed_pending_contract(tmp_path: Path) -> None:
         catalog,
         [ChangedPath("A", migration.relative_to(repository).as_posix())],
     )
+
+
+def test_historical_compatibility_is_exact_and_cannot_admit_other_files(tmp_path: Path):
+    repository = _repository(tmp_path)
+    migration = repository / "supabase/migrations/20260716000000_remove_workspace_binding.sql"
+    migration.parent.mkdir()
+    migration.write_text("DROP TABLE public.example;\n")
+    plan = repository / "supabase/releases/20260923_production_catchup.json"
+    plan.parent.mkdir()
+    payload = {
+        "api_version": 1,
+        "id": "20260923_production_catchup",
+        "schema_sha256": {migration.name: hashlib.sha256(migration.read_bytes()).hexdigest()},
+        "policy_compatibility": [migration.name],
+    }
+    plan.write_text(json.dumps(payload))
+    catalog = DataMigrationCatalog(repository)
+    validate_repository_policy(
+        catalog, [ChangedPath("A", migration.relative_to(repository).as_posix())]
+    )
+    migration.write_text("DROP TABLE public.other;\n")
+    with pytest.raises(ManifestError, match="checksum changed"):
+        validate_repository_policy(catalog, [])
+    payload["policy_compatibility"].append("20260923000000_unreviewed.sql")
+    plan.write_text(json.dumps(payload))
+    with pytest.raises(ManifestError, match="unreviewed compatibility"):
+        validate_repository_policy(catalog, [])

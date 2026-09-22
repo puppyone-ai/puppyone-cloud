@@ -534,6 +534,8 @@ class Settings(BaseSettings):
     INTERNAL_API_SECRET: str = ""  # Internal service communication secret
     MCP_SERVER_URL: str = ""  # MCP service address
     ACCESS_CREDENTIAL_HASH_SECRET: str = "ContextBase-access-credential-development-secret"
+    # Verification only during key rotation; new credentials always use the primary key.
+    ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET: str = ""
 
     # Product entitlements / billing enforcement.
     # disabled: open-source/self-hosted default, no product limits enforced.

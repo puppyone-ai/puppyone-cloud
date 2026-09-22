@@ -41,10 +41,10 @@ def test_schema_and_data_jobs_share_serialized_environment_boundary() -> None:
 def test_hosted_workflows_bind_connection_to_protected_project() -> None:
     schema = (WORKFLOWS / "_schema-deploy.yml").read_text()
     data = (WORKFLOWS / "_data-migration.yml").read_text()
-    assert "db.${SUPABASE_PROJECT_ID}.supabase.co:5432" in schema
-    assert "pooler.supabase.com:5432" in schema
-    assert "SUPABASE_PROJECT_ID:?supabase_project_id is required" in data
-    assert "SUPABASE_URL=https://${SUPABASE_PROJECT_ID}.supabase.co" in data
+    assert "python3 supabase/releases/connection.py" in schema
+    assert "python3 supabase/releases/connection.py" in data
+    assert "secrets.SUPABASE_PROJECT_ID" in schema
+    assert "secrets.SUPABASE_PROJECT_ID" in data
     assert "secrets.DATABASE_URL" in schema
     assert "secrets.DATABASE_URL" in data
     for name in (
@@ -57,13 +57,14 @@ def test_hosted_workflows_bind_connection_to_protected_project() -> None:
         assert name not in data
 
 
-def test_psql_receives_connection_uri_explicitly() -> None:
+def test_psql_receives_discrete_connection_environment() -> None:
     schema = (WORKFLOWS / "_schema-deploy.yml").read_text()
     validation = (WORKFLOWS / "validate-migrations.yml").read_text()
 
     assert "PGDATABASE:" not in schema
     assert "PGDATABASE:" not in validation
-    assert 'psql "$DATABASE_URL"' in schema
+    assert 'psql "$DATABASE_URL"' not in schema
+    assert "python3 supabase/releases/connection.py" in schema
     assert validation.count('psql "$DATABASE_URL"') == 2
     upgrade_harness = (REPOSITORY / "scripts" / "test-repository-target-migration.sh").read_text()
     explicit_calls = upgrade_harness.count('psql "$database_url"')
@@ -259,7 +260,7 @@ def test_schema_runner_only_pauses_for_an_explicit_data_migration_guard() -> Non
 def test_schema_drift_is_scoped_to_puppyone_owned_public_schema() -> None:
     schema = (WORKFLOWS / "_schema-deploy.yml").read_text()
 
-    assert "supabase db diff --linked --schema public" in schema
+    assert 'supabase db diff --db-url "$SUPABASE_DATABASE_URL" --schema public' in schema
     assert "supabase db diff --linked 2>&1" not in schema
     assert "PuppyPay's `puppypay`" in schema
 
