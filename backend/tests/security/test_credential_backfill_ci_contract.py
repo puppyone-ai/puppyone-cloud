@@ -82,7 +82,10 @@ def test_schema_deployment_never_names_application_backfills() -> None:
         assert "_schema-deploy.yml" in workflow
 
     reusable = (REPO_ROOT / ".github/workflows/_schema-deploy.yml").read_text()
-    assert "python" not in reusable.lower()
+    # Credential acquisition is connection setup, not an application backfill.
+    # No other Python command may execute inside the ordinary schema lane.
+    without_connection = reusable.replace("python3 supabase/releases/connection.py", "")
+    assert "python" not in without_connection.lower()
     assert "backfill" not in reusable.lower()
 
 
