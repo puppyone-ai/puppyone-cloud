@@ -162,6 +162,12 @@ jobs:
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
             -f supabase/data_migrations/20260713_reconcile_project_creator_admin/test_assert.sql
 
+      - name: Verify legacy credential upgrade and pre-write admission
+        working-directory: backend
+        env:
+          TEST_LEGACY_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: uv run pytest tests/infra/data_migrations/test_legacy_credentials_postgres.py -q
+
       - name: Verify repository-target upgrade, concurrency, and dirty-data blocking
         env:
           DATA_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
