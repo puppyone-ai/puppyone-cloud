@@ -25,6 +25,7 @@ PREFLIGHT = ROOT / "supabase/releases/legacy_credential_preflight.sql"
 MIGRATIONS = ROOT / "supabase/migrations"
 HASH_EXPAND = MIGRATIONS / "20260704000000_repo_scopes_access_key_hash.sql"
 RETIRE = MIGRATIONS / "20260711070000_move_scope_credentials_to_access_credentials.sql"
+EMPTY_FIELDS = ROOT / "supabase/data_migrations/20260923_remove_empty_runtime_credential_fields"
 
 
 @pytest.fixture
@@ -106,6 +107,64 @@ def test_released_sql_rejects_unhashed_credentials(database):
         execute_file(database, RETIRE)
     assert database.scalar("SELECT count(*) FROM public.repo_scopes") == "152"
     assert database.scalar("SELECT count(*) FROM public.access_surface_credentials") == "2"
+
+
+@pytest.mark.parametrize("kind", ["agent", "sandbox"])
+def test_empty_secret_placeholders_are_removed_without_changing_credentials(database, kind):
+    seed(database)
+    credentials = database.scalar(
+        "SELECT jsonb_agg(c ORDER BY id) FROM public.access_surface_credentials c"
+    )
+    database.scalar(
+        "INSERT INTO public.access_surfaces(id,project_id,kind,config) "
+        "VALUES ('empty-secrets','fixture-project',:'kind', "
+        "'{\"api_key\":null,\"access_key\":\"\",\"mcp_api_key\":null,"
+        "\"model\":\"preserved\",\"nested\":{\"api_key\":null}}')",
+        variables={"kind": kind},
+    )
+    with pytest.raises(ExecutionError, match="placeholder cleanup is incomplete"):
+        execute_file(database, EMPTY_FIELDS / "verify.sql")
+    execute_file(database, EMPTY_FIELDS / "run.sql")
+    execute_file(database, EMPTY_FIELDS / "verify.sql")
+    expected = {"model": "preserved", "nested": {"api_key": None}}
+    assert json.loads(database.scalar(
+        "SELECT config FROM public.access_surfaces WHERE id='empty-secrets'"
+    )) == expected
+    execute_file(database, EMPTY_FIELDS / "run.sql")
+    assert json.loads(database.scalar(
+        "SELECT config FROM public.access_surfaces WHERE id='empty-secrets'"
+    )) == expected
+    assert database.scalar(
+        "SELECT jsonb_agg(c ORDER BY id) FROM public.access_surface_credentials c"
+    ) == credentials
+
+
+def test_empty_placeholder_cleanup_preserves_nonempty_and_unrelated_values(database):
+    seed(database)
+    original = {
+        "api_key": "synthetic-credential",
+        "access_key": False,
+        "mcp_api_key": " ",
+        "other": None,
+    }
+    database.scalar(
+        "INSERT INTO public.access_surfaces(id,project_id,kind,config) "
+        "VALUES ('real-secret','fixture-project','agent',:'config'::jsonb), "
+        "('other-kind','fixture-project','cli','{\"api_key\":null}')",
+        variables={"config": json.dumps(original)},
+    )
+    execute_file(database, EMPTY_FIELDS / "run.sql")
+    execute_file(database, EMPTY_FIELDS / "verify.sql")
+    assert json.loads(database.scalar(
+        "SELECT config FROM public.access_surfaces WHERE id='real-secret'"
+    )) == original
+    assert json.loads(database.scalar(
+        "SELECT config FROM public.access_surfaces WHERE id='other-kind'"
+    )) == {"api_key": None}
+    # Cleanup success cannot stand in for the actual credential backfill.
+    database.scalar("DELETE FROM public.repo_scopes")
+    with pytest.raises(ExecutionError, match="Agent/Sandbox"):
+        execute_file(database, PREFLIGHT)
 
 
 def test_actual_hash_artifact_then_retirement_preserves_tokens_and_existing_credentials(
