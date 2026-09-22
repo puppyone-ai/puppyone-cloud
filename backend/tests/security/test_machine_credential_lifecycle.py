@@ -113,6 +113,7 @@ class _MemoryClient:
 
 @pytest.fixture(autouse=True)
 def _credential_secret(monkeypatch):
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET", "")
     monkeypatch.setattr(
         settings,
         "ACCESS_CREDENTIAL_HASH_SECRET",
@@ -168,6 +169,50 @@ def test_credential_rotation_revokes_old_hash_and_never_stores_plaintext():
     )
     assert repo.get_active_by_token(old) is None
     assert repo.get_active_by_token(new) is not None
+
+
+def test_explicit_previous_key_preserves_access_without_issuing_legacy_hashes(monkeypatch):
+    repo = AccessCredentialRepository(_MemoryClient(access_surface_credentials=[]))
+    old_secret = settings.ACCESS_CREDENTIAL_HASH_SECRET
+    old = repo.issue_bearer_token(
+        access_surface_id="old", org_id="org-1", project_id="project-1", prefix="mcp",
+    )
+    old_hash = access_token_hash(old)
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "new-independent-secret-for-rotation-123456789")
+    assert repo.get_active_by_token(old) is None
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET", old_secret)
+    assert repo.get_active_by_token(old)["key_hash"] == old_hash
+    new = repo.issue_bearer_token(
+        access_surface_id="new", org_id="org-1", project_id="project-1", prefix="mcp",
+    )
+    assert repo.get_active_by_token(new)["key_hash"] == access_token_hash(new)
+    rows = repo._client.tables["access_surface_credentials"]
+    rows[0]["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    assert repo.get_active_by_token(old) is None
+    rows[0]["expires_at"] = None
+    rows[0]["status"] = "revoked"
+    assert repo.get_active_by_token(old) is None
+
+
+def test_git_previous_key_still_uses_authoritative_runtime_rpc(monkeypatch):
+    old_secret = settings.ACCESS_CREDENTIAL_HASH_SECRET
+    old_hash = access_token_hash("git_legacy")
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "new-independent-secret-for-rotation-123456789")
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET", old_secret)
+    calls = []
+    authorized = True
+
+    def rpc(name, params):
+        assert name == "resolve_git_runtime_credential"
+        calls.append(params["p_key_hash"])
+        row = [{"id": "old", "effective_mode": "r"}] if authorized and params["p_key_hash"] == old_hash else []
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=row))
+
+    repo = AccessCredentialRepository(SimpleNamespace(rpc=rpc))
+    assert repo.resolve_git_runtime_credential("git_legacy")["effective_mode"] == "r"
+    assert calls == [access_token_hash("git_legacy"), old_hash]
+    authorized = False
+    assert repo.resolve_git_runtime_credential("git_legacy") is None
 
 
 def test_expired_scope_session_credential_is_rejected():

@@ -31,6 +31,17 @@ def access_token_hash(raw_token: str) -> str:
     ).hexdigest()
 
 
+def access_token_hash_candidates(raw_token: str) -> list[str]:
+    """Accept one explicitly retained old key without issuing new hashes with it."""
+    candidates = [access_token_hash(raw_token)]
+    previous = settings.ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET
+    if previous and previous != settings.ACCESS_CREDENTIAL_HASH_SECRET:
+        candidates.append(hmac.new(
+            previous.encode("utf-8"), raw_token.strip().encode("utf-8"), hashlib.sha256,
+        ).hexdigest())
+    return candidates
+
+
 def access_token_metadata(raw_token: str) -> tuple[str, str]:
     token = raw_token.strip()
     prefix = token.split("_", 1)[0] if "_" in token else token[:3]
@@ -82,19 +93,23 @@ class AccessCredentialRepository:
         *,
         credential_type: str = "bearer_token",
     ) -> Optional[dict[str, Any]]:
-        token_hash = access_token_hash(raw_token)
-        resp = (
-            self._client.table(CREDENTIALS_TABLE)
-            .select("*")
-            .eq("key_hash", token_hash)
-            .eq("credential_type", credential_type)
-            .eq("status", "active")
-            .limit(1)
-            .execute()
-        )
+        matched = []
+        for token_hash in access_token_hash_candidates(raw_token):
+            resp = (
+                self._client.table(CREDENTIALS_TABLE)
+                .select("*")
+                .eq("key_hash", token_hash)
+                .eq("credential_type", credential_type)
+                .eq("status", "active")
+                .limit(1)
+                .execute()
+            )
+            if resp.data:
+                matched = resp.data
+                break
         now = datetime.now(timezone.utc)
         rows = [
-            row for row in (resp.data or [])
+            row for row in matched
             if not row.get("expires_at")
             or datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00")) > now
         ]
@@ -119,17 +134,17 @@ class AccessCredentialRepository:
         lightweight in-memory repository used by unit tests.
         """
 
-        token_hash = access_token_hash(raw_token)
         rpc = getattr(self._client, "rpc", None)
         if callable(rpc):
-            response = rpc(
-                "resolve_git_runtime_credential",
-                {"p_key_hash": token_hash},
-            ).execute()
-            rows = response.data or []
-            if isinstance(rows, dict):
-                return rows
-            return rows[0] if rows else None
+            for token_hash in access_token_hash_candidates(raw_token):
+                response = rpc(
+                    "resolve_git_runtime_credential",
+                    {"p_key_hash": token_hash},
+                ).execute()
+                rows = response.data or []
+                if rows:
+                    return rows if isinstance(rows, dict) else rows[0]
+            return None
 
         credential = self.get_active_by_token(
             raw_token,
