@@ -149,8 +149,15 @@ class TurbopufferSearchService:
         raise TurbopufferConfigError("Invalid turbopuffer client: no namespace API")
 
     async def _call(self, fn: Callable[[], Any]) -> Any:
+        task = asyncio.create_task(asyncio.to_thread(fn))
         try:
-            return await asyncio.to_thread(fn)
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # The SDK call is synchronous and cannot be stopped once its
+            # thread begins. Keep the surrounding Project write lease alive
+            # until the namespace mutation has physically completed.
+            await task
+            raise
         except Exception as e:
             mapped = map_external_exception(e)
             # Log more detailed error info for debugging

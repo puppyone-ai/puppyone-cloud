@@ -26,13 +26,19 @@ JWT_ALGORITHM=HS256
 
 # Redis (必需 - 从 Railway Redis 获取 Internal URL)
 ETL_REDIS_URL=redis://default:xxx@redis.railway.internal:6379
+AUTH_SECURITY_REDIS_URL=redis://default:xxx@redis.railway.internal:6379
+NOTIFICATIONS_REDIS_URL=redis://default:xxx@redis.railway.internal:6379
 
 # 应用配置
+APP_ENV=production
 DEBUG=False
 APP_NAME=ContextBase
 VERSION=1.0.0
 ALLOWED_HOSTS=https://your-frontend.com
 PUBLIC_URL=https://your-api.railway.app
+FRONTEND_URL=https://your-frontend.com
+SUPABASE_PUBLIC_URL=https://your-project.supabase.co
+DESKTOP_AUTH_PUBLIC_BASE_URL=https://your-api.railway.app/api/v1
 INTERNAL_API_SECRET=your-shared-internal-secret
 ACCESS_CREDENTIAL_HASH_SECRET=your-stable-random-access-credential-hmac-secret
 ENTITLEMENTS_MODE=db

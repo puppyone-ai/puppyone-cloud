@@ -6,7 +6,7 @@ import { get, post, patch, del } from '@/lib/apiClient';
 import { SYNC_MODE_META, getProviderDisplayLabel, getSyncTriggerPolicy } from '@/lib/syncTriggerPolicy';
 import type { SyncModeType } from '@/lib/syncTriggerPolicy';
 import { useConnectorSpecs } from '@/lib/hooks/useData';
-import { PanelShell } from '../../../app/(main)/projects/[projectId]/data/components/PanelShell';
+import { PanelShell } from '@/features/files/components/PanelShell';
 import { Dots } from '@/components/loading';
 import { ActivityIconButton } from '@/components/ActivityIconButton';
 import { StatusIndicator } from '@/components/ui/StatusDot';

@@ -62,8 +62,8 @@ def provider_from_settings(settings, name: str | None = None) -> SandboxProvider
 
 
 def build_session_store(name: str) -> SandboxSessionStore:
-    """Build the session store backend. ``memory`` for dev/single-process;
-    ``supabase`` for durable, multi-worker-visible state (roadmap #3)."""
+    """Build a store. Production defaults to durable ``supabase``;
+    ``memory`` exists only when tests/local development select it explicitly."""
     if name == STORE_MEMORY:
         return InMemorySandboxSessionStore()
     if name == STORE_SUPABASE:
@@ -73,4 +73,4 @@ def build_session_store(name: str) -> SandboxSessionStore:
 
 
 def store_from_settings(settings) -> SandboxSessionStore:
-    return build_session_store(getattr(settings, "SCOPE_SANDBOX_STORE", STORE_MEMORY))
+    return build_session_store(getattr(settings, "SCOPE_SANDBOX_STORE", STORE_SUPABASE))

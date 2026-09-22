@@ -19,16 +19,20 @@ any layer.
 
 from __future__ import annotations
 
-import asyncio
 import json
 
-from src.version_engine.write_engine.diff import diff_trees
-from src.version_engine.storage.object_store import ObjectStore
-from src.version_engine.write_engine.tree import read_tree
-from src.version_engine.domain.errors import ObjectNotFoundError, VersionEngineError
+from starlette.concurrency import run_in_threadpool
 
-from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.utils.logger import log_error
+from src.version_engine.domain.errors import ObjectNotFoundError, VersionEngineError
+from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
+from src.version_engine.read.history_facts import (
+    read_commit_parent_ids,
+    resolve_project_history_head,
+)
+from src.version_engine.storage.object_store import ObjectStore
+from src.version_engine.write_engine.diff import diff_trees
+from src.version_engine.write_engine.tree import read_tree
 
 
 _SCOPE_PROMOTE_TRAILER = "PuppyOne-Source: scope-promote"
@@ -77,10 +81,10 @@ class VersionAdminService:
     ) -> list[dict]:
         """Get commit history ordered by ``(created_at ASC, commit_id ASC)``.
 
-        Contract: linear ASC order (oldest first). When ``limit > 0`` we return the
-        *newest* ``limit`` commits (the tail of the ASC list), not the
-        oldest — so callers asking for "latest 50" actually get the
-        most recent 50.
+        Contract: linear ASC order (oldest first). Without an anchor, a
+        positive limit returns the newest commits for history UIs. With
+        ``since_commit_id``, it returns the first page immediately after the
+        anchor so reconnect/catch-up callers cannot skip an oversized gap.
 
         When *path* is specified we need to fetch a larger batch from
         the DB because the SQL query returns all commits (not just
@@ -92,6 +96,15 @@ class VersionAdminService:
         newer than this one are returned. Leave empty to fetch from
         the head (latest).
         """
+        # PostgREST is synchronous. Keep filtering and its database read in
+        # one worker hop, sharing FastAPI/AnyIO's bounded pool and contextvars.
+        return await run_in_threadpool(
+            self._get_commit_history_sync, project_id, path, limit, since_commit_id,
+        )
+
+    def _get_commit_history_sync(
+        self, project_id: str, path: str | None, limit: int, since_commit_id: str,
+    ) -> list[dict]:
         repo = self._repos.get_repo(project_id)
         fetch_limit = _history_fetch_limit(limit)
         entries = repo.history.get_since(since_commit_id, limit=fetch_limit)
@@ -110,9 +123,27 @@ class VersionAdminService:
             # entries is ASC (oldest first) — keep the *tail* so callers
             # asking for "latest 50" see the most recent visible changes,
             # not technical projections or the oldest rows.
-            entries = entries[-limit:]
+            # Catch-up returns the earliest next page, never the tail. The
+            # overfetch is only for visibility filtering, not the wire limit.
+            entries = entries[:limit] if since_commit_id else entries[-limit:]
 
         return entries
+
+    async def get_project_head_commit_id(self, project_id: str) -> str:
+        """Return the canonical project-view head without reading named refs."""
+
+        repo = self._repos.get_repo(project_id)
+        return await run_in_threadpool(resolve_project_history_head, repo)
+
+    async def get_commit_parent_ids(
+        self,
+        project_id: str,
+        commit_ids: list[str],
+    ) -> dict[str, list[str]]:
+        """Read parent ids for legacy linear-history rows in one worker hop."""
+
+        repo = self._repos.get_repo(project_id)
+        return await run_in_threadpool(read_commit_parent_ids, repo, commit_ids)
 
     async def get_commit_content(
         self,
@@ -122,11 +153,11 @@ class VersionAdminService:
     ) -> bytes:
         """Get file content at a specific commit."""
         repo = self._repos.get_repo(project_id)
-        entry = await asyncio.to_thread(repo.history.get_entry, commit_id)
+        entry = await run_in_threadpool(repo.history.get_entry, commit_id)
         if not entry:
             raise ValueError(f"Commit {commit_id} not found")
 
-        resolved = await asyncio.to_thread(
+        resolved = await run_in_threadpool(
             _resolve_entry_blob, repo.store, entry, path,
         )
         if resolved is None:
@@ -136,7 +167,7 @@ class VersionAdminService:
         if not blob_hash:
             raise FileNotFoundError(f"File {path} not found at {commit_id}")
 
-        return await asyncio.to_thread(repo.store.get, blob_hash)
+        return await run_in_threadpool(repo.store.get, blob_hash)
 
     async def compute_diff(
         self, project_id: str, from_commit_id: str, to_commit_id: str
@@ -144,8 +175,8 @@ class VersionAdminService:
         """Compute the diff between two commits."""
         repo = self._repos.get_repo(project_id)
 
-        entry1 = await asyncio.to_thread(repo.history.get_entry, from_commit_id)
-        entry2 = await asyncio.to_thread(repo.history.get_entry, to_commit_id)
+        entry1 = await run_in_threadpool(repo.history.get_entry, from_commit_id)
+        entry2 = await run_in_threadpool(repo.history.get_entry, to_commit_id)
         if not entry1 or not entry2:
             raise ValueError(f"Commit {from_commit_id} or {to_commit_id} not found")
 
@@ -160,7 +191,7 @@ class VersionAdminService:
         # instead of an unhandled 500. ObjectNotFoundError carries http_status
         # 404; the HTTP layer maps VersionEngineError to it.
         try:
-            return await asyncio.to_thread(
+            return await run_in_threadpool(
                 diff_trees, repo.store, root1, root2, tolerant=True
             )
         except VersionEngineError:

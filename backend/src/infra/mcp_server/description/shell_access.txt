@@ -1,3 +1,0 @@
-Provide Bash / shell access for the scoped JSON data (read-write if permitted).
-Use this tool to inspect and modify the JSON within the allowed scope.
-

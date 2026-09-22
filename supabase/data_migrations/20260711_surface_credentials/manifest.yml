@@ -1,0 +1,17 @@
+api_version: 1
+id: 20260711_surface_credentials
+description: Move legacy agent and sandbox config secrets into hashed credentials
+kind: python
+entrypoint: run.py
+verify: verify.sql
+requires_schema:
+  - "20260503000000"
+  - "20260616003000"
+required_env:
+  - SUPABASE_URL
+  - SUPABASE_KEY
+  - ACCESS_CREDENTIAL_HASH_SECRET
+timeout_seconds: 3600
+batch_size: 500
+contract_key: surface_credential_retirement
+legacy: true

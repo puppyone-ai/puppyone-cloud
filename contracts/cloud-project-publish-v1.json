@@ -1,0 +1,97 @@
+{
+  "contract": "puppyone.cloud-project-publish",
+  "version": 1,
+  "identity": {
+    "organization": "explicit request field",
+    "project": "server-created Project id",
+    "repository_target": "project_root",
+    "local_binding": false,
+    "device_registration": false
+  },
+  "idempotency": {
+    "header": "Idempotency-Key",
+    "format": "canonical lowercase UUIDv4",
+    "namespace": [
+      "actor_user_id",
+      "operation_kind",
+      "key"
+    ],
+    "same_key_across_operation_kinds": true,
+    "replay_header": "Idempotency-Replayed"
+  },
+  "operations": {
+    "create_empty_project": {
+      "method": "POST",
+      "path": "/projects/",
+      "request": {
+        "org_id": "required string",
+        "name": "required string",
+        "description": "string or null"
+      },
+      "additional_properties": false,
+      "created_status": 201,
+      "replayed_status": 200
+    },
+    "issue_project_root_credential": {
+      "method": "POST",
+      "path": "/projects/{project_id}/git-credentials",
+      "repository_contract_header": {
+        "name": "X-PuppyOne-Repository-Contract",
+        "value": "2"
+      },
+      "request": {
+        "target": {
+          "kind": "project_root",
+          "project_id": "{project_id}"
+        },
+        "mode": "rw",
+        "credential": "client-generated pwg_ plus 43 base64url characters"
+      },
+      "response": {
+        "id": "credential id",
+        "mode": "rw",
+        "remote": {
+          "url": "{cloud_origin}/git/{project_id}.git",
+          "username": "x-puppyone-token",
+          "target": {
+            "kind": "project_root",
+            "project_id": "{project_id}"
+          }
+        }
+      },
+      "response_echoes_credential": false,
+      "created_status": 201,
+      "replayed_status": 200
+    },
+    "abandon_empty_initialization": {
+      "method": "POST",
+      "path": "/projects/{project_id}/initialization/abandon",
+      "request": {},
+      "accepted_status": 202,
+      "completed_replay_status": 200,
+      "server_confirmation_precedes_local_cleanup": true
+    },
+    "revoke_credential": {
+      "method": "DELETE",
+      "path": "/projects/{project_id}/git-credentials/{credential_id}",
+      "repository_contract_header": {
+        "name": "X-PuppyOne-Repository-Contract",
+        "value": "2"
+      }
+    }
+  },
+  "git": {
+    "remote_name": "puppyone",
+    "destination_ref": "refs/heads/main",
+    "network_target_source": "journaled canonical remote URL",
+    "secret_in_url_or_arguments": false,
+    "force_push": false
+  },
+  "errors": {
+    "missing_idempotency_key": 400,
+    "invalid_idempotency_key": 422,
+    "idempotency_key_reused": 409,
+    "idempotency_target_gone": 410,
+    "client_upgrade_required": 426
+  }
+}

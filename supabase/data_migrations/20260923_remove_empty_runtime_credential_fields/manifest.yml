@@ -1,0 +1,11 @@
+api_version: 1
+id: 20260923_remove_empty_runtime_credential_fields
+description: Remove empty legacy Agent and Sandbox secret placeholders before credential retirement
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20260616003000"
+required_env: []
+timeout_seconds: 120
+legacy: false

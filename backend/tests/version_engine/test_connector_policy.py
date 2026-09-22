@@ -4,17 +4,28 @@ import pytest
 from fastapi import HTTPException
 
 from src.version_engine.admission import connector_policy
+from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
 
 
 def _auth(scope_id: str = "scope-1") -> dict:
+    target = ScopeTarget(project_id="project-1", scope_id=scope_id)
     return {
         "agent": f"scope:{scope_id}",
-        "_scope": {
-            "id": scope_id,
-            "path": "",
-            "exclude": [],
-            "mode": "rw",
-        },
+        "_runtime_grant": RuntimeGrant(
+            principal=RuntimePrincipal(
+                principal_id="credential-1",
+                credential_kind="legacy_access_key",
+            ),
+            target=target,
+            repository_view=ResolvedRepositoryView(
+                target=target,
+                path_prefix="docs",
+                excludes=(),
+                max_mode="rw",
+            ),
+            mode=RuntimeMode.READ_WRITE,
+        ),
     }
 
 
@@ -39,8 +50,8 @@ def test_cli_fs_command_policy_allows_cached_command(monkeypatch):
     calls = []
 
     class _Repo:
-        def get_by_scope_provider(self, scope_id, provider):
-            calls.append((scope_id, provider))
+        def get_by_target_provider(self, project_id, scope_id, provider):
+            calls.append((project_id, scope_id, provider))
             return SimpleNamespace(
                 id="connector-1",
                 provider="cli",
@@ -54,12 +65,12 @@ def test_cli_fs_command_policy_allows_cached_command(monkeypatch):
     connector_policy.admit_cli_fs_command(_auth(), "ls", "cli")
     connector_policy.admit_cli_fs_command(_auth(), "ls", "cli")
 
-    assert calls == [("scope-1", "cli")]
+    assert calls == [("project-1", "scope-1", "cli")]
 
 
 def test_cli_fs_command_policy_denies_unlisted_command(monkeypatch):
     class _Repo:
-        def get_by_scope_provider(self, _scope_id, _provider):
+        def get_by_target_provider(self, _project_id, _scope_id, _provider):
             return SimpleNamespace(
                 id="connector-1",
                 provider="cli",
@@ -80,7 +91,7 @@ def test_cli_fs_command_policy_denies_unlisted_command(monkeypatch):
 
 def test_cli_fs_command_policy_fails_closed_on_lookup_error(monkeypatch):
     class _Repo:
-        def get_by_scope_provider(self, _scope_id, _provider):
+        def get_by_target_provider(self, _project_id, _scope_id, _provider):
             raise RuntimeError("db down")
 
     connector_policy.clear_connector_policy_cache()

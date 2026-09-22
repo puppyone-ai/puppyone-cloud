@@ -2,7 +2,11 @@
 from fastapi import APIRouter, Depends, Query, status
 
 from src.common_schemas import ApiResponse
-from src.content.table.dependencies import get_table_service, get_verified_table
+from src.content.table.dependencies import (
+    get_table_service,
+    get_verified_table,
+    get_writable_table,
+)
 from src.content.table.models import Table
 from src.content.table.schemas import (
     ContextDataCreate,
@@ -19,6 +23,9 @@ from src.exceptions import ErrorCode, NotFoundException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.organization.dependencies import resolve_org_ids
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 router = APIRouter(
     prefix="/tables",
@@ -40,11 +47,19 @@ def list_tables(
     org_id: str | None = Query(None, description="Organization ID"),
     table_service: TableService = Depends(get_table_service),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     oids = resolve_org_ids(org_id, current_user.user_id)
     all_results = []
     for oid in oids:
-        all_results.extend(table_service.get_projects_with_tables_by_org_id(oid))
+        rows = table_service.get_projects_with_tables_by_org_id(oid)
+        all_results.extend(
+            row
+            for row in rows
+            if authorization.allows(
+                row.id, current_user.user_id, ProjectAction.PROJECT_READ
+            )
+        )
     return ApiResponse.success(data=all_results, message="Projects and tables list retrieved successfully")
 
 
@@ -70,13 +85,11 @@ async def create_table(
     payload: TableCreate,
     table_service: TableService = Depends(get_table_service),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
-    if not table_service.verify_project_access(
-        payload.project_id, current_user.user_id
-    ):
-        raise NotFoundException(
-            f"Project not found: {payload.project_id}", code=ErrorCode.NOT_FOUND
-        )
+    authorization.authorize(
+        payload.project_id, current_user.user_id, ProjectAction.CONTENT_WRITE
+    )
 
     table = await table_service.create(
         user_id=current_user.user_id,
@@ -95,7 +108,7 @@ async def create_table(
     status_code=status.HTTP_200_OK,
 )
 async def update_table(
-    table: Table = Depends(get_verified_table),
+    table: Table = Depends(get_writable_table),
     payload: TableUpdate = ...,
     table_service: TableService = Depends(get_table_service),
 ):
@@ -115,7 +128,7 @@ async def update_table(
     status_code=status.HTTP_200_OK,
 )
 async def delete_table(
-    table: Table = Depends(get_verified_table),
+    table: Table = Depends(get_writable_table),
     table_service: TableService = Depends(get_table_service),
 ):
     await table_service.delete(table.id)
@@ -130,7 +143,7 @@ async def delete_table(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_context_data(
-    table: Table = Depends(get_verified_table),
+    table: Table = Depends(get_writable_table),
     payload: ContextDataCreate = ...,
     table_service: TableService = Depends(get_table_service),
 ):
@@ -176,7 +189,7 @@ def get_context_data(
     status_code=status.HTTP_200_OK,
 )
 async def update_context_data(
-    table: Table = Depends(get_verified_table),
+    table: Table = Depends(get_writable_table),
     payload: ContextDataUpdate = ...,
     table_service: TableService = Depends(get_table_service),
 ):
@@ -196,7 +209,7 @@ async def update_context_data(
     status_code=status.HTTP_200_OK,
 )
 async def delete_context_data(
-    table: Table = Depends(get_verified_table),
+    table: Table = Depends(get_writable_table),
     payload: ContextDataDelete = ...,
     table_service: TableService = Depends(get_table_service),
 ):

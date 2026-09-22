@@ -6,6 +6,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.common_schemas import ApiResponse
 from src.exceptions import AppException, ErrorCode
+from src.platform.auth.shared_security_store import SecurityStoreUnavailable
 from src.utils.request_context import request_id_var
 
 
@@ -49,6 +50,8 @@ def app_exception_handler(request: Request, exc: AppException):
     )
     if rid:
         resp.headers["X-Request-Id"] = rid
+    for key, value in getattr(exc, "headers", {}).items():
+        resp.headers[key] = value
     return resp
 
 
@@ -69,6 +72,11 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException):
             message=message,
             data=data,
         ).model_dump(),
+        # Starlette's default handler preserves HTTPException headers. Keep
+        # that contract when wrapping the body in ApiResponse: Git smart HTTP
+        # depends on WWW-Authenticate to trigger Basic credential lookup/retry,
+        # and other protocol responses may rely on Allow or Retry-After.
+        headers=exc.headers,
     )
     rid = request_id_var.get()
     if rid:
@@ -92,6 +100,28 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
         ).model_dump(),
     )
     rid = request_id_var.get()
+    if rid:
+        resp.headers["X-Request-Id"] = rid
+    return resp
+
+
+def security_store_unavailable_handler(
+    request: Request,
+    exc: SecurityStoreUnavailable,
+):
+    """Expose fail-closed authentication infrastructure failures as HTTP 503."""
+    rid = request_id_var.get()
+    logger.bind(request_id=rid).error(
+        "Authentication security store unavailable: {}",
+        exc,
+    )
+    resp = JSONResponse(
+        status_code=503,
+        content=ApiResponse.error(
+            code=ErrorCode.INTERNAL_SERVER_ERROR,
+            message="Authentication security store unavailable",
+        ).model_dump(),
+    )
     if rid:
         resp.headers["X-Request-Id"] = rid
     return resp

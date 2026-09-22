@@ -12,13 +12,13 @@ the actual object from S3, so agents see real files — not JSON stubs.
 from __future__ import annotations
 
 import json as _json
-import os
 import time
 
 from src.infra.s3.service import get_s3_service_instance
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 from src.platform.workspace.cache import CacheManager
+from src.platform.workspace.paths import content_child
 from src.utils.logger import log_error, log_info
+from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 
 
 def _extract_file_ref(data: bytes) -> str | None:
@@ -80,9 +80,9 @@ class SyncWorker:
         s3 = None  # lazy-init only when a binary is encountered
 
         for entry in entries:
-            local_path = os.path.join(project_dir, entry.path)
+            local_path = content_child(project_dir, entry.path)
             if entry.type == "folder":
-                os.makedirs(local_path, exist_ok=True)
+                local_path.mkdir(parents=True, exist_ok=True)
                 dir_count += 1
                 continue
 
@@ -104,8 +104,8 @@ class SyncWorker:
                     except Exception as e:
                         log_error(f"[SyncWorker] S3 download failed for {entry.path} ({s3_key}): {e}")
 
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            with open(local_path, "wb") as f:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            with local_path.open("wb") as f:
                 f.write(data)
             file_count += 1
 

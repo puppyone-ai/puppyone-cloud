@@ -1,90 +1,208 @@
-name: Deploy Migrations to Staging
+name: Deploy Database to Qubits
 
 on:
   push:
     branches:
-      - newmu
-    paths:
-      - "supabase/migrations/**"
-      - ".github/workflows/migrate-staging.yml"
+      - qubits
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  validate_ref:
+    name: Validate protected staging source
     runs-on: ubuntu-latest
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
-
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Link to staging project
-        run: supabase link --project-ref ${{ secrets.STAGING_PROJECT_ID }}
-
-      - name: Push migrations (dry run)
-        run: supabase db push --dry-run
-
-      - name: Push migrations
-        run: supabase db push
-
-      - name: Smoke test — verify critical triggers
-        env:
-          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
-          PGHOST: db.${{ secrets.STAGING_PROJECT_ID }}.supabase.co
+      - name: Enforce qubits branch
+        shell: bash
         run: |
           set -euo pipefail
-          # Direct DB smoke tests need the database password secret; migration push itself does not.
-          if [ -z "${PGPASSWORD:-}" ]; then
-            echo "::warning::STAGING_DB_PASSWORD is not configured; skipping direct database smoke test."
-            exit 0
+          if [ "$GITHUB_REF" != "refs/heads/qubits" ]; then
+            echo "::error::Staging database releases must run from the qubits branch."
+            exit 1
           fi
 
-          command -v dig >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
-          IPV4=$(dig +short A "$PGHOST" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
-          if [ -n "$IPV4" ]; then
-            psql "hostaddr=${IPV4} host=${PGHOST} port=5432 dbname=postgres user=postgres sslmode=require" \
-              -f supabase/tests/smoke_test_triggers.sql
-          else
-            echo "::warning::Could not resolve IPv4 A record for ${PGHOST}; falling back to normal DNS resolution."
-            psql "host=${PGHOST} port=5432 dbname=postgres user=postgres sslmode=require" \
-              -f supabase/tests/smoke_test_triggers.sql
-          fi
+  resolve_data_release:
+    name: Resolve staged data release
+    needs: validate_ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      migration_id: ${{ steps.release.outputs.migration_id }}
+      repair_migration_id: ${{ steps.release.outputs.repair_migration_id }}
+      execution_mode: ${{ steps.release.outputs.execution_mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Detect schema drift
+      - name: Validate staged migration pointer
+        id: release
+        shell: bash
         run: |
-          DIFF=$(supabase db diff --linked 2>&1) || true
-          if [ -n "$DIFF" ] && ! echo "$DIFF" | grep -q "No schema changes found"; then
-            echo "::warning::Schema drift detected after migration push!"
-            echo "$DIFF"
+          set -euo pipefail
+          request="supabase/releases/staging-data-migration.json"
+          migration_id=$(jq -er '.migration_id | select(type == "string")' "$request")
+          case "$migration_id" in
+            ''|*[!0-9A-Za-z_]*)
+              echo "::error::Invalid staging data migration ID."
+              exit 1
+              ;;
+          esac
+          if [ ! -d "supabase/data_migrations/$migration_id" ]; then
+            echo "::error::Staged data migration artifact does not exist."
+            exit 1
+          fi
+          execution_mode=$(jq -er '.execution_mode // "ci" | select(type == "string")' "$request")
+          case "$execution_mode" in
+            ci|operator_local) ;;
+            *)
+              echo "::error::Invalid staged data migration execution mode."
+              exit 1
+              ;;
+          esac
+          repair_migration_id=$(jq -er '.repair_migration_id // "" | select(type == "string")' "$request")
+          if [ "$execution_mode" = "operator_local" ] && [ -n "$repair_migration_id" ]; then
+            echo "::error::Operator-local data migrations cannot declare a CI repair artifact."
+            exit 1
+          fi
+          if [ -n "$repair_migration_id" ]; then
+            case "$repair_migration_id" in
+              *[!0-9A-Za-z_]*)
+                echo "::error::Invalid staged repair data migration ID."
+                exit 1
+                ;;
+            esac
+            if [ ! -d "supabase/data_migrations/$repair_migration_id" ]; then
+              echo "::error::Staged repair data migration artifact does not exist."
+              exit 1
+            fi
+          fi
+          echo "migration_id=$migration_id" >> "$GITHUB_OUTPUT"
+          echo "repair_migration_id=$repair_migration_id" >> "$GITHUB_OUTPUT"
+          echo "execution_mode=$execution_mode" >> "$GITHUB_OUTPUT"
+
+  prepare_schema:
+    name: Apply compatible schema before staged data migration
+    needs: resolve_data_release
+    uses: ./.github/workflows/_schema-deploy.yml
+    secrets: inherit
+    with:
+      environment: staging
+      allow_data_migration_pause: true
+
+  validate_schema_pause:
+    name: Match schema guard to staged data migration
+    needs:
+      - prepare_schema
+      - resolve_data_release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_MIGRATION_ID: ${{ needs.resolve_data_release.outputs.migration_id }}
+      REQUIRED_MIGRATION_ID: ${{ needs.prepare_schema.outputs.required_data_migration_id }}
+    steps:
+      - name: Reject a mismatched contract guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUIRED_MIGRATION_ID" ] && [ "$REQUIRED_MIGRATION_ID" != "$EXPECTED_MIGRATION_ID" ]; then
+            echo "::error::Schema requires $REQUIRED_MIGRATION_ID, but the staged release points to $EXPECTED_MIGRATION_ID."
+            exit 1
           fi
 
-      - name: Notify on failure (email)
-        if: failure()
-        continue-on-error: true
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.ALERT_SMTP_USERNAME }}
-          password: ${{ secrets.ALERT_SMTP_PASSWORD }}
-          from: PuppyOne CI <${{ secrets.ALERT_SMTP_USERNAME }}>
-          to: ${{ secrets.ALERT_EMAIL_TO }}
-          subject: "⚠️ [STAGING] Migration failed: ${{ github.event.head_commit.message }}"
-          body: |
-            Staging migration push FAILED.
+  repair_run:
+    name: Run staged repair before the staged data migration
+    if: >-
+      needs.validate_schema_pause.result == 'success' &&
+      needs.resolve_data_release.outputs.execution_mode == 'ci' &&
+      needs.resolve_data_release.outputs.repair_migration_id != ''
+    needs:
+      - validate_schema_pause
+      - resolve_data_release
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ needs.resolve_data_release.outputs.repair_migration_id }}
+      operation: run
 
-            Workflow: ${{ github.workflow }}
-            Commit:   ${{ github.sha }}
-            Author:   ${{ github.event.head_commit.author.name }}
-            Message:  ${{ github.event.head_commit.message }}
+  data_plan:
+    if: >-
+      always() && needs.validate_schema_pause.result == 'success' &&
+      needs.resolve_data_release.result == 'success' &&
+      needs.resolve_data_release.outputs.execution_mode == 'ci' &&
+      (needs.repair_run.result == 'success' || needs.repair_run.result == 'skipped')
+    needs:
+      - validate_schema_pause
+      - repair_run
+      - resolve_data_release
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ needs.resolve_data_release.outputs.migration_id }}
+      operation: plan
 
-            View logs:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  data_run:
+    # ``repair_run`` is intentionally optional.  A skipped optional ancestor
+    # otherwise propagates GitHub's implicit success() guard and silently
+    # skips this mutation even after data_plan succeeded.
+    if: >-
+      always() && needs.data_plan.result == 'success' &&
+      needs.resolve_data_release.result == 'success' &&
+      needs.resolve_data_release.outputs.execution_mode == 'ci'
+    needs:
+      - data_plan
+      - resolve_data_release
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ needs.resolve_data_release.outputs.migration_id }}
+      operation: run
 
-            Fix this BEFORE merging to main, otherwise production will break too.
+  data_verify:
+    if: >-
+      always() && needs.data_run.result == 'success' &&
+      needs.resolve_data_release.result == 'success' &&
+      needs.resolve_data_release.outputs.execution_mode == 'ci'
+    needs:
+      - data_run
+      - resolve_data_release
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ needs.resolve_data_release.outputs.migration_id }}
+      operation: verify
+
+  operator_data_verify:
+    name: Verify operator-local data migration on Qubits
+    if: >-
+      needs.validate_schema_pause.result == 'success' &&
+      needs.resolve_data_release.outputs.execution_mode == 'operator_local'
+    needs:
+      - validate_schema_pause
+      - resolve_data_release
+    uses: ./.github/workflows/_operator-data-verify.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ needs.resolve_data_release.outputs.migration_id }}
+
+  deploy_after_data:
+    name: Recheck staging schema after data migration
+    if: >-
+      always() && (
+        (needs.data_verify.result == 'success' && needs.resolve_data_release.outputs.execution_mode == 'ci') ||
+        (needs.operator_data_verify.result == 'success' && needs.resolve_data_release.outputs.execution_mode == 'operator_local')
+      )
+    needs:
+      - data_verify
+      - operator_data_verify
+      - resolve_data_release
+    uses: ./.github/workflows/_schema-deploy.yml
+    secrets: inherit
+    with:
+      environment: staging

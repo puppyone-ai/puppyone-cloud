@@ -1,5 +1,5 @@
 import React from 'react';
-import type { useRouter } from 'next/navigation';
+import type { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { T } from '../lib/tokens';
 import type { TreeNode, DashboardConnection } from '../lib/types';
 import { FileIcon } from './FileIcon';

@@ -5,6 +5,9 @@
  */
 
 import useSWR, { mutate } from 'swr';
+import { useMemo } from 'react';
+import { workspaceKeys } from '@/lib/queryKeys';
+import { readState } from '@/lib/queryState';
 import {
   getProjects,
   getProject,
@@ -15,7 +18,6 @@ import {
   type TableInfo,
 } from '../projectsApi';
 import {
-  getTools,
   getToolsByProjectId,
   getToolsByPath,
   type Tool,
@@ -28,6 +30,12 @@ import {
   type NodeInfo,
 } from '../contentTreeApi';
 import { getConnectorSpecs, type ConnectorSpec } from '../syncApi';
+
+// Shared immutable-by-convention fallback: effect dependencies must not
+// change identity merely because a disabled/pending query has no payload.
+const EMPTY_TOOLS: Tool[] = [];
+const EMPTY_PROJECTS: ProjectInfo[] = [];
+const EMPTY_NODES: NodeInfo[] = [];
 
 // SWR 配置：关闭自动重新验证，依赖手动刷新
 const defaultConfig = {
@@ -49,17 +57,19 @@ export function useProjects(orgId?: string | null) {
   const {
     data,
     error,
-    isLoading,
     mutate: revalidate,
   } = useSWR<ProjectInfo[]>(
     key,
     () => getProjects(orgId ?? undefined),
-    { ...defaultConfig, keepPreviousData: true }
+    { ...defaultConfig, keepPreviousData: false }
   );
+  const status = readState(!isDisabled, data, error);
 
   return {
-    projects: isDisabled ? [] : data ?? [],
-    isLoading: isDisabled ? false : isLoading,
+    projects: isDisabled ? EMPTY_PROJECTS : data ?? EMPTY_PROJECTS,
+    status,
+    hasLoaded: status === 'ready',
+    isLoading: status === 'loading',
     error,
     refresh: revalidate,
   };
@@ -114,7 +124,7 @@ export function useTable(projectId: string, tableId: string | undefined) {
     {
       ...defaultConfig,
       dedupingInterval: 10000, // 表数据 10 秒去重
-      keepPreviousData: true,  // 切换节点时保留旧数据直到新数据到达
+      keepPreviousData: false, // Never expose another file's data under this identity.
     }
   );
 
@@ -151,14 +161,14 @@ export function useOrphanTables() {
  * @returns Promise that resolves when the data is actually fetched
  */
 export async function refreshProjects(orgId?: string | null) {
-  mutate('orphan-tables');
+  void mutate('orphan-tables').catch(() => {});
   if (orgId === null) {
     return undefined;
   }
   if (orgId) {
-    return mutate(['projects', orgId], undefined, { revalidate: true });
+    return mutate(['projects', orgId]);
   }
-  return mutate('projects', undefined, { revalidate: true });
+  return mutate('projects');
 }
 
 /**
@@ -201,7 +211,7 @@ export function updateTableCache(
  * Fetch directory listing for a given path (SWR cached).
  *
  * - Global cache: ExplorerSidebar / GridView / ListView share same data
- * - keepPreviousData: preserves old list while new data loads
+ * - Keep only the same identity's cached snapshot while revalidating.
  */
 export function useTreeDir(projectId: string, dirPath: string | null | undefined) {
   const normalizedPath = normalizeTreePath(dirPath);
@@ -209,7 +219,6 @@ export function useTreeDir(projectId: string, dirPath: string | null | undefined
   const {
     data,
     error,
-    isLoading,
     isValidating,
     mutate: revalidate,
   } = useSWR<NodeInfo[]>(
@@ -223,13 +232,16 @@ export function useTreeDir(projectId: string, dirPath: string | null | undefined
     {
       ...defaultConfig,
       dedupingInterval: 30000,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
+  const status = readState(Boolean(projectId), data, error);
 
   return {
-    nodes: data ?? [],
-    isLoading,
+    nodes: data ?? EMPTY_NODES,
+    status,
+    hasLoaded: status === 'ready',
+    isLoading: status === 'loading',
     isValidating,
     error,
     refresh: revalidate,
@@ -242,40 +254,13 @@ export function useContentNodes(projectId: string, parentPath: string | null | u
 }
 
 /**
- * Stable project explorer listing for the left sidebar.
- *
- * This intentionally uses a separate SWR cache namespace from the folder
- * content view. The sidebar represents the whole project tree, like VS Code's
- * explorer; route changes may expand/select nodes, but they must never swap
- * the sidebar's root data source to "whatever folder the main pane is viewing".
+ * Project explorer and main folder content are two views over the same path
+ * listing. Share the canonical per-path SWR cache so mounting both panes does
+ * not issue duplicate `/ls` requests. Expansion and selection remain local UI
+ * state in the explorer components; they do not belong in the data cache.
  */
 export function useExplorerTreeDir(projectId: string, dirPath: string | null | undefined) {
-  const normalizedPath = normalizeTreePath(dirPath);
-  const key = projectId ? ['explorer-tree', projectId, normalizedPath] : null;
-  const {
-    data,
-    error,
-    isLoading,
-    isValidating,
-    mutate: revalidate,
-  } = useSWR<NodeInfo[]>(
-    key,
-    () => listDir(projectId, normalizedPath)
-      .then(r => sortNodes(directChildrenOf(r.nodes, normalizedPath))),
-    {
-      ...defaultConfig,
-      dedupingInterval: 30000,
-      keepPreviousData: true,
-    },
-  );
-
-  return {
-    nodes: data ?? [],
-    isLoading,
-    isValidating,
-    error,
-    refresh: revalidate,
-  };
+  return useTreeDir(projectId, dirPath);
 }
 
 export function useExplorerRootNodes(projectId: string) {
@@ -293,10 +278,7 @@ export function useExplorerRootNodes(projectId: string) {
  */
 export function refreshContentNodes(projectId: string, dirPath: string | null) {
   const normalizedPath = normalizeTreePath(dirPath);
-  return Promise.all([
-    mutate(['tree', projectId, normalizedPath]),
-    mutate(['explorer-tree', projectId, normalizedPath]),
-  ]);
+  return mutate(['tree', projectId, normalizedPath]);
 }
 
 /**
@@ -310,14 +292,9 @@ export function refreshContentNodes(projectId: string, dirPath: string | null) {
  * is what made saves feel slow.
  */
 export function refreshAllContentNodes(projectId: string) {
-  return Promise.all([
-    mutate(
-      key => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId,
-    ),
-    mutate(
-      key => Array.isArray(key) && key[0] === 'explorer-tree' && key[1] === projectId,
-    ),
-  ]);
+  return mutate(
+    key => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId,
+  );
 }
 
 /**
@@ -346,21 +323,12 @@ export function refreshFolderNodes(
   const unique = Array.from(
     new Set(folderPaths.map((p) => normalizeTreePath(p))),
   );
-  // Keep both read models fresh:
-  // - `tree` backs the main content pane for the current route.
-  // - `explorer-tree` backs the project-wide sidebar and is intentionally
-  //   isolated so route changes cannot swap the sidebar's root listing.
-  // Do not pass `undefined` as mutate data here: that clears the cached tree
-  // for one render and makes the UI flash empty while revalidation is in
-  // flight.
-  return Promise.all([
-    ...unique.map((folderPath) =>
-      mutate(['tree', projectId, folderPath]),
-    ),
-    ...unique.map((folderPath) =>
-      mutate(['explorer-tree', projectId, folderPath]),
-    ),
-  ]);
+  // Explorer and content panes share this canonical path cache. Do not pass
+  // `undefined` as mutate data: that clears the tree for one render and makes
+  // both panes flash empty while revalidation is in flight.
+  return Promise.all(
+    unique.map(folderPath => mutate(['tree', projectId, folderPath])),
+  );
 }
 
 /**
@@ -383,31 +351,37 @@ export function refreshProjectHistory(projectId: string) {
  * - 后端过滤：直接调用 /api/v1/tools/by-path/{path}
  * - 自动缓存：相同 path 共享数据
  */
-export function useToolsByPath(path: string | undefined) {
+export function useToolsByPath(path: string | undefined, projectId = '') {
+  // Project-aware callers select from the authorized project resource, shared
+  // with the Files layout. Changing a cache key alone cannot fix a path-only
+  // backend query (the same path may exist in multiple projects).
+  const projectQuery = useProjectTools(path && projectId ? projectId : undefined);
   const {
     data: tableTools,
     error,
     isLoading,
     mutate: revalidate,
   } = useSWR<Tool[]>(
-    path ? ['tools-by-path', path] : null,
+    path && !projectId ? workspaceKeys.tools('', path) : null,
     () => getToolsByPath(path!),
     {
       ...defaultConfig,
       dedupingInterval: 10000,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
 
-  // 同时获取所有 tools 的总数（用于 sidebar badge）
-  const { data: allToolsData } = useSWR<Tool[]>('all-tools', () => getTools(), {
-    ...defaultConfig,
-    dedupingInterval: 30000, // 30 秒去重，因为只用于显示总数
-  });
+  const scopedTools = useMemo(() => path ? projectQuery.tools.filter(tool => tool.path === path) : EMPTY_TOOLS,
+    [path, projectQuery.tools]);
+  if (projectId) return {
+    tools: scopedTools,
+    isLoading: projectQuery.isLoading,
+    error: projectQuery.error,
+    refresh: projectQuery.refresh,
+  };
 
   return {
-    tools: tableTools ?? [],
-    allTools: allToolsData ?? [],
+    tools: tableTools ?? EMPTY_TOOLS,
     isLoading,
     error,
     refresh: revalidate,
@@ -429,12 +403,12 @@ export function useProjectTools(projectId: string | undefined) {
     {
       ...defaultConfig,
       dedupingInterval: 30000,
-      keepPreviousData: true,
+      keepPreviousData: false,
     }
   );
 
   return {
-    tools: data ?? [],
+    tools: data ?? EMPTY_TOOLS,
     isLoading,
     error,
     refresh: revalidate,
@@ -454,11 +428,12 @@ export function refreshProjectTools(projectId?: string | null) {
 /**
  * 手动刷新指定路径的 Tools
  */
-export function refreshToolsByPath(path?: string) {
+export function refreshToolsByPath(path?: string, projectId = '') {
+  if (projectId) return refreshProjectTools(projectId);
   if (path) {
-    mutate(['tools-by-path', path]);
+    return mutate(workspaceKeys.tools(projectId, path));
   }
-  return mutate('all-tools');
+  return Promise.resolve(undefined);
 }
 
 /**

@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import re
+from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable, TypeVar
 
 import boto3
@@ -28,6 +30,23 @@ from src.infra.s3.schemas import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}"
+_PROJECT_KEY_PATTERNS = (
+    re.compile(rf"^(?:version|mut|projects|shadow-snapshots)/(?P<project>{_SEGMENT})/"),
+    re.compile(
+        rf"^users/{_SEGMENT}/(?:etl_artifacts|processed|raw)/"
+        rf"(?P<project>{_SEGMENT})/"
+    ),
+)
+
+
+def project_id_from_owned_s3_key(key: str) -> str | None:
+    for pattern in _PROJECT_KEY_PATTERNS:
+        matched = pattern.match(key)
+        if matched:
+            return matched.group("project")
+    return None
 
 
 class S3Service:
@@ -88,7 +107,47 @@ class S3Service:
         Returns:
             Function execution result
         """
-        return await asyncio.to_thread(func, *args, **kwargs)
+        task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # boto3 work in a thread cannot be cancelled. Keep the surrounding
+            # Project lease alive until the physical I/O actually stops, then
+            # propagate cancellation to the request/worker.
+            try:
+                await task
+            finally:
+                raise
+
+    @asynccontextmanager
+    async def _project_write_guard(self, key: str, operation: str):
+        project_id = project_id_from_owned_s3_key(key)
+        if project_id is None:
+            yield
+            return
+        from src.platform.project.write_lease import (
+            PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
+            ProjectWriteLease,
+            active_project_write_lease,
+        )
+
+        # Physical storage admission is intentionally independent from the
+        # logical Product lease. A ContextVar is copied into background tasks,
+        # and boto3 threads outlive asyncio cancellation; reusing only the
+        # outer project id would therefore permit a late PUT after the outer
+        # lease was released. The child claim lives through the real boto
+        # future and inherits initializer proof only from a currently-live
+        # outer lease.
+        parent = active_project_write_lease(project_id)
+        proof = parent.initialization_proof() if parent is not None else {}
+        async with ProjectWriteLease(
+            project_id,
+            f"s3.{operation}",
+            ttl_seconds=PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
+            reuse_active=False,
+            **proof,
+        ):
+            yield
 
     def _handle_client_error(self, error: ClientError, operation: str) -> None:
         """Handle boto3 ClientError"""
@@ -171,13 +230,14 @@ class S3Service:
             if metadata:
                 extra_args["Metadata"] = metadata
 
-            response = await self._run_sync(
-                self.client.put_object,
-                Bucket=self.bucket_name,
-                Key=key,
-                Body=content,
-                **extra_args,
-            )
+            async with self._project_write_guard(key, "put_object"):
+                response = await self._run_sync(
+                    self.client.put_object,
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Body=content,
+                    **extra_args,
+                )
 
             logger.info(f"File uploaded successfully: {key} ({file_size} bytes)")
 
@@ -607,6 +667,11 @@ class S3Service:
         Returns:
             str: Presigned URL
         """
+        if project_id_from_owned_s3_key(key) is not None:
+            raise S3OperationError(
+                "Presigned upload is unavailable for Project-owned storage; "
+                "use the leased multipart upload API"
+            )
         try:
             params = {"Bucket": self.bucket_name, "Key": key}
 
@@ -694,9 +759,10 @@ class S3Service:
             if metadata:
                 kwargs["Metadata"] = metadata
 
-            response = await self._run_sync(
-                self.client.create_multipart_upload, **kwargs
-            )
+            async with self._project_write_guard(key, "create_multipart"):
+                response = await self._run_sync(
+                    self.client.create_multipart_upload, **kwargs
+                )
             upload_id = response["UploadId"]
 
             logger.info(f"Created multipart upload for {key}: {upload_id}")
@@ -736,14 +802,15 @@ class S3Service:
             )
 
         try:
-            response = await self._run_sync(
-                self.client.upload_part,
-                Bucket=self.bucket_name,
-                Key=key,
-                UploadId=upload_id,
-                PartNumber=part_number,
-                Body=data,
-            )
+            async with self._project_write_guard(key, "upload_part"):
+                response = await self._run_sync(
+                    self.client.upload_part,
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    UploadId=upload_id,
+                    PartNumber=part_number,
+                    Body=data,
+                )
 
             etag = response["ETag"].strip('"')
             logger.info(f"Uploaded part {part_number} for {key}: {etag}")
@@ -777,13 +844,14 @@ class S3Service:
                 ]
             }
 
-            response = await self._run_sync(
-                self.client.complete_multipart_upload,
-                Bucket=self.bucket_name,
-                Key=key,
-                UploadId=upload_id,
-                MultipartUpload=multipart_upload,
-            )
+            async with self._project_write_guard(key, "complete_multipart"):
+                response = await self._run_sync(
+                    self.client.complete_multipart_upload,
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    UploadId=upload_id,
+                    MultipartUpload=multipart_upload,
+                )
 
             logger.info(f"Completed multipart upload for {key}")
 
@@ -924,7 +992,8 @@ class S3Service:
                 kwargs["Metadata"] = metadata
 
         try:
-            await self._run_sync(self.client.copy_object, **kwargs)
+            async with self._project_write_guard(dst_key, "copy_object"):
+                await self._run_sync(self.client.copy_object, **kwargs)
             logger.info(
                 f"Copied object {src_key} -> {dst_key} (server-side, no egress)"
             )
@@ -1020,14 +1089,8 @@ def get_s3_service_instance() -> S3Service:
     return _s3_service_instance
 
 
-# For backward compatibility, keep the s3_service variable but use lazy loading
-# Note: Accessing s3_service directly will trigger initialization; prefer get_s3_service_instance()
-@property
-def _lazy_s3_service():
-    return get_s3_service_instance()
-
-
-# Use property descriptor for lazy loading
+# Backward-compat: `s3_service` lazily proxies to the singleton.
+# Prefer get_s3_service_instance() / get_s3_service() in new code.
 class _S3ServiceProxy:
     def __getattr__(self, name):
         return getattr(get_s3_service_instance(), name)

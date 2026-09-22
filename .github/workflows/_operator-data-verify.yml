@@ -1,0 +1,81 @@
+name: Reusable Operator Data Verification
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      migration_id:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # Keep this name stable: Main Release Gate searches it as the attestation
+    # for an operator-local migration.
+    name: verify ${{ inputs.migration_id }} on ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: database-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      MIGRATION_ID: ${{ inputs.migration_id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate immutable verification artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$MIGRATION_ID" in
+            ''|*[!0-9A-Za-z_]*)
+              echo "::error::Invalid operator-local data migration ID."
+              exit 1
+              ;;
+          esac
+          verify="supabase/data_migrations/$MIGRATION_ID/verify.sql"
+          if [ ! -f "$verify" ]; then
+            echo "::error::Operator-local migration verification SQL is missing."
+            exit 1
+          fi
+
+      - name: Ensure PostgreSQL client is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+
+      - name: Bind protected PostgreSQL connection
+        run: python3 supabase/releases/connection.py
+
+      - name: Verify Supabase completion state
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -c "SET SESSION ROLE postgres;" \
+            -f "supabase/data_migrations/$MIGRATION_ID/verify.sql"
+
+      - name: Publish operator verification attestation
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Operator-local data migration verification"
+            echo
+            echo "- Environment: ${{ inputs.environment }}"
+            echo "- Migration: $MIGRATION_ID"
+            echo "- Source SHA: $GITHUB_SHA"
+            echo "- External data-plane work: not executed by CI"
+          } >> "$GITHUB_STEP_SUMMARY"

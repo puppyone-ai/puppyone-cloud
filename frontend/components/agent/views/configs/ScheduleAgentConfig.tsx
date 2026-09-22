@@ -480,7 +480,7 @@ export function ScheduleAgentConfig({ projectTools }: AgentConfigProps) {
       {/* Bash access */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-          <label style={{ ...labelStyle, marginBottom: 0 }}>Agent's bash access</label>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>{"Agent's bash access"}</label>
           <span style={{ width: 6, height: 6, background: 'var(--po-danger)', borderRadius: 1.5 }} title="Required" />
         </div>
         <div

@@ -7,6 +7,7 @@ import pytest
 from src.exceptions import BusinessException
 from src.repo.connector_service import ConnectorService
 from src.repo.models import Connector
+from src.platform.repository_target.models import ScopeTarget
 
 
 NOW = datetime(2026, 5, 31, tzinfo=timezone.utc)
@@ -20,8 +21,7 @@ def _connector(
 ) -> Connector:
     return Connector(
         id=connector_id or f"c-{provider}",
-        project_id="project-1",
-        scope_id="scope-1",
+        target=ScopeTarget(project_id="project-1", scope_id="scope-1"),
         provider=provider,
         name=provider.title(),
         direction=(
@@ -124,7 +124,7 @@ def test_create_rejects_github_access_connector() -> None:
     with pytest.raises(BusinessException, match="One-time imports are not Access connectors"):
         service.create(
             project_id="project-1",
-            scope_id="scope-1",
+            target=ScopeTarget(project_id="project-1", scope_id="scope-1"),
             provider="github",
             direction="inbound",
             name="GitHub",
@@ -139,10 +139,10 @@ def test_create_rejects_github_access_connector() -> None:
 def test_create_rejects_git_remote_connector() -> None:
     service = ConnectorService(repository=_FakeConnectorRepository())
 
-    with pytest.raises(BusinessException, match="access surfaces are created per scope"):
+    with pytest.raises(BusinessException, match="created per repository target"):
         service.create(
             project_id="project-1",
-            scope_id="scope-1",
+            target=ScopeTarget(project_id="project-1", scope_id="scope-1"),
             provider="git_remote",
             direction="bidirectional",
             name="Git Remote",
@@ -160,7 +160,7 @@ def test_create_rejects_import_once_connector() -> None:
     with pytest.raises(BusinessException, match="One-time imports are not Access connectors"):
         service.create(
             project_id="project-1",
-            scope_id="scope-1",
+            target=ScopeTarget(project_id="project-1", scope_id="scope-1"),
             provider="url",
             direction="inbound",
             name="Imported URL",
@@ -179,5 +179,5 @@ def test_delete_rejects_git_remote_builtin_surface() -> None:
         ]),
     )
 
-    with pytest.raises(BusinessException, match="Built-in Access surfaces"):
+    with pytest.raises(BusinessException, match="Standard Access surfaces"):
         service.delete("surface-git")

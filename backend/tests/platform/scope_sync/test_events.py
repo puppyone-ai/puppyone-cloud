@@ -11,6 +11,7 @@ from src.platform.scope_sync.events import (
 )
 from src.platform.scope_sync.policy import Persona, SyncAction, policy_for
 from src.platform.scope_sync.service import ScopeSyncService
+from src.platform.scope_sync.settings_store import InMemorySettingsStore
 
 
 def test_inmemory_store_append_and_since():
@@ -51,13 +52,11 @@ class _Scope:
     id: str
     project_id: str
     path: str
-    is_root: bool
 
 
 _SCOPES = [
-    _Scope("s-root", "p1", "", True),
-    _Scope("s-docs", "p1", "docs", False),
-    _Scope("s-src", "p1", "src", False),
+    _Scope("s-docs", "p1", "docs"),
+    _Scope("s-src", "p1", "src"),
 ]
 
 
@@ -67,6 +66,7 @@ def _svc():
         scope_lookup=lambda sid: next((s for s in _SCOPES if s.id == sid), None),
         scopes_lister=lambda pid: [(s.id, s.path) for s in _SCOPES if s.project_id == pid],
         event_store=store,
+        settings_store=InMemorySettingsStore(),
     )
 
 
@@ -74,13 +74,11 @@ def test_record_publish_fans_out_path_scoped():
     svc = _svc()
     n = svc.record_publish(project_id="p1", scope_path="docs", changed_paths=["a.md"],
                            head_version="v9", origin_user="u1")
-    assert n == 2                                            # root + docs (not src)
+    assert n == 1                                            # docs, not sibling src
     # docs scope sees it relative; src scope sees nothing
     docs = svc.poll_events(project_id="p1", scope_id="s-docs", cursor=0)
     assert docs["events"][0]["affected_paths"] == ["a.md"] and docs["cursor"] >= 1
     assert svc.poll_events(project_id="p1", scope_id="s-src", cursor=0)["events"] == []
-    root = svc.poll_events(project_id="p1", scope_id="s-root", cursor=0)
-    assert root["events"][0]["affected_paths"] == ["docs/a.md"]
 
 
 def test_poll_events_cursor_advances():
@@ -108,6 +106,7 @@ def test_record_publish_is_best_effort_on_error():
     # a broken scopes_lister must not raise into the publish path
     svc = ScopeSyncService(scope_lookup=lambda sid: None,
                            scopes_lister=lambda pid: (_ for _ in ()).throw(RuntimeError("boom")),
-                           event_store=InMemoryEventStore())
+                           event_store=InMemoryEventStore(),
+                           settings_store=InMemorySettingsStore())
     assert svc.record_publish(project_id="p1", scope_path="docs", changed_paths=["a"],
                               head_version="v", origin_user=None) == 0

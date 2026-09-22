@@ -3,7 +3,7 @@
 Conflict policies ``agent_review`` and ``agent_auto_resolve`` make the
 engine queue the conflict (same shape as ``manual_review``) but mark
 the pending row's ``resolver_kind = "agent"``. This module is the
-bridge from "row landed in mut_conflicts" to "an agent runner takes
+bridge from "row landed in version_conflicts" to "an agent runner takes
 the work".
 
 Architecture:

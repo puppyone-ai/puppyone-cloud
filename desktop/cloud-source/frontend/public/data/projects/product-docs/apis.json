@@ -1,9 +1,0 @@
-[
-  { "endpoint": "/api/v1/users", "method": "GET", "version": "1.0", "owner": "Alex", "updated_at": "2025-11-01 10:00" },
-  { "endpoint": "/api/v2/billing", "method": "POST", "version": "2.1", "owner": "Dana", "updated_at": "2025-11-03 12:30" },
-  { "endpoint": "/api/v1/shipping", "method": "PATCH", "version": "1.4", "owner": "Chris", "updated_at": "2025-11-05 15:22" },
-  { "endpoint": "/api/v2/orders", "method": "DELETE", "version": "2.0", "owner": "Morgan", "updated_at": "2025-11-06 09:05" },
-  { "endpoint": "/api/v3/metrics", "method": "GET", "version": "3.0", "owner": "Alex", "updated_at": "2025-11-07 18:11" }
-]
-
-

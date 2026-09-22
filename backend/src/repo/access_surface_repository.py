@@ -1,6 +1,6 @@
 """Supabase repository for workspace Access surfaces.
 
-Access surfaces are scope-bound ways to enter or operate on a workspace:
+Access surfaces are target-bound ways to enter or operate on a workspace:
 Git remote, CLI, agents, MCP endpoints, and sandboxes.
 They are not durable external data sources; those live in ``connections``.
 """
@@ -11,8 +11,9 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.infra.supabase.client import SupabaseClient
-from src.repo.models import Connector, RepoScope
-
+from src.platform.repository_target.models import repository_target_from_storage
+from src.repo.access_credentials import AccessCredentialRepository
+from src.repo.models import Connector, RepositoryScope, ResolvedAccessSurfaceCredential
 
 ACCESS_SURFACE_KINDS = frozenset({
     "git_remote",
@@ -22,7 +23,7 @@ ACCESS_SURFACE_KINDS = frozenset({
     "sandbox",
 })
 ACCESS_SURFACE_KIND_LIST = sorted(ACCESS_SURFACE_KINDS)
-BUILTIN_SCOPE_SURFACES = (
+STANDARD_TARGET_SURFACES = (
     ("git_remote", "Git Remote"),
     ("cli", "FS CLI"),
 )
@@ -40,8 +41,10 @@ def _row_to_connector(row: dict[str, Any]) -> Connector:
     config = row.get("config") or {}
     return Connector(
         id=row["id"],
-        project_id=row["project_id"],
-        scope_id=row["scope_id"],
+        target=repository_target_from_storage(
+            str(row["project_id"]),
+            str(row["scope_id"]) if row.get("scope_id") is not None else None,
+        ),
         provider=row["kind"],
         name=row["name"],
         direction=config.get("direction") or (
@@ -66,7 +69,9 @@ class AccessSurfaceRepository:
     CONNECTIONS = "connections"
 
     def __init__(self, supabase_client: Optional[SupabaseClient] = None):
-        self._client = (supabase_client or SupabaseClient()).get_client()
+        owner = supabase_client or SupabaseClient()
+        self._client = owner if callable(getattr(owner, "table", None)) else owner.get_client()
+        self._credentials = AccessCredentialRepository(self._client)
 
     def _project_org_id(self, project_id: str) -> str | None:
         resp = (
@@ -100,32 +105,156 @@ class AccessSurfaceRepository:
         resp = query.order("created_at", desc=False).execute()
         return resp.data or []
 
+    def list_by_projects(
+        self,
+        project_ids: list[str],
+        *,
+        kind: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Multi-project list used by tenant-authorized aggregate views."""
+        if not project_ids:
+            return []
+        query = self._client.table(self.TABLE).select("*")
+        query = (
+            query.eq("project_id", project_ids[0])
+            if len(project_ids) == 1
+            else query.in_("project_id", project_ids)
+        )
+        if kind:
+            if kind not in ACCESS_SURFACE_KINDS:
+                return []
+            query = query.eq("kind", kind)
+        else:
+            query = query.in_("kind", ACCESS_SURFACE_KIND_LIST)
+        if status:
+            query = query.eq("status", status)
+        return query.order("created_at").execute().data or []
+
+    def list_all(
+        self, *, kind: Optional[str] = None, status: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        query = self._client.table(self.TABLE).select("*")
+        if kind:
+            if kind not in ACCESS_SURFACE_KINDS:
+                return []
+            query = query.eq("kind", kind)
+        else:
+            query = query.in_("kind", ACCESS_SURFACE_KIND_LIST)
+        if status:
+            query = query.eq("status", status)
+        return query.order("created_at").execute().data or []
+
+    def get_agent_with_project(self, surface_id: str) -> Optional[dict[str, Any]]:
+        response = (
+            self._client.table(self.TABLE)
+            .select("*, project:project_id(created_by, org_id)")
+            .eq("id", surface_id)
+            .eq("kind", "agent")
+            .single()
+            .execute()
+        )
+        return response.data
+
+    def list_tool_bindings(
+        self,
+        surface_id: str,
+        *,
+        enabled_only: bool = False,
+        mcp_exposed_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Read canonical tool bindings for any access-surface kind."""
+
+        query = (
+            self._client.table("access_tools")
+            .select("*")
+            .eq("access_point_id", surface_id)
+        )
+        if enabled_only:
+            query = query.eq("enabled", True)
+        if mcp_exposed_only:
+            query = query.eq("mcp_exposed", True)
+        return query.order("created_at").execute().data or []
+
+    def count_by_projects_and_kinds(
+        self, project_ids: list[str], kinds: list[str]
+    ) -> dict[str, int]:
+        if not project_ids:
+            return {}
+        valid_kinds = [kind for kind in kinds if kind in ACCESS_SURFACE_KINDS]
+        if not valid_kinds:
+            return {}
+        rows = (
+            self._client.table(self.TABLE)
+            .select("project_id")
+            .in_("project_id", project_ids)
+            .in_("kind", valid_kinds)
+            .execute()
+        ).data or []
+        counts: dict[str, int] = {}
+        for row in rows:
+            project_id = row["project_id"]
+            counts[project_id] = counts.get(project_id, 0) + 1
+        return counts
+
+    def scope_rows_for(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Batch-load scope metadata for surface presentation/duplicate checks."""
+        scope_ids = sorted({row.get("scope_id") for row in rows if row.get("scope_id")})
+        if not scope_ids:
+            return {}
+        response = (
+            self._client.table("repository_scopes").select("*").in_("id", scope_ids).execute()
+        )
+        return {row["id"]: row for row in (response.data or [])}
+
+    def count_user_surfaces_by_project(self, project_id: str) -> int:
+        response = (
+            self._client.table(self.TABLE)
+            .select("id", count="exact")
+            .eq("project_id", project_id)
+            .not_.in_("kind", ["git_remote", "cli"])
+            .execute()
+        )
+        return response.count or 0
+
     def get(self, surface_id: str) -> Optional[dict[str, Any]]:
         resp = (
             self._client.table(self.TABLE)
             .select("*")
             .eq("id", surface_id)
-            .limit(1)
             .execute()
         )
         rows = resp.data or []
         row = rows[0] if rows else None
-        if row and row.get("kind") not in ACCESS_SURFACE_KINDS:
+        if row and row.get("kind", row.get("provider")) not in ACCESS_SURFACE_KINDS:
             return None
         return row
 
     def get_by_scope_kind(self, scope_id: str, kind: str) -> Optional[dict[str, Any]]:
+        rows = self.get_by_target_kind(None, scope_id, kind)
+        return rows
+
+    def get_by_target_kind(
+        self,
+        project_id: str | None,
+        scope_id: str | None,
+        kind: str,
+    ) -> Optional[dict[str, Any]]:
         if kind not in ACCESS_SURFACE_KINDS:
             return None
-        resp = (
+        query = (
             self._client.table(self.TABLE)
             .select("*")
-            .eq("scope_id", scope_id)
             .eq("kind", kind)
-            .order("created_at", desc=False)
-            .limit(1)
-            .execute()
         )
+        if project_id is not None:
+            query = query.eq("project_id", project_id)
+        query = (
+            query.is_("scope_id", "null")
+            if scope_id is None
+            else query.eq("scope_id", scope_id)
+        )
+        resp = query.order("created_at", desc=False).limit(1).execute()
         rows = resp.data or []
         return rows[0] if rows else None
 
@@ -163,9 +292,123 @@ class AccessSurfaceRepository:
         row = self.get_by_scope_kind(scope_id, kind)
         return _row_to_connector(row) if row else None
 
-    def get_agent_connector_by_mcp_key(self, mcp_api_key: str) -> Optional[Connector]:
-        row = self.get_by_config_key("agent", "mcp_api_key", mcp_api_key)
-        return _row_to_connector(row) if row else None
+    def resolve_scope_credential(
+        self,
+        raw_token: str,
+    ) -> Optional[ResolvedAccessSurfaceCredential]:
+        """Resolve a bearer token to one active, non-root CLI Surface.
+
+        Credential identity and capability stay distinct from Scope geometry;
+        the Scope repository joins the exact target in the next boundary.
+        """
+
+        credential = self._credentials.get_active_by_token(raw_token)
+        if not credential:
+            return None
+        surface = self.get(credential["access_surface_id"])
+        if (
+            not surface
+            or surface.get("kind") != "cli"
+            or surface.get("status") != "active"
+            or surface.get("scope_id") is None
+            or not surface.get("org_id")
+            or not credential.get("org_id")
+            or str(surface.get("project_id")) != str(credential.get("project_id"))
+            or str(surface.get("org_id")) != str(credential.get("org_id"))
+        ):
+            return None
+        mode_facts = {
+            str(credential.get("grant_mode") or "rw"),
+            str((surface.get("config") or {}).get("mode") or "rw"),
+        }
+        if not mode_facts.issubset({"r", "rw"}):
+            return None
+        mode_ceiling = "r" if "r" in mode_facts else "rw"
+        return ResolvedAccessSurfaceCredential(
+            credential_id=str(credential["id"]),
+            credential_type=str(credential["credential_type"]),
+            access_surface_id=str(surface["id"]),
+            project_id=str(surface["project_id"]),
+            scope_id=str(surface["scope_id"]),
+            mode_ceiling=mode_ceiling,
+        )
+
+    def store_scope_credential(
+        self,
+        *,
+        scope_id: str,
+        raw_token: str,
+        created_by: str | None = None,
+    ) -> bool:
+        """Store/rotate the shared CLI/Git scope credential hash-only."""
+
+        surface = self.get_by_scope_kind(scope_id, "cli")
+        if not surface:
+            return False
+        self._credentials.store_bearer_token(
+            access_surface_id=surface["id"],
+            org_id=surface.get("org_id") or self._project_org_id(surface["project_id"]),
+            project_id=surface["project_id"],
+            raw_token=raw_token,
+            created_by=created_by,
+            revoke_existing=True,
+        )
+        return True
+
+    def issue_scope_session_credential(
+        self,
+        *,
+        scope_id: str,
+        expires_at: datetime,
+        created_by: str | None = None,
+    ) -> Optional[str]:
+        """Issue a non-disruptive, expiring token for an internal scope session."""
+
+        surface = self.get_by_scope_kind(scope_id, "cli")
+        if not surface:
+            return None
+        return self._credentials.issue_bearer_token(
+            access_surface_id=surface["id"],
+            org_id=surface.get("org_id") or self._project_org_id(surface["project_id"]),
+            project_id=surface["project_id"],
+            prefix="cli",
+            created_by=created_by,
+            revoke_existing=False,
+            expires_at=expires_at,
+        )
+
+    def issue_git_session_credential(
+        self,
+        *,
+        scope_id: str,
+        expires_at: datetime,
+        created_by: str | None = None,
+    ) -> Optional[str]:
+        """Issue a non-disruptive scoped Git token for an internal session."""
+
+        surface = self.get_by_scope_kind(scope_id, "git_remote")
+        if not surface or surface.get("status") != "active":
+            return None
+        scopes = (
+            self._client.table("repository_scopes")
+            .select("max_mode")
+            .eq("id", scope_id)
+            .eq("project_id", surface["project_id"])
+            .limit(1)
+            .execute()
+        ).data or []
+        if not scopes:
+            return None
+        return self._credentials.issue_git_http_token(
+            access_surface_id=surface["id"],
+            org_id=surface.get("org_id") or self._project_org_id(surface["project_id"]),
+            project_id=surface["project_id"],
+            grant_mode=str(scopes[0].get("max_mode") or "r"),
+            prefix="git",
+            created_by=created_by,
+            revoke_existing=False,
+            expires_at=expires_at,
+        )
 
     # ── Writes ───────────────────────────────────────────────────────────
 
@@ -173,7 +416,7 @@ class AccessSurfaceRepository:
         self,
         *,
         project_id: str,
-        scope_id: str,
+        scope_id: str | None,
         kind: str,
         name: str,
         config: Optional[dict[str, Any]] = None,
@@ -218,28 +461,28 @@ class AccessSurfaceRepository:
         resp = self._client.table(self.TABLE).delete().eq("id", surface_id).execute()
         return bool(resp.data)
 
-    def ensure_scope_defaults(self, scope: RepoScope, *, created_by: Optional[str] = None) -> None:
-        for kind, name in BUILTIN_SCOPE_SURFACES:
-            existing = self.get_by_scope_kind(scope.id, kind)
-            if existing:
-                continue
-            config: dict[str, Any] = {
-                "access_key": scope.access_key,
-                "path": scope.path,
-                "mode": scope.mode,
-            }
-            if kind in {"git_remote", "cli"}:
-                config["direction"] = "bidirectional"
-            self.insert(
-                project_id=scope.project_id,
-                scope_id=scope.id,
-                kind=kind,
-                name=name,
-                config=config,
-                created_by=created_by,
-                principal_type="scope",
-                principal_id=scope.id,
-            )
+    def ensure_target_defaults(
+        self,
+        *,
+        project_id: str,
+        scope: RepositoryScope | None,
+        created_by: Optional[str] = None,
+    ) -> None:
+        """Atomically enable the standard Git/CLI Surfaces for one target."""
+
+        response = self._client.rpc(
+            "ensure_repository_target_access_surfaces",
+            {
+                "p_project_id": project_id,
+                "p_scope_id": scope.id if scope is not None else None,
+                "p_created_by": created_by,
+            },
+        ).execute()
+        rows = response.data or []
+        enabled_kinds = {str(row.get("kind")) for row in rows}
+        required_kinds = {kind for kind, _name in STANDARD_TARGET_SURFACES}
+        if not required_kinds.issubset(enabled_kinds):
+            raise RuntimeError("Repository target defaults were not enabled atomically")
 
     def count_bound_user_surfaces(self, scope_id: str) -> int:
         access_resp = (

@@ -21,7 +21,9 @@ interface Props {
 /**
  * Project-root Git view health banner.
  *
- * Subscribes to ``GET /git/{project_id}.git/health`` (60s revalidation)
+ * Subscribes to the JWT-authenticated Project control-plane health endpoint
+ * (60s revalidation). The canonical ``/git/...`` data plane continues to
+ * accept only a scope-bounded Git runtime credential.
  * and shows a colored chip when the view is degraded or corrupt. The
  * banner is silent on ``healthy`` and ``empty`` unless ``alwaysShow``
  * is set. Includes a "Rebuild cache" action that hits the project-
@@ -73,7 +75,7 @@ export function ProjectGitHealthBadge({ projectId, alwaysShow = false }: Props) 
   // canonical recovery action). For history_degraded we leave the
   // user with diagnostic info — rebuilding doesn't typically fix
   // truncated legacy history.
-  const showRebuildButton = state === 'current_corrupt';
+  const showRebuildButton = state === 'current_corrupt' && health?.can_rebuild === true;
 
   return (
     <div

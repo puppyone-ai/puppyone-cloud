@@ -210,9 +210,9 @@ async def seed_default_content(
 
     All content writes go through VersionWriteCommandService.
     """
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
+    from src.platform.project.write_lease import build_leased_worker_write_commands
 
-    commands = build_worker_version_engine_container().write_commands()
+    commands = build_leased_worker_write_commands()
 
     files: dict[str, bytes] = {
         "Getting Started.md": GETTING_STARTED_MD.encode("utf-8"),

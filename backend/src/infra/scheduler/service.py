@@ -2,15 +2,16 @@
 Scheduler service for managing scheduled agent executions.
 """
 
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
 from apscheduler.executors.asyncio import AsyncIOExecutor
+from apscheduler.executors.pool import ThreadPoolExecutor
+from apscheduler.job import Job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.executors.pool import ThreadPoolExecutor
-from apscheduler.job import Job
 
 from src.config import settings
 from src.infra.scheduler.config import scheduler_settings
@@ -19,14 +20,17 @@ from src.infra.scheduler.jobs import (
     execute_sync_pull,
     process_git_object_gc,
     process_object_integrity_scan,
+    process_project_deletion_cleanup,
+    process_project_initialization_reconciliation,
     process_sync_run_reaper,
     process_version_outbox,
 )
-from src.infra.scheduler.jobs.sandbox_reaper import reap_idle_sandboxes
+from src.infra.scheduler.jobs.import_job_reaper import process_import_job_reaper
 from src.infra.scheduler.jobs.shadow_snapshot_reaper import (
     process_shadow_snapshot_reaper,
 )
-from src.utils.logger import log_info, log_error, log_warning
+from src.infra.scheduler.jobs.upload_job_reaper import process_upload_job_reaper
+from src.utils.logger import log_error, log_info, log_warning
 
 
 class SchedulerService:
@@ -93,15 +97,6 @@ class SchedulerService:
         await self._load_scheduled_agents()
         await self._load_scheduled_syncs()
 
-        # Register sandbox idle reaper (runs every 60s)
-        self.scheduler.add_job(
-            reap_idle_sandboxes,
-            trigger=IntervalTrigger(seconds=60),
-            id="sandbox-reaper",
-            name="Sandbox Idle Reaper",
-            replace_existing=True,
-        )
-
         if settings.VERSION_OUTBOX_ENABLED:
             self.scheduler.add_job(
                 process_version_outbox,
@@ -124,6 +119,28 @@ class SchedulerService:
                 name="Version Engine Git Object GC",
                 replace_existing=True,
                 executor="threadpool",
+            )
+
+        if settings.PROJECT_DELETION_CLEANUP_ENABLED:
+            self.scheduler.add_job(
+                process_project_deletion_cleanup,
+                trigger=IntervalTrigger(
+                    seconds=settings.PROJECT_DELETION_CLEANUP_INTERVAL_SECONDS,
+                ),
+                id="project-deletion-cleanup",
+                name="Project Object Prefix Cleanup",
+                replace_existing=True,
+            )
+
+        if settings.PROJECT_INITIALIZATION_RECONCILE_ENABLED:
+            self.scheduler.add_job(
+                process_project_initialization_reconciliation,
+                trigger=IntervalTrigger(
+                    seconds=settings.PROJECT_INITIALIZATION_RECONCILE_INTERVAL_SECONDS,
+                ),
+                id="project-initialization-reconciler",
+                name="Project Root Initialization Reconciler",
+                replace_existing=True,
             )
 
         if settings.VERSION_INTEGRITY_SCAN_ENABLED:
@@ -160,6 +177,28 @@ class SchedulerService:
                 replace_existing=True,
             )
 
+        if settings.IMPORT_JOB_REAPER_ENABLED:
+            self.scheduler.add_job(
+                process_import_job_reaper,
+                trigger=IntervalTrigger(
+                    seconds=settings.IMPORT_JOB_REAPER_INTERVAL_SECONDS,
+                ),
+                id="import-job-reaper",
+                name="One-Time Import Job Reaper",
+                replace_existing=True,
+            )
+
+        if settings.UPLOAD_JOB_REAPER_ENABLED:
+            self.scheduler.add_job(
+                process_upload_job_reaper,
+                trigger=IntervalTrigger(
+                    seconds=settings.UPLOAD_JOB_REAPER_INTERVAL_SECONDS,
+                ),
+                id="upload-job-reaper",
+                name="Upload Job Reaper",
+                replace_existing=True,
+            )
+
         log_info(f"✅ APScheduler started with {scheduler_settings.max_workers} workers")
 
     async def shutdown(self):
@@ -176,20 +215,12 @@ class SchedulerService:
             return
 
         try:
-            from src.infra.supabase.client import SupabaseClient
-
-            client = SupabaseClient().client
-
-            result = (
-                client.table("access_surfaces")
-                .select("*")
-                .eq("kind", "agent")
-                .eq("status", "active")
-                .execute()
-            )
+            from src.repo.access_surface_repository import AccessSurfaceRepository
 
             agents = [
-                row for row in (result.data or [])
+                row for row in AccessSurfaceRepository().list_all(
+                    kind="agent", status="active"
+                )
                 if (row.get("config") or {}).get("type") == "schedule"
                 and ((row.get("config") or {}).get("trigger") or {}).get("type")
                 in {"cron", "scheduled"}

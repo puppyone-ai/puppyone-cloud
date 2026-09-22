@@ -9,6 +9,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from src.platform.repository_target.auth_context import repository_target_from_auth
+from src.platform.repository_target.models import repository_target_scope_id
 from src.repo.connector_repository import ConnectorRepository
 from src.utils.logger import log_error, log_warning
 from src.version_engine.admission.channel_pause import enforce_channel_pause
@@ -49,7 +51,7 @@ class ConnectorPolicySnapshot:
     allowed_commands: frozenset[str]
 
 
-_policy_cache: dict[tuple[str, str], tuple[float, ConnectorPolicySnapshot]] = {}
+_policy_cache: dict[tuple[str, str, str], tuple[float, ConnectorPolicySnapshot]] = {}
 _policy_cache_lock = threading.Lock()
 
 
@@ -69,7 +71,7 @@ def clear_connector_policy_cache(
             _policy_cache.clear()
             return
         for key in list(_policy_cache):
-            key_scope_id, key_provider = key
+            _key_project_id, key_scope_id, key_provider = key
             if scope_id is not None and key_scope_id != scope_id:
                 continue
             if provider is not None and key_provider != provider:
@@ -104,9 +106,13 @@ def effective_cli_fs_allowed_commands(policy: dict[str, Any] | None) -> frozense
     return frozenset(allowed)
 
 
-def _get_cached_policy(scope_id: str, provider: str) -> ConnectorPolicySnapshot | None:
+def _get_cached_policy(
+    project_id: str,
+    scope_id: str,
+    provider: str,
+) -> ConnectorPolicySnapshot | None:
     now = time.monotonic()
-    key = (scope_id, provider)
+    key = (project_id, scope_id, provider)
     with _policy_cache_lock:
         cached = _policy_cache.get(key)
         if cached is None:
@@ -118,8 +124,13 @@ def _get_cached_policy(scope_id: str, provider: str) -> ConnectorPolicySnapshot 
         return snapshot
 
 
-def _set_cached_policy(scope_id: str, provider: str, snapshot: ConnectorPolicySnapshot) -> None:
-    key = (scope_id, provider)
+def _set_cached_policy(
+    project_id: str,
+    scope_id: str,
+    provider: str,
+    snapshot: ConnectorPolicySnapshot,
+) -> None:
+    key = (project_id, scope_id, provider)
     with _policy_cache_lock:
         _policy_cache[key] = (
             time.monotonic() + _CLI_FS_POLICY_CACHE_TTL_SECONDS,
@@ -128,15 +139,20 @@ def _set_cached_policy(scope_id: str, provider: str, snapshot: ConnectorPolicySn
 
 
 def get_connector_policy_snapshot(
+    project_id: str,
     scope_id: str,
     provider: str,
 ) -> ConnectorPolicySnapshot:
-    cached = _get_cached_policy(scope_id, provider)
+    cached = _get_cached_policy(project_id, scope_id, provider)
     if cached is not None:
         return cached
 
     try:
-        connector = ConnectorRepository().get_by_scope_provider(scope_id, provider)
+        connector = ConnectorRepository().get_by_target_provider(
+            project_id,
+            scope_id,
+            provider,
+        )
     except Exception as exc:
         log_error(
             f"[ConnectorPolicy] Lookup failed for scope={scope_id} "
@@ -163,7 +179,7 @@ def get_connector_policy_snapshot(
             else frozenset()
         ),
     )
-    _set_cached_policy(scope_id, provider, snapshot)
+    _set_cached_policy(project_id, scope_id, provider, snapshot)
     return snapshot
 
 
@@ -194,15 +210,15 @@ def admit_cli_fs_command(
             detail=f"Unknown CLI FS command: {command!r}",
         )
 
-    scope = auth.get("_scope") or {}
-    scope_id = str(scope.get("id") or "")
-    if not scope_id:
+    target = repository_target_from_auth(auth)
+    scope_id = repository_target_scope_id(target)
+    if scope_id is None:
         raise HTTPException(
             status_code=403,
-            detail="CLI connector policy requires a resolved scope",
+            detail="This legacy CLI surface requires an exact repository Scope",
         )
 
-    snapshot = get_connector_policy_snapshot(scope_id, "cli")
+    snapshot = get_connector_policy_snapshot(target.project_id, scope_id, "cli")
     if snapshot.status == "paused":
         log_warning(
             f"{log_prefix} Rejected cli command={normalized_command} "

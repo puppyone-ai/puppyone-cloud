@@ -168,8 +168,8 @@ class GithubSyncLogRepository:
             "direction": direction,
             "status": status,
             "git_sha": git_sha,
-            # DB column rename is deferred; keep the historical column name
-            # behind this repository boundary.
+            # Canonical physical column is isolated behind this repository
+            # constant; rollout compatibility is handled by the DB trigger.
             GITHUB_SYNC_VERSION_COLUMN: version_commit_id,
             "error_message": error_message,
             "files_changed": files_changed,
@@ -224,6 +224,25 @@ class GithubSyncLogRepository:
             .execute()
         )
         return bool(resp.data)
+
+    async def latest_successful_import(self, integration_id: str) -> Optional[dict]:
+        """Most recent successful import row (carries version_commit_id +
+        created_at) — the anchor for GitHub-import conflict detection."""
+        return await asyncio.to_thread(self._latest_successful_import_sync, integration_id)
+
+    def _latest_successful_import_sync(self, integration_id: str) -> Optional[dict]:
+        resp = (
+            self._sb.table(self.TABLE)
+            .select("*")
+            .eq("integration_id", integration_id)
+            .eq("direction", "import")
+            .eq("status", "success")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return _to_api_row(rows[0]) if rows else None
 
 
 def _to_api_row(row: dict) -> dict:

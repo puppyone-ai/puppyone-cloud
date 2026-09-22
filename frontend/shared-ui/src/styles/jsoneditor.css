@@ -1,0 +1,1090 @@
+/*
+  Modern theme-aware skin for jsoneditor.
+  Designed to integrate with Puppyone light/dark semantic tokens.
+  Features refined color palette, smooth transitions, and improved visual hierarchy.
+*/
+
+/* --- General Container --- */
+div.jsoneditor {
+  border: none;
+  font-family: var(--po-font-sans);
+  background: var(--po-jsoneditor-bg) !important;
+  color: var(--po-text) !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+/* --- Menu Bar --- */
+div.jsoneditor-menu {
+  background-color: var(--po-jsoneditor-toolbar-bg);
+  border-bottom: 1px solid var(--po-border);
+  padding: 6px 8px;
+  backdrop-filter: blur(8px);
+}
+
+div.jsoneditor-menu > button,
+div.jsoneditor-menu > .jsoneditor-modes > button {
+  background-color: transparent;
+  color: var(--po-text-muted);
+  opacity: 0.9;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 0 2px;
+}
+
+div.jsoneditor-menu > button:hover,
+div.jsoneditor-menu > .jsoneditor-modes > button:hover {
+  background-color: var(--po-hover);
+  color: var(--po-text);
+  opacity: 1;
+}
+
+/* Highlight the currently active mode button */
+div.jsoneditor-menu > .jsoneditor-modes > button.jsoneditor-selected {
+  background-color: var(--po-selected);
+  color: var(--po-accent);
+  border: 1px solid color-mix(in srgb, var(--po-accent) 25%, transparent);
+  opacity: 1;
+}
+
+div.jsoneditor-menu > .jsoneditor-modes > button.jsoneditor-selected:hover {
+  background-color: color-mix(in srgb, var(--po-accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--po-accent) 35%, transparent);
+}
+
+/* Hide unnecessary buttons for a cleaner look */
+div.jsoneditor-menu button.jsoneditor-repair,
+div.jsoneditor-menu button.jsoneditor-separator {
+  display: none;
+}
+
+/* --- 菜单栏按钮特定样式自定义 --- */
+/* 使用自定义的扁平现代图标替换默认图标 */
+
+/* 通用图标按钮样式 - 只影响图标按钮，不影响模式切换按钮 */
+div.jsoneditor-menu > button.jsoneditor-expand-all,
+div.jsoneditor-menu > button.jsoneditor-collapse-all,
+div.jsoneditor-menu > button.jsoneditor-sort,
+div.jsoneditor-menu > button.jsoneditor-transform,
+div.jsoneditor-menu > button.jsoneditor-undo,
+div.jsoneditor-menu > button.jsoneditor-redo,
+div.jsoneditor-menu > button.jsoneditor-compact,
+div.jsoneditor-menu > button.jsoneditor-format {
+  position: relative;
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  margin: 0 2px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent !important;
+  background-image: none !important;
+  /* hide jsoneditor default icons */
+  color: transparent !important;
+  /* prevent icon text from flashing */
+}
+
+div.jsoneditor-menu > button.jsoneditor-expand-all::after,
+div.jsoneditor-menu > button.jsoneditor-collapse-all::after,
+div.jsoneditor-menu > button.jsoneditor-sort::after,
+div.jsoneditor-menu > button.jsoneditor-transform::after,
+div.jsoneditor-menu > button.jsoneditor-undo::after,
+div.jsoneditor-menu > button.jsoneditor-redo::after,
+div.jsoneditor-menu > button.jsoneditor-compact::after,
+div.jsoneditor-menu > button.jsoneditor-format::after {
+  content: '';
+  display: block;
+  width: 20px;
+  height: 20px;
+  background-color: var(--po-json-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 20px 20px;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 20px 20px;
+  pointer-events: none;
+}
+
+/* 模式切换按钮保持文本显示，不使用图标 */
+div.jsoneditor-menu > .jsoneditor-modes > button {
+  background-image: none !important;
+  width: auto !important;
+  padding: 6px 10px !important;
+}
+
+/* Expand All 按钮 */
+div.jsoneditor-menu > button.jsoneditor-expand-all::after {
+  -webkit-mask-image: url('/icons/jsoneditor/expand-all.svg') !important;
+  mask-image: url('/icons/jsoneditor/expand-all.svg') !important;
+}
+
+/* Collapse All 按钮 */
+div.jsoneditor-menu > button.jsoneditor-collapse-all::after {
+  -webkit-mask-image: url('/icons/jsoneditor/collapse-all.svg') !important;
+  mask-image: url('/icons/jsoneditor/collapse-all.svg') !important;
+}
+
+/* Sort 按钮 */
+div.jsoneditor-menu > button.jsoneditor-sort::after {
+  -webkit-mask-image: url('/icons/jsoneditor/sort.svg') !important;
+  mask-image: url('/icons/jsoneditor/sort.svg') !important;
+}
+
+/* Transform 按钮 */
+div.jsoneditor-menu > button.jsoneditor-transform::after {
+  -webkit-mask-image: url('/icons/jsoneditor/transform.svg') !important;
+  mask-image: url('/icons/jsoneditor/transform.svg') !important;
+}
+
+/* Undo 按钮 */
+div.jsoneditor-menu > button.jsoneditor-undo::after {
+  -webkit-mask-image: url('/icons/jsoneditor/undo.svg') !important;
+  mask-image: url('/icons/jsoneditor/undo.svg') !important;
+}
+
+/* Redo 按钮 */
+div.jsoneditor-menu > button.jsoneditor-redo::after {
+  -webkit-mask-image: url('/icons/jsoneditor/redo.svg') !important;
+  mask-image: url('/icons/jsoneditor/redo.svg') !important;
+}
+
+/* Compact 按钮 */
+div.jsoneditor-menu > button.jsoneditor-compact::after {
+  -webkit-mask-image: url('/icons/jsoneditor/compact.svg') !important;
+  mask-image: url('/icons/jsoneditor/compact.svg') !important;
+}
+
+/* Format 按钮 */
+div.jsoneditor-menu > button.jsoneditor-format::after {
+  -webkit-mask-image: url('/icons/jsoneditor/format.svg') !important;
+  mask-image: url('/icons/jsoneditor/format.svg') !important;
+}
+
+/* 自定义按钮悬停效果 */
+div.jsoneditor-menu > button.jsoneditor-expand-all:hover,
+div.jsoneditor-menu > button.jsoneditor-collapse-all:hover,
+div.jsoneditor-menu > button.jsoneditor-sort:hover,
+div.jsoneditor-menu > button.jsoneditor-transform:hover,
+div.jsoneditor-menu > button.jsoneditor-undo:hover,
+div.jsoneditor-menu > button.jsoneditor-redo:hover,
+div.jsoneditor-menu > button.jsoneditor-compact:hover,
+div.jsoneditor-menu > button.jsoneditor-format:hover {
+  background-color: var(--po-hover) !important;
+  opacity: 1 !important;
+}
+
+/* --- Contents Area (wrapper for tree/code/view) --- */
+div.jsoneditor-contents {
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* --- Tree View --- */
+div.jsoneditor-tree {
+  background: var(--po-jsoneditor-bg);
+  padding: 8px 0;
+  flex: 1 !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+  min-height: 0 !important;
+}
+
+/* --- Value Colors (Refined & Modern) --- */
+/* String values - Soft cyan with better readability */
+div.jsoneditor td.jsoneditor-value.jsoneditor-string,
+div.jsoneditor .jsoneditor-value.jsoneditor-string {
+  color: var(--po-json-string) !important;
+  font-weight: 400;
+}
+
+/* String values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-string:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-string:hover {
+  color: var(--po-json-string) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Number values - Elegant purple */
+div.jsoneditor td.jsoneditor-value.jsoneditor-number,
+div.jsoneditor .jsoneditor-value.jsoneditor-number {
+  color: var(--po-json-number) !important;
+  font-weight: 500;
+}
+
+/* Number values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-number:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-number:hover {
+  color: var(--po-json-number) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Boolean values - Warm coral */
+div.jsoneditor td.jsoneditor-value.jsoneditor-boolean,
+div.jsoneditor .jsoneditor-value.jsoneditor-boolean {
+  color: var(--po-json-boolean) !important;
+  font-weight: 500;
+}
+
+/* Boolean values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-boolean:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-boolean:hover {
+  color: var(--po-json-boolean) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Null values - Light slate */
+div.jsoneditor td.jsoneditor-value.jsoneditor-null,
+div.jsoneditor .jsoneditor-value.jsoneditor-null {
+  color: var(--po-json-null) !important;
+  font-style: italic;
+}
+
+/* Null values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-null:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-null:hover {
+  color: var(--po-json-null) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Array values - Light blue-gray */
+div.jsoneditor td.jsoneditor-value.jsoneditor-array,
+div.jsoneditor .jsoneditor-value.jsoneditor-array {
+  color: var(--po-text) !important;
+  font-weight: 400;
+}
+
+/* Array values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-array:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-array:hover {
+  color: var(--po-text) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Object values - Light blue-gray */
+div.jsoneditor td.jsoneditor-value.jsoneditor-object,
+div.jsoneditor .jsoneditor-value.jsoneditor-object {
+  color: var(--po-text) !important;
+  font-weight: 400;
+}
+
+/* Object values hover - Keep color consistent */
+div.jsoneditor td.jsoneditor-value.jsoneditor-object:hover,
+div.jsoneditor .jsoneditor-value.jsoneditor-object:hover {
+  color: var(--po-text) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* General value hover override - Prevent any unwanted background color changes */
+div.jsoneditor td.jsoneditor-value:hover,
+div.jsoneditor .jsoneditor-value:hover {
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Value active/focused - Prevent beige/yellow background when clicked */
+div.jsoneditor td.jsoneditor-value:active,
+div.jsoneditor .jsoneditor-value:active,
+div.jsoneditor td.jsoneditor-value:focus,
+div.jsoneditor .jsoneditor-value:focus {
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Value selected/active state (when clicked and stays active) */
+div.jsoneditor td.jsoneditor-value.jsoneditor-selected,
+div.jsoneditor .jsoneditor-value.jsoneditor-selected {
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* --- Key/Field Colors --- */
+/* Use more specific selectors and !important to override _app-pages-__tsx.css */
+/* This rule must override the default styles from jsoneditor/dist/jsoneditor.css */
+div.jsoneditor td.jsoneditor-field,
+div.jsoneditor th.jsoneditor-field,
+div.jsoneditor-field,
+div.jsoneditor .jsoneditor-field,
+div.jsoneditor td.jsoneditor-field.jsoneditor-tree,
+div.jsoneditor th.jsoneditor-field.jsoneditor-tree {
+  color: var(--po-json-key) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Field hover - Prevent beige/yellow background */
+div.jsoneditor td.jsoneditor-field:hover,
+div.jsoneditor th.jsoneditor-field:hover,
+div.jsoneditor-field:hover,
+div.jsoneditor .jsoneditor-field:hover,
+div.jsoneditor td.jsoneditor-field.jsoneditor-tree:hover,
+div.jsoneditor th.jsoneditor-field.jsoneditor-tree:hover {
+  color: var(--po-json-key) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Field active/focused - Prevent beige/yellow background when clicked */
+div.jsoneditor td.jsoneditor-field:active,
+div.jsoneditor th.jsoneditor-field:active,
+div.jsoneditor-field:active,
+div.jsoneditor .jsoneditor-field:active,
+div.jsoneditor td.jsoneditor-field.jsoneditor-tree:active,
+div.jsoneditor th.jsoneditor-field.jsoneditor-tree:active,
+div.jsoneditor td.jsoneditor-field:focus,
+div.jsoneditor th.jsoneditor-field:focus,
+div.jsoneditor-field:focus,
+div.jsoneditor .jsoneditor-field:focus,
+div.jsoneditor td.jsoneditor-field.jsoneditor-tree:focus,
+div.jsoneditor th.jsoneditor-field.jsoneditor-tree:focus {
+  color: var(--po-json-key) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Field selected/active state (when clicked and stays active) */
+div.jsoneditor td.jsoneditor-field.jsoneditor-selected,
+div.jsoneditor th.jsoneditor-field.jsoneditor-selected,
+div.jsoneditor-field.jsoneditor-selected,
+div.jsoneditor .jsoneditor-field.jsoneditor-selected {
+  color: var(--po-json-key) !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Prevent beige/yellow background on td/th cells containing field or value */
+div.jsoneditor td:has(.jsoneditor-field):hover,
+div.jsoneditor td:has(.jsoneditor-value):hover,
+div.jsoneditor td:has(.jsoneditor-field):active,
+div.jsoneditor td:has(.jsoneditor-value):active,
+div.jsoneditor td:has(.jsoneditor-field):focus,
+div.jsoneditor td:has(.jsoneditor-value):focus {
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Alternative approach for browsers that don't support :has() */
+div.jsoneditor td.jsoneditor-field:hover,
+div.jsoneditor td.jsoneditor-value:hover,
+div.jsoneditor td.jsoneditor-field:active,
+div.jsoneditor td.jsoneditor-value:active,
+div.jsoneditor td.jsoneditor-field:focus,
+div.jsoneditor td.jsoneditor-value:focus {
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+}
+
+div.jsoneditor div.jsoneditor-readonly {
+  color: var(--po-json-key) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+  opacity: 0.85;
+}
+
+/* --- General & Structural Elements --- */
+div.jsoneditor,
+.jsoneditor-contextmenu {
+  color: var(--po-text);
+}
+
+/* Braces and brackets - subtle accent */
+div.jsoneditor-tree .jsoneditor-bracket,
+div.jsoneditor-tree .jsoneditor-brace {
+  color: var(--po-text-subtle);
+  opacity: 0.8;
+}
+
+div.jsoneditor-tree button.jsoneditor-button,
+div.jsoneditor-tree .jsoneditor-expanded,
+div.jsoneditor-tree .jsoneditor-collapsed {
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+  color: var(--po-json-icon);
+  background-color: transparent !important;
+}
+
+div.jsoneditor-tree button.jsoneditor-button:hover,
+div.jsoneditor-tree .jsoneditor-expanded:hover,
+div.jsoneditor-tree .jsoneditor-collapsed:hover {
+  opacity: 1;
+  color: var(--po-text);
+  background-color: var(--po-hover) !important;
+}
+
+/* Context menu button (the button that opens the context menu) */
+button.jsoneditor-button.jsoneditor-contextmenu-button {
+  position: relative;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  text-indent: -9999px !important;
+  overflow: hidden !important;
+  border: none !important;
+  opacity: 0.8;
+  transition: all 0.2s ease;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 隐藏默认的 ::before 伪元素（如果有） */
+button.jsoneditor-button.jsoneditor-contextmenu-button::before {
+  display: none !important;
+  content: none !important;
+}
+
+button.jsoneditor-button.jsoneditor-contextmenu-button::after {
+  content: '';
+  display: block;
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--po-json-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 20px 20px;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 20px 20px;
+  pointer-events: none;
+  -webkit-mask-image: url('/icons/jsoneditor/contextmenu.svg') !important;
+  mask-image: url('/icons/jsoneditor/contextmenu.svg') !important;
+}
+
+button.jsoneditor-button.jsoneditor-contextmenu-button:hover {
+  background-color: var(--po-hover) !important;
+  opacity: 1;
+}
+
+button.jsoneditor-button.jsoneditor-contextmenu-button:hover::after {
+  background-color: var(--po-text);
+}
+
+/* Dragarea button (the button for dragging fields) */
+button.jsoneditor-button.jsoneditor-dragarea {
+  position: relative;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  text-indent: -9999px !important;
+  overflow: hidden !important;
+  border: none !important;
+  opacity: 0.8;
+  transition: all 0.2s ease;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 隐藏默认的 ::before 伪元素（如果有） */
+button.jsoneditor-button.jsoneditor-dragarea::before {
+  display: none !important;
+  content: none !important;
+}
+
+button.jsoneditor-button.jsoneditor-dragarea::after {
+  content: '';
+  display: block;
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--po-json-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 20px 20px;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 20px 20px;
+  pointer-events: none;
+  -webkit-mask-image: url('/icons/jsoneditor/dragarea.svg') !important;
+  mask-image: url('/icons/jsoneditor/dragarea.svg') !important;
+}
+
+button.jsoneditor-button.jsoneditor-dragarea:hover {
+  background-color: var(--po-hover) !important;
+  opacity: 1;
+}
+
+button.jsoneditor-button.jsoneditor-dragarea:hover::after {
+  background-color: var(--po-text);
+}
+
+/* --- Borders, Lines, and Selection --- */
+div.jsoneditor-tree table,
+div.jsoneditor-tree th,
+div.jsoneditor-tree td {
+  border-color: transparent !important;
+}
+
+/* Row hover effect */
+div.jsoneditor-tree tr {
+  transition: background-color 0.15s ease;
+}
+
+div.jsoneditor-tree tr:hover {
+  background-color: var(--po-hover) !important;
+}
+
+/* Highlight for focused/selected row */
+div.jsoneditor-tree .jsoneditor-selected {
+  background-color: var(--po-selected) !important;
+  border-radius: 4px;
+  border-left: 2px solid var(--po-accent);
+}
+
+div.jsoneditor-tree .jsoneditor-selected:hover {
+  background-color: color-mix(in srgb, var(--po-accent) 18%, transparent) !important;
+}
+
+/* Override jsoneditor-highlight class (added when hovering over context menu button) */
+/* This is the key class that JSONEditor adds when hovering over context menu buttons */
+div.jsoneditor tr.jsoneditor-highlight,
+div.jsoneditor-tree tr.jsoneditor-highlight,
+tr.jsoneditor-highlight {
+  background-color: var(--po-control) !important;
+}
+
+div.jsoneditor tr.jsoneditor-highlight:hover,
+div.jsoneditor-tree tr.jsoneditor-highlight:hover,
+tr.jsoneditor-highlight:hover {
+  background-color: var(--po-hover) !important;
+}
+
+/* Target td elements within highlighted rows */
+div.jsoneditor tr.jsoneditor-highlight td,
+div.jsoneditor-tree tr.jsoneditor-highlight td,
+tr.jsoneditor-highlight td {
+  background-color: transparent !important;
+}
+
+div.jsoneditor tr.jsoneditor-highlight:hover td,
+div.jsoneditor-tree tr.jsoneditor-highlight:hover td,
+tr.jsoneditor-highlight:hover td {
+  background-color: transparent !important;
+}
+
+/* Reduce highlight when hovering over context menu button */
+div.jsoneditor-tree tr:has(button.jsoneditor-contextmenu-button:hover),
+div.jsoneditor-tree tr:hover:has(button.jsoneditor-contextmenu-button) {
+  background-color: var(--po-control) !important;
+}
+
+/* Alternative: target td elements directly when context menu button is hovered */
+div.jsoneditor-tree td:has(+ td button.jsoneditor-contextmenu-button:hover),
+div.jsoneditor-tree tr:has(button.jsoneditor-contextmenu-button:hover) td {
+  background-color: transparent !important;
+}
+
+/* --- Frame/Navigation bar styling --- */
+div.jsoneditor-frame,
+.jsoneditor-frame {
+  background-color: var(--po-panel) !important;
+  color: var(--po-text) !important;
+  border: none !important;
+  padding: 0 2px !important;
+}
+
+/* Frame内部元素样式 */
+div.jsoneditor-frame input,
+.jsoneditor-frame input {
+  background-color: var(--po-inset) !important;
+  color: var(--po-text) !important;
+  border: 1px solid var(--po-border-strong) !important;
+  border-radius: 6px !important;
+}
+
+div.jsoneditor-frame input:focus,
+.jsoneditor-frame input:focus {
+  border-color: var(--po-focus-ring) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--po-accent) 12%, transparent) !important;
+}
+
+div.jsoneditor-frame button,
+.jsoneditor-frame button {
+  background-color: transparent !important;
+  color: var(--po-text-muted) !important;
+  border: none !important;
+}
+
+div.jsoneditor-frame button:hover,
+.jsoneditor-frame button:hover {
+  background-color: var(--po-hover) !important;
+  color: var(--po-text) !important;
+}
+
+/* --- Search input styling --- */
+.jsoneditor-search {
+  background-color: var(--po-panel);
+  border-bottom: 1px solid var(--po-border);
+  padding: 8px;
+}
+
+.jsoneditor-search input {
+  background-color: var(--po-inset);
+  border: 1px solid var(--po-border-strong) !important;
+  color: var(--po-text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.jsoneditor-search input:focus {
+  outline: none;
+  border-color: var(--po-focus-ring) !important;
+  background-color: var(--po-panel);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--po-accent) 12%, transparent);
+}
+
+/* --- Search bar buttons (refresh, next, previous) --- */
+button.jsoneditor-refresh,
+button.jsoneditor-next,
+button.jsoneditor-previous {
+  position: relative;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  text-indent: -9999px !important;
+  overflow: hidden !important;
+  border: none !important;
+  opacity: 0.8;
+  transition: all 0.2s ease;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 隐藏默认的 ::before 伪元素（如果有） */
+button.jsoneditor-refresh::before,
+button.jsoneditor-next::before,
+button.jsoneditor-previous::before {
+  display: none !important;
+  content: none !important;
+}
+
+button.jsoneditor-refresh::after,
+button.jsoneditor-next::after,
+button.jsoneditor-previous::after {
+  content: '';
+  display: block;
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--po-json-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 16px 16px;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 16px 16px;
+  pointer-events: none;
+}
+
+button.jsoneditor-refresh:hover,
+button.jsoneditor-next:hover,
+button.jsoneditor-previous:hover {
+  background-color: var(--po-hover) !important;
+  opacity: 1;
+}
+
+button.jsoneditor-refresh:hover::after,
+button.jsoneditor-next:hover::after,
+button.jsoneditor-previous:hover::after {
+  background-color: var(--po-text);
+}
+
+/* Refresh button */
+button.jsoneditor-refresh::after {
+  -webkit-mask-image: url('/icons/jsoneditor/refresh.svg') !important;
+  mask-image: url('/icons/jsoneditor/refresh.svg') !important;
+}
+
+/* Next button */
+button.jsoneditor-next::after {
+  -webkit-mask-image: url('/icons/jsoneditor/next.svg') !important;
+  mask-image: url('/icons/jsoneditor/next.svg') !important;
+}
+
+/* Previous button */
+button.jsoneditor-previous::after {
+  -webkit-mask-image: url('/icons/jsoneditor/previous.svg') !important;
+  mask-image: url('/icons/jsoneditor/previous.svg') !important;
+}
+
+.jsoneditor-navigation-bar {
+  color: var(--po-text-muted);
+  background-color: var(--po-panel);
+  border-top: 1px solid var(--po-border);
+  border-bottom: none !important;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-family: var(--po-font-sans);
+  height: 32px !important;
+  line-height: 32px !important;
+}
+
+/* 导航栏路径元素统一样式 */
+.jsoneditor-navigation-bar .jsoneditor-treepath-element,
+.jsoneditor-navigation-bar span {
+  color: var(--po-text-muted) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+}
+
+/* --- Code view styling (if used) --- */
+div.jsoneditor-code {
+  background-color: var(--po-jsoneditor-bg);
+}
+
+div.jsoneditor textarea.jsoneditor-text {
+  background-color: var(--po-jsoneditor-bg);
+  color: var(--po-text);
+  font-family: var(--po-font-sans);
+}
+
+/* --- Context menu styling --- */
+.jsoneditor-contextmenu,
+div.jsoneditor-contextmenu {
+  background-color: var(--po-overlay) !important;
+  border: 1px solid var(--po-border-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--po-text) 16%, transparent) !important;
+  padding: 4px !important;
+  color: var(--po-text) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+}
+
+/* Context menu list */
+.jsoneditor-contextmenu ul,
+.jsoneditor-contextmenu ol {
+  background-color: transparent !important;
+  color: var(--po-text) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+/* Context menu list items */
+.jsoneditor-contextmenu ul li,
+.jsoneditor-contextmenu ol li {
+  background-color: transparent !important;
+  color: var(--po-text) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Context menu separators */
+.jsoneditor-contextmenu .jsoneditor-separator,
+.jsoneditor-contextmenu hr {
+  border: none !important;
+  border-top: 1px solid var(--po-border-subtle) !important;
+  margin: 4px 0 !important;
+  background-color: transparent !important;
+}
+
+/* --- Modal dialogs styling (Sort, Transform, etc.) --- */
+.jsoneditor-modal,
+div.jsoneditor-modal,
+.pico-content.jsoneditor-modal {
+  background-color: var(--po-overlay) !important;
+  color: var(--po-text) !important;
+  border: 1px solid var(--po-border-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--po-text) 18%, transparent) !important;
+}
+
+/* Modal header */
+.jsoneditor-modal .jsoneditor-modal-header,
+.jsoneditor-modal header {
+  background-color: var(--po-panel) !important;
+  color: var(--po-text) !important;
+  border-bottom: 1px solid var(--po-border) !important;
+  padding: 12px 16px !important;
+}
+
+.jsoneditor-modal .jsoneditor-modal-title,
+.jsoneditor-modal h1,
+.jsoneditor-modal h2,
+.jsoneditor-modal h3 {
+  color: var(--po-text) !important;
+}
+
+/* Modal close button */
+.jsoneditor-modal .jsoneditor-modal-close,
+.jsoneditor-modal button[aria-label*='close'],
+.jsoneditor-modal button[aria-label*='关闭'] {
+  color: var(--po-text-muted) !important;
+  background-color: transparent !important;
+}
+
+.jsoneditor-modal .jsoneditor-modal-close:hover,
+.jsoneditor-modal button[aria-label*='close']:hover,
+.jsoneditor-modal button[aria-label*='关闭']:hover {
+  color: var(--po-text) !important;
+  background-color: var(--po-hover) !important;
+}
+
+/* Modal body/content */
+.jsoneditor-modal .jsoneditor-modal-body,
+.jsoneditor-modal .pico-content,
+.jsoneditor-modal .jsoneditor-modal-content {
+  background-color: var(--po-overlay) !important;
+  color: var(--po-text) !important;
+  padding: 16px !important;
+}
+
+/* Modal form elements */
+.jsoneditor-modal input,
+.jsoneditor-modal textarea,
+.jsoneditor-modal select {
+  background-color: var(--po-inset) !important;
+  color: var(--po-text) !important;
+  border: 1px solid var(--po-border-strong) !important;
+  border-radius: 6px !important;
+}
+
+.jsoneditor-modal input:focus,
+.jsoneditor-modal textarea:focus,
+.jsoneditor-modal select:focus {
+  border-color: var(--po-focus-ring) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--po-accent) 12%, transparent) !important;
+}
+
+/* Modal labels */
+.jsoneditor-modal label {
+  color: var(--po-text-muted) !important;
+}
+
+/* Modal buttons */
+.jsoneditor-modal button {
+  background-color: var(--po-selected) !important;
+  color: var(--po-accent) !important;
+  border: 1px solid color-mix(in srgb, var(--po-accent) 25%, transparent) !important;
+  border-radius: 6px !important;
+  padding: 8px 16px !important;
+  transition: all 0.2s ease !important;
+}
+
+.jsoneditor-modal button:hover {
+  background-color: color-mix(in srgb, var(--po-accent) 25%, transparent) !important;
+  border-color: color-mix(in srgb, var(--po-accent) 40%, transparent) !important;
+}
+
+.jsoneditor-modal button:active {
+  background-color: color-mix(in srgb, var(--po-accent) 30%, transparent) !important;
+}
+
+/* Modal preview section (for Transform modal) */
+.jsoneditor-modal .jsoneditor-preview,
+.jsoneditor-modal pre,
+.jsoneditor-modal code {
+  background-color: var(--po-inset) !important;
+  color: var(--po-text) !important;
+  border: 1px solid var(--po-border-subtle) !important;
+  border-radius: 6px !important;
+  padding: 12px !important;
+  font-family: var(--po-font-sans);
+}
+
+/* Ensure JSON values in modal preview use correct colors */
+.jsoneditor-modal .jsoneditor-value.jsoneditor-string {
+  color: var(--po-json-string) !important;
+}
+
+.jsoneditor-modal .jsoneditor-value.jsoneditor-number {
+  color: var(--po-json-number) !important;
+}
+
+.jsoneditor-modal .jsoneditor-value.jsoneditor-boolean {
+  color: var(--po-json-boolean) !important;
+}
+
+.jsoneditor-modal .jsoneditor-value.jsoneditor-null {
+  color: var(--po-json-null) !important;
+}
+
+.jsoneditor-modal .jsoneditor-field {
+  color: var(--po-text) !important;
+}
+
+.jsoneditor-modal .jsoneditor-bracket,
+.jsoneditor-modal .jsoneditor-brace {
+  color: var(--po-text-subtle) !important;
+}
+
+.jsoneditor-contextmenu ul li button,
+.jsoneditor-contextmenu ol li button,
+.jsoneditor-contextmenu button {
+  background-color: transparent !important;
+  color: var(--po-text-muted) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 6px 12px !important;
+  margin: 2px 0 !important;
+  width: 100% !important;
+  text-align: left !important;
+  transition: all 0.15s ease !important;
+  cursor: pointer !important;
+}
+
+.jsoneditor-contextmenu ul li button:hover,
+.jsoneditor-contextmenu ol li button:hover,
+.jsoneditor-contextmenu button:hover {
+  background-color: var(--po-hover) !important;
+  color: var(--po-text) !important;
+}
+
+.jsoneditor-contextmenu ul li button:active,
+.jsoneditor-contextmenu ol li button:active,
+.jsoneditor-contextmenu button:active {
+  background-color: var(--po-active) !important;
+  color: var(--po-text) !important;
+}
+
+/* --- Scrollbar styling (webkit browsers) --- */
+div.jsoneditor-tree::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+div.jsoneditor-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+div.jsoneditor-tree::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+div.jsoneditor-tree.po-scrollbar-active::-webkit-scrollbar-thumb {
+  background: var(--po-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+div.jsoneditor-tree.po-scrollbar-active::-webkit-scrollbar-thumb:hover {
+  background: var(--po-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* --- Ensure all text elements are light colored --- */
+/* Ensure all table cells have proper text color (fallback) */
+div.jsoneditor-tree td:not(.jsoneditor-value):not(.jsoneditor-field),
+div.jsoneditor-tree th:not(.jsoneditor-field) {
+  color: var(--po-text) !important;
+}
+
+/* Ensure all buttons and links are light colored (fallback) */
+div.jsoneditor button:not(.jsoneditor-button):not(.jsoneditor-selected),
+div.jsoneditor a {
+  color: var(--po-text-muted) !important;
+}
+
+/* Ensure all input elements have dark background and light text */
+div.jsoneditor input:not(.jsoneditor-search input),
+div.jsoneditor textarea:not(.jsoneditor-text),
+div.jsoneditor select {
+  background-color: var(--po-inset) !important;
+  color: var(--po-text) !important;
+  border-color: var(--po-border-strong) !important;
+}
+
+/* Ensure code view has dark background */
+div.jsoneditor pre,
+div.jsoneditor code {
+  background-color: var(--po-jsoneditor-bg) !important;
+  color: var(--po-text) !important;
+}
+
+/* Ensure all labels and text spans are light (fallback) */
+div.jsoneditor label,
+div.jsoneditor span:not(.jsoneditor-value):not(.jsoneditor-field) {
+  color: var(--po-text) !important;
+}
+
+/* Ensure menu items are light colored (fallback for any missed elements) */
+div.jsoneditor-menu button:not(.jsoneditor-selected) {
+  color: var(--po-text-muted) !important;
+}
+
+/* Ensure context menu items are light (fallback) */
+.jsoneditor-contextmenu button:not(:hover) {
+  color: var(--po-text-muted) !important;
+  background-color: transparent !important;
+}
+
+/* Ensure all context menu text elements are light */
+.jsoneditor-contextmenu * {
+  color: inherit !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+}
+
+.jsoneditor-contextmenu span,
+.jsoneditor-contextmenu div {
+  color: var(--po-text-muted) !important;
+  font-family: var(--po-font-sans);
+  font-size: 14px !important;
+}

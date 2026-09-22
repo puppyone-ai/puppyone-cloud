@@ -32,9 +32,9 @@ class VersionEngineWritePort:
         plan: IntegrationWritePlan,
         actor: str,
     ) -> IntegrationWriteOutcome:
-        import src.version_engine.bootstrap.dependencies as deps
+        from src.platform.project.write_lease import build_leased_worker_write_commands
 
-        commands = deps.build_worker_version_engine_container().write_commands()
+        commands = build_leased_worker_write_commands()
         if len(plan.files) == 1 and not plan.deleted:
             file_path, content = next(iter(plan.files.items()))
             outcome = await commands.write_bytes(

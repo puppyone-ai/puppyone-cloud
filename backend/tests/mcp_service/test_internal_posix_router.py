@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.internal.router import router as internal_router, verify_internal_secret
+from tests.authorization_fakes import authorization_for
 
 
 @dataclass
@@ -89,9 +90,9 @@ def client(app, ops):
     # The pre-existing tests don't set up real users, so we patch the
     # access check to always allow.
     with patch(
-        "src.internal.router.ProjectRepositorySupabase"
-    ) as repo_cls:
-        repo_cls.return_value.verify_project_access.return_value = "member"
+        "src.platform.authorization.factory.build_authorization_service",
+        return_value=authorization_for("proj-1"),
+    ):
         with TestClient(app) as c:
             # Inject the required header for every request via headers=
             c.headers.update({"X-Acting-User-Id": "test-user"})
@@ -274,46 +275,3 @@ def test_remove_node_success(client, ops, monkeypatch):
     ops.delete.assert_awaited_once_with(
         "proj-1", ["readme.md"], who="mcp_agent", message="delete readme.md",
     )
-
-
-def test_get_agent_by_mcp_key_enriches_access_with_node_info(client, app, monkeypatch):
-    connector = SimpleNamespace(
-        id="agent-1",
-        name="Agent",
-        project_id="proj-1",
-        scope_id="scope-1",
-        created_by="user-1",
-    )
-    scope = SimpleNamespace(
-        id="scope-1",
-        path="node-1",
-        mode="rw",
-        name="Node One",
-    )
-
-    class _ConnectorService:
-        def get_agent_by_mcp_key(self, mcp_api_key: str):
-            assert mcp_api_key == "mcp_k"
-            return connector
-
-    class _ScopeRepository:
-        def get(self, scope_id: str):
-            assert scope_id == "scope-1"
-            return scope
-
-    import src.repo.connector_service as connector_service_module
-    import src.repo.scope_repository as scope_repository_module
-    monkeypatch.setattr(connector_service_module, "ConnectorService", lambda: _ConnectorService())
-    monkeypatch.setattr(scope_repository_module, "RepoScopeRepository", lambda: _ScopeRepository())
-
-    resp = client.get(
-        "/internal/agent-by-mcp-key/mcp_k",
-        headers={"X-Internal-Secret": "ignored"},
-    )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["agent"]["id"] == "agent-1"
-    assert body["accesses"][0]["path"] == "node-1"
-    assert body["accesses"][0]["tool_create"] is True
-    assert body["tools"] == []

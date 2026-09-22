@@ -2,27 +2,29 @@
 
 from typing import List, Optional
 from datetime import datetime, timezone
-import secrets
 
 from src.connectors.agent.config.models import Agent, AgentBash, AgentTool
 from src.repo.scope_service import ScopeService
+from src.repo.access_credentials import AccessCredentialRepository
 from src.utils.id_generator import generate_uuid_v7
 
 
 AGENT_PROVIDER = "agent"
 ACCESS_SURFACES_TABLE = "access_surfaces"
-_NOW = "now()"
+
+
+def _now_iso() -> str:
+    """Return a real timestamp; PostgREST does not evaluate SQL expressions in JSON."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _scope_to_bash(agent_id: str, config: dict) -> list[AgentBash]:
-    """Derive AgentBash list from access-surface ``config.scope``."""
-    scope = config.get("scope")
-    if not scope:
+    """Derive AgentBash list from the operational view, not target identity."""
+    view = config.get("bash_view")
+    if not view:
         return []
-    if scope.get("_orphaned_from"):
-        return []
-    path = scope.get("path", "")
-    mode = scope.get("mode", "r")
+    path = view.get("path_prefix", "")
+    mode = view.get("max_mode", "r")
     return [AgentBash(
         id=f"{agent_id}:scope",
         agent_id=agent_id,
@@ -44,18 +46,16 @@ def _row_to_tool(row: dict) -> AgentTool:
     )
 
 
-def generate_access_key(agent_type: str = "chat") -> str:
-    return f"mcp_{secrets.token_urlsafe(32)}"
-
-
-def generate_mcp_api_key() -> str:
-    return generate_access_key("chat")
-
-
-def _row_to_agent(row: dict) -> Agent:
+def _row_to_agent(
+    row: dict,
+    *,
+    credential: dict | None = None,
+    plaintext_mcp_api_key: str | None = None,
+) -> Agent:
     """Convert an access_surfaces row (kind='agent') to an Agent model."""
     config = row.get("config") or {}
     trigger = config.get("trigger") or {}
+    active_key = plaintext_mcp_api_key
     return Agent(
         id=row["id"],
         project_id=row["project_id"],
@@ -64,7 +64,11 @@ def _row_to_agent(row: dict) -> Agent:
         type=config.get("type", "chat"),
         description=config.get("description"),
         is_default=config.get("is_default", False),
-        mcp_api_key=config.get("mcp_api_key") or None,
+        # Plaintext is populated only for one-time issuance or an authenticated
+        # runtime lookup. Ordinary reads expose metadata below, never the token.
+        mcp_api_key=plaintext_mcp_api_key,
+        mcp_enabled=bool(credential or active_key),
+        mcp_key_last4=(credential or {}).get("key_last4") or (active_key[-4:] if active_key else None),
         trigger_type=trigger.get("type", "manual"),
         trigger_config=trigger.get("config"),
         task_content=config.get("task_content"),
@@ -118,6 +122,28 @@ class AgentRepository:
             self._client = get_supabase_client()
         else:
             self._client = supabase_client
+        self._credentials = AccessCredentialRepository(self._client)
+
+    def _credential_map(self, rows: list[dict]) -> dict[str, dict]:
+        # A few narrow unit tests construct the repository via ``__new__`` to
+        # isolate visibility filtering. Production instances always run
+        # ``__init__`` and therefore have the credential boundary.
+        if not hasattr(self, "_credentials"):
+            return {}
+        return self._credentials.list_active_by_surface([row["id"] for row in rows])
+
+    def _agent_from_row(
+        self,
+        row: dict,
+        *,
+        plaintext_mcp_api_key: str | None = None,
+    ) -> Agent:
+        credential = self._credentials.get_active_by_surface(row["id"])
+        return _row_to_agent(
+            row,
+            credential=credential,
+            plaintext_mcp_api_key=plaintext_mcp_api_key,
+        )
 
     def _project_org_id(self, project_id: str) -> str | None:
         resp = (
@@ -129,6 +155,11 @@ class AgentRepository:
         )
         rows = resp.data or []
         return rows[0].get("org_id") if rows else None
+
+    def get_project_org_id(self, project_id: str) -> str | None:
+        """Return the Agent Project tenant for child-resource validation."""
+
+        return self._project_org_id(project_id)
 
     def _query(self):
         return (
@@ -143,7 +174,13 @@ class AgentRepository:
         normalized = (path or "").strip("/")
         scope_service = ScopeService()
         if not normalized:
-            scope = scope_service.ensure_root_scope(project_id)
+            return {
+                "target": {"kind": "project_root", "project_id": project_id},
+                "id": None,
+                "path": "",
+                "exclude": [],
+                "mode": "r" if readonly else "rw",
+            }
         else:
             scope = None
             for candidate in scope_service.list_for_project(project_id):
@@ -156,13 +193,29 @@ class AgentRepository:
                     name=normalized.rsplit("/", 1)[-1] or "Agent Scope",
                     path=normalized,
                     exclude=[],
-                    mode="r" if readonly else "rw",
+                    max_mode="r" if readonly else "rw",
                 )
         return {
             "id": scope.id,
             "path": scope.path,
             "exclude": scope.exclude,
-            "mode": scope.mode,
+            "mode": scope.max_mode,
+            "target": {
+                "kind": "scope",
+                "project_id": project_id,
+                "scope_id": scope.id,
+            },
+        }
+
+    @staticmethod
+    def _resolved_view(scope: dict) -> dict:
+        """Convert a target selection into the canonical resolved-view shape."""
+
+        return {
+            "target": scope["target"],
+            "path_prefix": scope.get("path", ""),
+            "excludes": list(scope.get("exclude") or []),
+            "max_mode": scope.get("mode", "r"),
         }
 
     def _agent_surface_for_scope(
@@ -173,14 +226,18 @@ class AgentRepository:
         name: str,
         created_by: Optional[str],
     ) -> dict:
-        resp = (
+        query = (
             self._client.table(self.TABLE)
             .select("*")
-            .eq("scope_id", scope["id"])
+            .eq("project_id", project_id)
             .eq("kind", AGENT_PROVIDER)
-            .limit(1)
-            .execute()
         )
+        query = (
+            query.is_("scope_id", "null")
+            if scope["id"] is None
+            else query.eq("scope_id", scope["id"])
+        )
+        resp = query.limit(1).execute()
         rows = resp.data or []
         if rows:
             surface = rows[0]
@@ -205,7 +262,12 @@ class AgentRepository:
                 "status": "active",
                 "config": {
                     "name": name,
-                    "scope": scope,
+                    "repository_view": self._resolved_view(scope),
+                    "bash_view": {
+                        "path_prefix": scope.get("path", ""),
+                        "excludes": list(scope.get("exclude") or []),
+                        "max_mode": scope.get("mode", "r"),
+                    },
                     "activated": False,
                 },
                 "created_by": created_by,
@@ -225,7 +287,7 @@ class AgentRepository:
             .execute()
         )
         if response.data:
-            return _row_to_agent(response.data[0])
+            return self._agent_from_row(response.data[0])
         return None
 
     def get_by_id_with_accesses(self, agent_id: str) -> Optional[Agent]:
@@ -237,10 +299,22 @@ class AgentRepository:
         if not response.data:
             return None
         row = response.data[0]
-        agent = _row_to_agent(row)
+        agent = self._agent_from_row(row)
         agent.bash_accesses = _scope_to_bash(agent_id, row.get("config") or {})
         agent.tools = self.get_tools_by_agent_id(agent_id)
         return agent
+
+    def get_project_id(self, agent_id: str) -> str | None:
+        """Return only the parent identity needed for pre-read authorization."""
+        rows = (
+            self._client.table(self.TABLE)
+            .select("project_id")
+            .eq("id", agent_id)
+            .eq("kind", AGENT_PROVIDER)
+            .limit(1)
+            .execute()
+        ).data or []
+        return str(rows[0]["project_id"]) if rows else None
 
     def get_by_project_id(self, project_id: str) -> List[Agent]:
         response = (
@@ -249,12 +323,14 @@ class AgentRepository:
             .order("created_at", desc=True)
             .execute()
         )
-        return [_row_to_agent(row) for row in response.data]
+        rows = response.data or []
+        credentials = self._credential_map(rows)
+        return [_row_to_agent(row, credential=credentials.get(row["id"])) for row in rows]
 
     def get_by_project_id_with_accesses(
         self, project_id: str, viewer_user_id: Optional[str] = None,
     ) -> List[Agent]:
-        """Load agents with scope-derived bash_accesses and tool bindings.
+        """Load agents with view-derived bash_accesses and tool bindings.
 
         Visibility filter (security: M-1):
         Agents whose config.visibility == 'private' are only returned if
@@ -277,13 +353,14 @@ class AgentRepository:
                 or r.get("created_by") == viewer_user_id
             ]
 
-        agents = [_row_to_agent(row) for row in rows]
+        credentials = self._credential_map(rows)
+        agents = [_row_to_agent(row, credential=credentials.get(row["id"])) for row in rows]
         if not agents:
             return agents
 
         agent_ids = [a.id for a in agents]
 
-        # Derive bash_accesses from access_surfaces.config.scope
+        # Derive bash_accesses from the operational view in Surface config.
         config_by_id = {row["id"]: (row.get("config") or {}) for row in rows}
         bash_by_agent: dict[str, list[AgentBash]] = {}
         for aid, cfg in config_by_id.items():
@@ -316,33 +393,8 @@ class AgentRepository:
         for row in response.data:
             config = row.get("config") or {}
             if config.get("is_default"):
-                return _row_to_agent(row)
+                return self._agent_from_row(row)
         return None
-
-    def get_by_mcp_api_key(self, mcp_api_key: str) -> Optional[Agent]:
-        # mcp_api_key lives in access_surfaces.config (jsonb).
-        response = (
-            self._query()
-            .filter("config->>mcp_api_key", "eq", mcp_api_key)
-            .execute()
-        )
-        if response.data:
-            return _row_to_agent(response.data[0])
-        return None
-
-    def get_by_mcp_api_key_with_accesses(self, mcp_api_key: str) -> Optional[Agent]:
-        response = (
-            self._query()
-            .filter("config->>mcp_api_key", "eq", mcp_api_key)
-            .execute()
-        )
-        if not response.data:
-            return None
-        row = response.data[0]
-        agent = _row_to_agent(row)
-        agent.bash_accesses = _scope_to_bash(agent.id, row.get("config") or {})
-        agent.tools = self.get_tools_by_agent_id_for_mcp(agent.id)
-        return agent
 
     def create(
         self,
@@ -374,8 +426,6 @@ class AgentRepository:
             name=name,
             created_by=created_by,
         )
-        existing_config = dict(surface.get("config") or {})
-        mcp_api_key = existing_config.get("mcp_api_key") or generate_access_key(type)
         trigger = {
             "type": trigger_type or "manual",
             "config": trigger_config,
@@ -387,14 +437,18 @@ class AgentRepository:
             "type": type,
             "description": description,
             "is_default": is_default,
-            "mcp_api_key": mcp_api_key,
             "trigger": trigger,
             "task_content": task_content,
             "task_path": task_path,
             "external_config": external_config,
             "llm_model": llm_model,
             "system_prompt": system_prompt,
-            "scope": scope,
+            "repository_view": self._resolved_view(scope),
+            "bash_view": {
+                "path_prefix": scope.get("path", ""),
+                "excludes": list(scope.get("exclude") or []),
+                "max_mode": scope.get("mode", "r"),
+            },
             "activated": True,
         }
 
@@ -411,7 +465,20 @@ class AgentRepository:
             .eq("kind", AGENT_PROVIDER)
             .execute()
         )
-        return _row_to_agent(response.data[0])
+        inserted = response.data[0]
+        mcp_api_key = self._credentials.issue_bearer_token(
+            access_surface_id=inserted["id"],
+            org_id=inserted.get("org_id"),
+            project_id=inserted["project_id"],
+            prefix="mcp",
+            created_by=inserted.get("created_by"),
+        )
+        credential = self._credentials.get_active_by_surface(inserted["id"])
+        return _row_to_agent(
+            inserted,
+            credential=credential,
+            plaintext_mcp_api_key=mcp_api_key,
+        )
 
     def update(
         self,
@@ -458,13 +525,13 @@ class AgentRepository:
         )
 
         update_data: dict = {
-            "config": config, "updated_at": _NOW,
+            "config": config, "updated_at": _now_iso(),
         }
         config["trigger"] = trigger
         if name is not None:
             update_data["name"] = name
         if mcp_api_key is not None:
-            config["mcp_api_key"] = mcp_api_key
+            raise ValueError("Use regenerate_mcp_api_key for credential rotation")
 
         resp = (
             self._client.table(self.TABLE)
@@ -474,8 +541,23 @@ class AgentRepository:
             .execute()
         )
         if resp.data:
-            return _row_to_agent(resp.data[0])
+            credential = self._credentials.get_active_by_surface(agent_id)
+            return _row_to_agent(resp.data[0], credential=credential)
         return None
+
+    def regenerate_mcp_api_key(self, agent_id: str) -> Optional[str]:
+        response = self._query().eq("id", agent_id).execute()
+        if not response.data:
+            return None
+        row = response.data[0]
+        return self._credentials.issue_bearer_token(
+            access_surface_id=row["id"],
+            org_id=row.get("org_id"),
+            project_id=row["project_id"],
+            prefix="mcp",
+            created_by=row.get("created_by"),
+            revoke_existing=True,
+        )
 
     def delete(self, agent_id: str) -> bool:
         response = (
@@ -487,15 +569,11 @@ class AgentRepository:
         )
         return len(response.data) > 0
 
-    def verify_access(self, agent_id: str, user_id: str) -> bool:
-        """Check whether `user_id` is allowed to access agent `agent_id`.
+    def is_visible_to(self, agent_id: str, user_id: str) -> bool:
+        """Apply the child Agent visibility restriction only.
 
-        Two layers of checks (security: M-1):
-        1. Project membership — user must belong to the agent's project's org.
-        2. Visibility — if agent is marked private (config.visibility == 'private'),
-           only the agent surface owner may read it.
-
-        Defaults to org-visibility when the field is missing.
+        Canonical Project authorization is outside this method. Child
+        visibility may narrow a ProjectGrant but can never create one.
         """
         # Pull both the row and the agent in one go to avoid N queries.
         row_resp = (
@@ -510,27 +588,7 @@ class AgentRepository:
             return False
         row = row_resp.data[0]
         config = row.get("config") or {}
-        project_id = row.get("project_id")
-
-        # Layer 1: org membership
-        proj_resp = (
-            self._client.table("projects")
-            .select("org_id")
-            .eq("id", project_id)
-            .execute()
-        )
-        if not proj_resp.data:
-            return False
-        org_id = proj_resp.data[0].get("org_id")
-        if not org_id:
-            return False
-        from src.platform.organization.repository import OrganizationRepository
-        org_repo = OrganizationRepository(supabase_client=self._client)
-        member = org_repo.get_member(org_id, user_id)
-        if member is None:
-            return False
-
-        # Layer 2: visibility
+        # Agent visibility can only narrow the already-resolved ProjectGrant.
         visibility = (config.get("visibility") or "org").lower()
         if visibility == "private":
             owner = row.get("created_by")
@@ -539,7 +597,7 @@ class AgentRepository:
         return True
 
     # ============================================
-    # AgentBash CRUD — operates on access_surfaces.config.scope (JSONB)
+    # AgentBash CRUD — narrows an Agent target through config.bash_view.
     # ============================================
 
     def _get_agent_config(self, agent_id: str) -> Optional[dict]:
@@ -555,25 +613,37 @@ class AgentRepository:
             row = resp.data[0]
             config = dict(row.get("config") or {})
             config["_project_id"] = row.get("project_id")
-            config["_scope_id"] = row.get("scope_id")
+            config["_target_scope_id"] = row.get("scope_id")
             return config
         return None
 
-    def _update_scope(self, agent_id: str, scope: dict) -> None:
-        """Write scope back into access surface ``config.scope``."""
+    def _update_bash_view(self, agent_id: str, view: dict) -> None:
+        """Update an operational view without changing Surface target identity."""
         config = self._get_agent_config(agent_id)
         if config is None:
             return
-        current_scope_id = config.pop("_scope_id", None)
-        if current_scope_id and current_scope_id != scope["id"]:
-            raise RuntimeError(
-                "Agent scope is immutable; create an agent access surface "
-                "for the target scope instead."
-            )
+        config.pop("_target_scope_id", None)
         config.pop("_project_id", None)
-        config["scope"] = scope
+        target_view = config.get("repository_view")
+        if not isinstance(target_view, dict):
+            raise RuntimeError("Agent repository target is missing")
+        target_prefix = str(target_view.get("path_prefix") or "").strip("/")
+        path_prefix = str(view.get("path_prefix") or "").strip("/")
+        if target_prefix and not (
+            path_prefix == target_prefix or path_prefix.startswith(f"{target_prefix}/")
+        ):
+            raise RuntimeError("Agent Bash view cannot escape its repository target")
+        target_mode = str(target_view.get("max_mode") or "r")
+        max_mode = str(view.get("max_mode") or "r")
+        if max_mode == "rw" and target_mode != "rw":
+            raise RuntimeError("Agent Bash view cannot exceed its target mode")
+        config["bash_view"] = {
+            "path_prefix": path_prefix,
+            "excludes": list(view.get("excludes") or []),
+            "max_mode": max_mode,
+        }
         self._client.table(self.TABLE).update(
-            {"config": config, "scope_id": scope["id"], "updated_at": _NOW}
+            {"config": config, "updated_at": _now_iso()}
         ).eq("id", agent_id).eq("kind", AGENT_PROVIDER).execute()
 
     def get_bash_by_agent_id(self, agent_id: str) -> List[AgentBash]:
@@ -602,13 +672,18 @@ class AgentRepository:
         project_id = config.get("_project_id")
         if not project_id:
             raise RuntimeError(f"Agent {agent_id} is missing project_id")
-        scope = self._scope_for_path(project_id, path, readonly=readonly)
-        self._update_scope(agent_id, scope)
+        normalized = (path or "").strip("/")
+        view = {
+            "path_prefix": normalized,
+            "excludes": [],
+            "max_mode": "r" if readonly else "rw",
+        }
+        self._update_bash_view(agent_id, view)
         return AgentBash(
             id=f"{agent_id}:scope",
             agent_id=agent_id,
-            path=scope["path"],
-            readonly=scope["mode"] == "r",
+            path=normalized,
+            readonly=readonly,
             created_at=datetime.now(timezone.utc),
         )
 
@@ -621,10 +696,12 @@ class AgentRepository:
         config = self._get_agent_config(agent_id)
         if config is None:
             return None
-        scope = config.get("scope", {})
+        view = dict(config.get("bash_view") or {})
+        if not view:
+            return None
         if readonly is not None:
-            scope["mode"] = "r" if readonly else "rw"
-        self._update_scope(agent_id, scope)
+            view["max_mode"] = "r" if readonly else "rw"
+        self._update_bash_view(agent_id, view)
         return self.get_bash_by_id(bash_id)
 
     def delete_bash(self, bash_id: str) -> bool:
@@ -632,11 +709,12 @@ class AgentRepository:
         config = self._get_agent_config(agent_id)
         if config is None:
             return False
-        if "scope" in config:
-            del config["scope"]
+        if "bash_view" in config:
+            del config["bash_view"]
             config.pop("_project_id", None)
+            config.pop("_target_scope_id", None)
             self._client.table(self.TABLE).update(
-                {"config": config, "updated_at": _NOW}
+                {"config": config, "updated_at": _now_iso()}
             ).eq("id", agent_id).execute()
         return True
 
@@ -666,6 +744,19 @@ class AgentRepository:
             .execute()
         )
         return [_row_to_tool(row) for row in response.data]
+
+    def list_access_point_ids_by_tool(self, tool_id: str) -> list[str]:
+        response = (
+            self._client.table("access_tools")
+            .select("access_point_id")
+            .eq("tool_id", tool_id)
+            .execute()
+        )
+        return list(dict.fromkeys(
+            row["access_point_id"]
+            for row in (response.data or [])
+            if row.get("access_point_id")
+        ))
 
     def get_tools_by_agent_id_for_mcp(self, agent_id: str) -> List[AgentTool]:
         response = (

@@ -1,9 +1,8 @@
 """Server-side resolution of the managed sync policy (#M5).
 
-Users don't configure triggers; the server resolves a preset for a
-(scope-role × persona × client-kind) and hands it to the sidecar + frontend.
-Scope role is derived from the scope (root vs sub). Persona/client default
-sensibly and can be overridden by the caller (later: persisted project setting).
+Users don't configure triggers; the server resolves a preset for a real,
+non-root repository Scope and hands it to the sidecar + frontend. Project-root
+sync is a Project concern and never enters this Scope API.
 """
 
 from __future__ import annotations
@@ -45,8 +44,8 @@ def _scope_service():
 
 
 def _scope_by_access_key(access_key: str):
-    from src.repo.scope_repository import RepoScopeRepository
-    return RepoScopeRepository().get_by_access_key(access_key)
+    from src.repo.scope_repository import RepositoryScopeRepository
+    return RepositoryScopeRepository().get_by_access_key(access_key)
 
 
 class ScopeSyncService:
@@ -75,10 +74,7 @@ class ScopeSyncService:
         scope = self._scope_lookup(scope_id)
         if scope is None or getattr(scope, "project_id", None) != project_id:
             raise LookupError("scope not found in project")
-        is_root = getattr(scope, "is_root", None)
-        if is_root is None:
-            is_root = (getattr(scope, "path", "") or "") == ""
-        return ScopeRole.ROOT if is_root else ScopeRole.SUB
+        return ScopeRole.SUB
 
     def resolve_policy(
         self,

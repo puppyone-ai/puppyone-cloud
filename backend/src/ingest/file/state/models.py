@@ -7,7 +7,7 @@ Redis runtime state is the source of truth for in-flight ETL tasks.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from src.ingest.file.tasks.models import ETLTaskStatus
 
 
-class ETLPhase(str, Enum):
+class ETLPhase(StrEnum):
     OCR = "ocr"
     POSTPROCESS = "postprocess"
     FINALIZE = "finalize"
@@ -42,7 +42,10 @@ class ETLRuntimeState(BaseModel):
     arq_job_id_postprocess: str | None = None
 
     artifact_mineru_markdown_key: str | None = None
-    provider_task_id: str | None = None  # e.g. mineru_task_id
+    provider_name: str | None = None
+    provider_task_id: str | None = None  # e.g. MineRU/Reducto task ID
+    provider_task_external: bool | None = None
+    provider_task_terminal: bool | None = None
 
     error_code: str | None = None
     error_message: str | None = None

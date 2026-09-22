@@ -21,16 +21,6 @@ class ProjectRepositoryBase(ABC):
         """Get project list by organization ID"""
 
     @abstractmethod
-    def create(
-        self,
-        name: str,
-        description: str | None,
-        org_id: str,
-        created_by: str,
-    ) -> Project:
-        """Create a project"""
-
-    @abstractmethod
     def update(
         self,
         project_id: str,
@@ -41,13 +31,6 @@ class ProjectRepositoryBase(ABC):
     ) -> Project | None:
         """Update a project"""
 
-    @abstractmethod
-    def delete(self, project_id: str) -> bool:
-        """Delete a project"""
-
-    @abstractmethod
-    def verify_project_access(self, project_id: str, user_id: str) -> str | None:
-        """Verify whether user has access to the specified project; returns role string or None"""
 
 
 class ProjectRepositorySupabase(ProjectRepositoryBase):
@@ -95,44 +78,6 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
         projects_response = self._supabase_repo.get_projects(org_id=org_id)
         return [self._project_response_to_project(p) for p in projects_response]
 
-    def create(
-        self,
-        name: str,
-        description: str | None,
-        org_id: str,
-        created_by: str,
-    ) -> Project:
-        """
-        Create a project
-
-        Args:
-            name: Project name
-            description: Project description
-            org_id: Organization ID
-            created_by: Creator user ID
-
-        Returns:
-            Created Project object
-        """
-        import secrets
-
-        from src.platform.project.supabase_schemas import ProjectCreate
-        from src.utils.id_generator import generate_uuid_v7
-
-        project_data = ProjectCreate(
-            id=generate_uuid_v7(),
-            name=name,
-            description=description,
-            org_id=org_id,
-            created_by=created_by,
-            # Per the share-link MVP: every project ships with a fresh
-            # URL-safe token at create time. 24 bytes → 32-char URL-safe
-            # string; same entropy budget we use for org-invite tokens.
-            share_token=secrets.token_urlsafe(24),
-        )
-        project_response = self._supabase_repo.create_project(project_data)
-        return self._project_response_to_project(project_response)
-
     def rotate_share_token(self, project_id: str) -> Project | None:
         """Generate a new share token for ``project_id`` and persist it.
 
@@ -162,6 +107,7 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
             client.table("projects")
             .select("*")
             .eq("share_token", token)
+            .eq("lifecycle_status", "ready")
             .limit(1)
             .execute()
         )
@@ -215,75 +161,6 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
             return self._project_response_to_project(project_response)
         return None
 
-    def delete(self, project_id: str) -> bool:
-        """
-        Delete a project
-
-        Args:
-            project_id: Project ID
-
-        Returns:
-            Whether deletion was successful
-        """
-        return self._supabase_repo.delete_project(project_id)
-
-    def verify_project_access(self, project_id: str, user_id: str) -> str | None:
-        """
-        Verify whether user has access to the specified project
-
-        Access logic:
-        1. visibility='org' -> any member of the org can access
-        2. visibility='private' -> only org owner or members in project_members can access
-
-        Uses per-request contextvar cache to avoid redundant DB lookups
-        when the same project+user pair is checked multiple times.
-
-        Returns:
-            Role string (org role or project role), or None if no access
-        """
-        from src.utils.request_context import project_access_cache_var
-
-        cache_key = f"{project_id}:{user_id}"
-        cache = project_access_cache_var.get()
-        if cache is not None and cache_key in cache:
-            return cache[cache_key]
-
-        result = self._verify_project_access_uncached(project_id, user_id)
-
-        if cache is not None:
-            cache[cache_key] = result
-
-        return result
-
-    def _verify_project_access_uncached(self, project_id: str, user_id: str) -> str | None:
-        project = self.get_by_id(project_id)
-        if not project:
-            return None
-
-        from src.platform.organization.repository import OrganizationRepository
-        org_repo = OrganizationRepository()
-        member = org_repo.get_member(project.org_id, user_id)
-
-        if project.visibility == "org":
-            return member.role if member else None
-
-        if member and member.role == "owner":
-            return "owner"
-
-        from src.infra.supabase.dependencies import get_supabase_client
-        client = get_supabase_client()
-        resp = (
-            client.table("project_members")
-            .select("role")
-            .eq("project_id", project_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
-        if resp.data:
-            return resp.data[0]["role"]
-
-        return None
-
     def _project_response_to_project(self, project_response) -> Project:
         """
         Convert ProjectResponse to Project model
@@ -299,10 +176,10 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
             name=project_response.name,
             description=project_response.description,
             org_id=project_response.org_id,
-            visibility=getattr(project_response, 'visibility', 'org'),
-            bound_git_branch=getattr(project_response, 'bound_git_branch', 'main'),
+            visibility=getattr(project_response, "visibility", "org"),
+            bound_git_branch=getattr(project_response, "bound_git_branch", "main"),
             created_by=project_response.created_by,
             created_at=project_response.created_at,
-            updated_at=getattr(project_response, 'updated_at', None),
-            share_token=getattr(project_response, 'share_token', None),
+            updated_at=getattr(project_response, "updated_at", None),
+            share_token=getattr(project_response, "share_token", None),
         )

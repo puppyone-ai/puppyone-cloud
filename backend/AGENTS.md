@@ -44,6 +44,24 @@ repair.**
 - Scope、权限、excludes、pause、冲突策略和 audit 都在 server 端执行
 - 旧线协议和外部版本包不再是运行时依赖
 
+### 授权架构（Organization → Project → Runtime）
+
+- Human Project action 必须经过 `src/platform/authorization/` 的 canonical
+  `AuthorizationService`，以具名 `ProjectAction` 求值；业务模块不得直接读取
+  `project_members`、解释 raw role 或复活 `verify_project_access`。
+- `project_members` 是唯一显式 Human Project role 事实。Organization membership
+  只建立 tenant context；`visibility='org'` 仅给 Viewer baseline。
+- Agent visibility、publish ownership、upload ownership 等 child rule 只能继续
+  收紧 `ProjectGrant`，不能放大权限。
+- Git/CLI/Agent/MCP/Sandbox credential 只能形成绑定到显式
+  Project-root 或 Scope target 的 `RuntimeGrant`，不得替代 Human ProjectGrant 或进入成员、分享、设置、Billing
+  与 credential management control plane。
+- canonical PuppyOne remote 是本地到 Cloud 的唯一 locator。Desktop 在本地解析
+  Project-root/Scope target；Backend 只接收结构化 target，并用当前 JWT 的
+  ProjectGrant 再授权。Cloud 不登记 device、folder、checkout 或 workspace instance；
+  Git URL、Scope key 与本地路径都不是 authority。新增 Project-scoped route 必须
+  登记在 `src/platform/authorization/manifest.py`。
+
 ## 项目结构
 
 ```
@@ -67,7 +85,7 @@ backend/
 │   ├── tool/                  # 工具注册 & 搜索索引
 │   │
 │   ├── connectors/            # 连接器
-│   │   ├── manager/           # 统一 Access CRUD (access_points 表)
+│   │   ├── manager/           # Access surface CRUD (Project-root / Scope target)
 │   │   ├── agent/             # AI Agent (config/chat/MCP 绑定)
 │   │   ├── datasource/        # SaaS 数据源 (Gmail/GitHub/Notion/...)
 │   │   │   └── oauth/         # OAuth 授权流程 & token 存储
@@ -97,6 +115,42 @@ backend/
 ```
 
 ## 核心模块
+
+### MCP 四层职责与唯一数据路径
+
+```text
+MCP client
+    │ streamable HTTP / session / notifications
+    ▼
+mcp_service/                         transport only
+    │ /internal/mcp-runtime/tools|call
+    ▼
+src/internal/mcp_runtime.py          tool registry + dispatch
+    │ one hash credential lookup + one scope/policy resolution
+    ▼
+access_surface_credentials ── access_surfaces ── Project + optional repository_scopes
+    │                                 │
+    │ custom bindings                 │ filesystem operations
+    ▼                                 ▼
+access_tools                   version_engine/scoped_fs
+                                      │
+                                      ▼
+                              Version Engine Git data
+```
+
+- **传输层**：`mcp_service` 只处理协议、session、通知和 RPC 适配，不解析
+  agent/endpoint 配置，不缓存凭证，不读取产品数据。
+- **能力层**：`src/internal/mcp_runtime.py` 是唯一工具注册和调用入口；所有
+  文件数据读写由 `version_engine/scoped_fs` 完成。绑定的 search 工具只读取
+  由同一 scope 内容构建的索引，并再次验证 tool path 位于该 scope 内。
+- **配置层**：agent 与 MCP endpoint 都是 `access_surfaces`；API key 只在
+  `access_surface_credentials` 以 hash 保存和认证；自定义工具绑定只在
+  `access_tools`。
+- **管理层**：远程 MCP 的独立基础设施职责仅为 `infra/mcp_health.py` 的传输
+  健康探测。legacy `mcps`、`mcp_bindings` 及其 repository 不属于运行时。
+
+缓存失效 webhook 只负责通知已连接 session 重新拉取工具；传输层没有产品
+配置或表数据缓存，因此不存在第二套鉴权缓存。
 
 ### ProductOperationAdapter（产品写入入口）
 
@@ -148,7 +202,8 @@ audit/transaction/outbox。
 |----------|------|------|
 | `/api/v1/content/{project_id}` | version_engine/routers/content_router | Content API (ls/cat/stat/tree/write/mkdir/mv/rm/history/diff) |
 | `/api/v1/ap-fs` | version_engine/routers/access_point_fs | Puppyone CLI scoped filesystem API |
-| `/git/{project_id}.git`, `/git/ap/{access_key}.git` | version_engine/adapters/git/router | Git smart-HTTP clone/fetch/push |
+| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | version_engine/entrypoints/git/router | Canonical Git smart-HTTP; stable locator plus separate HTTP credential |
+| `/git/ap/{access_key}.git` | version_engine/entrypoints/git/router | Instrumented legacy compatibility only; no new URL construction |
 | `/api/v1/tables` | content/table | 数据表 JSON Pointer 操作 |
 | `/api/v1/projects` | platform/project | 项目管理 |
 | `/api/v1/organizations` | platform/organization | 组织管理 |

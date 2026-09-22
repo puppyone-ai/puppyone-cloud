@@ -84,8 +84,13 @@ export async function middleware(request: NextRequest) {
   //    so an in-flight accept lands the user where they were going,
   //    not at /home.
   if (session && pathname === '/login') {
+    const desktopState = request.nextUrl.searchParams.get('desktop_state');
+    if (request.nextUrl.searchParams.get('client') === 'desktop' && desktopState) {
+      response.headers.set('x-next-intl-locale', detectLocale(request));
+      return response;
+    }
     const dest = request.nextUrl.searchParams.get('redirect');
-    if (dest && dest.startsWith('/') && !dest.startsWith('//')) {
+    if (dest && dest.startsWith('/') && !dest.startsWith('//') && !dest.startsWith('/\\')) {
       return NextResponse.redirect(new URL(dest, request.url));
     }
     return NextResponse.redirect(new URL('/home', request.url));

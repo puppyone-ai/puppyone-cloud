@@ -255,7 +255,7 @@ export function SupabaseConnectDialog({ projectId, onClose, onConnected }: Supab
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--po-text-muted)', lineHeight: 1.5 }}>
                   Your Supabase may have Row Level Security (RLS) enabled.
-                  If you get a "403 Access Denied" error, we'll guide you through RLS configuration.
+                  {'If you get a "403 Access Denied" error, we\'ll guide you through RLS configuration.'}
                 </div>
               </div>
             </div>

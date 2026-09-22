@@ -7,7 +7,7 @@ from src.platform.scope_sandbox.scope_provision import (
     provision_scope_steps,
 )
 
-URL = "https://qubits-api.puppyone.ai/git/ap/cli_ABC123.git"
+URL = "https://qubits-api.puppyone.ai/git/project-1/scopes/scope-1.git"
 
 
 def test_steps_clone_and_set_rebase_default():
@@ -18,6 +18,9 @@ def test_steps_clone_and_set_rebase_default():
     assert any("config pull.rebase true" in s for s in steps)
     assert any("config user.email" in s for s in steps)
     assert any("config user.name" in s for s in steps)
+    assert "x-puppyone-token" in joined
+    assert "$HOME/.config/puppyone/git-http-token" in joined
+    assert "password=$" not in joined
     # git install guard comes first
     assert "command -v git" in steps[0]
 

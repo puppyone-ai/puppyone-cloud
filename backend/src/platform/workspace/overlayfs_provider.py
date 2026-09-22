@@ -23,6 +23,12 @@ import subprocess
 from pathlib import Path
 
 from src.connectors.datasource.schemas import SyncResult
+from src.platform.workspace.paths import (
+    absolute_path,
+    agent_child,
+    project_child,
+    validate_storage_segment,
+)
 from src.platform.workspace.provider import (
     WorkspaceChanges,
     WorkspaceInfo,
@@ -35,14 +41,19 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
     """Linux OverlayFS-based workspace provider with CoW isolation."""
 
     def __init__(self, base_dir: str = "/tmp/puppyone-workspaces"):
-        self._base = Path(base_dir)
+        self._base = absolute_path(base_dir)
+        self._base_dir = str(self._base)
         self._lower_dir = self._base / "lower"
+        self._workspaces_dir = self._base / "workspaces"
         self._base.mkdir(parents=True, exist_ok=True)
+        if self._lower_dir.is_symlink() or self._workspaces_dir.is_symlink():
+            raise ValueError("workspace storage roots must not be symlinks")
         self._lower_dir.mkdir(parents=True, exist_ok=True)
+        self._workspaces_dir.mkdir(parents=True, exist_ok=True)
         self._registry: dict[str, WorkspaceInfo] = {}
 
     def get_lower_path(self, project_id: str) -> str:
-        return str(self._lower_dir / project_id)
+        return str(project_child(self._lower_dir, project_id))
 
     async def create_workspace(
         self,
@@ -54,8 +65,16 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
 
         Returns WorkspaceInfo with the path to the merged (usable) directory.
         """
+        validate_storage_segment(agent_id, label="agent_id")
+        validate_storage_segment(project_id, label="project_id")
+        existing = self._registry.get(agent_id)
+        if existing is not None and existing.project_id != project_id:
+            raise ValueError("agent_id is already bound to another Project workspace")
+
         lower_path = self.get_lower_path(project_id)
-        merged_path = self._mount_overlay(agent_id, lower_path)
+        if os.path.islink(lower_path):
+            raise ValueError("Project Lower cache path must not be a symlink")
+        merged_path = self._mount_overlay(project_id, agent_id, lower_path)
 
         info = WorkspaceInfo(
             path=merged_path,
@@ -67,9 +86,18 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
         self._registry[agent_id] = info
         return info
 
-    def _mount_overlay(self, workspace_id: str, source_dir: str) -> str:
+    def _mount_overlay(
+        self,
+        project_id: str,
+        workspace_id: str,
+        source_dir: str,
+    ) -> str:
         """Attempt OverlayFS mount, falling back to copy. Returns merged path."""
-        ws_root = self._base / workspace_id
+        ws_root = self._workspace_root(project_id, workspace_id)
+        if ws_root.is_symlink():
+            ws_root.unlink()
+        elif ws_root.exists():
+            self._unmount_root(ws_root)
         lower = Path(source_dir)
         upper = ws_root / "upper"
         work = ws_root / "work"
@@ -87,11 +115,11 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
                 return merged_str
 
             # Both failed — fall back to full copy
-            return self._fallback_copy(workspace_id, source_dir)
+            return self._fallback_copy(workspace_id, source_dir, ws_root)
 
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             log_error(f"[OverlayFS] mount error, falling back to copy: {e}")
-            return self._fallback_copy(workspace_id, source_dir)
+            return self._fallback_copy(workspace_id, source_dir, ws_root)
 
     def _try_mount(
         self, workspace_id: str, lower: Path, upper: Path, work: Path, merged: Path,
@@ -128,7 +156,7 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
             return WorkspaceChanges(agent_id=agent_id)
 
         # The upper dir contains only modified/new files
-        ws_root = self._base / agent_id
+        ws_root = Path(info.path).parent
         upper = ws_root / "upper"
 
         modified: dict[str, str] = {}
@@ -157,10 +185,15 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
 
     async def cleanup(self, agent_id: str) -> None:
         """Unmount and clean up an agent's workspace."""
-        info = self._registry.pop(agent_id, None)
+        validate_storage_segment(agent_id, label="agent_id")
+        info = self._registry.get(agent_id)
         if not info:
             return
-        self._unmount_workspace(agent_id)
+        expected = self._workspace_root(info.project_id, info.agent_id) / "merged"
+        if Path(info.path) != expected:
+            raise ValueError("workspace registry path escaped its Project root")
+        self._unmount_workspace(info)
+        self._registry.pop(agent_id, None)
         log_debug(f"[OverlayFS] Cleaned up workspace for {agent_id}")
 
     async def sync_lower(self, project_id: str) -> SyncResult:
@@ -168,37 +201,75 @@ class OverlayFSWorkspaceProvider(WorkspaceProvider):
         os.makedirs(lower_path, exist_ok=True)
         return SyncResult()
 
-    def _unmount_workspace(self, workspace_id: str) -> None:
+    def _unmount_workspace(self, info: WorkspaceInfo) -> None:
         """Unmount and remove a workspace directory."""
-        ws_root = self._base / workspace_id
+        ws_root = Path(info.path).parent
+        self._unmount_root(ws_root)
+        log_info(f"[OverlayFS] Destroyed workspace {info.agent_id}")
+
+    def _unmount_root(self, ws_root: Path) -> None:
+        """Unmount and remove one already-validated workspace root."""
+        if ws_root.is_symlink() or (os.path.lexists(ws_root) and not ws_root.is_dir()):
+            ws_root.unlink()
+            return
         merged = ws_root / "merged"
 
-        if merged.exists() and merged.is_mount():
+        if not merged.is_symlink() and merged.exists() and merged.is_mount():
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["umount", str(merged)],
-                    capture_output=True, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
                 )
             except Exception as e:
-                log_error(f"[OverlayFS] umount failed: {e}")
+                raise RuntimeError(f"[OverlayFS] umount failed: {e}") from e
+            if result.returncode != 0:
+                detail = result.stderr.strip() or f"exit {result.returncode}"
+                raise RuntimeError(f"[OverlayFS] umount failed: {detail}")
 
         if ws_root.exists():
-            shutil.rmtree(ws_root, ignore_errors=True)
-        log_info(f"[OverlayFS] Destroyed workspace {workspace_id}")
+            shutil.rmtree(ws_root)
 
-    def get_workspace_path(self, workspace_id: str) -> str:
+    def get_workspace_path(
+        self,
+        workspace_id: str,
+        project_id: str | None = None,
+    ) -> str:
         """Return the merged directory path for a workspace."""
-        return str(self._base / workspace_id / "merged")
+        validate_storage_segment(workspace_id, label="agent_id")
+        if project_id is None:
+            info = self._registry.get(workspace_id)
+            if info is None:
+                raise ValueError("project_id is required for an inactive workspace")
+            project_id = info.project_id
+        return str(self._workspace_root(project_id, workspace_id) / "merged")
 
-    def workspace_exists(self, workspace_id: str) -> bool:
-        merged = self._base / workspace_id / "merged"
+    def workspace_exists(
+        self,
+        workspace_id: str,
+        project_id: str | None = None,
+    ) -> bool:
+        merged = Path(self.get_workspace_path(workspace_id, project_id))
         return merged.exists()
 
-    def _fallback_copy(self, workspace_id: str, source_dir: str) -> str:
+    def _fallback_copy(
+        self,
+        workspace_id: str,
+        source_dir: str,
+        ws_root: Path,
+    ) -> str:
         """Full directory copy when OverlayFS is unavailable."""
-        dest = self._base / workspace_id / "merged"
+        dest = ws_root / "merged"
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(source_dir, dest)
         log_info(f"[OverlayFS] Fallback copy for workspace {workspace_id}")
         return str(dest)
+
+    def _workspace_root(self, project_id: str, workspace_id: str) -> Path:
+        project_root = project_child(self._workspaces_dir, project_id)
+        if project_root.is_symlink():
+            raise ValueError("Project workspace path must not be a symlink")
+        return agent_child(project_root, workspace_id)

@@ -20,22 +20,9 @@ import { useMention } from '../../../lib/hooks/useMention';
 import { useAgent } from '@/contexts/AgentContext';
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { Dots } from '@/components/loading';
-import { ActivityIconButton } from '@/components/ActivityIconButton';
+import { AgentChatBrand, AgentChatEmptyState, AgentChatHeader } from '@/components/chat/AgentChatChrome';
+import chatStyles from '@/components/chat/AgentChatSurface.module.css';
 
-// 时间格式化
-const getTimeAgo = (date: Date): string => {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'now';
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
-  if (diffDays < 7) return `${diffDays}d`;
-  return `${Math.floor(diffDays / 7)}w`;
-};
 import { type Tool as DbTool } from '../../../lib/mcpApi';
 
 type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
@@ -58,81 +45,7 @@ interface ChatRuntimeViewProps {
   projectTools?: DbTool[];
   onClose?: () => void;
   onBack?: () => void;
-}
-
-function getAgentTypeIcon(type?: string): React.ReactNode {
-  switch (type) {
-    case 'chat':
-      return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
-    case 'schedule':
-      return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>;
-    case 'webhook':
-      return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>;
-    default:
-      return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
-  }
-}
-
-// Sub-component for agent name button with hover state
-function AgentNameButton({
-  agentIcon,
-  agentName,
-  isEditing,
-  canEdit,
-  onClick
-}: {
-  agentIcon: React.ReactNode;
-  agentName: string;
-  isEditing: boolean;
-  canEdit: boolean;
-  onClick: () => void;
-}) {
-  const [isHovered, setIsHovered] = useState(false);
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={!canEdit}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        height: 30,
-        padding: '0 8px',
-        background: isEditing ? 'var(--po-border)' : isHovered ? 'var(--po-hover)' : 'transparent',
-        border: '1px solid transparent',
-        borderRadius: 6,
-        cursor: canEdit ? 'pointer' : 'default',
-        transition: 'all 0.15s',
-      }}
-    >
-      {/* Agent icon */}
-      <span style={{ fontSize: 14, display: 'flex', alignItems: 'center', color: 'var(--po-text-subtle)' }}>{agentIcon}</span>
-      {/* Agent name */}
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--po-text-muted)' }}>{agentName}</span>
-      {/* Edit pencil icon - only show on hover */}
-      {canEdit && (
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--po-text-disabled)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            opacity: isHovered || isEditing ? 1 : 0,
-            transition: 'opacity 0.15s',
-          }}
-        >
-          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-        </svg>
-      )}
-    </button>
-  );
+  seamlessHeader?: boolean;
 }
 
 export function ChatRuntimeView({
@@ -144,6 +57,7 @@ export function ChatRuntimeView({
   projectTools,
   onClose,
   onBack,
+  seamlessHeader = false,
 }: ChatRuntimeViewProps) {
   const {
     selectedCapabilities,
@@ -177,44 +91,6 @@ export function ChatRuntimeView({
 
   // 编辑 agent 信息
   const [editingName, setEditingName] = useState('');
-
-  const [isEditingInfo, setIsEditingInfo] = useState(false);
-
-  // Chat history 菜单
-  const [isHistoryMenuOpen, setIsHistoryMenuOpen] = useState(false);
-  const historyMenuRef = useRef<HTMLDivElement>(null);
-  const editPopoverRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭菜单
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node)) {
-        setIsHistoryMenuOpen(false);
-      }
-      if (editPopoverRef.current && !editPopoverRef.current.contains(e.target as Node)) {
-        setIsEditingInfo(false);
-      }
-    };
-    if (isHistoryMenuOpen || isEditingInfo) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isHistoryMenuOpen, isEditingInfo]);
-
-  // 初始化编辑值（当打开编辑弹窗时）
-  useEffect(() => {
-    if (isEditingInfo && currentAgent) {
-      setEditingName(currentAgent.name);
-    }
-  }, [isEditingInfo, currentAgent]);
-
-  // 保存 agent 信息
-  const handleSaveAgentInfo = useCallback(() => {
-    if (currentAgentId && editingName.trim()) {
-      updateAgentInfo(currentAgentId, editingName.trim(), currentAgent?.icon || '');
-      setIsEditingInfo(false);
-    }
-  }, [currentAgentId, editingName, currentAgent, updateAgentInfo]);
 
   // 保存资源配置的状态
   const [isSavingResources, setIsSavingResources] = useState(false);
@@ -603,292 +479,27 @@ export function ChatRuntimeView({
     setIsNewChatMode(true); // 标记为新建聊天模式，防止自动选择最新 session
   }, []);
 
+  const isEmpty = messages.length === 0 && !messagesLoading;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--po-control)' }}>
-      {/* Header */}
-      <div style={{
-        height: 40,
-        minHeight: 40,
-        padding: '0 12px',
-        borderBottom: '1px solid var(--po-border-subtle)',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexShrink: 0
-      }}>
-        {/* Left: Agent name with edit button */}
-        <div style={{ position: 'relative' }} ref={editPopoverRef}>
-          <AgentNameButton
-            agentIcon={getAgentTypeIcon(currentAgent?.type)}
-            agentName={agentName}
-            isEditing={isEditingInfo}
-            canEdit={!!currentAgentId}
-            onClick={() => currentAgentId && setIsEditingInfo(!isEditingInfo)}
-          />
-
-          {/* Edit Popover - Compact inline design */}
-          {isEditingInfo && currentAgent && (
-            <div style={{
-              position: 'absolute',
-              top: 'calc(100% + 4px)',
-              left: 0,
-              background: 'var(--po-panel)',
-              border: '1px solid var(--po-border)',
-              borderRadius: 8,
-              boxShadow: '0 4px 16px var(--po-shadow)',
-              zIndex: 100,
-              overflow: 'hidden',
-            }}>
-              {/* Input row with type icon + name */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: 8,
-                gap: 8,
-              }}>
-                {/* Type icon — fixed */}
-                <span style={{
-                  width: 32, height: 32,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'var(--po-hover)', border: '1px solid var(--po-border-strong)', borderRadius: 6,
-                  flexShrink: 0, color: 'var(--po-text-subtle)',
-                }}>
-                  {getAgentTypeIcon(currentAgent?.type)}
-                </span>
-
-                {/* Name input */}
-                <input
-                  type="text"
-                  value={editingName}
-                  onChange={e => setEditingName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') handleSaveAgentInfo();
-                    if (e.key === 'Escape') setIsEditingInfo(false);
-                  }}
-                  placeholder="Agent name"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    height: 32,
-                    padding: '0 10px',
-                    background: 'var(--po-hover)',
-                    border: '1px solid var(--po-border-strong)',
-                    borderRadius: 6,
-                    color: 'var(--po-text)',
-                    fontSize: 13,
-                    outline: 'none',
-                  }}
-                  autoFocus
-                />
-
-                {/* Save button */}
-                <button
-                  onClick={handleSaveAgentInfo}
-                  disabled={!editingName.trim()}
-                  style={{
-                    height: 32,
-                    padding: '0 12px',
-                    background: editingName.trim() ? 'var(--po-success)' : 'var(--po-border)',
-                    border: 'none',
-                    borderRadius: 6,
-                    color: editingName.trim() ? 'var(--po-text-inverse)' : 'var(--po-text-disabled)',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: editingName.trim() ? 'pointer' : 'not-allowed',
-                    flexShrink: 0,
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right side buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {/* Chat History Button - 点击显示菜单 */}
-          {currentAgentId && (
-            <div style={{ position: 'relative' }} ref={historyMenuRef}>
-              <button
-                onClick={() => setIsHistoryMenuOpen(!isHistoryMenuOpen)}
-                title={sessions.length > 0 ? `${sessions.length} chat${sessions.length > 1 ? 's' : ''} - Click to view` : 'No chat history yet'}
-                style={{
-                  width: 30,
-                  height: 30,
-                  background: isHistoryMenuOpen ? 'var(--po-border-strong)' : 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: isHistoryMenuOpen ? 'var(--po-text-inverse)' : (sessions.length > 0 ? 'var(--po-text-muted)' : 'var(--po-text-subtle)'),
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 4,
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => { if (!isHistoryMenuOpen) { e.currentTarget.style.color = 'var(--po-text)'; e.currentTarget.style.background = 'var(--po-border-strong)'; }}}
-                onMouseLeave={e => { if (!isHistoryMenuOpen) { e.currentTarget.style.color = sessions.length > 0 ? 'var(--po-text-muted)' : 'var(--po-text-subtle)'; e.currentTarget.style.background = 'transparent'; }}}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
-              </button>
-
-              {/* Chat History 下拉菜单 */}
-              {isHistoryMenuOpen && (
-                <div style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 4px)',
-                  right: 0,
-                  minWidth: 220,
-                  maxHeight: 300,
-                  overflowY: 'auto',
-                  background: 'var(--po-panel)',
-                  border: '1px solid var(--po-border)',
-                  borderRadius: 6,
-                  boxShadow: '0 4px 12px var(--po-shadow)',
-                  zIndex: 100,
-                }}>
-                  {sessions.length > 0 ? (
-                    sessions.map((session, idx) => {
-                      // 计算时间显示
-                      const createdAt = session.created_at ? new Date(session.created_at) : null;
-                      const timeAgo = createdAt ? getTimeAgo(createdAt) : '';
-                      return (
-                        <button
-                          key={session.id}
-                          onClick={() => {
-                            setCurrentSessionId(session.id);
-                            setIsHistoryMenuOpen(false);
-                          }}
-                          style={{
-                            width: '100%',
-                            height: 32,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                            padding: '0 12px',
-                            background: session.id === currentSessionId ? 'var(--po-border-strong)' : 'transparent',
-                            border: 'none',
-                            borderBottom: idx < sessions.length - 1 ? '1px solid var(--po-hover)' : 'none',
-                            color: session.id === currentSessionId ? 'var(--po-text-inverse)' : 'var(--po-text-muted)',
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            fontSize: 13,
-                          }}
-                          onMouseEnter={e => { if (session.id !== currentSessionId) e.currentTarget.style.background = 'var(--po-hover)'; }}
-                          onMouseLeave={e => { if (session.id !== currentSessionId) e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                          {session.title || `Chat ${sessions.length - idx}`}
-                        </span>
-                          {timeAgo && <span style={{ fontSize: 11, color: 'var(--po-text-disabled)', flexShrink: 0 }}>{timeAgo}</span>}
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div style={{ padding: '16px 12px', fontSize: 13, color: 'var(--po-text-disabled)', textAlign: 'center' }}>
-                      No chat history yet
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* New Chat Button */}
-          {currentAgentId && (
-            <button
-              onClick={handleNewChat}
-              title="New chat"
-              style={{
-                width: 30,
-                height: 30,
-                background: currentSessionId === null && messages.length === 0 ? 'var(--po-border-strong)' : 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: currentSessionId === null && messages.length === 0 ? 'var(--po-text-inverse)' : 'var(--po-text-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 4,
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = 'var(--po-text)'; e.currentTarget.style.background = 'var(--po-border-strong)'; }}
-              onMouseLeave={e => {
-                e.currentTarget.style.color = currentSessionId === null && messages.length === 0 ? 'var(--po-text-inverse)' : 'var(--po-text-subtle)';
-                e.currentTarget.style.background = currentSessionId === null && messages.length === 0 ? 'var(--po-border-strong)' : 'transparent';
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </button>
-          )}
-
-          {/* Settings Button */}
-          {currentAgentId && (
-            <button
-              onClick={() => setIsSettingsExpanded(!isSettingsExpanded)}
-              title={isSettingsExpanded ? "Close settings" : "Edit settings"}
-              style={{
-                width: 30,
-                height: 30,
-                background: isSettingsExpanded ? 'var(--po-border-strong)' : 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: isSettingsExpanded ? 'var(--po-text-inverse)' : 'var(--po-text-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 4,
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { if (!isSettingsExpanded) { e.currentTarget.style.color = 'var(--po-text)'; e.currentTarget.style.background = 'var(--po-border-strong)'; }}}
-              onMouseLeave={e => { if (!isSettingsExpanded) { e.currentTarget.style.color = 'var(--po-text-subtle)'; e.currentTarget.style.background = 'transparent'; }}}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-              </svg>
-            </button>
-          )}
-          {onBack && (
-            <button
-              onClick={onBack}
-              title="Back to integrations"
-              style={{
-                width: 30,
-                height: 30,
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--po-text-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 4,
-                transition: 'all 0.15s',
-                fontSize: 14,
-                lineHeight: 1,
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = 'var(--po-text)'; e.currentTarget.style.background = 'var(--po-border-strong)'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = 'var(--po-text-subtle)'; e.currentTarget.style.background = 'transparent'; }}
-            >
-              ←
-            </button>
-          )}
-          {onClose && (
-            <ActivityIconButton kind="close" title="Close panel" onClick={onClose} />
-          )}
-        </div>
-      </div>
+    <div className={chatStyles.surface} data-seamless-header={seamlessHeader || undefined}>
+      <AgentChatHeader
+        title={sessions.find(session => session.id === currentSessionId)?.title || agentName}
+        agentName={agentName}
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        busy={isLoading}
+        onSelectSession={currentAgentId ? setCurrentSessionId : undefined}
+        onNewChat={currentAgentId ? handleNewChat : undefined}
+        onSettings={currentAgentId ? () => setIsSettingsExpanded(value => !value) : undefined}
+        onRename={currentAgentId ? name => updateAgentInfo(currentAgentId, name, currentAgent?.icon || '') : undefined}
+        onClose={onClose}
+        onBack={onBack}
+      />
 
       {/* Expandable Settings Panel */}
       {isSettingsExpanded && currentAgent && (
-        <div style={{
+        <div className={chatStyles.settings} style={{
           padding: '12px 16px',
           background: 'var(--po-panel-raised)',
           borderBottom: '1px solid var(--po-border-subtle)',
@@ -905,7 +516,7 @@ export function ChatRuntimeView({
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, color: 'var(--po-text-subtle)',
             }}>
-              {getAgentTypeIcon(currentAgent.type)}
+              <AgentChatBrand />
             </span>
 
             {/* 名字输入 */}
@@ -955,7 +566,7 @@ export function ChatRuntimeView({
 
           {/* Agent's bash access - 和 AgentSettingView 保持一致 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--po-text-subtle)' }}>Agent's bash access</span>
+            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--po-text-subtle)' }}>{"Agent's bash access"}</span>
           </div>
           <div
             style={{
@@ -1190,102 +801,60 @@ export function ChatRuntimeView({
         </div>
       )}
 
-      {/* Messages Area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          padding: '16px 12px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 20,
-          background: 'var(--po-control)',
-        }}
-      >
-        {messagesLoading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '10px 0' }}>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <div
-                style={{
-                  width: '70%',
-                  height: 36,
-                  borderRadius: 12,
-                  background: 'var(--po-hover)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-              >
-                <div className='skeleton-shimmer' />
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[90, 75, 60].map((w, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: `${w}%`,
-                    height: 14,
-                    borderRadius: 4,
-                    background: 'var(--po-hover)',
-                    position: 'relative',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div className='skeleton-shimmer' />
+      {/* The empty state and transcript share the same flexible region. */}
+      <div className={`${chatStyles.conversation}${isEmpty ? ` ${chatStyles.emptyConversation}` : ''}`}>
+        {isEmpty ? <AgentChatEmptyState /> : (
+          <div className={chatStyles.transcript} role='log' aria-label='Chat messages' aria-busy={isLoading}>
+            {messagesLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '10px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <div
+                    style={{
+                      width: '100%',
+                      height: 36,
+                      borderRadius: 8,
+                      background: 'var(--po-hover)',
+                      position: 'relative',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div className='skeleton-shimmer' />
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : messages.length === 0 ? (
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '20px',
-            }}
-          >
-            <div style={{ textAlign: 'center' }}>
-              <svg
-                width='24'
-                height='24'
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='currentColor'
-                strokeWidth='1.5'
-                strokeLinecap='round'
-                strokeLinejoin='round'
-                style={{ color: 'var(--po-text-subtle)', marginBottom: 10 }}
-              >
-                <path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' />
-              </svg>
-              <div style={{ fontSize: 12, color: 'var(--po-text-subtle)', lineHeight: 1.6, maxWidth: 200 }}>
-                {`Ask ${agentName} a question...`}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {[90, 75, 60].map((w, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        width: `${w}%`,
+                        height: 14,
+                        borderRadius: 4,
+                        background: 'var(--po-hover)',
+                        position: 'relative',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div className='skeleton-shimmer' />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </div>
-        ) : (
-          messages.map((msg, idx) =>
-            msg.role === 'user' ? (
-              <UserMessage
-                key={msg.id || `user-${idx}`}
-                message={{ content: msg.content, timestamp: msg.timestamp }}
-                showAvatar={false}
-              />
             ) : (
-              <BotMessage
-                key={msg.id || `assistant-${idx}`}
-                message={{ role: 'assistant', content: msg.content }}
-                parts={msg.parts}
-                isStreaming={msg.isStreaming}
-              />
-            )
-          )
+              messages.map((msg, idx) =>
+                msg.role === 'user' ? (
+                  <div key={msg.id || `user-${idx}`} className={chatStyles.message}>
+                    <UserMessage message={{ content: msg.content, timestamp: msg.timestamp }} showAvatar={false} />
+                  </div>
+                ) : (
+                  <div key={msg.id || `assistant-${idx}`} className={`${chatStyles.message} ${chatStyles.assistant}`}>
+                    <BotMessage message={{ role: 'assistant', content: msg.content }} parts={msg.parts} isStreaming={msg.isStreaming} />
+                  </div>
+                )
+              )
+            )}
+            <div ref={messagesEndRef} style={{ height: 1, flexShrink: 0 }} />
+          </div>
         )}
-        <div ref={messagesEndRef} style={{ height: 1 }} />
       </div>
 
       {/* Input Area */}
@@ -1296,6 +865,8 @@ export function ChatRuntimeView({
         onKeyDown={handleKeyDown}
         onSend={handleSend}
         isLoading={isLoading}
+        disabled={!currentAgentId}
+        placeholder={messages.length ? 'Send follow-up' : 'Ask about this project'}
         showMentionMenu={mention.showMentionMenu}
         filteredMentionOptions={mention.filteredMentionOptions}
         mentionIndex={mention.mentionIndex}

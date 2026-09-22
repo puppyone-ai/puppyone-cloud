@@ -1,37 +1,52 @@
 """Workspace Access API.
 
-Access manages scope-bound ways to enter or operate on a workspace:
+Access manages target-bound ways to enter or operate on a workspace:
 Git remote, FS CLI, agents, MCP endpoints, and sandboxes.
 External source relationships belong to Integration, not this router.
 """
 
 from __future__ import annotations
 
-import secrets
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
-from src.exceptions import ErrorCode, NotFoundException
+from src.config import settings
+from src.exceptions import AppException, ErrorCode, NotFoundException
 from src.infra.supabase.client import SupabaseClient
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.dependencies import resolve_org_ids
+from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.platform.repository_target.protocol import require_repository_target_contract
+from src.platform.repository_target.schemas import (
+    RepositoryTargetSchema,
+    repository_target_schema,
+)
+from src.repo.access_credentials import AccessCredentialRepository
 from src.repo.access_surface_repository import AccessSurfaceRepository
-from src.repo.scope_service import ScopeService
 
-router = APIRouter(prefix="/access", tags=["access"])
+router = APIRouter(
+    prefix="/access",
+    tags=["access"],
+    dependencies=[Depends(require_repository_target_contract)],
+)
 
 
 # ── Schemas ─────────────────────────────────────────────────
 
+
 class ConnectionOut(BaseModel):
     id: str
     project_id: str
+    target: RepositoryTargetSchema
     provider: str
     name: str | None = None
     path: str | None = None
@@ -39,6 +54,8 @@ class ConnectionOut(BaseModel):
     direction: str | None = None
     status: str = "active"
     access_key: str | None = None
+    has_key: bool = False
+    key_last4: str | None = None
     gateway_id: str | None = None
     trigger: dict | None = None
     last_synced_at: str | None = None
@@ -56,19 +73,9 @@ class ConnectionUpdate(BaseModel):
 
 # ── Helpers ─────────────────────────────────────────────────
 
+
 def _get_client():
     return SupabaseClient().client
-
-
-def _count_user_access_surfaces_for_project(sb_client, project_id: str) -> int:
-    resp = (
-        sb_client.table("access_surfaces")
-        .select("id", count="exact")
-        .eq("project_id", project_id)
-        .not_.in_("kind", ["git_remote", "cli"])
-        .execute()
-    )
-    return resp.count or 0
 
 
 def _normalize_scope_path(path: str | None) -> str:
@@ -82,75 +89,84 @@ def _normalize_scope_path(path: str | None) -> str:
     return value
 
 
-def _scope_rows_for_surfaces(sb_client, rows: list[dict]) -> dict[str, dict]:
-    scope_ids = sorted({r.get("scope_id") for r in rows if r.get("scope_id")})
-    if not scope_ids:
-        return {}
-    resp = (
-        sb_client.table("repo_scopes")
-        .select("*")
-        .in_("id", scope_ids)
-        .execute()
-    )
-    return {r["id"]: r for r in (resp.data or [])}
+# Config keys that hold machine credentials / secrets. These must never be
+# returned by ordinary list/detail/mutation responses. Raw values are only
+# meaningful in the one-time create/regenerate issuance responses.
+_SECRET_CONFIG_KEYS = {
+    "access_key",
+    "mcp_api_key",
+    "api_key",
+    "secret",
+    "client_secret",
+    "token",
+    "bearer_token",
+    "refresh_token",
+    "access_token",
+    "password",
+    "private_key",
+    "credential",
+    "credentials",
+}
+
+_SECRET_CONFIG_KEY_SUFFIXES = (
+    "_access_key",
+    "_api_key",
+    "_secret",
+    "_password",
+    "_private_key",
+    "_bearer_token",
+    "_access_token",
+    "_refresh_token",
+    "_credential",
+    "_credentials",
+)
 
 
-def _scope_for_path(
-    project_id: str,
-    path: str | None,
-    *,
-    name: str | None = None,
-    exclude: list[str] | None = None,
-    mode: str = "rw",
-) -> dict:
-    target = _normalize_scope_path(path)
-    scope_service = ScopeService()
-    if target == "":
-        scope = scope_service.ensure_root_scope(project_id)
+def _normalise_config_key(key: Any) -> str:
+    """Return a conservative snake-case-ish representation for secret checks."""
+    import re
+
+    value = re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower()
+    return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
+
+
+def _is_secret_config_key(key: Any) -> bool:
+    normalised = _normalise_config_key(key)
+    return normalised in _SECRET_CONFIG_KEYS or normalised.endswith(_SECRET_CONFIG_KEY_SUFFIXES)
+
+
+def _redact_config(value: Any) -> Any:
+    """Recursively remove credential-bearing fields from response config.
+
+    Access surface config is intentionally provider-extensible, so a shallow
+    blacklist is unsafe: a provider can nest credentials under OAuth/session
+    metadata and ordinary read or mutation responses would echo them. Keep the
+    non-secret shape for existing clients, but fail closed for known credential
+    names at every depth (including camelCase variants and provider prefixes).
+    """
+    if isinstance(value, dict):
         return {
-            "id": scope.id,
-            "project_id": scope.project_id,
-            "name": scope.name,
-            "path": scope.path,
-            "access_key": scope.access_key,
+            key: _redact_config(child)
+            for key, child in value.items()
+            if not _is_secret_config_key(key)
         }
-    for scope in scope_service.list_for_project(project_id):
-        if _normalize_scope_path(scope.path) == target:
-            return {
-                "id": scope.id,
-                "project_id": scope.project_id,
-                "name": scope.name,
-                "path": scope.path,
-                "access_key": scope.access_key,
-            }
-    scope = scope_service.create(
-        project_id=project_id,
-        name=name or target.rsplit("/", 1)[-1] or "Scope",
-        path=target,
-        exclude=exclude or [],
-        mode=mode,
-    )
-    return {
-        "id": scope.id,
-        "project_id": scope.project_id,
-        "name": scope.name,
-        "path": scope.path,
-        "access_key": scope.access_key,
-    }
+    if isinstance(value, list):
+        return [_redact_config(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_config(child) for child in value)
+    return value
 
 
-def _access_key_for(row: dict, scope: dict | None) -> str | None:
-    cfg = row.get("config") or {}
-    provider = row.get("kind", row.get("provider", ""))
-    if provider in {"git_remote", "cli"}:
-        return (scope or {}).get("access_key")
-    if provider == "agent":
-        return cfg.get("mcp_api_key") or cfg.get("access_key")
-    if provider == "mcp":
-        return None
-    if provider == "sandbox":
-        return cfg.get("access_key")
-    return cfg.get("access_key")
+def _contains_secret_config_key(value: Any) -> bool:
+    """Reject attempts to smuggle credentials through the metadata endpoint."""
+    if isinstance(value, dict):
+        return any(
+            _is_secret_config_key(key) or _contains_secret_config_key(child)
+            for key, child in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_contains_secret_config_key(child) for child in value)
+    return False
 
 
 def _created_or_updated(value: Any) -> str | None:
@@ -166,8 +182,17 @@ def _enrich(rows: list[dict], sb_client) -> list[ConnectionOut]:
 
     Auto-disambiguates duplicate display names by appending path or a counter,
     so users can tell apart multiple connections of the same provider type.
+
+    This ordinary response serializer is credential-free by construction.
+    Raw credentials are issued only by the explicit create/regenerate response
+    models; callers cannot opt this serializer into returning a bearer token.
     """
-    scopes = _scope_rows_for_surfaces(sb_client, rows)
+    scopes = AccessSurfaceRepository(sb_client).scope_rows_for(rows)
+    from src.repo.access_credentials import AccessCredentialRepository
+
+    credentials = AccessCredentialRepository(sb_client).list_active_by_surface(
+        [row["id"] for row in rows]
+    )
     # First pass: build raw entries
     entries = []
     for r in rows:
@@ -177,23 +202,28 @@ def _enrich(rows: list[dict], sb_client) -> list[ConnectionOut]:
         base_name = r.get("name") or cfg.get("name") or cfg.get("sync_url") or kind
         node_path = _normalize_scope_path((scope or {}).get("path"))
         node_name = node_path.rsplit("/", 1)[-1] if node_path else None
-        entries.append({
-            "row": r,
-            "cfg": cfg,
-            "scope": scope,
-            "base_name": base_name,
-            "node_path": node_path,
-            "node_name": node_name,
-        })
+        entries.append(
+            {
+                "row": r,
+                "cfg": cfg,
+                "scope": scope,
+                "kind": kind,
+                "base_name": base_name,
+                "node_path": node_path,
+                "node_name": node_name,
+            }
+        )
 
     # Second pass: detect duplicates and disambiguate names
     from collections import Counter
+
     name_counts = Counter(e["base_name"] for e in entries)
     name_seen: dict[str, int] = {}
 
     out: list[ConnectionOut] = []
     for e in entries:
         r = e["row"]
+        cfg = e["cfg"]
         base_name = e["base_name"]
         node_path = e["node_path"]
 
@@ -209,49 +239,71 @@ def _enrich(rows: list[dict], sb_client) -> list[ConnectionOut]:
         else:
             name = base_name
 
-        out.append(ConnectionOut(
-            id=r["id"],
-            project_id=r["project_id"],
-            provider=kind,
-            name=name,
-            path=node_path or None,
-            node_name=e["node_name"],
-            direction=cfg.get("direction"),
-            status=r.get("status", "active"),
-            access_key=_access_key_for(r, e["scope"]),
-            gateway_id=(e["cfg"].get("gateway_id") if isinstance(e["cfg"], dict) else None),
-            trigger=cfg.get("trigger"),
-            last_synced_at=_created_or_updated(cfg.get("last_seen_at") or cfg.get("last_run_at")),
-            error_message=cfg.get("error_message"),
-            config=e["cfg"],
-            created_at=_created_or_updated(r.get("created_at")),
-            updated_at=_created_or_updated(r.get("updated_at")),
-        ))
+        credential = credentials.get(r["id"])
+        has_key = credential is not None
+        key_last4 = credential.get("key_last4") if credential else None
+
+        out.append(
+            ConnectionOut(
+                id=r["id"],
+                project_id=r["project_id"],
+                target=repository_target_schema(
+                    ScopeTarget(
+                        project_id=r["project_id"],
+                        scope_id=str(r["scope_id"]),
+                    )
+                    if r.get("scope_id") is not None
+                    else ProjectRootTarget(project_id=r["project_id"])
+                ),
+                provider=e["kind"],
+                name=name,
+                path=node_path or None,
+                node_name=e["node_name"],
+                direction=cfg.get("direction"),
+                status=r.get("status", "active"),
+                access_key=None,
+                has_key=has_key,
+                key_last4=key_last4,
+                gateway_id=(e["cfg"].get("gateway_id") if isinstance(e["cfg"], dict) else None),
+                trigger=cfg.get("trigger"),
+                last_synced_at=_created_or_updated(
+                    cfg.get("last_seen_at") or cfg.get("last_run_at")
+                ),
+                error_message=cfg.get("error_message"),
+                config=_redact_config(e["cfg"]),
+                created_at=_created_or_updated(r.get("created_at")),
+                updated_at=_created_or_updated(r.get("updated_at")),
+            )
+        )
     return out
 
 
-def _get_user_project_ids(sb_client, org_ids: list[str]) -> list[str]:
-    """Get all project IDs across the user's organizations.
-
-    NOTE: This relies on resolve_org_ids() which queries org_members for the
-    user.  If a user was added to an org but their org_members row is missing
-    (e.g. RLS policy prevents the service-role read, or the invite flow didn't
-    insert a row), they will get zero org_ids and therefore zero project_ids,
-    causing 404 on access-point mutations.  This is a data/RLS issue, not a
-    code bug — ensure org_members rows exist for all invited users.
-    """
+def _get_user_project_ids(
+    sb_client,
+    org_ids: list[str],
+    authorization: AuthorizationService,
+    user_id: str,
+) -> list[str]:
+    """Discover tenant candidates, then filter them through ProjectGrant."""
     if not org_ids:
         return []
-    resp = (
-        sb_client.table("projects")
-        .select("id")
-        .in_("org_id", org_ids)
-        .execute()
+    resp = sb_client.table("projects").select("id").in_("org_id", org_ids).execute()
+    return authorization.accessible_project_ids(
+        [str(row["id"]) for row in (resp.data or [])], user_id
     )
-    return [r["id"] for r in resp.data]
+
+
+def _require_connection_project_access(
+    authorization: AuthorizationService,
+    project_id: str,
+    user_id: str,
+    action: ProjectAction,
+) -> None:
+    authorization.authorize(project_id, user_id, action)
 
 
 # ── Endpoints ───────────────────────────────────────────────
+
 
 @router.get(
     "/",
@@ -264,31 +316,32 @@ def list_connections(
     provider: str | None = Query(None),
     connection_status: str | None = Query(None, alias="status"),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     sb = _get_client()
     org_ids = resolve_org_ids(None, current_user.user_id)
+    allowed_project_ids = _get_user_project_ids(
+        sb, org_ids, authorization, current_user.user_id
+    )
 
     if project_id:
+        # project_id is client-controlled input and must be re-authorized against
+        # the caller's own membership set — otherwise this list endpoint is an IDOR
+        # into any tenant's access points. Mirror get_connection's non-leak
+        # convention: return empty rather than confirming another tenant's project.
+        if project_id not in allowed_project_ids:
+            return ApiResponse.success(data=[], message="No access connections")
         project_ids = [project_id]
     else:
-        project_ids = _get_user_project_ids(sb, org_ids)
+        project_ids = allowed_project_ids
 
     if not project_ids:
         return ApiResponse.success(data=[], message="No access connections")
 
-    query = sb.table("access_surfaces").select("*")
-
-    if len(project_ids) == 1:
-        query = query.eq("project_id", project_ids[0])
-    else:
-        query = query.in_("project_id", project_ids)
-
-    if provider:
-        query = query.eq("kind", provider)
-    if connection_status:
-        query = query.eq("status", connection_status)
-
-    rows = query.order("created_at").execute().data
+    rows = AccessSurfaceRepository(sb).list_by_projects(
+        project_ids, kind=provider, status=connection_status
+    )
+    # List views never emit raw credentials (IDOR would otherwise leak usable keys).
     return ApiResponse.success(data=_enrich(rows, sb), message="Access connections listed")
 
 
@@ -301,19 +354,17 @@ def list_connections(
 def get_connection(
     connection_id: str = Path(...),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     sb = _get_client()
-    resp = sb.table("access_surfaces").select("*").eq("id", connection_id).execute()
-    if not resp.data:
+    row = AccessSurfaceRepository(sb).get(connection_id)
+    if not row:
         raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
+    _require_connection_project_access(
+        authorization, row["project_id"], current_user.user_id, ProjectAction.ACCESS_READ
+    )
 
-    row = resp.data[0]
-    # Verify user has access via org membership
-    org_ids = resolve_org_ids(None, current_user.user_id)
-    pids = _get_user_project_ids(sb, org_ids)
-    if row["project_id"] not in pids:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
-
+    # Detail views must not echo raw credentials (access_key / config secrets).
     return ApiResponse.success(data=_enrich([row], sb)[0], message="Access connection found")
 
 
@@ -327,28 +378,33 @@ async def update_connection(
     payload: ConnectionUpdate,
     connection_id: str = Path(...),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     sb = _get_client()
 
-    resp = (
-        sb.table("access_surfaces")
-        .select("*")
-        .eq("id", connection_id)
-        .execute()
+    surfaces = AccessSurfaceRepository(sb)
+    row = surfaces.get(connection_id)
+    if not row:
+        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
+    _require_connection_project_access(
+        authorization,
+        row["project_id"],
+        current_user.user_id,
+        ProjectAction.ACCESS_MANAGE,
     )
-    if not resp.data:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
-
-    row = resp.data[0]
-    org_ids = resolve_org_ids(None, current_user.user_id)
-    pids = _get_user_project_ids(sb, org_ids)
-    if row["project_id"] not in pids:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
 
     fields: dict[str, Any] = {}
     if payload.status is not None:
         fields["status"] = payload.status
     if payload.config is not None:
+        if _contains_secret_config_key(payload.config):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Credentials cannot be updated through access metadata; "
+                    "use the dedicated create or regenerate-key flow"
+                ),
+            )
         cfg = dict(row.get("config") or {})
         cfg.update(payload.config)
         fields["config"] = cfg
@@ -357,10 +413,10 @@ async def update_connection(
         cfg["trigger"] = payload.trigger
         fields["config"] = cfg
 
-    sb.table("access_surfaces").update(fields).eq("id", connection_id).execute()
-
-    updated = sb.table("access_surfaces").select("*").eq("id", connection_id).execute()
-    return ApiResponse.success(data=_enrich(updated.data, sb)[0], message="Access connection updated")
+    updated = surfaces.update(connection_id, fields)
+    return ApiResponse.success(
+        data=_enrich([updated], sb)[0], message="Access connection updated"
+    )
 
 
 @router.delete(
@@ -372,21 +428,25 @@ async def update_connection(
 async def delete_connection(
     connection_id: str = Path(...),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     sb = _get_client()
 
-    resp = sb.table("access_surfaces").select("project_id, kind").eq("id", connection_id).execute()
-    if not resp.data:
+    surfaces = AccessSurfaceRepository(sb)
+    row = surfaces.get(connection_id)
+    if not row:
         raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
 
-    org_ids = resolve_org_ids(None, current_user.user_id)
-    pids = _get_user_project_ids(sb, org_ids)
-    if resp.data[0]["project_id"] not in pids:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
+    _require_connection_project_access(
+        authorization,
+        row["project_id"],
+        current_user.user_id,
+        ProjectAction.ACCESS_MANAGE,
+    )
 
-    if resp.data[0].get("kind") in {"git_remote", "cli"}:
+    if row.get("kind") in {"git_remote", "cli"}:
         raise HTTPException(status_code=400, detail="Built-in access surfaces cannot be deleted")
-    AccessSurfaceRepository().delete(connection_id)
+    surfaces.delete(connection_id)
     return ApiResponse.success(message="Access connection deleted")
 
 
@@ -400,6 +460,7 @@ def rename_connection(
     connection_id: str = Path(...),
     body: dict = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """Update only the display name stored in config.name."""
     new_name = (body.get("name") or "").strip()
@@ -407,72 +468,95 @@ def rename_connection(
         raise HTTPException(status_code=400, detail="name must not be empty")
 
     sb = _get_client()
-    resp = sb.table("access_surfaces").select("*").eq("id", connection_id).execute()
-    if not resp.data:
+    surfaces = AccessSurfaceRepository(sb)
+    row = surfaces.get(connection_id)
+    if not row:
         raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
-
-    row = resp.data[0]
-    org_ids = resolve_org_ids(None, current_user.user_id)
-    pids = _get_user_project_ids(sb, org_ids)
-    if row["project_id"] not in pids:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
+    _require_connection_project_access(
+        authorization,
+        row["project_id"],
+        current_user.user_id,
+        ProjectAction.ACCESS_MANAGE,
+    )
 
     cfg = dict(row.get("config") or {})
     cfg["name"] = new_name
-    cfg["name"] = new_name
-    sb.table("access_surfaces").update({"name": new_name, "config": cfg}).eq("id", connection_id).execute()
-
-    updated = sb.table("access_surfaces").select("*").eq("id", connection_id).execute()
-    return ApiResponse.success(data=_enrich(updated.data, sb)[0], message="Access connection renamed")
+    updated = surfaces.update(connection_id, {"name": new_name, "config": cfg})
+    return ApiResponse.success(
+        data=_enrich([updated], sb)[0], message="Access connection renamed"
+    )
 
 
 @router.post(
     "/{connection_id}/regenerate-key",
     response_model=ApiResponse[dict],
-    summary="Regenerate access key for an access connection",
+    summary="Rotate a credential for an access connection",
     status_code=status.HTTP_200_OK,
 )
 def regenerate_key(
     connection_id: str = Path(...),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     sb = _get_client()
 
-    resp = sb.table("access_surfaces").select("*").eq("id", connection_id).execute()
-    if not resp.data:
+    row = AccessSurfaceRepository(sb).get(connection_id)
+    if not row:
         raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
-
-    row = resp.data[0]
-    org_ids = resolve_org_ids(None, current_user.user_id)
-    pids = _get_user_project_ids(sb, org_ids)
-    if row["project_id"] not in pids:
-        raise NotFoundException("Access connection not found", code=ErrorCode.NOT_FOUND)
+    _require_connection_project_access(
+        authorization,
+        row["project_id"],
+        current_user.user_id,
+        ProjectAction.CREDENTIAL_MANAGE,
+    )
 
     provider = row.get("kind", row.get("provider", ""))
-    if provider in {"git_remote", "cli"}:
-        new_key = ScopeService().regenerate_access_key(row["scope_id"])
-        if not new_key:
-            raise NotFoundException("Scope not found", code=ErrorCode.NOT_FOUND)
-        surfaces = (
-            sb.table("access_surfaces")
-            .select("*")
-            .eq("scope_id", row["scope_id"])
-            .in_("kind", ["git_remote", "cli"])
-            .execute()
-        ).data or []
-        for surface in surfaces:
-            cfg = dict(surface.get("config") or {})
-            cfg["access_key"] = new_key
-            sb.table("access_surfaces").update({"config": cfg}).eq("id", surface["id"]).execute()
-        return ApiResponse.success(data={"access_key": new_key}, message="Key regenerated")
+    if provider == "git_remote":
+        raise AppException(
+            code=ErrorCode.CLIENT_UPGRADE_REQUIRED,
+            status_code=status.HTTP_410_GONE,
+            message=(
+                "Git credentials must be client-generated through "
+                "POST /api/v1/projects/{project_id}/git-credentials"
+            ),
+            details={"required_repository_contract": 2},
+        )
+    if provider == "cli":
+        new_key = AccessCredentialRepository(sb).issue_bearer_token(
+            access_surface_id=row["id"],
+            org_id=row["org_id"],
+            project_id=row["project_id"],
+            prefix="cli",
+            created_by=current_user.user_id,
+        )
+        target = (
+            ScopeTarget(project_id=row["project_id"], scope_id=row["scope_id"])
+            if row.get("scope_id") is not None
+            else ProjectRootTarget(project_id=row["project_id"])
+        )
+        return ApiResponse.success(
+            data={
+                "credential": new_key,
+                "target": repository_target_schema(target).model_dump(),
+            },
+            message="Key regenerated",
+        )
     if provider == "sandbox":
-        prefix = "sbx"
-        key_field = "access_key"
+        from src.connectors.sandbox_endpoint.repository import SandboxEndpointRepository
+
+        endpoint = SandboxEndpointRepository(sb).regenerate_access_key(connection_id)
+        if not endpoint or not endpoint.get("access_key"):
+            raise NotFoundException("Sandbox endpoint not found", code=ErrorCode.NOT_FOUND)
+        return ApiResponse.success(
+            data={"access_key": endpoint["access_key"]}, message="Key regenerated"
+        )
     elif provider == "mcp":
         from src.connectors.mcp_endpoint.repository import McpEndpointRepository
         from src.connectors.mcp_endpoint.service import McpEndpointService
 
-        endpoint = McpEndpointService(repository=McpEndpointRepository()).regenerate_key(connection_id)
+        endpoint = McpEndpointService(repository=McpEndpointRepository()).regenerate_key(
+            connection_id
+        )
         if not endpoint or not endpoint.get("api_key"):
             raise NotFoundException("MCP endpoint not found", code=ErrorCode.NOT_FOUND)
         return ApiResponse.success(
@@ -483,21 +567,19 @@ def regenerate_key(
             message="Key regenerated",
         )
     elif provider == "agent":
-        prefix = "cli"
-        key_field = "mcp_api_key"
-    else:
-        prefix = "key"
-        key_field = "access_key"
+        from src.connectors.agent.config.repository import AgentRepository
 
-    new_key = f"{prefix}_{secrets.token_urlsafe(32)}"
-    cfg = dict(row.get("config") or {})
-    cfg[key_field] = new_key
-    sb.table("access_surfaces").update({"config": cfg}).eq("id", connection_id).execute()
-
-    return ApiResponse.success(data={"access_key": new_key}, message="Key regenerated")
+        new_key = AgentRepository(sb).regenerate_mcp_api_key(connection_id)
+        if not new_key:
+            raise NotFoundException("Agent not found", code=ErrorCode.NOT_FOUND)
+        return ApiResponse.success(
+            data={"access_key": new_key}, message="Key regenerated"
+        )
+    raise HTTPException(status_code=400, detail="This access surface has no bearer key")
 
 
 # ── Connection Types (unified) ─────────────────────────────
+
 
 @router.get(
     "/types",
@@ -510,15 +592,6 @@ def list_connection_types():
     Returns available workspace Access surface types.
     """
     access_types = [
-        {
-            "provider": "direct",
-            "display_name": "Git Remote",
-            "description": "Scoped Git remote and CLI credentials",
-            "auth": "access_key",
-            "creation_mode": "direct",
-            "category": "access",
-            "icon": "git-branch",
-        },
         {
             "provider": "agent",
             "display_name": "Chat Agent",
@@ -553,21 +626,33 @@ def list_connection_types():
 
 # ── Unified Create ─────────────────────────────────────────
 
+
 class UnifiedConnectionCreate(BaseModel):
     """
     Single request schema for creating ANY access type.
     The `provider` field determines which service handles creation.
     """
+
     project_id: str = Field(..., description="Project ID")
+    target: RepositoryTargetSchema | None = Field(
+        None,
+        description="Required for direct Git/CLI access; ignored by other providers",
+    )
     provider: str = Field(..., description="Access type: gmail, github, agent, mcp, sandbox, ...")
     name: str | None = Field(None, description="Display name")
     path: str | None = Field(None, description="Target version path")
     config: dict = Field(default_factory=dict, description="Provider-specific configuration")
-    gateway_id: str | None = Field(None, description="Gateway ID (required for datasource providers)")
+    gateway_id: str | None = Field(
+        None, description="Gateway ID (required for datasource providers)"
+    )
     direction: str | None = Field(None, description="Sync direction (datasource only)")
     trigger: dict | None = Field(None, description="Trigger config (datasource/agent)")
-    credentials_ref: str | None = Field(None, description="OAuth credentials reference (datasource)")
-    sync_mode: str | None = Field(None, description="Sync mode: manual, scheduled, realtime (datasource)")
+    credentials_ref: str | None = Field(
+        None, description="OAuth credentials reference (datasource)"
+    )
+    sync_mode: str | None = Field(
+        None, description="Sync mode: manual, scheduled, realtime (datasource)"
+    )
     conflict_strategy: str | None = Field(None, description="Conflict strategy (datasource)")
     accesses: list[dict] | None = Field(None, description="Node access bindings (agent/mcp)")
     tools_config: list[dict] | None = Field(None, description="Tool bindings (mcp)")
@@ -580,8 +665,24 @@ class UnifiedConnectionOut(BaseModel):
     name: str | None = None
     status: str = "active"
     gateway_id: str | None = None
-    access_key: str | None = None
-    ap_base: str | None = None
+    target: RepositoryTargetSchema | None = None
+    git_url: str | None = None
+    git_username: str | None = None
+    git_credential: str | None = None
+    cli_access_key: str | None = None
+    mcp_api_key: str | None = Field(
+        None,
+        description="One-time MCP bearer credential returned only by creation",
+    )
+    mcp_server_url: str | None = Field(
+        None,
+        description="Canonical public MCP proxy URL; authenticate with Authorization: Bearer",
+    )
+
+
+def _public_mcp_server_url() -> str | None:
+    base = (settings.PUBLIC_URL or "").rstrip("/")
+    return f"{base}/api/v1/mcp/proxy" if base else None
 
 
 def _create_agent(payload: UnifiedConnectionCreate) -> UnifiedConnectionOut:
@@ -621,10 +722,14 @@ def _create_agent(payload: UnifiedConnectionCreate) -> UnifiedConnectionOut:
         provider="agent",
         name=agent.name,
         status="active",
+        mcp_api_key=agent.mcp_api_key,
+        mcp_server_url=_public_mcp_server_url(),
     )
 
 
-def _create_mcp(payload: UnifiedConnectionCreate, *, created_by: str | None = None) -> UnifiedConnectionOut:
+def _create_mcp(
+    payload: UnifiedConnectionCreate, *, created_by: str | None = None
+) -> UnifiedConnectionOut:
     from src.connectors.mcp_endpoint.repository import McpEndpointRepository
     from src.connectors.mcp_endpoint.schemas import McpAccessItem, McpToolItem
     from src.connectors.mcp_endpoint.service import McpEndpointService
@@ -649,6 +754,8 @@ def _create_mcp(payload: UnifiedConnectionCreate, *, created_by: str | None = No
         provider="mcp",
         name=row["name"],
         status=row["status"],
+        mcp_api_key=row.get("api_key"),
+        mcp_server_url=_public_mcp_server_url(),
     )
 
 
@@ -661,7 +768,9 @@ def _create_sandbox(payload: UnifiedConnectionCreate) -> UnifiedConnectionOut:
 
     cfg = payload.config
     mounts = [SandboxMountItem(**m) for m in cfg.get("mounts", [])] or None
-    resource_limits = SandboxResourceLimits(**cfg["resource_limits"]) if cfg.get("resource_limits") else None
+    resource_limits = (
+        SandboxResourceLimits(**cfg["resource_limits"]) if cfg.get("resource_limits") else None
+    )
 
     row = service.create_endpoint(
         project_id=payload.project_id,
@@ -682,57 +791,6 @@ def _create_sandbox(payload: UnifiedConnectionCreate) -> UnifiedConnectionOut:
     )
 
 
-def _create_direct(payload: UnifiedConnectionCreate) -> UnifiedConnectionOut:
-    """Return direct Git + FS HTTP API credentials for a scope."""
-    sb = _get_client()
-    cfg = payload.config
-    scope = cfg.get("scope", {})
-    scope_path = scope.get("path", payload.path or "") if isinstance(scope, dict) else (payload.path or "")
-    mode = scope.get("mode", "rw") if isinstance(scope, dict) else "rw"
-    exclude = scope.get("exclude", []) if isinstance(scope, dict) else []
-    scope_row = _scope_for_path(
-        payload.project_id,
-        scope_path,
-        name=payload.name or "Direct Access",
-        exclude=list(exclude or []),
-        mode=mode,
-    )
-    surface_resp = (
-        sb.table("access_surfaces")
-        .select("id, status")
-        .eq("scope_id", scope_row["id"])
-        .eq("kind", "git_remote")
-        .limit(1)
-        .execute()
-    )
-    if not surface_resp.data:
-        scope_model = ScopeService().get(scope_row["id"])
-        if scope_model is None:
-            raise RuntimeError("scope disappeared while creating direct access")
-        AccessSurfaceRepository().ensure_scope_defaults(scope_model)
-        surface_resp = (
-            sb.table("access_surfaces")
-            .select("id, status")
-            .eq("scope_id", scope_row["id"])
-            .eq("kind", "git_remote")
-            .limit(1)
-            .execute()
-        )
-    if not surface_resp.data:
-        raise RuntimeError("git_remote access surface was not created")
-    surface = surface_resp.data[0]
-
-    return UnifiedConnectionOut(
-        id=surface["id"],
-        project_id=payload.project_id,
-        provider="direct",
-        name=payload.name or "Direct Access",
-        status=surface.get("status", "active"),
-        access_key=scope_row["access_key"],
-        ap_base=f"/git/ap/{scope_row['access_key']}.git",
-    )
-
-
 @router.post(
     "/",
     response_model=ApiResponse[UnifiedConnectionOut],
@@ -743,6 +801,7 @@ async def create_connection(
     payload: UnifiedConnectionCreate,
     current_user: CurrentUser = Depends(get_current_user),
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """
     Unified entry point for creating Access surfaces.
@@ -751,18 +810,28 @@ async def create_connection(
     - agent: creates a chat agent
     - mcp: creates an MCP endpoint
     - sandbox: creates a sandbox endpoint
-    - direct: returns scoped Git Remote and FS CLI credentials
+    The removed ``direct`` provider returns 410 so legacy clients cannot cause
+    the server to generate a plaintext human Git credential. Human Git
+    credentials are accepted only by the client-generated, idempotent Project
+    credential endpoint.
     """
     from src.platform.project.repository import ProjectRepositorySupabase
-    project_repo = ProjectRepositorySupabase()
-    if not project_repo.verify_project_access(payload.project_id, current_user.user_id):
-        raise HTTPException(status_code=403, detail="Access denied to this project")
-    project = project_repo.get_by_id(payload.project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
 
     provider = payload.provider.lower()
-    if provider not in {"agent", "mcp", "sandbox", "direct"}:
+    if provider == "direct":
+        raise AppException(
+            code=ErrorCode.CLIENT_UPGRADE_REQUIRED,
+            status_code=status.HTTP_410_GONE,
+            message=(
+                "Direct Git credential creation was removed; use "
+                "POST /api/v1/projects/{project_id}/git-credentials"
+            ),
+            details={
+                "code": "legacy_direct_access_removed",
+                "required_repository_contract": 2,
+            },
+        )
+    if provider not in {"agent", "mcp", "sandbox"}:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -771,21 +840,27 @@ async def create_connection(
             ),
         )
 
+    action_by_provider = {
+        "agent": ProjectAction.AGENT_MANAGE,
+        "mcp": ProjectAction.MCP_MANAGE,
+        "sandbox": ProjectAction.SANDBOX_MANAGE,
+    }
+    authorization.authorize(
+        payload.project_id,
+        current_user.user_id,
+        action_by_provider[provider],
+    )
+    project_repo = ProjectRepositorySupabase()
+    project = project_repo.get_by_id(payload.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     # ── Duplicate detection ────────────────────────────────────────
     # Block creation if an identical access surface already exists.
     # "Identical" = same project + provider + path + key config fields.
-    sb = _get_client()
-    existing = []
-    existing_scopes: dict[str, dict] = {}
-    if provider != "direct":
-        existing = (
-            sb.table("access_surfaces")
-            .select("*")
-            .eq("project_id", payload.project_id)
-            .eq("kind", provider)
-            .execute()
-        ).data or []
-        existing_scopes = _scope_rows_for_surfaces(sb, existing)
+    surfaces = AccessSurfaceRepository()
+    existing = surfaces.list_by_project(payload.project_id, kind=provider)
+    existing_scopes = surfaces.scope_rows_for(existing)
 
     for ex in existing:
         ex_scope = existing_scopes.get(ex.get("scope_id")) or {}
@@ -794,8 +869,6 @@ async def create_connection(
         if ex_path != new_path:
             continue
         # Same path — compare key config fields per provider
-        ex_cfg = ex.get("config") or {}
-        new_cfg = payload.config or {}
         is_dup = False
         if provider in ("agent", "mcp", "sandbox"):
             is_dup = True
@@ -809,18 +882,17 @@ async def create_connection(
                 },
             )
 
-    if provider != "direct":
-        entitlement_service.require_allowed(
-            project.org_id,
-            "access_surface_kinds",
-            provider,
-        )
-        entitlement_service.require_feature(project.org_id, f"access_surface.{provider}")
-        entitlement_service.require_capacity(
-            project.org_id,
-            "access_surfaces.max_per_project",
-            current_count=_count_user_access_surfaces_for_project(sb, payload.project_id),
-        )
+    entitlement_service.require_allowed(
+        project.org_id,
+        "access_surface_kinds",
+        provider,
+    )
+    entitlement_service.require_feature(project.org_id, f"access_surface.{provider}")
+    entitlement_service.require_capacity(
+        project.org_id,
+        "access_surfaces.max_per_project",
+        current_count=surfaces.count_user_surfaces_by_project(payload.project_id),
+    )
 
     try:
         if provider == "agent":
@@ -829,13 +901,14 @@ async def create_connection(
             result = _create_mcp(payload, created_by=current_user.user_id)
         elif provider == "sandbox":
             result = _create_sandbox(payload)
-        elif provider == "direct":
-            result = _create_direct(payload)
     except HTTPException:
         raise
     except Exception as e:
         from src.utils.logger import log_error
+
         log_error(f"Failed to create {provider} access surface: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create {provider} access surface: {e}") from e
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create {provider} access surface: {e}"
+        ) from e
 
     return ApiResponse.success(data=result, message=f"{provider} access surface created")

@@ -1,7 +1,8 @@
 'use client';
+import { useProjectSession } from '@/features/workspace/session';
 
 import { use, useMemo, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { get } from '@/lib/apiClient';
 import useSWR from 'swr';
@@ -101,6 +102,7 @@ export default function HomePage({
 }) {
   const { projectId } = use(params);
   const router = useRouter();
+  const openPanel = useProjectSession(state => state.openPanel);
 
   // Shared hover key for the Data ApChip ↔ AccessPointsListCard
   // handshake.  When the user mouses over either side, this stores
@@ -211,7 +213,7 @@ export default function HomePage({
   const accessByPath = useMemo(() => {
     const map = new Map<string, DashboardConnection[]>();
     for (const conn of connections) {
-      // Normalize the three "root scope" path representations the
+      // Normalize the three legacy Project-root path representations the
       // backend can produce into a single key — '' — so downstream
       // consumers only have to look in one place:
       //
@@ -220,7 +222,7 @@ export default function HomePage({
       //                    enforced; still in some long-lived projects
       //   path === ''    — early hand-bootstrapped rows
       //
-      // Without this, the root TreeRow's ApChip lookup
+      // Without this, the Project-root TreeRow's ApChip lookup
       // (`accessByPath.get('')`) misses the AP entirely because its
       // path was '/' under the previous `conn.path || ''` pass-through
       // (truthy → key stays '/'), so the chip silently doesn't render
@@ -438,9 +440,9 @@ export default function HomePage({
             * ``healthy``. Silent on healthy/empty so the home page
             * stays calm; expands to a colored banner with a "Rebuild
             * cache" action button when current_corrupt is detected.
-            * The banner reads from ``GET /git/{id}.git/health`` every
-            * 60s so cache rebuilds (background workers, manual
-            * triggers from ops) reflect quickly.
+            * The banner reads from the JWT-authenticated Project Git-view
+            * control plane every 60s. The /git data plane remains reserved
+            * for scope-bounded runtime credentials.
             */}
           <ProjectGitHealthBadge projectId={projectId} />
           {/* ============================================================
@@ -544,7 +546,7 @@ export default function HomePage({
 
               <Sep />
               <button
-                onClick={() => router.push(`/projects/${projectId}/history`)}
+                onClick={() => router.push(`/projects/${projectId}/changes`)}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -575,7 +577,7 @@ export default function HomePage({
 
               <Sep />
               <button
-                onClick={() => router.push(`/projects/${projectId}/access`)}
+                onClick={() => openPanel({ type: 'access_list', view: 'overview' })}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -679,10 +681,9 @@ export default function HomePage({
               actual content lands (drop → upload, or `git push` → sync),
               then retires automatically via SWR revalidation.
 
-              Connections are passed in so the CLI card inside the panel
-              can derive its `access_key` from server truth (the
-              existing root Git Remote AP, if any) instead of relying on
-              local React state that vanishes on refresh.
+              Connections are passed in so the Git card can locate the
+              existing root Git Remote surface. Credentials are issued
+              explicitly and shown once; dashboard lists never return them.
               ============================================================ */}
 
           {(dashboard?.nodes?.total ?? 0) === 0 ? (

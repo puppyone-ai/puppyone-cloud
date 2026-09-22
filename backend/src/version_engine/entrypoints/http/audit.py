@@ -16,8 +16,9 @@ from src.infra.supabase.client import SupabaseClient
 from src.version_engine.infrastructure.supabase.audit_repository import AuditRepository
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 router = APIRouter(prefix="/nodes", tags=["audit-logs"])
 
@@ -71,12 +72,12 @@ def _get_audit_repo() -> AuditRepository:
 
 
 def _ensure_project_access(
-    project_service: ProjectService, current_user: CurrentUser, project_id: str
+    authorization: AuthorizationService, current_user: CurrentUser, project_id: str
 ):
-    """Check that the current user is a member of the project."""
-    if not project_service.verify_project_access(project_id, current_user.user_id):
-        from src.exceptions import ErrorCode, NotFoundException
-        raise NotFoundException("Project not found", code=ErrorCode.NOT_FOUND)
+    """Authorize audit/history read through the canonical Project PDP."""
+    authorization.authorize(
+        project_id, current_user.user_id, ProjectAction.HISTORY_READ
+    )
 
 
 # ============================================================
@@ -89,11 +90,11 @@ def get_project_audit_logs(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     audit_repo: AuditRepository = Depends(_get_audit_repo),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get all audit logs for a project (clone/push/pull/rollback events)"""
-    _ensure_project_access(project_service, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id)
 
     rows = audit_repo.list_by_project(project_id, limit, offset)
     total = audit_repo.count_by_project(project_id)
@@ -112,11 +113,11 @@ def get_node_audit_logs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     audit_repo: AuditRepository = Depends(_get_audit_repo),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Get audit logs for a node"""
-    _ensure_project_access(project_service, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id)
 
     rows = audit_repo.list_by_path(path, limit, offset, project_id=project_id)
     total = audit_repo.count_by_path(path, project_id=project_id)

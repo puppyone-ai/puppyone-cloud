@@ -9,6 +9,9 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 
+from src.version_engine.adapters.git._async_context import (
+    enter_sync_context_off_loop,
+)
 from src.version_engine.adapters.git.object_quarantine import (
     GitViewCurrentCorruptError,
     receive_pack_advertisement_bare_repo,
@@ -109,7 +112,7 @@ def info_refs_response(
     )
 
 
-def upload_pack_streaming_response(
+async def upload_pack_streaming_response(
     repo,
     scope_path: str,
     scope_excludes: list[str],
@@ -149,7 +152,13 @@ def upload_pack_streaming_response(
         extra_refs=_scope_version_refs(repo, scope_path),
     )
     try:
-        bare_dir = cm.__enter__()
+        # Building the transport view takes a cross-process file lock. Never
+        # acquire that blocking lock on the ASGI event-loop thread: a previous
+        # StreamingResponse may need the same loop to advance its body and
+        # release the lease, which otherwise deadlocks concurrent clone/fetch
+        # requests. Keep the pre-response enter here so a corrupt current view
+        # can still return HTTP 409 before any response bytes are sent.
+        bare_dir = await enter_sync_context_off_loop(cm)
     except GitViewCurrentCorruptError as exc:
         raise HTTPException(
             status_code=409,

@@ -27,7 +27,6 @@ class _Scope:
     id: str
     project_id: str
     path: str
-    access_key: str
 
 
 class FakeProvider(SandboxProvider):
@@ -36,6 +35,7 @@ class FakeProvider(SandboxProvider):
     def __init__(self, *, tcp_ingress: bool) -> None:
         self._tcp = tcp_ingress
         self.execs: list[tuple[str, str]] = []
+        self.secret_writes: list[tuple[str, str, str]] = []
         self._n = 0
         self.states: dict[str, SandboxState] = {}
 
@@ -79,15 +79,31 @@ class FakeProvider(SandboxProvider):
         self.execs.append((sandbox_id, command))
         return {"stdout": "", "stderr": "", "exit_code": 0}
 
+    async def write_secret(
+        self, sandbox_id: str, relative_path: str, value: str
+    ) -> None:
+        self.secret_writes.append((sandbox_id, relative_path, value))
+
     def exec_blob(self) -> str:
         return "\n".join(c for _, c in self.execs)
 
 
-SCOPE = _Scope(id="scope-123456789", project_id="proj-1", path="docs", access_key="AKEY")
+SCOPE = _Scope(id="scope-123456789", project_id="proj-1", path="docs")
 
 
 async def _noop_sidecar(*args, **kwargs):
     return None
+
+
+class _NoopLease:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
 
 
 def _service(provider: FakeProvider):
@@ -100,6 +116,9 @@ def _service(provider: FakeProvider):
             revoke_hook=ssh_credentials.revoke_ssh_access,
         ),
         sidecar_starter=_noop_sidecar,   # keep connect tests hermetic (no DB/sidecar)
+        scope_credential_issuer=lambda *_args: "secret-cli-token-value",
+        git_credential_issuer=lambda *_args: "secret-git-token-value",
+        write_lease_factory=_NoopLease,
     )
     return svc
 
@@ -127,10 +146,15 @@ async def test_connect_e2b_provisions_ssh_clones_and_grants():
 
     blob = prov.exec_blob()
     assert "sshd" in blob                                  # E2B SSH provisioned
-    assert "git clone" in blob and "AKEY" in blob          # scope cloned via access key
+    assert "git clone" in blob and "/git/proj-1/scopes/scope-123456789.git" in blob
+    assert "secret-cli-token-value" not in blob
+    assert "secret-git-token-value" not in blob
     assert "~/scope" in blob                               # scope workspace (bootstrap)
     assert "~/u1" in blob                                  # per-user working tree (#7)
     assert "authorized_keys" in blob                       # SSH key granted (#5)
+    assert prov.secret_writes
+    assert all(path == ".config/puppyone/git-http-token" for _, path, _ in prov.secret_writes)
+    assert all(value == "secret-git-token-value" for _, _, value in prov.secret_writes)
 
 
 async def test_connect_fly_skips_websocat_and_has_direct_tcp():
@@ -153,6 +177,7 @@ async def test_connect_reuses_sandbox_for_second_user():
     info2 = await _connect(svc, user="u2", now=5)
     assert info2.via == "reused" and info2.connected_users == 2
     assert prov._n == 1  # only one sandbox created for the scope
+    assert len(prov.secret_writes) == 3  # cold bootstrap + first/second renewal
 
 
 async def test_status_reflects_connection():

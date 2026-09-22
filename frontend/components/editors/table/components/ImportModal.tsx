@@ -1,5 +1,7 @@
 'use client';
 
+import { useWorkspaceRouter } from '@/features/workspace/navigation';
+
 import React, {
   useState,
   useCallback,
@@ -182,6 +184,7 @@ export function ImportModal({
   onClose,
   onSuccess,
 }: ImportModalProps) {
+  const router = useWorkspaceRouter();
   const [url, setUrl] = useState(initialUrl);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -244,16 +247,8 @@ export function ImportModal({
   ]);
 
   const handleGoToAuth = useCallback(() => {
-    // Dispatch custom event for client-side navigation to connect view
-    // This avoids full page reload which would cause 404
-    window.dispatchEvent(new CustomEvent('navigateToConnect'));
-
-    // Also update URL using pushState for consistency
-    window.history.pushState({}, '', '/connect');
-
-    // Close the modal
-    onClose();
-  }, [onClose]);
+    if (router.push('/connect')) onClose();
+  }, [onClose, router]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

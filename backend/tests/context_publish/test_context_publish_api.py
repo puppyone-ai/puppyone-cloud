@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, Optional
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -23,7 +24,7 @@ from src.exception_handler import (
     http_exception_handler,
     validation_exception_handler,
 )
-from src.exceptions import AppException
+from src.exceptions import AppException, PermissionException
 from src.context_publish.supabase_schemas import (
     ContextPublishCreate as SbContextPublishCreate,
     ContextPublishUpdate as SbContextPublishUpdate,
@@ -96,8 +97,13 @@ class _InMemoryPublishRepo(ContextPublishRepositoryBase):
 
 class _FakeTableService:
     def __init__(self):
-        self.get_by_id_with_access_check = Mock()
+        self.get_by_id = Mock()
         self.get_context_data = Mock()
+
+
+class _FakeAuthorization:
+    def __init__(self):
+        self.authorize = Mock(return_value=object())
 
 
 @pytest.fixture
@@ -125,9 +131,14 @@ def app(current_user):
 
     repo = _InMemoryPublishRepo()
     table_service = _FakeTableService()
-    table_service.get_by_id_with_access_check.return_value = object()
+    table_service.get_by_id.return_value = SimpleNamespace(project_id="project-1")
     table_service.get_context_data.return_value = {"hello": "world"}
-    svc = ContextPublishService(repo=repo, table_service=table_service)  # type: ignore[arg-type]
+    authorization = _FakeAuthorization()
+    svc = ContextPublishService(
+        repo=repo,
+        table_service=table_service,  # type: ignore[arg-type]
+        authorization=authorization,  # type: ignore[arg-type]
+    )
 
     test_app.dependency_overrides[get_context_publish_service] = lambda: svc
     test_app.dependency_overrides[get_current_user] = lambda: current_user
@@ -162,6 +173,27 @@ def test_create_publish_and_public_get_success(client: TestClient):
     assert resp3.status_code == 200
 
 
+def test_publish_management_rechecks_current_project_grant(app: FastAPI, client: TestClient):
+    svc = app.dependency_overrides[get_context_publish_service]()
+    created = client.post(
+        "/api/v1/publishes/",
+        json={"table_id": "123", "json_path": "/users"},
+    )
+    assert created.status_code == 201
+    publish_id = created.json()["data"]["id"]
+
+    svc.authorization.authorize.side_effect = PermissionException("revoked")
+
+    denied_update = client.patch(
+        f"/api/v1/publishes/{publish_id}", json={"status": False}
+    )
+    hidden_list = client.get("/api/v1/publishes/")
+
+    assert denied_update.status_code == 403
+    assert hidden_list.status_code == 200
+    assert hidden_list.json()["data"] == []
+
+
 def test_revoke_then_public_get_404_even_if_cached(client: TestClient):
     resp = client.post("/api/v1/publishes/", json={"table_id": "123", "json_path": ""})
     assert resp.status_code == 201
@@ -179,5 +211,3 @@ def test_revoke_then_public_get_404_even_if_cached(client: TestClient):
     # 再读：必须 404（缓存已失效且语义生效）
     resp3 = client.get(f"/p/{publish_key}")
     assert resp3.status_code == 404
-
-

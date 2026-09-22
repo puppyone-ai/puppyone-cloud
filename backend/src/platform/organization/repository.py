@@ -6,10 +6,10 @@ from src.utils.id_generator import generate_uuid_v7
 
 
 class OrganizationRepository:
-
     def __init__(self, supabase_client=None):
         if supabase_client is None:
             from src.infra.supabase.dependencies import get_supabase_client
+
             self._client = get_supabase_client()
         else:
             self._client = supabase_client
@@ -41,9 +41,7 @@ class OrganizationRepository:
                 orgs.append(Organization(**row["organizations"]))
         return orgs
 
-    def create(
-        self, name: str, slug: str, created_by: str
-    ) -> Organization:
+    def create(self, name: str, slug: str, created_by: str) -> Organization:
         data = {
             "id": generate_uuid_v7(),
             "name": name,
@@ -61,9 +59,26 @@ class OrganizationRepository:
             return Organization(**resp.data[0])
         return None
 
-    def delete(self, org_id: str) -> bool:
-        resp = self._client.table("organizations").delete().eq("id", org_id).execute()
-        return len(resp.data) > 0
+    def delete_empty_control_plane(self, org_id: str, actor_user_id: str) -> dict:
+        """Atomically delete an Organization only after proving it has no Projects.
+
+        Project rows must be removed through the Project deletion control plane,
+        which durably records object cleanup before deleting relational state.
+        A direct Organizations DELETE would let the FK cascade bypass that
+        journal, so production code has no direct-delete repository primitive.
+        """
+
+        response = self._client.rpc(
+            "delete_empty_organization_control_plane",
+            {
+                "p_org_id": org_id,
+                "p_actor_user_id": actor_user_id,
+            },
+        ).execute()
+        data = response.data
+        if isinstance(data, list):
+            data = data[0] if data else None
+        return data if isinstance(data, dict) else {"outcome": "invalid_response"}
 
     # ── Members ──
 
@@ -79,6 +94,18 @@ class OrganizationRepository:
             return OrgMember(**resp.data[0])
         return None
 
+    def get_owner_user_id(self, org_id: str) -> str | None:
+        resp = (
+            self._client.table("org_members")
+            .select("user_id")
+            .eq("org_id", org_id)
+            .eq("role", "owner")
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return str(rows[0]["user_id"]) if rows else None
+
     def list_members(self, org_id: str) -> list[dict]:
         """List members with profile info via PostgREST join (FK: org_members.user_id → profiles.user_id)."""
         try:
@@ -91,12 +118,7 @@ class OrganizationRepository:
             return resp.data
         except Exception:
             # Fallback: two-step query if FK not yet migrated
-            resp = (
-                self._client.table("org_members")
-                .select("*")
-                .eq("org_id", org_id)
-                .execute()
-            )
+            resp = self._client.table("org_members").select("*").eq("org_id", org_id).execute()
             members = resp.data
             if not members:
                 return members
@@ -135,6 +157,22 @@ class OrganizationRepository:
             return OrgMember(**resp.data[0])
         return None
 
+    def transfer_ownership(
+        self,
+        org_id: str,
+        current_owner_user_id: str,
+        new_owner_user_id: str,
+    ) -> bool:
+        response = self._client.rpc(
+            "transfer_organization_ownership",
+            {
+                "p_org_id": org_id,
+                "p_current_owner": current_owner_user_id,
+                "p_new_owner": new_owner_user_id,
+            },
+        ).execute()
+        return response.data is True
+
     def remove_member(self, org_id: str, user_id: str) -> bool:
         resp = (
             self._client.table("org_members")
@@ -153,6 +191,36 @@ class OrganizationRepository:
             .execute()
         )
         return resp.count or 0
+
+    def count_billable_members(self, org_id: str) -> int:
+        try:
+            data = (
+                self._client.rpc(
+                    "count_billable_organization_members",
+                    {"p_org_id": org_id},
+                )
+                .execute()
+                .data
+            )
+            if isinstance(data, list):
+                data = data[0] if data else 0
+            return int(data or 0)
+        except Exception:
+            # Additive rollout compatibility is allowed only while seat billing
+            # is disabled. Hosted shadow/required deployments must use the
+            # capability-derived database policy and therefore fail closed.
+            from src.config import settings
+
+            if settings.SEAT_BILLING_MODE != "disabled":
+                raise
+            resp = (
+                self._client.table("org_members")
+                .select("id", count="exact")
+                .eq("org_id", org_id)
+                .in_("role", ["owner", "member"])
+                .execute()
+            )
+            return resp.count or 0
 
     # ── Invitations ──
 
@@ -184,20 +252,18 @@ class OrganizationRepository:
         return None
 
     def accept_invitation(self, invitation_id: str) -> None:
-        self._client.table("org_invitations").update(
-            {"status": "accepted"}
-        ).eq("id", invitation_id).execute()
+        self._client.table("org_invitations").update({"status": "accepted"}).eq(
+            "id", invitation_id
+        ).execute()
 
     def revoke_invitation(self, org_id: str, invitation_id: str) -> None:
         """Mark a pending invitation as revoked. Idempotent: scoped by
         org_id so a cross-org call cannot revoke someone else's invite,
         and matched only against ``status='pending'`` so re-revoking an
         already-revoked / accepted row is a no-op (not an error)."""
-        self._client.table("org_invitations").update(
-            {"status": "revoked"}
-        ).eq("id", invitation_id).eq("org_id", org_id).eq(
-            "status", "pending"
-        ).execute()
+        self._client.table("org_invitations").update({"status": "revoked"}).eq(
+            "id", invitation_id
+        ).eq("org_id", org_id).eq("status", "pending").execute()
 
     def list_invitations(self, org_id: str) -> list[OrgInvitation]:
         resp = (

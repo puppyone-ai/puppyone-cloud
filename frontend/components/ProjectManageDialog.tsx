@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { LayoutTemplate } from 'lucide-react';
 import type { ProjectInfo } from '../lib/projectsApi';
 import {
   createProject,
@@ -22,6 +23,7 @@ const ACCENT = 'var(--po-success)';
 type DialogMode = 'create' | 'edit' | 'delete';
 
 type ProjectManageDialogProps = {
+  layer?: 'modal' | 'modalNested';
   mode: DialogMode;
   projectId: string | null;
   projects: ProjectInfo[];
@@ -31,6 +33,7 @@ type ProjectManageDialogProps = {
 };
 
 export function ProjectManageDialog({
+  layer = 'modal',
   mode,
   projectId,
   projects,
@@ -44,6 +47,11 @@ export function ProjectManageDialog({
 
   const [name, setName] = useState(project?.name || '');
   const [loading, setLoading] = useState(false);
+  const createOperationRef = useRef<{
+    idempotencyKey: string;
+    name: string;
+    orgId: string;
+  } | null>(null);
 
   useEffect(() => {
     if (project) {
@@ -72,13 +80,29 @@ export function ProjectManageDialog({
         await refreshProjects(currentOrg?.id);
         onClose();
       } else {
+        if (!currentOrg?.id) {
+          throw new Error('Select an organization before creating a project.');
+        }
+        setLoading(true);
+        const previousOperation = createOperationRef.current;
+        const operation =
+          previousOperation?.name === finalName &&
+          previousOperation.orgId === currentOrg.id
+            ? previousOperation
+            : {
+                idempotencyKey: crypto.randomUUID(),
+                name: finalName,
+                orgId: currentOrg.id,
+              };
+        createOperationRef.current = operation;
+        const created = await createProject({
+          name: finalName,
+          description: '',
+          orgId: currentOrg.id,
+          idempotencyKey: operation.idempotencyKey,
+        });
+        createOperationRef.current = null;
         onClose();
-        const created = await createProject(
-          finalName,
-          '',
-          currentOrg?.id,
-          false
-        );
         // Jump straight into the new project. Refresh the org project list in
         // the background so navigation is not blocked by a home-page reload.
         router.push(`/projects/${created.id}/data`);
@@ -115,7 +139,7 @@ export function ProjectManageDialog({
   };
 
   return (
-    <DialogRoot onClose={onClose}>
+    <DialogRoot onClose={onClose} layer={layer}>
       <DialogSurface width={surfaceWidth}>
         {mode === 'delete' ? (
           <DeleteBody
@@ -139,6 +163,10 @@ export function ProjectManageDialog({
             onClose={onClose}
             onSubmit={handleSubmit}
             loading={loading}
+            onBrowseTemplates={() => {
+              onClose();
+              router.push('/templates');
+            }}
           />
         )}
       </DialogSurface>
@@ -156,12 +184,14 @@ function CreateBody({
   onClose,
   onSubmit,
   loading,
+  onBrowseTemplates,
 }: {
   name: string;
   setName: (v: string) => void;
   onClose: () => void;
   onSubmit: (e: FormEvent) => void;
   loading: boolean;
+  onBrowseTemplates: () => void;
 }) {
   return (
     <>
@@ -178,7 +208,37 @@ function CreateBody({
           </Field>
 
           <Field label="Start">
-            <StartEmptyCard />
+            <div style={{ display: 'grid', gap: 10 }}>
+              <StartEmptyCard />
+              <button
+                type="button"
+                onClick={onBrowseTemplates}
+                style={{
+                  width: '100%',
+                  minHeight: 62,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  border: '1px solid var(--po-border)',
+                  background: 'var(--po-panel)',
+                  color: 'var(--po-text)',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <LayoutTemplate size={18} color="var(--po-text-muted)" />
+                <span>
+                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>
+                    Browse templates
+                  </span>
+                  <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--po-text-muted)' }}>
+                    Start from a reusable project structure.
+                  </span>
+                </span>
+              </button>
+            </div>
           </Field>
         </DialogBody>
 

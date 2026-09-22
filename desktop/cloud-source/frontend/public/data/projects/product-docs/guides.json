@@ -1,9 +1,0 @@
-[
-  { "guide_id": "g-101", "title": "Authentication", "author": "Alex", "tags": "api,auth", "updated_at": "2025-11-01 11:02" },
-  { "guide_id": "g-102", "title": "Webhooks", "author": "Dana", "tags": "billing,webhooks", "updated_at": "2025-11-02 14:28" },
-  { "guide_id": "g-103", "title": "Shipping Integrations", "author": "Chris", "tags": "shipping,integrations", "updated_at": "2025-11-04 16:18" },
-  { "guide_id": "g-104", "title": "Rate Limits", "author": "Morgan", "tags": "api,limits", "updated_at": "2025-11-05 09:33" },
-  { "guide_id": "g-105", "title": "Observability", "author": "Alex", "tags": "metrics,logs", "updated_at": "2025-11-06 20:10" }
-]
-
-

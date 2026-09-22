@@ -11,11 +11,13 @@ name: Main Release Gate
 on:
   pull_request_target:
     branches: [main]
-    types: [opened, edited, reopened, synchronize, ready_for_review]
+    types: [opened, edited, reopened, synchronize, ready_for_review, labeled, unlabeled]
   pull_request_review:
     types: [submitted, dismissed]
 
 permissions:
+  actions: read
+  contents: read
   pull-requests: read
 
 jobs:
@@ -25,7 +27,7 @@ jobs:
     if: github.event.pull_request.base.ref == 'main'
     steps:
       - name: Validate main release policy
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const OWNER = 'realGuantum';
@@ -70,8 +72,13 @@ jobs:
               .sort((a, b) => new Date(a.submitted_at || 0) - new Date(b.submitted_at || 0));
             const latestOwnerReview = ownerReviews[ownerReviews.length - 1];
 
-            if (latestOwnerReview?.state === 'APPROVED') {
-              core.info(`Latest ${OWNER} review is APPROVED; owner gate passed.`);
+            if (
+              latestOwnerReview?.state === 'APPROVED' &&
+              latestOwnerReview?.commit_id === pr.head.sha
+            ) {
+              core.info(
+                `Latest ${OWNER} review approves exact head ${pr.head.sha}; owner gate passed.`
+              );
               return;
             }
 
@@ -79,5 +86,157 @@ jobs:
               [
                 `PRs targeting main that are not authored by ${OWNER} require ${OWNER}'s approval.`,
                 `Latest ${OWNER} review state: ${latestOwnerReview?.state || 'none'}.`,
+                `Reviewed SHA: ${latestOwnerReview?.commit_id || 'none'}.`,
+                `Current SHA: ${pr.head.sha}.`,
               ].join('\n')
+            );
+
+      - name: Require exact Qubits database attestation
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            const schemaFiles = files.filter(file =>
+              file.filename.startsWith('supabase/migrations/') &&
+              file.filename.endsWith('.sql')
+            );
+            if (schemaFiles.length === 0) {
+              core.info('No schema migration changes; database attestation is not required.');
+              return;
+            }
+
+            if (pr.head.ref.startsWith('hotfix/')) {
+              const labels = new Set(pr.labels.map(label => label.name));
+              if (!labels.has('database-break-glass')) {
+                core.setFailed(
+                  'Database hotfixes require the `database-break-glass` label and incident process.'
+                );
+                return;
+              }
+              core.warning('Database break-glass label present; normal Qubits promotion is bypassed.');
+              return;
+            }
+
+            async function successfulRuns(workflow, sha, branch) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: workflow,
+                  branch,
+                  status: 'completed',
+                  per_page: 100,
+                }
+              );
+              return runs.filter(run => run.head_sha === sha && run.conclusion === 'success');
+            }
+
+            const schemaRuns = await successfulRuns(
+              'migrate-staging.yml',
+              pr.head.sha,
+              'qubits'
+            );
+            if (schemaRuns.length === 0) {
+              core.setFailed(
+                `No successful Qubits schema deployment exists for exact head SHA ${pr.head.sha}.`
+              );
+              return;
+            }
+
+            const contractIds = new Set();
+            for (const file of schemaFiles.filter(file =>
+              ['added', 'renamed'].includes(file.status) &&
+              file.filename.includes('_contract_')
+            )) {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: file.filename,
+                ref: pr.head.sha,
+              });
+              if (Array.isArray(response.data) || !response.data.content) {
+                core.setFailed(`Cannot inspect contract migration ${file.filename}.`);
+                return;
+              }
+              const text = Buffer.from(response.data.content, 'base64').toString('utf8');
+              const match = text.match(
+                /^--\s*requires-data-migration:\s*([0-9]{8,14}_[a-z0-9_]+)\s*$/m
+              );
+              const checksumMatch = text.match(
+                /^--\s*data-migration-checksum:\s*([0-9a-f]{64})\s*$/m
+              );
+              if (!match) {
+                core.setFailed(
+                  `Contract migration ${file.filename} has no requires-data-migration marker.`
+                );
+                return;
+              }
+              if (!checksumMatch) {
+                core.setFailed(
+                  `Contract migration ${file.filename} has no data-migration-checksum marker.`
+                );
+                return;
+              }
+              contractIds.add(match[1]);
+            }
+
+            async function hasSuccessfulVerification({workflow, sha, branch, environment, migrationId}) {
+              const runs = await successfulRuns(workflow, sha, branch);
+              for (const run of runs) {
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id,
+                    per_page: 100,
+                  }
+                );
+                const expected = `verify ${migrationId} on ${environment}`;
+                if (jobs.some(job => job.conclusion === 'success' && job.name.includes(expected))) {
+                  return true;
+                }
+              }
+              return false;
+            }
+
+            for (const migrationId of contractIds) {
+              const stagingVerified = await hasSuccessfulVerification({
+                workflow: 'migrate-staging.yml',
+                sha: pr.head.sha,
+                branch: 'qubits',
+                environment: 'staging',
+                migrationId,
+              });
+              if (!stagingVerified) {
+                core.setFailed(
+                  `Contract ${migrationId} needs a successful staging verify on head SHA ${pr.head.sha}.`
+                );
+                return;
+              }
+
+              const productionVerified = await hasSuccessfulVerification({
+                workflow: 'migrate-production.yml',
+                sha: pr.base.sha,
+                branch: 'main',
+                environment: 'production',
+                migrationId,
+              });
+              if (!productionVerified) {
+                core.setFailed(
+                  `Contract ${migrationId} needs a successful production verify on base SHA ${pr.base.sha}.`
+                );
+                return;
+              }
+            }
+
+            core.info(
+              `Database release gate passed: schema run ${schemaRuns[0].html_url}`
             );

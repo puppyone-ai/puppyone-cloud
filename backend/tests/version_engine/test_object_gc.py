@@ -130,6 +130,65 @@ def test_git_object_gc_deletes_only_unreachable_objects(server_repo):
     assert not server_repo.store.exists(orphan_blob)
 
 
+def test_git_object_gc_requires_durable_quarantine_window_before_delete(server_repo):
+    orphan = _put_raw_object(server_repo.store, b"recoverable orphan")
+    first_seen: dict[str, datetime] = {}
+
+    def sync_candidates(object_ids, *, now, quarantine_seconds):
+        current = set(object_ids)
+        for object_id in list(first_seen):
+            if object_id not in current:
+                first_seen.pop(object_id)
+        for object_id in current:
+            first_seen.setdefault(object_id, now)
+        cutoff = now - timedelta(seconds=quarantine_seconds)
+        return [oid for oid in current if first_seen[oid] <= cutoff]
+
+    def remove_candidates(object_ids):
+        for object_id in object_ids:
+            first_seen.pop(object_id, None)
+
+    server_repo.history.sync_object_gc_candidates = sync_candidates
+    server_repo.history.remove_object_gc_candidates = remove_candidates
+    started = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    first = run_git_object_gc(
+        server_repo,
+        dry_run=False,
+        retention_seconds=0,
+        quarantine_seconds=3600,
+        now=started,
+    )
+    assert first.deleted_count == 0
+    assert first.quarantined_count >= 1
+    assert server_repo.store.exists(orphan)
+
+    second = run_git_object_gc(
+        server_repo,
+        dry_run=False,
+        retention_seconds=0,
+        quarantine_seconds=3600,
+        now=started + timedelta(hours=2),
+    )
+    assert second.deleted_count >= 1
+    assert not server_repo.store.exists(orphan)
+    assert orphan not in first_seen
+
+
+def test_git_object_gc_fails_closed_without_quarantine_registry(server_repo):
+    orphan = _put_raw_object(server_repo.store, b"orphan")
+    result = run_git_object_gc(
+        server_repo,
+        dry_run=False,
+        retention_seconds=0,
+        quarantine_seconds=3600,
+    )
+
+    assert result.sweep_skipped_for_safety is True
+    assert result.deleted_count == 0
+    assert server_repo.store.exists(orphan)
+
+
 def test_git_object_gc_does_not_follow_non_git_raw_tree_children(server_repo):
     raw_blob = _put_raw_object(server_repo.store, b"old raw bytes")
     raw_tree = _put_raw_object(
@@ -256,6 +315,103 @@ def test_git_object_gc_fails_safe_when_reachability_walk_errors(server_repo, mon
     assert store.exists(guide_blob)
     # … and the genuine orphan is also kept (safety over reclamation).
     assert store.exists(orphan_commit)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "head",
+        "root",
+        "scopes",
+        "scope_head",
+        "history",
+        "version_index",
+        "outbox",
+        "conflicts",
+        "version_refs",
+        "shadow_snapshots",
+    ],
+)
+def test_git_object_gc_fails_closed_for_every_root_source(
+    server_repo,
+    monkeypatch,
+    source,
+):
+    live_tree = build_tree_from_files(server_repo.store, {"keep.txt": b"keep"})
+    live_commit = _commit_tree(server_repo, live_tree, "live")
+    _publish_root(server_repo, live_tree, live_commit)
+    orphan_tree = build_tree_from_files(server_repo.store, {"drop.txt": b"drop"})
+    orphan_commit = _commit_tree(server_repo, orphan_tree, "orphan")
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError(f"{source} unavailable")
+
+    history = server_repo.history
+    if source == "head":
+        monkeypatch.setattr(server_repo, "get_head_commit_id", fail)
+    elif source == "root":
+        monkeypatch.setattr(server_repo, "get_root_hash", fail)
+    elif source == "scopes":
+        monkeypatch.setattr(server_repo, "get_all_scope_hashes", fail)
+    elif source == "scope_head":
+        history.set_scope_hash("docs", live_tree)
+        monkeypatch.setattr(server_repo, "get_scope_head_commit_id", fail)
+    elif source == "history":
+        monkeypatch.setattr(history, "_entries", None)
+        monkeypatch.setattr(history, "get_since", fail)
+    elif source == "version_index":
+        monkeypatch.setattr(history, "_version_index", None)
+        monkeypatch.setattr(history, "list_version_index_roots", fail, raising=False)
+    elif source == "outbox":
+        monkeypatch.setattr(history, "list_pending_outbox_roots", fail, raising=False)
+    elif source == "conflicts":
+        monkeypatch.setattr(server_repo.audit, "events", None)
+        monkeypatch.setattr(history, "list_pending_conflict_roots", fail, raising=False)
+    elif source == "version_refs":
+        monkeypatch.setattr(history, "list_version_ref_roots", fail, raising=False)
+    elif source == "shadow_snapshots":
+        monkeypatch.setattr(history, "list_shadow_snapshot_roots", fail, raising=False)
+
+    result = run_git_object_gc(server_repo, dry_run=False, retention_seconds=0)
+
+    assert result.sweep_skipped_for_safety is True
+    assert result.eligible_count == 0
+    assert result.deleted_count == 0
+    assert any(source.split("_")[0] in error for error in result.errors)
+    assert server_repo.store.exists(orphan_commit)
+
+
+def test_git_object_gc_incomplete_dry_run_is_explicitly_non_actionable(
+    server_repo,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        server_repo.history,
+        "list_version_ref_roots",
+        lambda: (_ for _ in ()).throw(RuntimeError("page 2 failed")),
+        raising=False,
+    )
+
+    result = run_git_object_gc(server_repo, dry_run=True, retention_seconds=0)
+
+    assert result.sweep_skipped_for_safety is True
+    assert result.eligible_count == 0
+    assert any("untrusted candidate" in error for error in result.errors)
+
+
+def test_git_object_gc_invalid_persisted_root_is_non_actionable(server_repo, monkeypatch):
+    monkeypatch.setattr(
+        server_repo.history,
+        "list_version_ref_roots",
+        lambda: ["not-a-commit-id"],
+        raising=False,
+    )
+
+    result = run_git_object_gc(server_repo, dry_run=True, retention_seconds=0)
+
+    assert result.sweep_skipped_for_safety is True
+    assert result.eligible_count == 0
+    assert any("invalid persisted GC root" in error for error in result.errors)
 
 
 def test_object_gc_worker_can_run_bounded_manual_project_list(server_repo, monkeypatch):

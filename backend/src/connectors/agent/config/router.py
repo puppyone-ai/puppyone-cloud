@@ -6,7 +6,7 @@ REST API for Agent configuration.
 
 import asyncio
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
@@ -18,11 +18,12 @@ from src.utils.logger import log_info, log_error
 from src.connectors.agent.config.dependencies import (
     get_agent_config_service,
     get_verified_agent,
-    require_project_membership_query,
-    require_project_membership_body,
+    get_writable_agent,
+    require_agent_read_query,
+    require_agent_manage_body,
 )
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 from src.connectors.agent.config.models import Agent
 from src.connectors.agent.config.schemas import (
     AgentCreate,
@@ -80,6 +81,8 @@ def _to_agent_out(
         is_default=agent.is_default,
         project_id=agent.project_id,
         mcp_api_key=agent.mcp_api_key,
+        mcp_enabled=agent.mcp_enabled,
+        mcp_key_last4=agent.mcp_key_last4,
         trigger_type=agent.trigger_type,
         trigger_config=agent.trigger_config,
         task_content=agent.task_content,
@@ -103,12 +106,12 @@ def _to_agent_out(
     description="Get the list of Agents for a specified project",
 )
 def list_agents(
-    project_id: str = Depends(require_project_membership_query),
+    project_id: str = Depends(require_agent_read_query),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
 ):
-    # SECURITY (C-2): require_project_membership_query verifies the JWT
+    # The named Agent read action is enforced before repository reads.
     # caller is a member of project_id BEFORE any agent data is read.
     # SECURITY (M-1): pass viewer_user_id so private agents owned by other
     # users in the same org are filtered out of the response.
@@ -140,11 +143,14 @@ def list_agents(
     description="Get the default Agent for a specified project",
 )
 def get_default_agent(
-    project_id: str = Depends(require_project_membership_query),
+    project_id: str = Depends(require_agent_read_query),
+    current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
     # SECURITY (C-2): membership verified via dependency.
-    agent = service.get_default_agent(project_id)
+    agent = service.get_default_agent(
+        project_id, viewer_user_id=current_user.user_id
+    )
     if not agent:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -219,7 +225,7 @@ def create_agent(
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     if not payload.project_id:
         raise HTTPException(
@@ -229,8 +235,8 @@ def create_agent(
 
     # SECURITY (C-2): the project_id comes from the request body, so we
     # verify membership manually instead of via Depends.
-    require_project_membership_body(
-        payload.project_id, current_user, project_service,
+    require_agent_manage_body(
+        payload.project_id, current_user, authorization,
     )
 
     agent = service.create_agent(
@@ -274,7 +280,7 @@ def create_agent(
 def update_agent(
     payload: AgentUpdate,
     background_tasks: BackgroundTasks,
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
@@ -332,7 +338,7 @@ def update_agent(
 )
 def delete_agent(
     background_tasks: BackgroundTasks,
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
@@ -363,7 +369,7 @@ def delete_agent(
 )
 def add_bash(
     payload: AgentBashCreate,
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
@@ -398,7 +404,7 @@ def add_bash(
 def update_bash(
     bash_id: str,
     payload: AgentBashUpdate,
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
@@ -431,7 +437,7 @@ def update_bash(
 )
 def remove_bash(
     bash_id: str,
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
@@ -475,7 +481,7 @@ def get_execution_history(
 )
 def sync_bash(
     bash_list: List[AgentBashCreate],
-    agent: Agent = Depends(get_verified_agent),
+    agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):

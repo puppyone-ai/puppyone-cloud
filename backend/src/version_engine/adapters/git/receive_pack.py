@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import Response
 
+from src.version_engine.adapters.git._async_context import sync_context_off_loop
 from src.version_engine.adapters.git.object_quarantine import (
     official_receive_pack_quarantine,
 )
@@ -118,11 +119,13 @@ async def receive_pack_response_from_path(
 
     if command is None:
         try:
-            with official_receive_pack_quarantine(
-                repo,
-                scope_path,
-                request_path,
-                scope_excludes=scope_excludes,
+            async with sync_context_off_loop(
+                official_receive_pack_quarantine(
+                    repo,
+                    scope_path,
+                    request_path,
+                    scope_excludes=scope_excludes,
+                )
             ) as official:
                 return _official_receive_pack_response(official.output)
         except Exception as exc:
@@ -158,15 +161,17 @@ async def receive_pack_response_from_path(
 
     try:
         official_ref_updated = False
-        with official_receive_pack_quarantine(
-            repo,
-            scope_path,
-            request_path,
-            roots=[command.new_id],
-            exclude_roots=_named_ref_exclude_roots(
-                repo, project_id, scope_path, scope_excludes, command,
-            ),
-            scope_excludes=scope_excludes,
+        async with sync_context_off_loop(
+            official_receive_pack_quarantine(
+                repo,
+                scope_path,
+                request_path,
+                roots=[command.new_id],
+                exclude_roots=_named_ref_exclude_roots(
+                    repo, project_id, scope_path, scope_excludes, command,
+                ),
+                scope_excludes=scope_excludes,
+            )
         ) as official:
             official_ref_updated = official.ref_points_to(command.ref, command.new_id)
             if not official_ref_updated:
@@ -205,7 +210,7 @@ async def receive_pack_response_from_path(
                     command.ref,
                     outcome="rejected",
                     message="puppyone-rejected: client merge commits are not supported; "
-                            "fetch and rebase, or resolve through PuppyOne review",
+                            "fetch and rebase onto the remote main branch",
                     capabilities=command.capabilities,
                 )
 
@@ -468,12 +473,13 @@ async def receive_pack_response_from_path(
 
 _LFS_POINTER_PREAMBLE = b"version https://git-lfs.github.com/spec/v1"
 _NON_FAST_FORWARD_REMOTE_LINES = [
+    "PuppyOne-Code: NON_FAST_FORWARD",
     "PuppyOne: Updates were rejected because the remote contains work that "
     "you do not have locally.",
-    "PuppyOne: Fetch first, then rebase your work onto origin/main before "
+    "PuppyOne: Fetch first, then rebase your work onto the remote main branch before "
     "pushing again.",
-    "PuppyOne: Scope remotes do not use force push as a server-side merge "
-    "proposal.",
+    "PuppyOne: Do not force push. PuppyOne Cloud only accepts fast-forward "
+    "updates to main.",
 ]
 
 
@@ -695,7 +701,7 @@ def _store_named_ref(
 
     The commit's reachable objects are promoted into the canonical store
     so the ref is durable and fetchable, then the pointer is recorded.
-    The scope head (``mut_scope_state``) is deliberately untouched.
+    The scope head (``version_scope_state``) is deliberately untouched.
     """
     from src.version_engine.infrastructure.supabase.version_ref_repository import (
         VersionRefStore,
@@ -734,7 +740,7 @@ def _ref_writability(ref: str) -> tuple[bool, str]:
 
     Three accepted shapes (GAP-3):
       - ``refs/heads/main`` — the scope head; lands through the write
-        engine and advances ``mut_scope_state``.
+        engine and advances ``version_scope_state``.
       - other ``refs/heads/*`` and ``refs/tags/*`` — stored as named refs
         in ``version_refs`` WITHOUT advancing the scope head. A stored ref
         is a durable, fetchable pointer to a promoted commit; landing it to

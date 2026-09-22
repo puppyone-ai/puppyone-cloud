@@ -1,0 +1,12 @@
+api_version: 1
+id: 20260715_project_owned_repository_targets_preflight
+description: Fail-closed readiness audit before Project-owned repository target cutover
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20260713020000"
+required_env: []
+timeout_seconds: 900
+contract_key: project_owned_repository_targets
+legacy: false

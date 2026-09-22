@@ -53,6 +53,7 @@ export function DialogRoot({
   return (
     <ModalPortal>
       <div
+        data-dialog-root=""
         role="presentation"
         onPointerDown={handleBackdropPointerDown}
         onClick={handleBackdropClick}
@@ -83,6 +84,7 @@ type DialogSurfaceProps = {
   maxWidth?: number | string;
   maxHeight?: number | string;
   ariaLabel?: string;
+  variant?: 'project-settings';
   ariaLabelledBy?: string;
   style?: CSSProperties;
 };
@@ -93,6 +95,7 @@ export function DialogSurface({
   maxWidth = 'calc(100vw - 32px)',
   maxHeight = 'calc(100vh - 32px)',
   ariaLabel,
+  variant,
   ariaLabelledBy,
   style,
 }: DialogSurfaceProps) {
@@ -102,6 +105,7 @@ export function DialogSurface({
 
   return (
     <div
+      data-dialog-surface={variant ?? 'default'}
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel}
@@ -220,7 +224,7 @@ type DialogBodyProps = {
 
 export function DialogBody({ children, style }: DialogBodyProps) {
   return (
-    <div
+    <div data-dialog-body=''
       style={{
         padding: '12px 24px 20px',
         overflow: 'auto',

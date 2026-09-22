@@ -66,9 +66,9 @@ async def handle_webhook(
         3. Verify HMAC. Reject 401 on mismatch.
         4. If the push was for the wrong branch, ack-and-skip.
         5. Idempotency on ``git_sha``: if already imported, ack.
-        6. Schedule the import (fire-and-forget asyncio task — same
-           process can run it; production deployments should switch
-           to the ARQ job in ``infra.scheduler.jobs.github_import_job``).
+        6. Enqueue the import onto the durable ``imports`` worker queue
+           (``execute_github_import``) and ack — the import runs out of
+           process, surviving API deploys/crashes.
     """
     event_type = headers.get("x-github-event", "").lower()
     delivery_id = headers.get("x-github-delivery", "?")
@@ -146,38 +146,33 @@ async def _maybe_dispatch(
         return {"integration_id": integ_id, "status": "skipped",
                 "reason": "already_imported"}
 
-    # Schedule the import. We don't block the webhook ack on it.
-    import asyncio
+    # Enqueue the import onto the durable imports worker queue (out of the API
+    # process). The webhook only validates + enqueues + acks, staying well
+    # inside GitHub's 5s budget; the worker survives API deploys/crashes. The
+    # ARQ _job_id dedups a redelivered webhook for the same push, and
+    # import_branch's own has_successful_sha check is a second guard.
+    from src.platform.imports.dependencies import get_import_arq_client
 
-    from src.repo.github_integration.importer import import_branch
-    coro = import_branch(integration, branch=pushed_branch,
-                         force=False, triggered_by="webhook")
-
-    def _on_done(task: "asyncio.Task") -> None:
-        # Without this callback, exceptions raised inside the import
-        # coroutine die silently in ``Task.__del__`` (asyncio reports
-        # "Task exception was never retrieved" but the message is easy
-        # to miss in production logs and there is no surface in the
-        # github_sync_log table). Promote the exception to a real log
-        # line keyed by integration so ops can correlate against the
-        # GitHub webhook delivery id (``X-GitHub-Delivery``).
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            log_error(
-                f"[GithubWebhook] background import failed "
-                f"integration={integ_id}: {exc!r}"
-            )
-
+    dedup_key = f"gh-import:{integ_id}:{pushed_sha}" if pushed_sha else None
     try:
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(coro)
-        task.add_done_callback(_on_done)
-    except RuntimeError:
-        # No running loop — sync caller. Run to completion. ``asyncio.run``
-        # raises any exception directly so the caller sees the failure;
-        # no extra wrapping needed.
-        asyncio.run(coro)
+        worker_job_id = await get_import_arq_client().enqueue_github_import(
+            integ_id,
+            branch=pushed_branch,
+            force=False,
+            triggered_by="webhook",
+            dedup_key=dedup_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Ack the delivery (GitHub redelivers on non-2xx); surface to ops.
+        log_error(
+            f"[GithubWebhook] failed to enqueue import integration={integ_id}: {exc!r}"
+        )
+        return {"integration_id": integ_id, "status": "error",
+                "reason": "enqueue_failed"}
 
-    return {"integration_id": integ_id, "status": "queued"}
+    if worker_job_id is None:
+        # ARQ deduped against an in-flight job for the same push.
+        return {"integration_id": integ_id, "status": "queued",
+                "reason": "already_queued"}
+    return {"integration_id": integ_id, "status": "queued",
+            "worker_job_id": worker_job_id}

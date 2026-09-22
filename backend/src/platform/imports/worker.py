@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _env_path = Path(__file__).resolve().parents[3] / ".env"
-load_dotenv(_env_path, override=True)
+load_dotenv(_env_path, override=False)
 
 from arq.connections import RedisSettings  # noqa: E402
 
@@ -16,6 +16,7 @@ from src.ingest.file.config import etl_config  # noqa: E402
 from src.platform.imports.jobs import execute_import_job  # noqa: E402
 from src.platform.imports.repository import ImportJobRepository  # noqa: E402
 from src.platform.imports.runner import OneTimeImportRunner  # noqa: E402
+from src.repo.github_integration.jobs import execute_github_import  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [execute_import_job]  # noqa: RUF012
+    functions = [execute_import_job, execute_github_import]  # noqa: RUF012
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(etl_config.etl_redis_url)

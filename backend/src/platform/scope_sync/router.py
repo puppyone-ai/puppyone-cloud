@@ -13,18 +13,21 @@ from pydantic import BaseModel
 from src.common_schemas import ApiResponse
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 from src.platform.scope_sync.service import ScopeSyncService, get_scope_sync_service
 
 router = APIRouter(prefix="/api/v1/scope-sync", tags=["scope-sync"])
 
 
-def _ensure_project_access(project_service: ProjectService, current_user: CurrentUser, project_id: str):
-    project = project_service.get_by_id_with_access_check(project_id, current_user.user_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return project
+def _authorize_project(
+    authorization: AuthorizationService,
+    current_user: CurrentUser,
+    project_id: str,
+    action: ProjectAction,
+):
+    return authorization.authorize(project_id, current_user.user_id, action)
 
 
 @router.get("/policy", response_model=ApiResponse)
@@ -34,10 +37,10 @@ def get_policy(
     persona: str | None = Query(None, description="non_dev | dev | reviewer (default dev)"),
     client: str | None = Query(None, description="agent | vscode | cli | unknown"),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
-    _ensure_project_access(project_service, current_user, project_id)
+    _authorize_project(authorization, current_user, project_id, ProjectAction.CONTENT_READ)
     try:
         data = service.resolve_policy(
             project_id=project_id, scope_id=scope_id, persona=persona, client=client,
@@ -53,12 +56,12 @@ def get_events(
     scope_id: str = Query(...),
     cursor: int = Query(0, description="last event id the client has seen"),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
     """Path-scoped upstream events for a scope since ``cursor`` (M3). The sidecar
     polls this and integrates/holds per the managed policy."""
-    _ensure_project_access(project_service, current_user, project_id)
+    _authorize_project(authorization, current_user, project_id, ProjectAction.CONTENT_READ)
     return ApiResponse.success(data=service.poll_events(
         project_id=project_id, scope_id=scope_id, cursor=cursor))
 
@@ -69,11 +72,11 @@ def get_activity(
     scope_id: str = Query(...),
     limit: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
     """Recent sync activity (publish/projection event log) for a scope (M6)."""
-    _ensure_project_access(project_service, current_user, project_id)
+    _authorize_project(authorization, current_user, project_id, ProjectAction.HISTORY_READ)
     return ApiResponse.success(data=service.activity(
         project_id=project_id, scope_id=scope_id, limit=limit))
 
@@ -84,12 +87,12 @@ def get_stats(
     scope_id: str = Query(...),
     window: int = Query(200, ge=1, le=1000),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
     """Aggregate sync observability for a scope (#8): publish volume, distinct
     origins, per-source breakdown, latest head — over the recent event window."""
-    _ensure_project_access(project_service, current_user, project_id)
+    _authorize_project(authorization, current_user, project_id, ProjectAction.HISTORY_READ)
     return ApiResponse.success(data=service.stats(
         project_id=project_id, scope_id=scope_id, window=window))
 
@@ -124,11 +127,11 @@ def get_settings(
     project_id: str = Query(...),
     scope_id: str = Query(...),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
     """The coarse, user-facing sync setting (persona + auto-sync) for a scope (M5)."""
-    _ensure_project_access(project_service, current_user, project_id)
+    _authorize_project(authorization, current_user, project_id, ProjectAction.CONTENT_READ)
     return ApiResponse.success(data=service.get_settings(project_id=project_id, scope_id=scope_id))
 
 
@@ -136,10 +139,12 @@ def get_settings(
 def put_settings(
     body: SyncSettingsBody,
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSyncService = Depends(get_scope_sync_service),
 ):
-    _ensure_project_access(project_service, current_user, body.project_id)
+    _authorize_project(
+        authorization, current_user, body.project_id, ProjectAction.SCOPE_MANAGE
+    )
     if body.persona is not None and body.persona not in ("non_dev", "dev", "reviewer"):
         raise HTTPException(status_code=400, detail="persona must be non_dev | dev | reviewer")
     data = service.set_settings(project_id=body.project_id, scope_id=body.scope_id,

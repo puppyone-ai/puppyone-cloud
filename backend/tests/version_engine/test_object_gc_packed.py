@@ -154,7 +154,7 @@ def _make_backend():
 
 
 def _add_location_row(supa, oid, pack_key, size=10, created_at="2026-01-01T00:00:00+00:00"):
-    supa.client.tables.setdefault("mut_object_locations", []).append({
+    supa.client.tables.setdefault("version_object_locations", []).append({
         "project_id": PROJECT,
         "object_id": oid,
         "pack_key": pack_key,
@@ -236,7 +236,7 @@ def test_delete_chunked_removes_manifest_and_parts():
     assert manifest_key not in s3.objects
     assert part_key not in s3.objects
     # location row purged
-    assert supa.client.tables["mut_object_locations"] == []
+    assert supa.client.tables["version_object_locations"] == []
 
 
 def test_delete_bundled_object_is_refused():
@@ -250,7 +250,7 @@ def test_delete_bundled_object_is_refused():
     assert backend.delete(OID_BUNDLE_1) is False
     assert pack_key in s3.objects  # bundle untouched
     # both location rows intact
-    assert len(supa.client.tables["mut_object_locations"]) == 2
+    assert len(supa.client.tables["version_object_locations"]) == 2
 
 
 def test_sweep_dead_bundles_deletes_fully_dead_bundle():
@@ -265,7 +265,7 @@ def test_sweep_dead_bundles_deletes_fully_dead_bundle():
     assert count == 2
     assert set(swept) == {OID_BUNDLE_1, OID_BUNDLE_2}
     assert pack_key not in s3.objects
-    assert supa.client.tables["mut_object_locations"] == []
+    assert supa.client.tables["version_object_locations"] == []
 
 
 def test_sweep_keeps_partially_dead_bundle():
@@ -281,7 +281,7 @@ def test_sweep_keeps_partially_dead_bundle():
     assert count == 0
     assert swept == []
     assert pack_key in s3.objects
-    assert len(supa.client.tables["mut_object_locations"]) == 2
+    assert len(supa.client.tables["version_object_locations"]) == 2
 
 
 def test_sweep_ignores_chunked_objects():
@@ -333,16 +333,12 @@ def test_version_refs_are_gc_roots(monkeypatch):
     roots, or GC reclaims their objects after the retention window."""
     from src.version_engine.derived.object_gc import _add_version_ref_roots
     from src.version_engine.adapters.git.protocol import is_object_id, ZERO_ID
-    import src.version_engine.infrastructure.supabase.version_ref_repository as vrr
-
     ref_commit = "f" * 40
 
     class FakeStore:
         def list_all_commit_ids(self, project_id):
             assert project_id == "p1"
             return [ref_commit, ZERO_ID, "nothex"]  # add() must filter the invalid ones
-
-    monkeypatch.setattr(vrr, "VersionRefStore", lambda *a, **k: FakeStore())
 
     roots = set()
     errors = []
@@ -351,7 +347,12 @@ def test_version_refs_are_gc_roots(monkeypatch):
         if isinstance(v, str) and is_object_id(v) and v != ZERO_ID:
             roots.add(v)
 
-    _add_version_ref_roots(SimpleNamespace(_project_id="p1"), add, errors)
+    repo = SimpleNamespace(
+        history=SimpleNamespace(
+            list_version_ref_roots=lambda: FakeStore().list_all_commit_ids("p1")
+        )
+    )
+    _add_version_ref_roots(repo, add, errors)
     assert roots == {ref_commit}
     assert errors == []
 

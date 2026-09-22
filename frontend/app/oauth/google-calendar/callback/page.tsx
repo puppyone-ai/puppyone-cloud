@@ -12,10 +12,10 @@ function GoogleCalendarCallbackContent() {
 
   useEffect(() => {
     const handleCallback = async () => {
-      const code = searchParams.get('code');
+      const code = searchParams?.get('code');
       // CSRF nonce — backend's OAuthStateRepository.consume() requires it.
-      const state = searchParams.get('state') || undefined;
-      const error = searchParams.get('error');
+      const state = searchParams?.get('state') || undefined;
+      const error = searchParams?.get('error');
 
       if (error) {
         setStatus('error');

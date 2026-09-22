@@ -2,7 +2,7 @@
 PuppyOneAuthenticator — version access authentication adapter
 
 Maps PuppyOne's authentication system to the version access context:
-  - JWT Bearer → user + full project scope (mode=rw)
+  - JWT Bearer → human ProjectGrant + Project root view bounded by role
   - Access Key → connection + restricted repo scope
 
 Supports:
@@ -19,13 +19,21 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 from src.config import settings
+from src.exceptions import ErrorCode
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.infrastructure.supabase.scope_repository import (
-    find_scope_by_access_key,
-)
-from src.version_engine.admission.channel_pause import enforce_channel_pause
 from src.platform.auth.dependencies import security
+from src.platform.authorization.service import redacted_project_ref
+from src.platform.repository_target.models import (
+    ProjectRootTarget,
+    ResolvedRepositoryView,
+    ScopeTarget,
+)
+from src.repo.models import ResolvedScopeCredential
 from src.utils.logger import log_error, log_warning
+from src.version_engine.admission.channel_pause import enforce_channel_pause
+from src.version_engine.infrastructure.supabase.scope_repository import (
+    resolve_scope_access_credential,
+)
 
 
 class PuppyOneAuthenticator:
@@ -51,12 +59,12 @@ class PuppyOneAuthenticator:
                 to the actual operator (the cli/agent identity behind the
                 key). The strict per-key binding enforcement that this
                 value used to drive moved to the new
-                repo_user_permissions table; this parameter is now an
-                identity HINT, not an auth gate.
+                Project authorization boundary; this value is an identity
+                hint, not an authorization gate.
             user_identity: X-PuppyOne-User header value (for identity binding)
 
-        Returns:
-            {"agent": str, "_scope": {"id", "path", "exclude", "mode"}}
+        Returns a typed Project-root view for Human JWTs or a typed
+        ``RuntimeGrant`` for machine credentials.
         """
         if settings.SKIP_AUTH:
             # config.py.enforce_skip_auth_safety guarantees APP_ENV is
@@ -72,9 +80,15 @@ class PuppyOneAuthenticator:
                     detail="Server misconfigured: SKIP_AUTH must not be active in this environment",
                 )
             log_warning("SKIP_AUTH enabled — version auth returning mock user")
+            target = ProjectRootTarget(project_id=project_id)
             return {
                 "agent": "user:mock",
-                "_scope": {"id": "_root", "path": "", "exclude": [], "mode": "rw"},
+                "_repository_view": ResolvedRepositoryView(
+                    target=target,
+                    path_prefix="",
+                    excludes=(),
+                    max_mode="rw",
+                ),
             }
 
         user = self._try_jwt(token)
@@ -83,7 +97,8 @@ class PuppyOneAuthenticator:
             # be a member of the target project. Without this check, ANY
             # logged-in user could read/write the version tree of ANY project
             # by changing project_id in the URL.
-            if not self._user_has_project_access(user["user_id"], project_id):
+            grant = self._resolve_project_grant(user["user_id"], project_id)
+            if grant is None:
                 log_warning(
                     f"[Auth] JWT user {user['user_id']} attempted version access "
                     f"to project {project_id} without membership"
@@ -92,25 +107,67 @@ class PuppyOneAuthenticator:
                     status_code=403,
                     detail="Not a member of this project",
                 )
+            target = ProjectRootTarget(project_id=project_id)
             return {
                 "agent": f"user:{user['user_id']}",
-                "_scope": {"id": "_root", "path": "", "exclude": [], "mode": "rw"},
+                "_repository_view": ResolvedRepositoryView(
+                    target=target,
+                    path_prefix="",
+                    excludes=(),
+                    max_mode="rw",
+                ),
+                "_project_grant": grant,
                 "_user_identity": user_identity,
             }
 
-        scope_row = self._try_access_key(token, project_id)
-        if scope_row:
-            # Access keys resolve to repo_scopes rows directly. The
-            # "scope is the auth" mental model: the scope dict we return
-            # IS the row that authenticated.
-            return {
-                "agent": f"scope:{scope_row['id']}",
-                "_scope": {
-                    "id": scope_row["id"],
-                    "path": scope_row.get("path", ""),
-                    "exclude": scope_row.get("exclude") or [],
-                    "mode": scope_row.get("mode", "rw"),
+        try:
+            resolved_credential = self._try_access_key(token, project_id)
+        except Exception as error:
+            log_error(
+                "[Auth] credential target lookup failed "
+                f"error_type={type(error).__name__}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Repository view is temporarily unavailable",
+                headers={
+                    "X-PuppyOne-Error-Code": str(
+                        ErrorCode.REPOSITORY_STORAGE_UNAVAILABLE.value
+                    )
                 },
+            ) from error
+        if resolved_credential:
+            scope = resolved_credential.scope
+            from src.platform.authorization.models import (
+                RuntimeGrant,
+                RuntimeMode,
+                RuntimePrincipal,
+            )
+            target = ScopeTarget(
+                project_id=scope.project_id,
+                scope_id=scope.id,
+            )
+            max_mode = scope.max_mode
+
+            runtime_grant = RuntimeGrant(
+                principal=RuntimePrincipal(
+                    principal_id=resolved_credential.credential_id,
+                    credential_kind=resolved_credential.credential_type,
+                ),
+                target=target,
+                repository_view=ResolvedRepositoryView(
+                    target=target,
+                    path_prefix=scope.path,
+                    excludes=tuple(scope.exclude),
+                    max_mode=max_mode,
+                ),
+                mode=RuntimeMode(max_mode),
+            )
+            return {
+                "agent": f"scope:{scope.id}",
+                "_runtime_grant": runtime_grant,
+                "_credential_id": resolved_credential.credential_id,
+                "_access_surface_id": resolved_credential.access_surface_id,
                 "_user_identity": user_identity,
             }
 
@@ -133,56 +190,57 @@ class PuppyOneAuthenticator:
             # Expected: invalid/expired JWT → not a JWT, try next method
             return None
         except Exception as e:
-            log_error(f"[Auth] Unexpected JWT auth error: {e}")
+            log_error(
+                "[Auth] Unexpected JWT auth error "
+                f"error_type={type(e).__name__}"
+            )
             return None
 
-    def _user_has_project_access(self, user_id: str, project_id: str) -> bool:
-        """Verify that user is a member of the project's organization.
-
-        Reused from ProjectRepositorySupabase.verify_project_access. We avoid
-        a full ProjectService instantiation here to keep version auth fast — we
-        only need a boolean, not the project model.
-        """
+    def _resolve_project_grant(self, user_id: str, project_id: str):
+        """Resolve the canonical human ProjectGrant, failing closed."""
         try:
-            from src.platform.project.repository import ProjectRepositorySupabase
-            repo = ProjectRepositorySupabase()
-            role = repo.verify_project_access(project_id, user_id)
-            return role is not None
+            from src.platform.authorization.factory import build_authorization_service
+
+            return build_authorization_service(
+                self._supabase.client
+            ).resolve_project_grant(project_id, user_id)
         except Exception as e:
             # Fail closed: if the access check itself errors, deny access.
             log_error(
-                f"[Auth] Project access check failed user={user_id} "
-                f"project={project_id}: {e}"
+                "[Auth] Project access check failed "
+                f"project_ref={redacted_project_ref(project_id)} "
+                f"error_type={type(e).__name__}"
             )
-            return False
+            return None
 
-    def _try_access_key(self, key: str, project_id: str) -> dict | None:
-        """Resolve an access_key against the canonical repo_scopes table.
+    def _try_access_key(
+        self,
+        key: str,
+        project_id: str,
+    ) -> ResolvedScopeCredential | None:
+        """Resolve an access key through canonical access-surface credentials.
 
-        Scopes own their keys directly. There is no config-scope fallback
-        here because accepting two auth sources creates two policy models
-        for the same credential. The actual SQL lives in
-        ``infrastructure/supabase/scope_repository.find_scope_by_access_key``
-        so identity is purely a policy layer.
+        Access Surfaces own machine credentials; Scope is only the exact path
+        target. There is no config or Scope-column fallback. Storage work lives
+        in ``resolve_scope_access_credential`` so identity remains a policy
+        layer and database failures do not become false authentication misses.
         """
-        scope = find_scope_by_access_key(self._supabase, key)
-        if scope is None:
+        resolved = resolve_scope_access_credential(self._supabase, key)
+        if resolved is None:
             return None
-        if scope.get("access_key_revoked_at"):
-            return None
-        if scope.get("project_id") != project_id:
+        if resolved.project_id != project_id:
             log_warning(
-                f"[Auth] access_key project mismatch (repo_scopes): "
-                f"url_project={project_id} key_project={scope.get('project_id')}"
+                "[Auth] access_key project mismatch (access surface scope) "
+                f"requested_project_ref={redacted_project_ref(project_id)} "
+                f"credential_project_ref={redacted_project_ref(resolved.project_id)}"
             )
             return None
-        return scope
+        return resolved
 
     # ── Key management ──
     #
-    # Key revocation uses repo_scopes.access_key_revoked_at. The public
-    # endpoint is POST /api/v1/projects/{pid}/scopes/{sid}/regenerate-key
-    # (see src/repo/scope_router.py).
+    # Key revocation uses access_surface_credentials.status. Credentials are
+    # issued and rotated through an explicit Access Surface, never a Scope row.
 
 
 def get_version_auth(

@@ -23,6 +23,7 @@
  */
 
 import { getApiAccessToken } from './apiClient';
+import { getProjectHead, getProjectHistory, type VersionCommitInfo } from './contentTreeApi';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9090';
 
@@ -38,6 +39,9 @@ const _TOKEN_REFRESH_MARGIN_SECS = 60;
 /** Hard cap on the recycle delay. If a token reports an absurdly far
  *  ``exp`` (or we fail to decode it), don't schedule a 30-day timer. */
 const _MAX_TOKEN_LIFETIME_MS = 60 * 60 * 1000; // 1h
+const _MAX_SEEN_EVENT_IDS = 2_048;
+// Keep within the HTTP contract (1..100); larger pages receive 422 forever.
+const _CATCH_UP_PAGE_SIZE = 100;
 
 /**
  * Server → client commit_update frame. Mirrors
@@ -48,7 +52,7 @@ const _MAX_TOKEN_LIFETIME_MS = 60 * 60 * 1000; // 1h
 export interface CommitUpdateEvent {
   type: 'commit_update';
   notification_id: string;
-  scope: string;            // normalised scope_path; '' = root scope
+  scope: string;            // normalized path projection; '' = Project root
   commit_id: string;        // 40-hex SHA-1 git commit object hash
   pushed_by: string;        // agent identity, e.g. 'user:<uuid>'
   message: string;
@@ -85,6 +89,18 @@ interface ProjectConnection {
    *  socket whose lifetime ended) can detect they're obsolete and
    *  not schedule a reconnect on top of an already-replaced socket. */
   generation: number;
+  /** Last canonical project head confirmed by either the history API or a
+   * live frame. It is the exclusive anchor for reconnect catch-up. */
+  canonicalHead: string;
+  /** Frames arriving while canonical history is being pulled are held until
+   * the snapshot has been applied. This closes the pull/subscribe race. */
+  reconciling: boolean;
+  pendingFrames: VersionNotification[];
+  /** Insertion-ordered bounded sets. Keeping both identifiers is important:
+   * a replayed commit has a synthetic notification id but is still the same
+   * logical update as a buffered live frame. */
+  seenNotificationIds: Map<string, true>;
+  seenCommitIds: Map<string, true>;
 }
 
 const _connections = new Map<string, ProjectConnection>();
@@ -107,10 +123,116 @@ function _getOrCreate(projectId: string): ProjectConnection {
       reconnectTimer: null,
       refreshTimer: null,
       generation: 0,
+      canonicalHead: '',
+      reconciling: false,
+      pendingFrames: [],
+      seenNotificationIds: new Map(),
+      seenCommitIds: new Map(),
     };
     _connections.set(projectId, conn);
   }
   return conn;
+}
+
+function _rememberBounded(set: Map<string, true>, value: string): boolean {
+  if (!value) return false;
+  if (set.has(value)) return true;
+  set.set(value, true);
+  while (set.size > _MAX_SEEN_EVENT_IDS) {
+    const oldest = set.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    set.delete(oldest);
+  }
+  return false;
+}
+
+function _dispatch(conn: ProjectConnection, event: VersionNotification): void {
+  if (event.type === 'commit_update') {
+    const commit = event as CommitUpdateEvent;
+    const duplicateNotification = _rememberBounded(
+      conn.seenNotificationIds,
+      commit.notification_id,
+    );
+    const duplicateCommit = _rememberBounded(conn.seenCommitIds, commit.commit_id);
+    if (duplicateNotification || duplicateCommit) return;
+    conn.canonicalHead = commit.commit_id || conn.canonicalHead;
+  }
+
+  for (const h of conn.handlers) {
+    try {
+      h(event);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[VersionWS] handler threw', err);
+    }
+  }
+}
+
+function _historyCommitEvent(commit: VersionCommitInfo): CommitUpdateEvent {
+  return {
+    type: 'commit_update',
+    notification_id: `canonical:${commit.commit_id}`,
+    scope: commit.scope_path || '',
+    commit_id: commit.commit_id,
+    pushed_by: commit.who || '',
+    message: commit.message || '',
+    scope_hash: commit.root_hash || '',
+    changed_files: (commit.changes || []).map((change) => change.path),
+    timestamp: commit.created_at || new Date(0).toISOString(),
+  };
+}
+
+async function _reconcileCanonicalHistory(
+  projectId: string,
+  conn: ProjectConnection,
+  generation: number,
+): Promise<void> {
+  const startingHead = conn.canonicalHead;
+  let anchor = startingHead;
+
+  try {
+    // On the first connection we establish the canonical head without
+    // replaying the project's entire history. On reconnect, page forward from
+    // the last confirmed head until caught up; never silently truncate a long
+    // disconnect window.
+    if (!anchor) {
+      const snapshot = await getProjectHead(projectId);
+      if (conn.generation !== generation) return;
+      conn.canonicalHead = snapshot.head_commit_id || '';
+      if (conn.canonicalHead) {
+        _rememberBounded(conn.seenCommitIds, conn.canonicalHead);
+      }
+    } else {
+      for (;;) {
+        const previousAnchor = anchor;
+        const page = await getProjectHistory(projectId, _CATCH_UP_PAGE_SIZE, anchor);
+        if (conn.generation !== generation) return;
+        for (const commit of page.commits) {
+          _dispatch(conn, _historyCommitEvent(commit));
+          anchor = commit.commit_id || anchor;
+        }
+        if (page.commits.length < _CATCH_UP_PAGE_SIZE) break;
+        if (!page.commits.length || anchor === previousAnchor) {
+          throw new Error('canonical history pagination made no progress');
+        }
+      }
+    }
+  } catch (err) {
+    // A socket must not be marked usable when the authoritative catch-up
+    // failed: close it and retry the whole handshake/reconciliation. Keeping
+    // it open here would recreate the original silent event-loss bug.
+    // eslint-disable-next-line no-console
+    console.error('[VersionWS] canonical reconciliation failed', err);
+    if (conn.generation === generation && conn.socket) {
+      conn.socket.close(1012, 'canonical-reconciliation-failed');
+    }
+    return;
+  }
+
+  if (conn.generation !== generation) return;
+  conn.reconciling = false;
+  const pending = conn.pendingFrames.splice(0);
+  for (const event of pending) _dispatch(conn, event);
 }
 
 function _backoffDelayMs(attempt: number): number {
@@ -184,16 +306,20 @@ async function _connect(projectId: string, conn: ProjectConnection): Promise<voi
     return;
   }
 
-  const token = await getApiAccessToken();
+  // Claim the connection before awaiting auth: concurrent subscribers must not
+  // open parallel sockets, and teardown during auth must invalidate this task.
+  const myGen = ++conn.generation;
+  conn.state = 'connecting';
+  let token: string | null;
+  try { token = await getApiAccessToken(); }
+  catch { token = null; }
+  if (conn.generation !== myGen || conn.handlers.size === 0) return;
   if (!token) {
     // Without a token the upgrade will be 1008'd. Schedule a retry —
     // user may be in the middle of a session refresh.
     _scheduleReconnect(projectId, conn);
     return;
   }
-
-  const myGen = ++conn.generation;
-  conn.state = 'connecting';
 
   let socket: WebSocket;
   try {
@@ -212,11 +338,13 @@ async function _connect(projectId: string, conn: ProjectConnection): Promise<voi
     if (conn.generation !== myGen) return;  // stale callback
     conn.state = 'open';
     conn.reconnectAttempts = 0;
+    conn.reconciling = true;
     // Schedule a forced reconnect ~60s before this token expires so
     // the next handshake picks up the supabase-js-refreshed JWT,
     // closing the "long-idle socket outlives its token" gap. Tied to
     // ``myGen`` so a teardown / re-open cycle replaces the timer.
     _scheduleTokenRefresh(projectId, conn, token);
+    void _reconcileCanonicalHistory(projectId, conn, myGen);
   };
 
   socket.onmessage = (ev) => {
@@ -230,17 +358,8 @@ async function _connect(projectId: string, conn: ProjectConnection): Promise<voi
       console.warn('[VersionWS] dropping non-JSON frame', ev.data);
       return;
     }
-    // Fan out to every handler. Each handler is wrapped in try so a
-    // single throwing subscriber doesn't break the other subscribers
-    // or terminate the message loop.
-    for (const h of conn.handlers) {
-      try {
-        h(parsed);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[VersionWS] handler threw', err);
-      }
-    }
+    if (conn.reconciling) conn.pendingFrames.push(parsed);
+    else _dispatch(conn, parsed);
   };
 
   socket.onerror = () => {
@@ -288,6 +407,8 @@ function _teardown(projectId: string, conn: ProjectConnection): void {
   }
   conn.state = 'closed';
   conn.reconnectAttempts = 0;
+  conn.reconciling = false;
+  conn.pendingFrames = [];
   _connections.delete(projectId);
 }
 

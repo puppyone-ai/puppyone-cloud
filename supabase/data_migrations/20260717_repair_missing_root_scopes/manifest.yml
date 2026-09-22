@@ -1,0 +1,11 @@
+api_version: 1
+id: 20260717_repair_missing_root_scopes
+description: Restore the single legacy root Scope for historical Projects created without one
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20260713020000"
+required_env: []
+timeout_seconds: 900
+legacy: false

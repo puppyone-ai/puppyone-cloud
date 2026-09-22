@@ -15,15 +15,30 @@ from src.connectors.gateway.schemas import (
     GatewayUpdate,
 )
 from src.connectors.gateway.service import GatewayService
+from src.exceptions import ErrorCode, PermissionException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.organization.dependencies import resolve_org_id
+from src.platform.organization.dependencies import get_org_repository, resolve_org_id
 
 router = APIRouter(prefix="/gateways", tags=["gateways"])
 
 
 def _get_service() -> GatewayService:
     return GatewayService()
+
+
+def _require_gateway_org_access(svc: GatewayService, gateway_id: str, user_id: str) -> dict:
+    """Load a gateway and enforce that ``user_id`` is a member of its org.
+
+    Gateways are org-scoped credential bindings. Without this check, any
+    authenticated user could read/modify/delete/refresh any org's gateway by id.
+    """
+    gw = svc.get_by_id(gateway_id)
+    if not get_org_repository().get_member(gw["org_id"], user_id):
+        raise PermissionException(
+            "Not a member of this gateway's organization", code=ErrorCode.FORBIDDEN
+        )
+    return gw
 
 
 # ── List ───────────────────────────────────────────────────
@@ -88,6 +103,7 @@ def update_gateway(
     current_user: CurrentUser = Depends(get_current_user),
     svc: GatewayService = Depends(_get_service),
 ):
+    _require_gateway_org_access(svc, gateway_id, current_user.user_id)
     row = svc.update(
         gateway_id,
         name=payload.name,
@@ -112,6 +128,7 @@ def delete_gateway(
     current_user: CurrentUser = Depends(get_current_user),
     svc: GatewayService = Depends(_get_service),
 ):
+    _require_gateway_org_access(svc, gateway_id, current_user.user_id)
     svc.delete(gateway_id)
     return ApiResponse.success(message="Gateway deleted")
 
@@ -128,6 +145,7 @@ async def refresh_token(
     current_user: CurrentUser = Depends(get_current_user),
     svc: GatewayService = Depends(_get_service),
 ):
+    _require_gateway_org_access(svc, gateway_id, current_user.user_id)
     row = await svc.refresh_token(gateway_id)
     return ApiResponse.success(
         data=GatewayService._to_out(row),
@@ -242,5 +260,6 @@ def get_gateway(
     current_user: CurrentUser = Depends(get_current_user),
     svc: GatewayService = Depends(_get_service),
 ):
+    _require_gateway_org_access(svc, gateway_id, current_user.user_id)
     detail = svc.get_detail(gateway_id)
     return ApiResponse.success(data=detail)

@@ -8,10 +8,9 @@ One row per scope in ``scope_sandbox_sessions`` (migration
 The (de)serialization helpers are pure and unit-tested; the store wraps the
 Supabase table API (select/upsert/delete). ``put`` upserts on ``scope_id``.
 
-Known limitation: ``put`` is last-write-wins and the manager's per-scope lock is
-in-process, so two API instances acquiring the SAME scope concurrently could
-double-create. A row lock / optimistic version is the follow-up before
-multi-writer production; single-instance is correct today.
+Creation uses an atomic primary-key insert; losing workers adopt the winner's
+row and tear down any speculative provider resource. Subsequent state updates
+are idempotent upserts coordinated by the manager.
 """
 
 from __future__ import annotations

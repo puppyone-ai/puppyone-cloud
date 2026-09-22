@@ -6,13 +6,16 @@ Covers:
   - Unified connections manager routing by provider
 """
 
-import pytest
 from unittest.mock import MagicMock
 
-from src.connectors.datasource._base import (
-    BaseConnector, ConnectorSpec, FetchResult, Capability,
-)
+import pytest
 
+from src.connectors.datasource._base import (
+    BaseConnector,
+    Capability,
+    ConnectorSpec,
+    FetchResult,
+)
 
 # ── BaseConnector Tests ────────────────────────────────────────
 
@@ -119,6 +122,7 @@ class TestIntegrationEngineDecoupling:
     def test_engine_uses_version_write_port(self):
         """IntegrationEngine.execute() should enter project writes through one port."""
         import inspect
+
         from src.platform.integrations.engine import IntegrationEngine
         source = inspect.getsource(IntegrationEngine.execute)
         assert "self.write_port.write_plan" in source
@@ -128,10 +132,10 @@ class TestIntegrationEngineDecoupling:
     def test_version_write_port_uses_version_write_commands(self):
         """The Integration write port is the only direct Version Engine write adapter."""
         import inspect
+
         from src.platform.integrations.version_write_port import VersionEngineWritePort
         source = inspect.getsource(VersionEngineWritePort.write_plan)
-        assert "build_worker_version_engine_container" in source
-        assert "write_commands" in source
+        assert "build_leased_worker_write_commands" in source
         assert "commands.bulk_write" in source
         assert "commands.write_bytes" in source
 

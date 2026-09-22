@@ -4,11 +4,12 @@ import logging
 from typing import Any, List
 
 from src.connectors.database.models import DBConnection
-from src.connectors.database.repository import DBConnectionRepository
 from src.connectors.database.providers import get_provider
 from src.connectors.database.providers.base import QueryResult, TableInfo
-from src.platform.project.service import ProjectService
-from src.exceptions import NotFoundException, ErrorCode
+from src.connectors.database.repository import DBConnectionRepository
+from src.exceptions import ErrorCode, NotFoundException
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,10 @@ class DBConnectorService:
     def __init__(
         self,
         repo: DBConnectionRepository,
-        project_service: ProjectService,
+        authorization: AuthorizationService,
     ):
         self.repo = repo
-        self.project_service = project_service
+        self.authorization = authorization
 
     # === Connection Management ===
 
@@ -42,6 +43,9 @@ class DBConnectorService:
         config: dict,
     ) -> dict[str, Any]:
         """Create a connection and test it immediately."""
+        self.authorization.authorize(
+            project_id, user_id, ProjectAction.INTEGRATION_MANAGE
+        )
         db_provider = get_provider(provider)
         test_result = await db_provider.test_connection(config)
 
@@ -58,21 +62,26 @@ class DBConnectorService:
             "database_info": test_result,
         }
 
-    def get_connection(self, connection_id: str, user_id: str) -> DBConnection:
+    def get_connection(
+        self,
+        connection_id: str,
+        user_id: str,
+        action: ProjectAction = ProjectAction.ACCESS_READ,
+    ) -> DBConnection:
         conn = self.repo.get_by_id(connection_id)
         if not conn:
             raise NotFoundException("Database connector not found", code=ErrorCode.NOT_FOUND)
-        if not self.project_service.verify_project_access(conn.project_id, user_id):
-            raise NotFoundException("Database connector not found", code=ErrorCode.NOT_FOUND)
+        self.authorization.authorize(conn.project_id, user_id, action)
         return conn
 
     def list_connections(self, project_id: str, user_id: str) -> List[DBConnection]:
-        if not self.project_service.verify_project_access(project_id, user_id):
-            raise NotFoundException("Project not found", code=ErrorCode.NOT_FOUND)
+        self.authorization.authorize(project_id, user_id, ProjectAction.ACCESS_READ)
         return self.repo.list_by_project(project_id)
 
     def delete_connection(self, connection_id: str, user_id: str) -> bool:
-        conn = self.get_connection(connection_id, user_id)
+        conn = self.get_connection(
+            connection_id, user_id, ProjectAction.INTEGRATION_MANAGE
+        )
         return self.repo.delete(conn.id)
 
     # === Table Data ===
@@ -117,7 +126,11 @@ class DBConnectorService:
         limit: int = 1000,
     ) -> dict[str, Any]:
         """Fetch entire table data and save as a Version Engine file."""
-        conn = self.get_connection(connection_id, user_id)
+        conn = self.get_connection(connection_id, user_id, ProjectAction.CONTENT_WRITE)
+        if conn.project_id != project_id:
+            raise NotFoundException(
+                "Database connector not found", code=ErrorCode.NOT_FOUND
+            )
         provider = get_provider(conn.provider)
 
         result = await provider.query_table(
@@ -133,8 +146,10 @@ class DBConnectorService:
         }
 
         import json
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-        commands = build_worker_version_engine_container().write_commands()
+
+        from src.platform.project.write_lease import build_leased_worker_write_commands
+
+        commands = build_leased_worker_write_commands()
         content_bytes = json.dumps(content_data, ensure_ascii=False, indent=2).encode("utf-8")
         file_path = f"{name}.json" if not name.endswith(".json") else name
         await commands.write_bytes(

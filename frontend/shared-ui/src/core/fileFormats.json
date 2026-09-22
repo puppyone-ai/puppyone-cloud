@@ -1,0 +1,2643 @@
+{
+  "formats": [
+    {
+      "id": "markdown",
+      "label": "Markdown",
+      "extensions": [
+        ".agent.md",
+        ".chatmode.md",
+        ".copilotmd",
+        ".instructions.md",
+        ".jmd",
+        ".litcoffee",
+        ".markdn",
+        ".markdown",
+        ".md",
+        ".mdown",
+        ".mdtext",
+        ".mdtxt",
+        ".mdwn",
+        ".mdx",
+        ".mkd",
+        ".mkdn",
+        ".prompt.md",
+        ".ron",
+        ".ronn",
+        ".workbook"
+      ],
+      "mimeTypes": [
+        "text/markdown"
+      ],
+      "category": "markdown",
+      "defaultViewer": "markdown-editor",
+      "availableViewers": [
+        "markdown-editor",
+        "monaco-code"
+      ],
+      "editable": true,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "markdown",
+      "filenamePatterns": [
+        "**/.claude/agents/*.md",
+        "**/.claude/rules/**/*.md",
+        "**/.cursor/**/*.mdc",
+        "**/.github/agents/*.md"
+      ],
+      "filenames": [
+        "copilot-instructions.md",
+        "SKILL.md"
+      ]
+    },
+    {
+      "id": "json",
+      "label": "JSON",
+      "extensions": [
+        ".babelrc",
+        ".bowerrc",
+        ".code-profile",
+        ".code-snippets",
+        ".code-workspace",
+        ".css.map",
+        ".eslintrc",
+        ".eslintrc.json",
+        ".geojson",
+        ".har",
+        ".hintrc",
+        ".js.map",
+        ".jscsrc",
+        ".jsfmtrc",
+        ".jshintrc",
+        ".jslintrc",
+        ".json",
+        ".json5",
+        ".jsonc",
+        ".jsonld",
+        ".swcrc",
+        ".toolset.jsonc",
+        ".ts.map",
+        ".tsbuildinfo",
+        ".vuerc",
+        ".webmanifest"
+      ],
+      "mimeTypes": [
+        "application/json",
+        "application/manifest+json"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "availableViewers": [
+        "monaco-code"
+      ],
+      "editable": true,
+      "ingestStrategy": "parse-structured",
+      "monacoLanguage": "json",
+      "filenames": [
+        ".babelrc.json",
+        ".devcontainer.json",
+        ".ember-cli",
+        ".watchmanconfig",
+        "argv.json",
+        "babel.config.json",
+        "bun.lock",
+        "color-theme.json",
+        "composer.lock",
+        "devcontainer.json",
+        "extensions.json",
+        "icon-theme.json",
+        "jsconfig.json",
+        "keybindings.json",
+        "language-configuration.json",
+        "launch.json",
+        "mcp.json",
+        "profiles.json",
+        "settings.json",
+        "tasks.json",
+        "tsconfig.json",
+        "typedoc.json"
+      ],
+      "filenamePatterns": [
+        "**/.github/hooks/*.json",
+        "**/snippets*.json",
+        "**/User/profiles/*/snippets/*.json",
+        "**/User/snippets/*.json",
+        "jsconfig-*.json",
+        "jsconfig.*.json",
+        "tsconfig-*.json",
+        "tsconfig.*.json"
+      ]
+    },
+    {
+      "id": "jsonl",
+      "label": "JSON Lines",
+      "extensions": [
+        ".jsonl",
+        ".ndjson"
+      ],
+      "mimeTypes": [
+        "application/jsonl",
+        "application/x-ndjson"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "json"
+    },
+    {
+      "id": "yaml",
+      "label": "YAML",
+      "extensions": [
+        ".cff",
+        ".eyaml",
+        ".eyml",
+        ".winget",
+        ".yaml",
+        ".yaml-tmlanguage",
+        ".yaml-tmpreferences",
+        ".yaml-tmtheme",
+        ".yml"
+      ],
+      "mimeTypes": [
+        "application/yaml",
+        "text/x-yaml",
+        "text/yaml"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "yaml",
+      "filenamePatterns": [
+        "*docker*compose*.yaml",
+        "*docker*compose*.yml",
+        "compose.*.yaml",
+        "compose.*.yml",
+        "compose.yaml",
+        "compose.yml"
+      ]
+    },
+    {
+      "id": "toml",
+      "label": "TOML",
+      "extensions": [
+        ".toml"
+      ],
+      "mimeTypes": [
+        "application/toml",
+        "text/toml"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "xml",
+      "label": "XML",
+      "extensions": [
+        ".ascx",
+        ".atom",
+        ".axaml",
+        ".axml",
+        ".bpmn",
+        ".cpt",
+        ".csl",
+        ".csproj",
+        ".csproj.user",
+        ".dita",
+        ".ditamap",
+        ".dtd",
+        ".dtml",
+        ".ent",
+        ".fsproj",
+        ".fxml",
+        ".iml",
+        ".isml",
+        ".jmx",
+        ".launch",
+        ".menu",
+        ".mod",
+        ".mxml",
+        ".nuspec",
+        ".opml",
+        ".owl",
+        ".plist",
+        ".proj",
+        ".props",
+        ".pt",
+        ".publishsettings",
+        ".pubxml",
+        ".pubxml.user",
+        ".rbxlx",
+        ".rbxmx",
+        ".rdf",
+        ".rng",
+        ".rss",
+        ".shproj",
+        ".slnx",
+        ".storyboard",
+        ".svg-xml",
+        ".targets",
+        ".tld",
+        ".tmx",
+        ".vbproj",
+        ".vbproj.user",
+        ".vcxproj",
+        ".vcxproj.filters",
+        ".wixproj",
+        ".wsdl",
+        ".wxi",
+        ".wxl",
+        ".wxs",
+        ".xaml",
+        ".xbl",
+        ".xib",
+        ".xlf",
+        ".xliff",
+        ".xml",
+        ".xoml",
+        ".xpdl",
+        ".xsd",
+        ".xsl",
+        ".xslt",
+        ".xul"
+      ],
+      "mimeTypes": [
+        "application/xml",
+        "text/xml"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "xml"
+    },
+    {
+      "id": "csv",
+      "label": "CSV",
+      "extensions": [
+        ".csv"
+      ],
+      "mimeTypes": [
+        "text/csv"
+      ],
+      "category": "data",
+      "defaultViewer": "csv-table",
+      "availableViewers": [
+        "csv-table",
+        "monaco-code"
+      ],
+      "editable": true,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "tsv",
+      "label": "TSV",
+      "extensions": [
+        ".tsv"
+      ],
+      "mimeTypes": [
+        "text/tab-separated-values"
+      ],
+      "category": "data",
+      "defaultViewer": "csv-table",
+      "availableViewers": [
+        "csv-table",
+        "monaco-code"
+      ],
+      "editable": true,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "protobuf",
+      "label": "Protocol Buffers",
+      "extensions": [
+        ".proto"
+      ],
+      "mimeTypes": [
+        "text/x-protobuf"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "protobuf"
+    },
+    {
+      "id": "ini",
+      "label": "INI Config",
+      "extensions": [
+        ".cfg",
+        ".conf",
+        ".config",
+        ".editorconfig",
+        ".gitconfig",
+        ".ini"
+      ],
+      "mimeTypes": [
+        "text/plain",
+        "text/x-ini"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "ini"
+    },
+    {
+      "id": "properties",
+      "label": "Properties",
+      "extensions": [
+        ".directory",
+        ".gitattributes",
+        ".gitmodules",
+        ".npmrc",
+        ".properties",
+        ".repo"
+      ],
+      "mimeTypes": [
+        "text/x-properties"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "ini",
+      "filenames": [
+        "gitconfig"
+      ],
+      "filenamePatterns": [
+        "**/.config/git/config",
+        "**/.git/config"
+      ]
+    },
+    {
+      "id": "hcl",
+      "label": "HCL / Terraform",
+      "extensions": [
+        ".hcl",
+        ".tf",
+        ".tfvars"
+      ],
+      "mimeTypes": [
+        "text/x-hcl"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "hcl"
+    },
+    {
+      "id": "typescript",
+      "label": "TypeScript",
+      "extensions": [
+        ".cts",
+        ".mts",
+        ".ts",
+        ".tsx"
+      ],
+      "mimeTypes": [
+        "application/typescript",
+        "text/typescript"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "typescript"
+    },
+    {
+      "id": "javascript",
+      "label": "JavaScript",
+      "extensions": [
+        ".cjs",
+        ".es6",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".pac"
+      ],
+      "mimeTypes": [
+        "application/javascript",
+        "text/javascript"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "javascript",
+      "filenames": [
+        "jakefile"
+      ]
+    },
+    {
+      "id": "coffeescript",
+      "label": "CoffeeScript",
+      "extensions": [
+        ".coffee",
+        ".cson",
+        ".iced"
+      ],
+      "mimeTypes": [
+        "application/vnd.coffeescript"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "coffeescript"
+    },
+    {
+      "id": "html",
+      "label": "HTML",
+      "extensions": [
+        ".asp",
+        ".aspx",
+        ".ejs",
+        ".htm",
+        ".html",
+        ".jshtm",
+        ".jsp",
+        ".mdoc",
+        ".rhtml",
+        ".shtml",
+        ".volt",
+        ".xht",
+        ".xhtml"
+      ],
+      "mimeTypes": [
+        "application/xhtml+xml",
+        "text/html",
+        "text/ng-template",
+        "text/template",
+        "text/x-jshtm"
+      ],
+      "category": "code",
+      "defaultViewer": "html-artifact",
+      "availableViewers": [
+        "html-artifact",
+        "monaco-code"
+      ],
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "html"
+    },
+    {
+      "id": "css",
+      "label": "CSS",
+      "extensions": [
+        ".css"
+      ],
+      "mimeTypes": [
+        "text/css"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "css"
+    },
+    {
+      "id": "scss",
+      "label": "SCSS",
+      "extensions": [
+        ".sass",
+        ".scss"
+      ],
+      "mimeTypes": [
+        "text/scss",
+        "text/x-sass",
+        "text/x-scss"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "scss"
+    },
+    {
+      "id": "less",
+      "label": "Less",
+      "extensions": [
+        ".less"
+      ],
+      "mimeTypes": [
+        "text/less",
+        "text/x-less"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "less"
+    },
+    {
+      "id": "pug",
+      "label": "Pug",
+      "extensions": [
+        ".jade",
+        ".pug"
+      ],
+      "mimeTypes": [
+        "text/x-pug"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "pug"
+    },
+    {
+      "id": "handlebars",
+      "label": "Handlebars",
+      "extensions": [
+        ".handlebars",
+        ".hbs",
+        ".hjs",
+        ".mustache"
+      ],
+      "mimeTypes": [
+        "text/x-handlebars-template"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "handlebars"
+    },
+    {
+      "id": "razor",
+      "label": "Razor",
+      "extensions": [
+        ".cshtml",
+        ".razor"
+      ],
+      "mimeTypes": [
+        "text/x-cshtml"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "razor"
+    },
+    {
+      "id": "twig",
+      "label": "Twig",
+      "extensions": [
+        ".twig"
+      ],
+      "mimeTypes": [
+        "text/x-twig"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "twig"
+    },
+    {
+      "id": "liquid",
+      "label": "Liquid",
+      "extensions": [
+        ".liquid"
+      ],
+      "mimeTypes": [
+        "text/x-liquid"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "liquid"
+    },
+    {
+      "id": "python",
+      "label": "Python",
+      "extensions": [
+        ".cpy",
+        ".gyp",
+        ".gypi",
+        ".ipy",
+        ".py",
+        ".pyi",
+        ".pyt",
+        ".pyw",
+        ".pyx",
+        ".rpy"
+      ],
+      "mimeTypes": [
+        "application/x-python",
+        "text/x-python"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "python",
+      "filenames": [
+        "SConscript",
+        "SConstruct"
+      ]
+    },
+    {
+      "id": "ruby",
+      "label": "Ruby",
+      "extensions": [
+        ".erb",
+        ".gemspec",
+        ".podspec",
+        ".rake",
+        ".rb",
+        ".rbi",
+        ".rbx",
+        ".rjs",
+        ".ru"
+      ],
+      "filenames": [
+        "Appfile",
+        "appraisals",
+        "Berksfile",
+        "berksfile.lock",
+        "Brewfile",
+        "Capfile",
+        "Cheffile",
+        "dangerfile",
+        "Deliverfile",
+        "Fastfile",
+        "Gemfile",
+        "Guardfile",
+        "gymfile",
+        "hobofile",
+        "Matchfile",
+        "Podfile",
+        "Procfile",
+        "puppetfile",
+        "Rakefile",
+        "rantfile",
+        "scanfile",
+        "Snapfile",
+        "thorfile",
+        "Vagrantfile"
+      ],
+      "mimeTypes": [
+        "application/x-ruby",
+        "text/x-ruby"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "ruby"
+    },
+    {
+      "id": "rust",
+      "label": "Rust",
+      "extensions": [
+        ".rs"
+      ],
+      "mimeTypes": [
+        "text/x-rust"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "rust"
+    },
+    {
+      "id": "go",
+      "label": "Go",
+      "extensions": [
+        ".go"
+      ],
+      "mimeTypes": [
+        "text/x-go"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "go"
+    },
+    {
+      "id": "java",
+      "label": "Java",
+      "extensions": [
+        ".jav",
+        ".java"
+      ],
+      "mimeTypes": [
+        "text/x-java",
+        "text/x-java-source"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "java"
+    },
+    {
+      "id": "kotlin",
+      "label": "Kotlin",
+      "extensions": [
+        ".kt",
+        ".kts"
+      ],
+      "mimeTypes": [
+        "text/x-kotlin"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "kotlin"
+    },
+    {
+      "id": "swift",
+      "label": "Swift",
+      "extensions": [
+        ".swift"
+      ],
+      "mimeTypes": [
+        "text/x-swift"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "swift"
+    },
+    {
+      "id": "objective-c",
+      "label": "Objective-C",
+      "extensions": [
+        ".m",
+        ".mm"
+      ],
+      "mimeTypes": [
+        "text/x-objectivec"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "objective-c"
+    },
+    {
+      "id": "c",
+      "label": "C",
+      "extensions": [
+        ".c",
+        ".h",
+        ".i"
+      ],
+      "mimeTypes": [
+        "text/x-c",
+        "text/x-csrc"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "c"
+    },
+    {
+      "id": "cpp",
+      "label": "C++",
+      "extensions": [
+        ".c++",
+        ".c++m",
+        ".cc",
+        ".ccm",
+        ".cpp",
+        ".cppm",
+        ".cu",
+        ".cuh",
+        ".cxx",
+        ".cxxm",
+        ".h.in",
+        ".h++",
+        ".hh",
+        ".hpp",
+        ".hpp.in",
+        ".hxx",
+        ".ii",
+        ".inl",
+        ".ino",
+        ".ipp",
+        ".ixx",
+        ".tpp",
+        ".txx"
+      ],
+      "mimeTypes": [
+        "text/x-c++",
+        "text/x-c++src"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "cpp"
+    },
+    {
+      "id": "csharp",
+      "label": "C#",
+      "extensions": [
+        ".cake",
+        ".cs",
+        ".csx"
+      ],
+      "mimeTypes": [
+        "text/x-csharp"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "csharp"
+    },
+    {
+      "id": "fsharp",
+      "label": "F#",
+      "extensions": [
+        ".fs",
+        ".fsi",
+        ".fsscript",
+        ".fsx"
+      ],
+      "mimeTypes": [
+        "text/x-fsharp"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "fsharp"
+    },
+    {
+      "id": "visualbasic",
+      "label": "Visual Basic",
+      "extensions": [
+        ".bas",
+        ".brs",
+        ".vb",
+        ".vba",
+        ".vbs"
+      ],
+      "mimeTypes": [
+        "text/x-vb"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "vb"
+    },
+    {
+      "id": "pascal",
+      "label": "Pascal",
+      "extensions": [
+        ".dpr",
+        ".pas",
+        ".pp"
+      ],
+      "mimeTypes": [
+        "text/x-pascal"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "pascal"
+    },
+    {
+      "id": "haskell",
+      "label": "Haskell",
+      "extensions": [
+        ".hs",
+        ".lhs"
+      ],
+      "mimeTypes": [
+        "text/x-haskell"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "erlang",
+      "label": "Erlang",
+      "extensions": [
+        ".erl",
+        ".hrl"
+      ],
+      "mimeTypes": [
+        "text/x-erlang"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "elixir",
+      "label": "Elixir",
+      "extensions": [
+        ".eex",
+        ".ex",
+        ".exs",
+        ".heex",
+        ".leex"
+      ],
+      "mimeTypes": [
+        "text/x-elixir"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "elixir"
+    },
+    {
+      "id": "clojure",
+      "label": "Clojure",
+      "extensions": [
+        ".clj",
+        ".cljc",
+        ".cljs",
+        ".cljx",
+        ".clojure",
+        ".edn"
+      ],
+      "mimeTypes": [
+        "text/x-clojure"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "clojure"
+    },
+    {
+      "id": "scala",
+      "label": "Scala",
+      "extensions": [
+        ".sc",
+        ".scala"
+      ],
+      "mimeTypes": [
+        "text/x-scala"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "scala"
+    },
+    {
+      "id": "dart",
+      "label": "Dart",
+      "extensions": [
+        ".dart"
+      ],
+      "mimeTypes": [
+        "application/dart"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "dart"
+    },
+    {
+      "id": "julia",
+      "label": "Julia",
+      "extensions": [
+        ".jl"
+      ],
+      "mimeTypes": [
+        "text/x-julia"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "julia"
+    },
+    {
+      "id": "r",
+      "label": "R",
+      "extensions": [
+        ".r",
+        ".rhistory",
+        ".rmd",
+        ".rprofile",
+        ".rt"
+      ],
+      "mimeTypes": [
+        "text/x-r"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "r"
+    },
+    {
+      "id": "lua",
+      "label": "Lua",
+      "extensions": [
+        ".lua"
+      ],
+      "mimeTypes": [
+        "application/x-lua",
+        "text/x-lua"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "lua"
+    },
+    {
+      "id": "perl",
+      "label": "Perl",
+      "extensions": [
+        ".pl",
+        ".pm",
+        ".pod",
+        ".psgi",
+        ".t"
+      ],
+      "mimeTypes": [
+        "text/x-perl"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "perl"
+    },
+    {
+      "id": "php",
+      "label": "PHP",
+      "extensions": [
+        ".ctp",
+        ".phar",
+        ".php",
+        ".php4",
+        ".php5",
+        ".phtml"
+      ],
+      "mimeTypes": [
+        "application/x-php",
+        "text/x-php"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "php"
+    },
+    {
+      "id": "shell",
+      "label": "Shell",
+      "extensions": [
+        ".ash",
+        ".bash",
+        ".bash_aliases",
+        ".bash_login",
+        ".bash_logout",
+        ".bash_profile",
+        ".bashrc",
+        ".csh",
+        ".cshrc",
+        ".ebuild",
+        ".eclass",
+        ".fish",
+        ".ksh",
+        ".profile",
+        ".sh",
+        ".tcshrc",
+        ".xprofile",
+        ".xsession",
+        ".xsessionrc",
+        ".yash_profile",
+        ".yashrc",
+        ".zlogin",
+        ".zlogout",
+        ".zprofile",
+        ".zsh",
+        ".zsh-theme",
+        ".zshenv",
+        ".zshrc"
+      ],
+      "mimeTypes": [
+        "application/x-sh",
+        "text/x-shellscript"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "shell",
+      "filenames": [
+        ".envrc",
+        ".hushlogin",
+        "APKBUILD",
+        "bashrc_Apple_Terminal",
+        "PKGBUILD",
+        "zlogin",
+        "zlogout",
+        "zprofile",
+        "zshenv",
+        "zshrc",
+        "zshrc_Apple_Terminal"
+      ]
+    },
+    {
+      "id": "powershell",
+      "label": "PowerShell",
+      "extensions": [
+        ".ps1",
+        ".psd1",
+        ".psm1",
+        ".psrc",
+        ".pssc"
+      ],
+      "mimeTypes": [
+        "application/x-powershell"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "powershell"
+    },
+    {
+      "id": "batch",
+      "label": "Batch",
+      "extensions": [
+        ".bat",
+        ".cmd"
+      ],
+      "mimeTypes": [
+        "application/x-bat"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "bat"
+    },
+    {
+      "id": "tcl",
+      "label": "Tcl",
+      "extensions": [
+        ".tcl"
+      ],
+      "mimeTypes": [
+        "application/x-tcl"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "sql",
+      "label": "SQL",
+      "extensions": [
+        ".dsql",
+        ".mysql",
+        ".psql",
+        ".sql"
+      ],
+      "mimeTypes": [
+        "application/sql",
+        "text/x-sql"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "sql"
+    },
+    {
+      "id": "graphql",
+      "label": "GraphQL",
+      "extensions": [
+        ".gql",
+        ".graphql"
+      ],
+      "mimeTypes": [
+        "application/graphql"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "graphql"
+    },
+    {
+      "id": "solidity",
+      "label": "Solidity",
+      "extensions": [
+        ".sol"
+      ],
+      "mimeTypes": [
+        "text/x-solidity"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "sol"
+    },
+    {
+      "id": "verilog",
+      "label": "Verilog / SystemVerilog",
+      "extensions": [
+        ".sv",
+        ".svh",
+        ".v",
+        ".vh"
+      ],
+      "mimeTypes": [
+        "text/x-systemverilog",
+        "text/x-verilog"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "systemverilog"
+    },
+    {
+      "id": "dockerfile",
+      "label": "Dockerfile",
+      "extensions": [
+        ".containerfile",
+        ".dockerfile"
+      ],
+      "filenames": [
+        "Containerfile",
+        "Dockerfile"
+      ],
+      "mimeTypes": [
+        "text/x-dockerfile"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "dockerfile",
+      "filenamePatterns": [
+        "Containerfile.*",
+        "Dockerfile.*"
+      ]
+    },
+    {
+      "id": "makefile",
+      "label": "Makefile",
+      "extensions": [
+        ".mak",
+        ".mk"
+      ],
+      "filenames": [
+        "GNUmakefile",
+        "makefile",
+        "Makefile",
+        "OCamlMakefile"
+      ],
+      "mimeTypes": [
+        "text/x-makefile"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "cmake",
+      "label": "CMake",
+      "extensions": [
+        ".cmake"
+      ],
+      "filenames": [
+        "CMakeLists.txt"
+      ],
+      "mimeTypes": [
+        "text/x-cmake"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "tex",
+      "label": "TeX / LaTeX",
+      "extensions": [
+        ".bbx",
+        ".bib",
+        ".cbx",
+        ".cls",
+        ".ctx",
+        ".latex",
+        ".ltx",
+        ".sty",
+        ".tex"
+      ],
+      "mimeTypes": [
+        "application/x-latex",
+        "application/x-tex"
+      ],
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "latex"
+    },
+    {
+      "id": "restructuredtext",
+      "label": "reStructuredText",
+      "extensions": [
+        ".rst"
+      ],
+      "mimeTypes": [
+        "text/x-rst"
+      ],
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "restructuredtext"
+    },
+    {
+      "id": "diff",
+      "label": "Diff / Patch",
+      "extensions": [
+        ".diff",
+        ".patch",
+        ".rej"
+      ],
+      "mimeTypes": [
+        "text/x-diff",
+        "text/x-patch"
+      ],
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "plaintext",
+      "label": "Plain Text",
+      "extensions": [
+        ".env",
+        ".log",
+        ".text",
+        ".txt"
+      ],
+      "filenames": [
+        ".env",
+        ".flaskenv",
+        "AUTHORS",
+        "CHANGELOG",
+        "CHANGES",
+        "CONTRIBUTORS",
+        "COPYING",
+        "CREDITS",
+        "HISTORY",
+        "INSTALL",
+        "LICENSE",
+        "MAINTAINERS",
+        "NEWS",
+        "NOTICE",
+        "README",
+        "TODO",
+        "user-dirs.dirs",
+        "VERSION"
+      ],
+      "mimeTypes": [
+        "text/plain"
+      ],
+      "category": "text",
+      "defaultViewer": "plain-text",
+      "availableViewers": [
+        "monaco-code",
+        "plain-text"
+      ],
+      "editable": true,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext",
+      "filenamePatterns": [
+        ".env.*",
+        "*.log.?"
+      ]
+    },
+    {
+      "id": "subtitle-srt",
+      "label": "SubRip Subtitle",
+      "extensions": [
+        ".srt"
+      ],
+      "mimeTypes": [
+        "application/x-subrip"
+      ],
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "subtitle-vtt",
+      "label": "WebVTT Subtitle",
+      "extensions": [
+        ".vtt"
+      ],
+      "mimeTypes": [
+        "text/vtt"
+      ],
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "subtitle-ass",
+      "label": "ASS / SSA Subtitle",
+      "extensions": [
+        ".ass",
+        ".ssa"
+      ],
+      "mimeTypes": [
+        "text/x-ass"
+      ],
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext"
+    },
+    {
+      "id": "ignore",
+      "label": "Ignore Rules",
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "ignore",
+      "filenamePatterns": [
+        ".copilotignore"
+      ],
+      "filenames": [
+        ".vscodeignore"
+      ],
+      "extensions": [
+        ".git-blame-ignore-revs",
+        ".gitignore",
+        ".gitignore_global",
+        ".npmignore"
+      ]
+    },
+    {
+      "id": "git-commit",
+      "label": "Git Commit Message",
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "git-commit",
+      "filenames": [
+        "COMMIT_EDITMSG",
+        "MERGE_MSG"
+      ]
+    },
+    {
+      "id": "git-rebase",
+      "label": "Git Rebase Message",
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "git-rebase",
+      "filenames": [
+        "git-rebase-todo"
+      ],
+      "filenamePatterns": [
+        "**/rebase-merge/done"
+      ]
+    },
+    {
+      "id": "groovy",
+      "label": "Groovy",
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "groovy",
+      "extensions": [
+        ".gradle",
+        ".groovy",
+        ".gvy",
+        ".jenkinsfile",
+        ".nf"
+      ],
+      "filenames": [
+        "Jenkinsfile"
+      ],
+      "filenamePatterns": [
+        "Jenkinsfile*"
+      ]
+    },
+    {
+      "id": "hlsl",
+      "label": "HLSL",
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "hlsl",
+      "extensions": [
+        ".cginc",
+        ".compute",
+        ".fx",
+        ".fxh",
+        ".hlsl",
+        ".hlsli",
+        ".psh",
+        ".vsh"
+      ]
+    },
+    {
+      "id": "raku",
+      "label": "Raku",
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "perl",
+      "extensions": [
+        ".nqp",
+        ".p6",
+        ".pl6",
+        ".pm6",
+        ".raku",
+        ".rakudoc",
+        ".rakumod",
+        ".rakutest"
+      ]
+    },
+    {
+      "id": "search-result",
+      "label": "Search Result",
+      "category": "text",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "plaintext",
+      "extensions": [
+        ".code-search"
+      ]
+    },
+    {
+      "id": "shaderlab",
+      "label": "ShaderLab",
+      "category": "code",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-text",
+      "monacoLanguage": "shaderlab",
+      "extensions": [
+        ".shader"
+      ]
+    },
+    {
+      "id": "png",
+      "label": "PNG Image",
+      "extensions": [
+        ".apng",
+        ".png"
+      ],
+      "mimeTypes": [
+        "image/apng",
+        "image/png"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "jpeg",
+      "label": "JPEG Image",
+      "extensions": [
+        ".jfif",
+        ".jpe",
+        ".jpeg",
+        ".jpg",
+        ".pjp",
+        ".pjpeg"
+      ],
+      "mimeTypes": [
+        "image/jpeg"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "gif",
+      "label": "GIF Image",
+      "extensions": [
+        ".gif"
+      ],
+      "mimeTypes": [
+        "image/gif"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "webp",
+      "label": "WebP Image",
+      "extensions": [
+        ".webp"
+      ],
+      "mimeTypes": [
+        "image/webp"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "avif",
+      "label": "AVIF Image",
+      "extensions": [
+        ".avif"
+      ],
+      "mimeTypes": [
+        "image/avif"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "svg",
+      "label": "SVG Image",
+      "extensions": [
+        ".svg"
+      ],
+      "mimeTypes": [
+        "image/svg+xml"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "availableViewers": [
+        "image-preview",
+        "monaco-code"
+      ],
+      "editable": false,
+      "ingestStrategy": "raw",
+      "monacoLanguage": "xml"
+    },
+    {
+      "id": "bmp",
+      "label": "Bitmap Image",
+      "extensions": [
+        ".bmp"
+      ],
+      "mimeTypes": [
+        "image/bmp"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "ico",
+      "label": "Icon",
+      "extensions": [
+        ".ico"
+      ],
+      "mimeTypes": [
+        "image/vnd.microsoft.icon",
+        "image/x-icon"
+      ],
+      "category": "image",
+      "defaultViewer": "image-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "tiff",
+      "label": "TIFF Image",
+      "extensions": [
+        ".tif",
+        ".tiff"
+      ],
+      "mimeTypes": [
+        "image/tiff"
+      ],
+      "category": "image",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "heic",
+      "label": "HEIC Image",
+      "extensions": [
+        ".heic",
+        ".heif"
+      ],
+      "mimeTypes": [
+        "image/heic",
+        "image/heif"
+      ],
+      "category": "image",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "raw-photo",
+      "label": "RAW Photo",
+      "extensions": [
+        ".arw",
+        ".cr2",
+        ".cr3",
+        ".dng",
+        ".nef",
+        ".orf",
+        ".raw",
+        ".rw2"
+      ],
+      "mimeTypes": [
+        "image/x-canon-cr2",
+        "image/x-nikon-nef",
+        "image/x-raw"
+      ],
+      "category": "image",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "photoshop",
+      "label": "Photoshop Document",
+      "extensions": [
+        ".psd"
+      ],
+      "mimeTypes": [
+        "image/vnd.adobe.photoshop"
+      ],
+      "category": "image",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "mp3",
+      "label": "MP3 Audio",
+      "extensions": [
+        ".mp3"
+      ],
+      "mimeTypes": [
+        "audio/mp3",
+        "audio/mpeg"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "wav",
+      "label": "WAV Audio",
+      "extensions": [
+        ".wav",
+        ".wave"
+      ],
+      "mimeTypes": [
+        "audio/wav",
+        "audio/x-wav"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "ogg-audio",
+      "label": "OGG Audio",
+      "extensions": [
+        ".oga",
+        ".ogg",
+        ".opus"
+      ],
+      "mimeTypes": [
+        "audio/ogg",
+        "audio/opus"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "m4a",
+      "label": "M4A Audio",
+      "extensions": [
+        ".m4a",
+        ".m4b"
+      ],
+      "mimeTypes": [
+        "audio/mp4",
+        "audio/x-m4a"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "flac",
+      "label": "FLAC Audio",
+      "extensions": [
+        ".flac"
+      ],
+      "mimeTypes": [
+        "audio/flac",
+        "audio/x-flac"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "aac",
+      "label": "AAC Audio",
+      "extensions": [
+        ".aac"
+      ],
+      "mimeTypes": [
+        "audio/aac"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "webm-audio",
+      "label": "WebM Audio",
+      "extensions": [
+        ".weba"
+      ],
+      "mimeTypes": [
+        "audio/webm"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "aiff",
+      "label": "AIFF Audio",
+      "extensions": [
+        ".aif",
+        ".aifc",
+        ".aiff"
+      ],
+      "mimeTypes": [
+        "audio/aiff",
+        "audio/x-aiff"
+      ],
+      "category": "audio",
+      "defaultViewer": "audio-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "wma",
+      "label": "Windows Media Audio",
+      "extensions": [
+        ".wma"
+      ],
+      "mimeTypes": [
+        "audio/x-ms-wma"
+      ],
+      "category": "audio",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "midi",
+      "label": "MIDI",
+      "extensions": [
+        ".mid",
+        ".midi"
+      ],
+      "mimeTypes": [
+        "audio/midi",
+        "audio/x-midi"
+      ],
+      "category": "audio",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "mp4",
+      "label": "MP4 Video",
+      "extensions": [
+        ".m4v",
+        ".mp4"
+      ],
+      "mimeTypes": [
+        "video/mp4"
+      ],
+      "category": "video",
+      "defaultViewer": "video-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "webm-video",
+      "label": "WebM Video",
+      "extensions": [
+        ".webm"
+      ],
+      "mimeTypes": [
+        "video/webm"
+      ],
+      "category": "video",
+      "defaultViewer": "video-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "ogv",
+      "label": "OGG Video",
+      "extensions": [
+        ".ogv"
+      ],
+      "mimeTypes": [
+        "video/ogg"
+      ],
+      "category": "video",
+      "defaultViewer": "video-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "mov",
+      "label": "QuickTime Video",
+      "extensions": [
+        ".mov",
+        ".qt"
+      ],
+      "mimeTypes": [
+        "video/quicktime"
+      ],
+      "category": "video",
+      "defaultViewer": "video-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "avi",
+      "label": "AVI Video",
+      "extensions": [
+        ".avi"
+      ],
+      "mimeTypes": [
+        "video/x-msvideo"
+      ],
+      "category": "video",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "mkv",
+      "label": "Matroska Video",
+      "extensions": [
+        ".mkv"
+      ],
+      "mimeTypes": [
+        "video/x-matroska"
+      ],
+      "category": "video",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "wmv",
+      "label": "Windows Media Video",
+      "extensions": [
+        ".wmv"
+      ],
+      "mimeTypes": [
+        "video/x-ms-wmv"
+      ],
+      "category": "video",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "flv",
+      "label": "Flash Video",
+      "extensions": [
+        ".flv"
+      ],
+      "mimeTypes": [
+        "video/x-flv"
+      ],
+      "category": "video",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "mpeg-video",
+      "label": "MPEG Video",
+      "extensions": [
+        ".m2v",
+        ".mpe",
+        ".mpeg",
+        ".mpg"
+      ],
+      "mimeTypes": [
+        "video/mpeg"
+      ],
+      "category": "video",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "three-gp",
+      "label": "3GP Video",
+      "extensions": [
+        ".3g2",
+        ".3gp",
+        ".3gpp"
+      ],
+      "mimeTypes": [
+        "video/3gpp",
+        "video/3gpp2"
+      ],
+      "category": "video",
+      "defaultViewer": "video-preview",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "pdf",
+      "label": "PDF Document",
+      "extensions": [
+        ".pdf"
+      ],
+      "mimeTypes": [
+        "application/pdf"
+      ],
+      "category": "document",
+      "defaultViewer": "pdf-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "docx",
+      "label": "Word Document",
+      "extensions": [
+        ".doc",
+        ".docx"
+      ],
+      "mimeTypes": [
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "xlsx",
+      "label": "Excel Spreadsheet",
+      "extensions": [
+        ".xls",
+        ".xlsb",
+        ".xlsm",
+        ".xlsx"
+      ],
+      "mimeTypes": [
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "pptx",
+      "label": "PowerPoint",
+      "extensions": [
+        ".pps",
+        ".ppsx",
+        ".ppt",
+        ".pptx"
+      ],
+      "mimeTypes": [
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "odt",
+      "label": "OpenDocument Text",
+      "extensions": [
+        ".odt",
+        ".ott"
+      ],
+      "mimeTypes": [
+        "application/vnd.oasis.opendocument.text"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "ods",
+      "label": "OpenDocument Spreadsheet",
+      "extensions": [
+        ".ods",
+        ".ots"
+      ],
+      "mimeTypes": [
+        "application/vnd.oasis.opendocument.spreadsheet"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "odp",
+      "label": "OpenDocument Presentation",
+      "extensions": [
+        ".odp",
+        ".otp"
+      ],
+      "mimeTypes": [
+        "application/vnd.oasis.opendocument.presentation"
+      ],
+      "category": "document",
+      "defaultViewer": "office-preview",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "pages",
+      "label": "Pages Document",
+      "extensions": [
+        ".pages"
+      ],
+      "mimeTypes": [
+        "application/x-iwork-pages-sffpages"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "numbers",
+      "label": "Numbers Spreadsheet",
+      "extensions": [
+        ".numbers"
+      ],
+      "mimeTypes": [
+        "application/x-iwork-numbers-sffnumbers"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "keynote",
+      "label": "Keynote Presentation",
+      "mimeTypes": [
+        "application/x-iwork-keynote-sffkey"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "rtf",
+      "label": "Rich Text",
+      "extensions": [
+        ".rtf"
+      ],
+      "mimeTypes": [
+        "application/rtf",
+        "text/rtf"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "epub",
+      "label": "EPUB Book",
+      "extensions": [
+        ".epub"
+      ],
+      "mimeTypes": [
+        "application/epub+zip"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "mobi",
+      "label": "Kindle Book",
+      "extensions": [
+        ".azw",
+        ".azw3",
+        ".mobi"
+      ],
+      "mimeTypes": [
+        "application/x-mobipocket-ebook"
+      ],
+      "category": "document",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "ocr"
+    },
+    {
+      "id": "jupyter",
+      "label": "Jupyter Notebook",
+      "extensions": [
+        ".ipynb"
+      ],
+      "mimeTypes": [
+        "application/x-ipynb+json"
+      ],
+      "category": "data",
+      "defaultViewer": "monaco-code",
+      "editable": false,
+      "ingestStrategy": "parse-structured",
+      "availableViewers": [
+        "monaco-code"
+      ],
+      "monacoLanguage": "json"
+    },
+    {
+      "id": "zip",
+      "label": "ZIP Archive",
+      "extensions": [
+        ".zip"
+      ],
+      "mimeTypes": [
+        "application/x-zip-compressed",
+        "application/zip"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "tar",
+      "label": "TAR Archive",
+      "extensions": [
+        ".tar",
+        ".tar.bz2",
+        ".tar.gz",
+        ".tar.xz",
+        ".tbz",
+        ".tbz2",
+        ".tgz",
+        ".txz"
+      ],
+      "mimeTypes": [
+        "application/gzip",
+        "application/x-tar"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "gzip",
+      "label": "Gzip",
+      "extensions": [
+        ".gz"
+      ],
+      "mimeTypes": [
+        "application/gzip"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "bzip2",
+      "label": "Bzip2",
+      "extensions": [
+        ".bz",
+        ".bz2"
+      ],
+      "mimeTypes": [
+        "application/x-bzip2"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "xz",
+      "label": "XZ",
+      "extensions": [
+        ".lzma",
+        ".xz"
+      ],
+      "mimeTypes": [
+        "application/x-lzma",
+        "application/x-xz"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "7zip",
+      "label": "7-Zip Archive",
+      "extensions": [
+        ".7z"
+      ],
+      "mimeTypes": [
+        "application/x-7z-compressed"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "rar",
+      "label": "RAR Archive",
+      "extensions": [
+        ".rar"
+      ],
+      "mimeTypes": [
+        "application/vnd.rar",
+        "application/x-rar-compressed"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "dmg",
+      "label": "macOS Disk Image",
+      "extensions": [
+        ".dmg"
+      ],
+      "mimeTypes": [
+        "application/x-apple-diskimage"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "iso",
+      "label": "Disc Image",
+      "extensions": [
+        ".img",
+        ".iso"
+      ],
+      "mimeTypes": [
+        "application/x-iso9660-image"
+      ],
+      "category": "archive",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "truetype",
+      "label": "TrueType Font",
+      "extensions": [
+        ".ttc",
+        ".ttf"
+      ],
+      "mimeTypes": [
+        "application/x-font-ttf",
+        "font/ttf"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "opentype",
+      "label": "OpenType Font",
+      "extensions": [
+        ".otf"
+      ],
+      "mimeTypes": [
+        "application/x-font-otf",
+        "font/otf"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "woff",
+      "label": "Web Font",
+      "extensions": [
+        ".woff",
+        ".woff2"
+      ],
+      "mimeTypes": [
+        "font/woff",
+        "font/woff2"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "eot",
+      "label": "Embedded OpenType",
+      "extensions": [
+        ".eot"
+      ],
+      "mimeTypes": [
+        "application/vnd.ms-fontobject"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "sqlite",
+      "label": "SQLite Database",
+      "extensions": [
+        ".db",
+        ".db3",
+        ".sqlite",
+        ".sqlite3"
+      ],
+      "mimeTypes": [
+        "application/vnd.sqlite3",
+        "application/x-sqlite3"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "three-d",
+      "label": "3D Model",
+      "extensions": [
+        ".dae",
+        ".fbx",
+        ".glb",
+        ".gltf",
+        ".obj",
+        ".ply",
+        ".stl"
+      ],
+      "mimeTypes": [
+        "model/gltf-binary",
+        "model/gltf+json",
+        "model/obj",
+        "model/stl"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "cert",
+      "label": "Certificate / Key",
+      "extensions": [
+        ".cer",
+        ".crt",
+        ".csr",
+        ".der",
+        ".key",
+        ".p12",
+        ".pem",
+        ".pfx",
+        ".pub"
+      ],
+      "mimeTypes": [
+        "application/pkix-cert",
+        "application/x-pem-file",
+        "application/x-x509-ca-cert"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    },
+    {
+      "id": "executable",
+      "label": "Executable",
+      "extensions": [
+        ".apk",
+        ".app",
+        ".deb",
+        ".dll",
+        ".dylib",
+        ".exe",
+        ".ipa",
+        ".msi",
+        ".pkg",
+        ".rpm",
+        ".so"
+      ],
+      "mimeTypes": [
+        "application/vnd.android.package-archive",
+        "application/x-msdownload"
+      ],
+      "category": "binary",
+      "defaultViewer": "binary-placeholder",
+      "editable": false,
+      "ingestStrategy": "raw"
+    }
+  ],
+  "unknownFormat": {
+    "id": "unknown",
+    "label": "File",
+    "extensions": [],
+    "mimeTypes": [
+      "application/octet-stream"
+    ],
+    "category": "binary",
+    "defaultViewer": "binary-placeholder",
+    "editable": false,
+    "ingestStrategy": "raw"
+  }
+}

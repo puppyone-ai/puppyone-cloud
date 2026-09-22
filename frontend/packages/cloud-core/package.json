@@ -1,0 +1,11 @@
+{
+  "name": "@puppyone/cloud-core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Shared, transport-agnostic cloud domain (types + API-client contracts) consumed by the web frontend and the desktop cloud panel (ISSUE-022).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./accessProviders": "./src/accessProviders.ts"
+  }
+}

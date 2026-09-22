@@ -46,7 +46,11 @@ def list_tools(
     oids = resolve_org_ids(org_id, current_user.user_id)
     all_tools: list = []
     for oid in oids:
-        all_tools.extend(tool_service.list_org_tools(oid, skip=skip, limit=limit))
+        all_tools.extend(
+            tool_service.list_org_tools(
+                current_user.user_id, oid, skip=skip, limit=limit
+            )
+        )
     return ApiResponse.success(data=all_tools, message="Tool list retrieved successfully")
 
 
@@ -89,7 +93,7 @@ def list_tools_by_project_id(
 ):
     resolved = resolve_org_id(org_id, current_user.user_id)
     tools = tool_service.list_org_tools_by_project_id(
-        resolved, project_id=project_id
+        current_user.user_id, resolved, project_id=project_id
     )
     return ApiResponse.success(data=tools, message="Tool list retrieved successfully")
 

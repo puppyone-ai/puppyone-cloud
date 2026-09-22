@@ -1,2 +1,1 @@
 """Organization entitlement enforcement."""
-

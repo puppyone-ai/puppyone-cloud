@@ -1,0 +1,99 @@
+name: Reusable Data Migration
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      migration_id:
+        required: true
+        type: string
+      operation:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  data-migration:
+    name: ${{ inputs.operation }} ${{ inputs.migration_id }} on ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: database-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+      MIGRATION_ID: ${{ inputs.migration_id }}
+      MIGRATION_OPERATION: ${{ inputs.operation }}
+      DATA_MIGRATION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ACCESS_CREDENTIAL_HASH_SECRET: ${{ secrets.ACCESS_CREDENTIAL_HASH_SECRET }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked backend environment
+        working-directory: backend
+        run: |
+          python -m pip install "uv==0.5.11"
+          uv sync --locked
+
+      - name: Ensure PostgreSQL client is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+
+      - name: Validate repository data migration artifacts
+        working-directory: backend
+        run: uv run puppyone-db lint
+
+      - name: Bind protected Supabase target
+        run: python3 supabase/releases/connection.py
+
+      - name: Show target migration plan
+        working-directory: backend
+        run: uv run puppyone-db plan "$MIGRATION_ID"
+
+      - name: Execute and verify data migration
+        if: inputs.operation == 'run'
+        working-directory: backend
+        run: uv run puppyone-db run "$MIGRATION_ID"
+
+      - name: Verify existing data migration result
+        if: inputs.operation == 'verify'
+        working-directory: backend
+        run: uv run puppyone-db verify "$MIGRATION_ID"
+
+      - name: Publish data migration attestation
+        if: always()
+        working-directory: backend
+        shell: bash
+        run: |
+          {
+            echo "## Data migration attestation"
+            echo
+            echo "- Environment: $TARGET_ENVIRONMENT"
+            echo "- Operation: $MIGRATION_OPERATION"
+            echo "- Migration: $MIGRATION_ID"
+            echo "- Source SHA: $GITHUB_SHA"
+            echo
+            echo '```json'
+            uv run puppyone-db status "$MIGRATION_ID" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

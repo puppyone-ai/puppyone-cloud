@@ -8,7 +8,6 @@ Module structure:
 - repository: Unified data access repository (Facade)
 - projects: Project data access layer
 - tables: Table data access layer
-- mcps: MCP data access layer
 - dependencies: Dependency injection
 - exceptions: Exception handling
 - schemas: Data models (backward compatible)
@@ -31,7 +30,6 @@ from src.infra.supabase.exceptions import (
 # Re-exports from domain modules (backward compat)
 from src.platform.project.supabase_repo import ProjectRepository
 from src.content.table.supabase_repo import TableRepository
-from src.infra.mcp_server.supabase_repo import McpRepository
 
 from src.platform.project.supabase_schemas import (
     ProjectCreate,
@@ -43,11 +41,6 @@ from src.content.table.supabase_schemas import (
     TableUpdate,
     TableResponse,
 )
-from src.infra.mcp_server.supabase_schemas import (
-    McpCreate,
-    McpUpdate,
-    McpResponse,
-)
 
 __all__ = [
     # Client and main repository
@@ -58,7 +51,6 @@ __all__ = [
     # Sub-module Repositories (optional usage)
     "ProjectRepository",
     "TableRepository",
-    "McpRepository",
     # Exceptions
     "SupabaseException",
     "SupabaseDuplicateKeyError",
@@ -72,7 +64,4 @@ __all__ = [
     "TableCreate",
     "TableUpdate",
     "TableResponse",
-    "McpCreate",
-    "McpUpdate",
-    "McpResponse",
 ]

@@ -183,7 +183,7 @@ shown in UI as an Agent feature, but architecture should classify the context
 operation by the underlying Access surface and write source.
 
 Access surfaces are backed by `access_surfaces` and scoped by the project access
-model. Legacy connector rows and `repo_scopes` are migration input and
+model. Legacy connector rows and the pre-ISSUE-039 `repo_scopes` table are migration input and
 compatibility history; runtime Access should be described as an entry point into
 workspace context, not an import mechanism.
 

@@ -1,17 +1,19 @@
 'use client';
+import { useProjectSession } from '@/features/workspace/session';
 
 import React, { useState } from 'react';
-import type { useRouter } from 'next/navigation';
+import type { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
 import { ArrowRight, ArrowLeft, ArrowLeftRight } from 'lucide-react';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { CountBadge } from '@/components/ui/CountBadge';
-import { getAccessProviderLabel } from '@/lib/accessProviderRegistry';
+import { getAccessProviderLabel, isGitRemoteProvider } from '@/lib/accessProviderRegistry';
 import { T } from '../lib/tokens';
 import { getApDirection } from '../lib/constants';
 import type { DashboardConnection } from '../lib/types';
 import { ProviderAvatar } from './ProviderAvatar';
+import { canonicalProjectGitUrl, canonicalScopeGitUrl } from '@/lib/gitRemote';
 
-// Normalize the three known "root scope" path representations the
+// Normalize the three known legacy Project-root path representations the
 // backend may emit ('/' or '' for root, null for incomplete rows) into a single
 // canonical key.  Used both for the lookup key in `accessByPath` and
 // for the hover-sync key here.  Keep this in step with the same
@@ -71,8 +73,7 @@ function DirectionGlyph({ direction }: { direction: 'inbound' | 'outbound' | 'bi
 // when set (build-time-baked backend host) and falls back to the
 // current page origin only when no env was provided — same pattern as
 // SyncDetailView / GetStartedPanel.
-function buildEndpointUrl(conn: DashboardConnection): string | null {
-  if (!conn.access_key) return null;
+function buildEndpointUrl(conn: DashboardConnection, projectId: string): string | null {
   const apiBase =
     typeof window !== 'undefined'
       ? process.env.NEXT_PUBLIC_API_URL || window.location.origin
@@ -80,9 +81,11 @@ function buildEndpointUrl(conn: DashboardConnection): string | null {
 
   switch (conn.provider) {
     case 'git_remote':
-      // Git Remote access keys authorise the Git smart-HTTP remote at
-      // /git/ap/<key>.git.
-      return `${apiBase}/git/ap/${conn.access_key}.git`;
+      return conn.path === null || conn.path === '' || conn.path === '/'
+        ? canonicalProjectGitUrl(apiBase, projectId)
+        : conn.scope_id
+          ? canonicalScopeGitUrl(apiBase, projectId, conn.scope_id)
+          : null;
     case 'mcp':
     case 'agent':
       return `${apiBase}/api/v1/mcp/proxy`;
@@ -102,11 +105,10 @@ function buildEndpointUrl(conn: DashboardConnection): string | null {
 // Non-Git invocation shapes (MCP server config blob, sandbox exec
 // body, etc.) live on the /access detail page.
 function buildCliCommand(conn: DashboardConnection, url: string | null): string | null {
-  if (!url || !conn.access_key) return null;
+  if (!url) return null;
   if (conn.provider !== 'git_remote') return null;
-  // Stock git clone is the canonical setup. The
-  // user authenticates once via `git credential.helper store`; see the
-  // detail panel's "Authenticate" step for the full one-line helper.
+  // Stock git clone is the canonical setup. The separately issued password
+  // is supplied through an OS-backed, path-aware Git credential helper.
   return `git clone ${url}`;
 }
 
@@ -314,6 +316,7 @@ function ApListRow({
   copiedKey: string | null;
   onCopy: (text: string, key: string) => void;
 }) {
+  const openPanel = useProjectSession(state => state.openPanel);
   const [isMouseOver, setIsMouseOver] = useState(false);
 
   const direction = getApDirection(conn);
@@ -321,7 +324,7 @@ function ApListRow({
   const rawPath = conn.path;
   const isRoot = rawPath === null || rawPath === '' || rawPath === '/';
   const displayScope = isRoot ? '/' : `/${rawPath}`;
-  const url = buildEndpointUrl(conn);
+  const url = buildEndpointUrl(conn, projectId);
   const cmd = buildCliCommand(conn, url);
 
   const apPath = normalizeApPath(rawPath);
@@ -474,7 +477,7 @@ function ApListRow({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              router.push(`/projects/${projectId}/access?ap=${conn.id}`);
+              openPanel({ type: 'access_list', view: 'detail', accessEndpointId: conn.id });
             }}
             title="Open integration details"
             aria-label="Open integration details"
@@ -561,6 +564,11 @@ function ApListRow({
                 onCopy={onCopy}
               />
             )}
+            {isGitRemoteProvider(conn.provider) ? (
+              <span style={{ color: T.text3, fontSize: 11, lineHeight: '16px' }}>
+                Open this Git Remote to generate its separate one-time password; the URL is not a key.
+              </span>
+            ) : null}
           </div>
         )}
       </div>

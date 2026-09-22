@@ -42,8 +42,8 @@ from src.version_engine.entrypoints.http.content_helpers import (
 )
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 
 
 router = APIRouter()
@@ -104,7 +104,7 @@ class ResolveConflictResponse(BaseModel):
 )
 async def list_pending_conflicts(
     project_id: str,
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return every pending conflict row with ``status='pending'``.
@@ -114,7 +114,7 @@ async def list_pending_conflicts(
     needs write access.
     """
 
-    ensure_project_access(project_service, current_user, project_id)
+    ensure_project_access(authorization, current_user, project_id)
     rows = _query_pending(project_id)
     summaries = [PendingConflictSummary(**_row_to_summary(row)) for row in rows]
     return ApiResponse.success(data=summaries)
@@ -128,10 +128,10 @@ async def list_pending_conflicts(
 async def get_pending_conflict(
     project_id: str,
     pending_conflict_id: str,
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    ensure_project_access(project_service, current_user, project_id)
+    ensure_project_access(authorization, current_user, project_id)
     row = _query_one(project_id, pending_conflict_id)
     if row is None:
         raise HTTPException(status_code=404, detail="pending conflict not found")
@@ -152,7 +152,7 @@ async def resolve_pending_conflict(
     pending_conflict_id: str,
     body: ResolveConflictRequest,
     engine: VersionWriteEngine = Depends(get_version_write_engine),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Drive ``VersionWriteEngine.resolve``.
@@ -165,7 +165,7 @@ async def resolve_pending_conflict(
     follow-up ``pending_conflict_id`` for the next round.
     """
 
-    ensure_write_access(project_service, current_user, project_id)
+    ensure_write_access(authorization, current_user, project_id)
 
     row = _query_one(project_id, pending_conflict_id)
     if row is None:

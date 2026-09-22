@@ -5,9 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.config import settings
 from src.connectors.datasource._base import BaseConnector, Capability, ConnectorSpec, FetchResult
 from src.connectors.datasource.materializers.base import MaterializationSchema, MaterializedOutput
-from src.connectors.datasource.materializers.providers import GmailMaterializer, GoogleSheetsMaterializer
+from src.connectors.datasource.materializers.providers import (
+    GmailMaterializer,
+    GoogleSheetsMaterializer,
+)
 from src.connectors.datasource.registry import ConnectorRegistry
 from src.connectors.datasource.schemas import Sync
 from src.platform.integrations.engine import IntegrationEngine
@@ -30,17 +34,19 @@ def test_gmail_materializer_writes_threads_and_index():
             "synced_at": "2026-06-09T00:00:00+00:00",
             "email_count": 1,
             "query": "in:inbox",
-            "emails": [{
-                "id": "msg-1",
-                "thread_id": "thread-1",
-                "subject": "Roadmap",
-                "from": "A <a@example.com>",
-                "to": "B <b@example.com>",
-                "date": "2026-06-09T01:02:03+00:00",
-                "labels": ["INBOX"],
-                "body": "Hello",
-                "url": "https://mail.google.com/mail/u/0/#inbox/msg-1",
-            }],
+            "emails": [
+                {
+                    "id": "msg-1",
+                    "thread_id": "thread-1",
+                    "subject": "Roadmap",
+                    "from": "A <a@example.com>",
+                    "to": "B <b@example.com>",
+                    "date": "2026-06-09T01:02:03+00:00",
+                    "labels": ["INBOX"],
+                    "body": "Hello",
+                    "url": "https://mail.google.com/mail/u/0/#inbox/msg-1",
+                }
+            ],
         },
         content_hash="hash-1",
         summary="Fetched 1 email",
@@ -61,13 +67,15 @@ def test_google_sheets_materializer_writes_workbook_csv_and_schema():
             "synced_at": "2026-06-09T00:00:00+00:00",
             "spreadsheet_id": "sheet-1",
             "spreadsheet_title": "Revenue Plan",
-            "sheets": [{
-                "name": "Q1",
-                "sheet_id": 123,
-                "headers": ["Month", "Revenue"],
-                "row_count": 1,
-                "rows": [{"Month": "Jan", "Revenue": "100"}],
-            }],
+            "sheets": [
+                {
+                    "name": "Q1",
+                    "sheet_id": 123,
+                    "headers": ["Month", "Revenue"],
+                    "row_count": 1,
+                    "rows": [{"Month": "Jan", "Revenue": "100"}],
+                }
+            ],
         },
         content_hash="hash-2",
     )
@@ -78,7 +86,10 @@ def test_google_sheets_materializer_writes_workbook_csv_and_schema():
     assert "spreadsheets/Revenue Plan/sheets/Q1.csv" in output.files
     assert "spreadsheets/Revenue Plan/sheets/Q1.schema.json" in output.files
     assert "Month,Revenue" in output.files["spreadsheets/Revenue Plan/sheets/Q1.csv"]
-    assert output.files["index.json"]["sheets"][0]["csv_path"] == "spreadsheets/Revenue Plan/sheets/Q1.csv"
+    assert (
+        output.files["index.json"]["sheets"][0]["csv_path"]
+        == "spreadsheets/Revenue Plan/sheets/Q1.csv"
+    )
 
 
 class _FakeConnector(BaseConnector):
@@ -119,7 +130,9 @@ def test_registry_pins_and_resolves_materialization_schema():
         "id": "puppyone.gmail.thread_markdown",
         "version": 1,
     }
-    assert registry.resolve_materializer("gmail", pinned["materialization_schema"]).schema.version == 1
+    assert (
+        registry.resolve_materializer("gmail", pinned["materialization_schema"]).schema.version == 1
+    )
 
 
 class _EngineConnector(BaseConnector):
@@ -203,6 +216,46 @@ class _CreatedSingleLaneRunRepo:
         self.completed.append((run_id, status, result_summary))
         self.run.status = status
 
+    def get_by_id(self, run_id: str):
+        return self.run if run_id == self.run.id else None
+
+
+class _RecordingRuntimeMeter:
+    def __init__(self, events: list[str]):
+        self.events = events
+        self.contexts: list[dict] = []
+
+    async def execute(self, *, audit_context: dict, operation):
+        self.contexts.append(audit_context)
+        self.events.append("reserve")
+        try:
+            return await operation()
+        finally:
+            self.events.append("settle")
+
+
+class _MeteredConnector(BaseConnector):
+    def __init__(self, events: list[str]):
+        self.events = events
+
+    def spec(self) -> ConnectorSpec:
+        return ConnectorSpec(
+            provider="metered_fake",
+            display_name="Metered Fake",
+            capabilities=Capability.PULL | Capability.PUSH,
+            supported_directions=["bidirectional"],
+        )
+
+    async def fetch(self, config, credentials):
+        self.events.append("fetch")
+        return FetchResult(content={"ok": True}, content_hash="metered-hash")
+
+    async def push(self, connection, content, node_type):
+        from src.connectors.datasource.schemas import PushResult
+
+        self.events.append("push")
+        return PushResult(success=True, remote_hash="remote-after-push")
+
 
 class _EngineMaterializer:
     provider = "engine_fake"
@@ -246,7 +299,7 @@ class _EngineMaterializerV2:
 
 
 @pytest.mark.asyncio
-async def test_integration_engine_uses_pinned_materializer(monkeypatch):
+async def test_integration_engine_uses_pinned_materializer():
     registry = ConnectorRegistry()
     registry.register(_EngineConnector())
     registry.register_materializer(_EngineMaterializer())
@@ -267,24 +320,18 @@ async def test_integration_engine_uses_pinned_materializer(monkeypatch):
     run_repo = MagicMock()
     run_repo.create.return_value = run
 
-    write_result = SimpleNamespace(commit_id="commit-2")
-    commands = MagicMock()
-    commands.bulk_write = AsyncMock(return_value=SimpleNamespace(result=write_result))
-    commands.write_bytes = AsyncMock()
+    write_port = MagicMock()
+    write_port.write_plan = AsyncMock(
+        return_value=SimpleNamespace(commit_id="commit-2")
+    )
 
-    class _Container:
-        def write_commands(self):
-            return commands
+    result = await IntegrationEngine(
+        registry, repository, run_repo, write_port=write_port
+    ).execute(connection.id)
 
-    import src.version_engine.bootstrap.dependencies as deps
-    monkeypatch.setattr(deps, "build_worker_version_engine_container", lambda: _Container())
-
-    result = await IntegrationEngine(registry, repository, run_repo).execute(connection.id)
-
-    commands.write_bytes.assert_not_called()
-    commands.bulk_write.assert_awaited_once()
-    call = commands.bulk_write.await_args
-    assert set(call.args[1]) == {
+    write_port.write_plan.assert_awaited_once()
+    call = write_port.write_plan.await_args
+    assert set(call.kwargs["plan"].files) == {
         "Integrations/Mount/index.json",
         "Integrations/Mount/docs/item.md",
     }
@@ -321,7 +368,7 @@ async def test_integration_engine_direct_execute_skips_existing_active_run():
 
 
 @pytest.mark.asyncio
-async def test_integration_engine_direct_execute_creates_claims_and_completes_run(monkeypatch):
+async def test_integration_engine_direct_execute_creates_claims_and_completes_run():
     run_repo = _CreatedSingleLaneRunRepo()
     connector = _ClaimAwareConnector(run_repo)
     registry = ConnectorRegistry()
@@ -338,19 +385,14 @@ async def test_integration_engine_direct_execute_creates_claims_and_completes_ru
     repository = MagicMock()
     repository.get_by_id.return_value = connection
 
-    write_result = SimpleNamespace(commit_id="commit-claim")
-    commands = MagicMock()
-    commands.bulk_write = AsyncMock(return_value=SimpleNamespace(result=write_result))
-    commands.write_bytes = AsyncMock()
+    write_port = MagicMock()
+    write_port.write_plan = AsyncMock(
+        return_value=SimpleNamespace(commit_id="commit-claim")
+    )
 
-    class _Container:
-        def write_commands(self):
-            return commands
-
-    import src.version_engine.bootstrap.dependencies as deps
-    monkeypatch.setattr(deps, "build_worker_version_engine_container", lambda: _Container())
-
-    result = await IntegrationEngine(registry, repository, run_repo).execute(connection.id)
+    result = await IntegrationEngine(
+        registry, repository, run_repo, write_port=write_port
+    ).execute(connection.id)
 
     assert result is not None
     assert result["run_id"] == "run-created"
@@ -358,4 +400,83 @@ async def test_integration_engine_direct_execute_creates_claims_and_completes_ru
     assert run_repo.claimed == ["run-created"]
     assert run_repo.completed == [("run-created", "success", "Fetched")]
     assert connector.fetch_calls == 1
-    commands.bulk_write.assert_awaited_once()
+    write_port.write_plan.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_integration_engine_reserves_connector_runtime_before_pull(monkeypatch):
+    monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "required")
+    events: list[str] = []
+    meter = _RecordingRuntimeMeter(events)
+    connector = _MeteredConnector(events)
+    registry = ConnectorRegistry()
+    registry.register(connector)
+
+    connection = _sync("metered_fake")
+    connection.created_by = "user-1"
+    repository = MagicMock()
+    repository.get_by_id.return_value = connection
+    run_repo = _CreatedSingleLaneRunRepo()
+    write_port = MagicMock()
+    write_port.write_plan = AsyncMock(return_value=SimpleNamespace(commit_id="commit-metered"))
+
+    result = await IntegrationEngine(
+        registry,
+        repository,
+        run_repo,
+        write_port,
+        runtime_metering=meter,
+    ).execute(connection.id)
+
+    assert result is not None
+    assert events == ["reserve", "fetch", "settle"]
+    assert meter.contexts == [
+        {
+            "run_id": "connector:pull:run-created",
+            "source": "connector",
+            "project_id": "project-1",
+            "user_id": "user-1",
+            "maximum_runtime_units": 16,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_integration_engine_reserves_connector_runtime_before_push(monkeypatch):
+    monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "required")
+    events: list[str] = []
+    meter = _RecordingRuntimeMeter(events)
+    connector = _MeteredConnector(events)
+    registry = ConnectorRegistry()
+    registry.register(connector)
+
+    connection = _sync("metered_fake")
+    connection.direction = "bidirectional"
+    connection.created_by = "user-1"
+    repository = MagicMock()
+    repository.find_owner_by_path.return_value = connection
+    run_repo = MagicMock()
+    run_repo.create.return_value = SimpleNamespace(id="push-run")
+
+    result = await IntegrationEngine(
+        registry,
+        repository,
+        run_repo,
+        runtime_metering=meter,
+    ).push_execute(
+        path="/Reports/current.json",
+        commit_id="commit-42",
+        content={"ok": True},
+        node_type="json",
+    )
+
+    assert result is not None
+    assert events == ["reserve", "push", "settle"]
+    assert meter.contexts == [
+        {
+            "run_id": "connector:push:sync-1:commit-42",
+            "source": "connector",
+            "project_id": "project-1",
+            "user_id": "user-1",
+        }
+    ]

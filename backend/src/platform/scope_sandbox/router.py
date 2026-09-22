@@ -7,8 +7,9 @@ Endpoints (JWT auth, project-scoped):
   POST /api/v1/scope-sandboxes/revoke   → revoke the caller's SSH access.
 
 The provider (Fly/E2B) is chosen per request (frontend selection), defaulting to
-``settings.SCOPE_SANDBOX_PROVIDER``. All git/CLI runs inside the sandbox; the
-scope's access key stays server-side (embedded in the in-box git remote URL).
+``settings.SCOPE_SANDBOX_PROVIDER``. All git/CLI runs inside the sandbox. Its
+canonical Git locator is credential-free; a short-lived Git credential stays
+server-side and reaches Git only through the sandbox credential-helper file.
 """
 
 from __future__ import annotations
@@ -20,16 +21,19 @@ from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
 from src.config import settings
+from src.exceptions import AppException, ErrorCode
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
 from src.platform.scope_sandbox.service import (
     ScopeSandboxService,
     get_scope_sandbox_service,
 )
+from src.utils.logger import log_warning
 
 router = APIRouter(prefix="/api/v1/scope-sandboxes", tags=["scope-sandboxes"])
 
@@ -46,13 +50,6 @@ class RevokeRequest(BaseModel):
     scope_id: str
 
 
-def _ensure_project_access(project_service: ProjectService, current_user: CurrentUser, project_id: str):
-    project = project_service.get_by_id_with_access_check(project_id, current_user.user_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return project
-
-
 def _public_base(request: Request) -> str:
     base = (settings.PUBLIC_URL or "").strip()
     return base.rstrip("/") if base else str(request.base_url).rstrip("/")
@@ -63,17 +60,38 @@ def _user_name(current_user: CurrentUser) -> str:
     return meta.get("name") or meta.get("full_name") or current_user.email or "puppyone"
 
 
+def _guard_long_lived_runtime_metering() -> None:
+    # Scope Sandbox is a long-lived SSH resource, unlike the bounded ephemeral
+    # SandboxService sessions metered around start/stop. Until segmented leases
+    # are implemented it must not create unreserved hosted cost in required mode.
+    if settings.RUNTIME_METERING_MODE == "required":
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            status_code=503,
+            message="Long-lived Scope Sandbox is not enabled for metered hosting",
+            details={
+                "code": "scope_sandbox_runtime_metering_unavailable",
+                "retryable": False,
+            },
+        )
+    if settings.RUNTIME_METERING_MODE == "shadow":
+        log_warning("[runtime-billing] Scope Sandbox would be denied in required mode")
+
+
 @router.post("/connect", response_model=ApiResponse)
 async def connect(
     payload: ConnectRequest,
     request: Request,
     current_user: CurrentUser = Depends(get_current_user),
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSandboxService = Depends(get_scope_sandbox_service),
 ):
-    project = _ensure_project_access(project_service, current_user, payload.project_id)
-    entitlement_service.require_feature(project.org_id, "scope_sandbox.connect")
+    grant = authorization.authorize(
+        payload.project_id, current_user.user_id, ProjectAction.SANDBOX_MANAGE
+    )
+    entitlement_service.require_feature(grant.org_id, "scope_sandbox.connect")
+    _guard_long_lived_runtime_metering()
     if not payload.public_key.strip():
         raise HTTPException(status_code=400, detail="public_key is required")
     if payload.provider and payload.provider not in ("fly", "e2b"):
@@ -109,10 +127,10 @@ def status(
     project_id: str = Query(...),
     scope_id: str = Query(...),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSandboxService = Depends(get_scope_sandbox_service),
 ):
-    _ensure_project_access(project_service, current_user, project_id)
+    authorization.authorize(project_id, current_user.user_id, ProjectAction.ACCESS_READ)
     data = service.status(project_id=project_id, scope_id=scope_id, user_id=current_user.user_id)
     return ApiResponse.success(data=data)
 
@@ -121,11 +139,13 @@ def status(
 async def revoke(
     payload: RevokeRequest,
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     service: ScopeSandboxService = Depends(get_scope_sandbox_service),
 ):
-    _ensure_project_access(project_service, current_user, payload.project_id)
+    authorization.authorize(payload.project_id, current_user.user_id, ProjectAction.SANDBOX_MANAGE)
     remaining = await service.revoke(
-        project_id=payload.project_id, scope_id=payload.scope_id, user_id=current_user.user_id,
+        project_id=payload.project_id,
+        scope_id=payload.scope_id,
+        user_id=current_user.user_id,
     )
     return ApiResponse.success(data={"connected_users": remaining}, message="Access revoked")

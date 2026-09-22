@@ -1,18 +1,19 @@
-"""mcp_service.server list_tools/call_tool 行为测试。"""
+"""The MCP transport delegates every surface kind to the canonical runtime."""
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from starlette.testclient import TestClient
 
 import mcp_service.server as server_module
+from mcp_service.settings import Settings, settings as mcp_settings
 
 
 class _FakeMcpServer:
-    latest: "_FakeMcpServer | None" = None
+    latest = None
 
     def __init__(self, _name: str):
         self.request_context = None
@@ -21,18 +22,14 @@ class _FakeMcpServer:
         _FakeMcpServer.latest = self
 
     def list_tools(self):
-        def _decorator(fn):
-            self._list_tools_fn = fn
-            return fn
-
-        return _decorator
+        return lambda fn: self._capture("_list_tools_fn", fn)
 
     def call_tool(self):
-        def _decorator(fn):
-            self._call_tool_fn = fn
-            return fn
+        return lambda fn: self._capture("_call_tool_fn", fn)
 
-        return _decorator
+    def _capture(self, attr, fn):
+        setattr(self, attr, fn)
+        return fn
 
 
 class _FakeSessionManager:
@@ -46,7 +43,7 @@ class _FakeSessionManager:
         async def __aenter__(self):
             return self
 
-        async def __aexit__(self, exc_type, exc, tb):
+        async def __aexit__(self, *_args):
             return False
 
     def run(self):
@@ -54,312 +51,99 @@ class _FakeSessionManager:
 
 
 class _FakeSessions:
-    async def bind(self, *_args):
-        return None
-
-    async def notify_tools_list_changed(self, *_args):
-        return 0
+    bind = AsyncMock(return_value=None)
+    bind_surface = AsyncMock(return_value=None)
+    notify_tools_list_changed = AsyncMock(return_value=1)
+    notify_surface_changed = AsyncMock(return_value=1)
+    broadcast_tools_list_changed = AsyncMock(return_value=1)
+    broadcast_surface_changed = AsyncMock(return_value=1)
+    start = AsyncMock(return_value=None)
+    close = AsyncMock(return_value=None)
 
 
 class _FakeRpc:
     def __init__(self):
-        self.search_tool_query = AsyncMock(return_value={"results": [{"id": "r1"}]})
-        self.list_mcp_runtime_tools = AsyncMock(
-            return_value={
-                "tools": [
-                    {
-                        "name": "fs_ls",
-                        "title": "List Directory",
-                        "description": "List files",
-                        "inputSchema": {"type": "object", "properties": {}},
-                        "outputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "entries": {"type": "array"},
-                            },
-                            "additionalProperties": True,
-                        },
-                        "annotations": {
-                            "title": "List Directory",
-                            "readOnlyHint": True,
-                            "destructiveHint": False,
-                            "idempotentHint": True,
-                            "openWorldHint": False,
-                        },
-                    }
-                ]
-            }
-        )
-        self.call_mcp_runtime_tool = AsyncMock(
-            return_value={"structuredContent": {"entries": [{"path": "README.md"}]}}
-        )
+        self.list_mcp_runtime_tools = AsyncMock(return_value={
+            "mode": "agent",
+            "endpoint": {"id": "agent-1"},
+            "tools": [{
+                "name": "fs_ls",
+                "title": "List Directory",
+                "description": "List files",
+                "inputSchema": {"type": "object", "properties": {}},
+                "annotations": {"readOnlyHint": True},
+            }],
+        })
+        self.call_mcp_runtime_tool = AsyncMock(return_value={
+            "structuredContent": {"entries": [{"path": "README.md"}]},
+        })
         self.close = AsyncMock()
-
-
-class _FakeTableTool:
-    def __init__(self, _rpc):
-        self.get_data_schema = AsyncMock(return_value={"schema": {}})
-        self.get_all_data = AsyncMock(return_value={"data": []})
-        self.query_data = AsyncMock(return_value={"data": [{"k": "v"}]})
-        self.create_element = AsyncMock(return_value={"created": 1})
-        self.update_element = AsyncMock(return_value={"updated": 1})
-        self.delete_element = AsyncMock(return_value={"deleted": 1})
-
-
-class _FakeFsTool:
-    latest: "_FakeFsTool | None" = None
-
-    def __init__(self, _rpc):
-        self.ls = AsyncMock(return_value={"entries": []})
-        self.cat = AsyncMock(return_value={"content": "ok"})
-        self.write = AsyncMock(return_value={"updated": True})
-        self.mkdir = AsyncMock(return_value={"created": True})
-        self.rm = AsyncMock(return_value={"removed": True})
-        _FakeFsTool.latest = self
 
 
 @pytest.fixture
 def server_env(monkeypatch):
     fake_rpc = _FakeRpc()
-
     monkeypatch.setattr(server_module, "MCP_Server", _FakeMcpServer)
     monkeypatch.setattr(server_module, "StreamableHTTPSessionManager", _FakeSessionManager)
-    monkeypatch.setattr(server_module, "SessionRegistry", lambda: _FakeSessions())
+    monkeypatch.setattr(server_module, "SessionRegistry", _FakeSessions)
     monkeypatch.setattr(server_module, "create_client", lambda: fake_rpc)
-    monkeypatch.setattr(server_module, "TableToolImplementation", _FakeTableTool)
-    monkeypatch.setattr(server_module, "FsToolImplementation", _FakeFsTool)
     monkeypatch.setattr(server_module, "extract_api_key", lambda _req: "mcp_key")
-
     app = server_module.build_starlette_app()
     fake_server = _FakeMcpServer.latest
-    assert fake_server is not None
-
     fake_server.request_context = SimpleNamespace(request=object(), session=object())
-
     return app, fake_server, fake_rpc
 
 
 @pytest.mark.asyncio
-async def test_list_tools_returns_agent_tools(server_env, monkeypatch):
-    _app, fake_server, _fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-1", "name": "Agent", "project_id": "proj-1"},
-                "accesses": [
-                    {
-                        "path": "n1",
-                        "node_name": "docs",
-                        "node_type": "folder",
-                        "bash_readonly": False,
-                        "tool_query": True,
-                        "tool_create": True,
-                        "tool_update": True,
-                        "tool_delete": True,
-                        "json_path": "",
-                    }
-                ],
-                "tools": [],
-            }
-        ),
-    )
-
-    tools = await fake_server._list_tools_fn()
-    names = {tool.name for tool in tools}
-    assert {"ls", "cat", "write", "mkdir", "rm", "node_0_get_schema"}.issubset(names)
-
-
-@pytest.mark.asyncio
-async def test_call_tool_denies_write_when_all_accesses_readonly(server_env, monkeypatch):
-    _app, fake_server, _fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-1", "project_id": "proj-1"},
-                "accesses": [{"path": "n1", "node_name": "docs", "node_type": "folder", "bash_readonly": True}],
-                "tools": [],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("write", {"path": "/x.md", "content": "x"})
-    assert "no write permission" in out[0].text
-
-
-@pytest.mark.asyncio
-async def test_call_tool_routes_rm_and_uses_agent_id_as_user_id(server_env, monkeypatch):
-    _app, fake_server, _fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-abc", "project_id": "proj-1"},
-                "accesses": [{"path": "n1", "node_name": "docs", "node_type": "folder", "bash_readonly": False}],
-                "tools": [],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("rm", {"path": "/docs/a.md"})
-    payload = json.loads(out[0].text)
-    assert payload["removed"] is True
-    assert _FakeFsTool.latest is not None
-    _FakeFsTool.latest.rm.assert_awaited_once_with(
-        "proj-1",
-        [{"path": "n1", "node_name": "docs", "node_type": "folder", "bash_readonly": False}],
-        "/docs/a.md",
-        user_id="agent-abc",
-        acting_user_id=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_call_tool_custom_search_routes_to_rpc(server_env, monkeypatch):
-    _app, fake_server, fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-1", "project_id": "proj-1"},
-                "accesses": [],
-                "tools": [{"name": "search_docs", "type": "search", "tool_id": "tool-1"}],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("tool_search_docs", {"query": "hello", "top_k": 3})
-    payload = json.loads(out[0].text)
-    assert payload["results"][0]["id"] == "r1"
-    fake_rpc.search_tool_query.assert_awaited_once_with("tool-1", "hello", 3)
-
-
-@pytest.mark.asyncio
-async def test_list_tools_mcp_endpoint_routes_to_runtime(server_env, monkeypatch):
-    _app, fake_server, fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "mcp_endpoint",
-                "agent": {"id": "endpoint-1", "project_id": "proj-1"},
-                "accesses": [],
-                "tools": [],
-            }
-        ),
-    )
-
+@pytest.mark.parametrize("surface_kind", ["agent", "mcp"])
+async def test_list_tools_all_surface_kinds_use_runtime(server_env, surface_kind):
+    _app, fake_server, rpc = server_env
+    rpc.list_mcp_runtime_tools.return_value["mode"] = surface_kind
     tools = await fake_server._list_tools_fn()
     assert [tool.name for tool in tools] == ["fs_ls"]
-    assert tools[0].title == "List Directory"
-    assert tools[0].outputSchema is not None
-    assert "entries" in tools[0].outputSchema["properties"]
-    assert tools[0].annotations is not None
-    assert tools[0].annotations.readOnlyHint is True
-    assert tools[0].annotations.destructiveHint is False
-    fake_rpc.list_mcp_runtime_tools.assert_awaited_once_with("mcp_key")
+    rpc.list_mcp_runtime_tools.assert_awaited_once_with("mcp_key")
 
 
 @pytest.mark.asyncio
-async def test_call_tool_mcp_endpoint_routes_to_runtime(server_env, monkeypatch):
-    _app, fake_server, fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "mcp_endpoint",
-                "agent": {"id": "endpoint-1", "project_id": "proj-1"},
-                "accesses": [],
-                "tools": [],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("fs_ls", {"path": ""})
-    assert out["entries"][0]["path"] == "README.md"
-    fake_rpc.call_mcp_runtime_tool.assert_awaited_once_with("mcp_key", "fs_ls", {"path": ""})
+@pytest.mark.parametrize("surface_kind", ["agent", "mcp"])
+async def test_call_tool_all_surface_kinds_use_runtime(server_env, surface_kind):
+    _app, fake_server, rpc = server_env
+    rpc.list_mcp_runtime_tools.return_value["mode"] = surface_kind
+    result = await fake_server._call_tool_fn("fs_ls", {"path": ""})
+    assert result["entries"][0]["path"] == "README.md"
+    rpc.call_mcp_runtime_tool.assert_awaited_once_with("mcp_key", "fs_ls", {"path": ""})
 
 
 @pytest.mark.asyncio
-async def test_call_tool_mcp_endpoint_returns_error_result(server_env, monkeypatch):
-    _app, fake_server, fake_rpc = server_env
-    fake_rpc.call_mcp_runtime_tool.return_value = {
+async def test_runtime_error_is_returned_as_mcp_error(server_env):
+    _app, fake_server, rpc = server_env
+    rpc.call_mcp_runtime_tool.return_value = {
         "isError": True,
         "error": {"code": "PERMISSION_DENIED", "message": "readonly"},
     }
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "mcp_endpoint",
-                "agent": {"id": "endpoint-1", "project_id": "proj-1"},
-                "accesses": [],
-                "tools": [],
-            }
-        ),
+    result = await fake_server._call_tool_fn("fs_write", {})
+    assert result.isError is True
+    assert "PERMISSION_DENIED" in result.content[0].text
+
+
+def test_cache_invalidation_requires_internal_secret(server_env, monkeypatch):
+    app, _server, _rpc = server_env
+    monkeypatch.setattr(mcp_settings, "INTERNAL_API_SECRET", "shared-secret")
+    with TestClient(app) as client:
+        assert client.post("/cache/invalidate", json={}).status_code == 401
+        assert client.post(
+            "/cache/invalidate",
+            json={},
+            headers={"X-Internal-Secret": "shared-secret"},
+        ).status_code == 400
+
+
+def test_hosted_cors_rejects_wildcard():
+    hosted = Settings(
+        APP_ENV="production",
+        INTERNAL_API_SECRET="secret",
+        REDIS_URL="redis://example.invalid:6379/0",
+        CORS_ALLOWED_ORIGINS="*",
     )
-
-    out = await fake_server._call_tool_fn("fs_write", {"path": "x.md", "content": "x"})
-    assert out.isError is True
-    assert "PERMISSION_DENIED" in out.content[0].text
-
-
-@pytest.mark.asyncio
-async def test_call_tool_builtin_permission_denied(server_env, monkeypatch):
-    _app, fake_server, _fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-1", "project_id": "proj-1"},
-                "accesses": [
-                    {
-                        "path": "node-1",
-                        "json_path": "",
-                        "tool_query": False,
-                        "tool_create": False,
-                        "tool_update": False,
-                        "tool_delete": False,
-                    }
-                ],
-                "tools": [],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("node_0_query_data", {"query": "*"})
-    assert "no query permission" in out[0].text
-
-
-@pytest.mark.asyncio
-async def test_call_tool_unknown_name_returns_error(server_env, monkeypatch):
-    _app, fake_server, _fake_rpc = server_env
-    monkeypatch.setattr(
-        server_module,
-        "load_mcp_config",
-        AsyncMock(
-            return_value={
-                "mode": "agent",
-                "agent": {"id": "agent-1", "project_id": "proj-1"},
-                "accesses": [],
-                "tools": [],
-            }
-        ),
-    )
-
-    out = await fake_server._call_tool_fn("unknown_tool", {})
-    assert "unknown tool name" in out[0].text
+    with pytest.raises(ValueError, match="explicit allowlist"):
+        hosted.validate()

@@ -13,10 +13,17 @@ import type { FileFormat } from './types';
 const FILENAME_INDEX = new Map<string, FileFormat>();
 const EXT_INDEX = new Map<string, FileFormat>();
 const MIME_INDEX = new Map<string, FileFormat>();
+const FILENAME_PATTERNS: Array<{ regex: RegExp; format: FileFormat }> = [];
 
 for (const fmt of FILE_FORMATS) {
   for (const filename of fmt.filenames ?? []) {
     FILENAME_INDEX.set(filename.toLowerCase(), fmt);
+  }
+  for (const pattern of fmt.filenamePatterns ?? []) {
+    FILENAME_PATTERNS.push({
+      regex: globPatternToRegExp(pattern.toLowerCase()),
+      format: fmt,
+    });
   }
   for (const ext of fmt.extensions ?? []) {
     EXT_INDEX.set(ext.toLowerCase(), fmt);
@@ -54,6 +61,57 @@ function matchExtension(name: string): FileFormat | null {
   return EXT_INDEX.get(lower.slice(lastDot)) ?? null;
 }
 
+function matchFilenamePattern(name: string): FileFormat | null {
+  const normalized = name.replace(/\\/g, '/').toLowerCase();
+  const base = basename(normalized);
+
+  for (const { regex, format } of FILENAME_PATTERNS) {
+    if (regex.test(normalized) || regex.test(base)) return format;
+  }
+
+  return null;
+}
+
+function globPatternToRegExp(pattern: string): RegExp {
+  let source = '^';
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    const next = pattern[index + 1];
+    const afterNext = pattern[index + 2];
+
+    if (char === '*' && next === '*' && afterNext === '/') {
+      source += '(?:.*/)?';
+      index += 2;
+      continue;
+    }
+
+    if (char === '*' && next === '*') {
+      source += '.*';
+      index += 1;
+      continue;
+    }
+
+    if (char === '*') {
+      source += '[^/]*';
+      continue;
+    }
+
+    if (char === '?') {
+      source += '[^/]';
+      continue;
+    }
+
+    source += escapeRegExp(char);
+  }
+
+  return new RegExp(`${source}$`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
 export interface ResolveInput {
   /** File path or just the filename — anything containing the extension. */
   name?: string | null;
@@ -75,6 +133,8 @@ export function resolveFormat(input: ResolveInput): FileFormat {
     if (byName) return byName;
     const byExt = matchExtension(name);
     if (byExt) return byExt;
+    const byPattern = matchFilenamePattern(name);
+    if (byPattern) return byPattern;
   }
   if (mimeType) {
     const byMime = MIME_INDEX.get(mimeType.toLowerCase());

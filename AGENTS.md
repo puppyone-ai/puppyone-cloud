@@ -3,10 +3,21 @@
 > **AI assistants working on this codebase**: the canonical Version Engine
 > architecture is in
 > [`docs/architecture/01-version-engine.md`](docs/architecture/01-version-engine.md).
-> PuppyOne is Git-native at the version layer: stock `git` talks to
-> `https://<host>/git/ap/<access_key>.git`, while Web/API/`puppyone fs`
+> PuppyOne is Git-native at the version layer: stock `git` talks to a
+> credential-free `/git/{project_id}.git` or
+> `/git/{project_id}/scopes/{scope_id}.git` locator and supplies its separate
+> Git credential through HTTP auth, while Web/API/`puppyone fs`
 > writes converge through the Product Operation Adapter. Do not introduce the
-> removed legacy wire protocol, external version package, or old source naming.
+> removed legacy wire protocol, construct the bounded legacy
+> `/git/ap/<access_key>.git` URL in new code, introduce an external version
+> package, or restore old source naming. The normative Git contract is
+> [`docs/architecture/05-git-remote-accesspoint.md`](docs/architecture/05-git-remote-accesspoint.md).
+>
+> The canonical database release architecture is
+> [`docs/architecture/13-database-release-governance.md`](docs/architecture/13-database-release-governance.md).
+> Schema changes use `supabase/migrations`; non-transactional/application-code
+> data changes use immutable `supabase/data_migrations` artifacts through the
+> portable runner. Never hide an external script between schema migrations.
 
 ## Overview
 
@@ -29,11 +40,29 @@ It aggregates information scattered across various sources into a unified Contex
 - **Collaborative editing** — Checkout/commit workflow, locking mechanism, conflict detection and resolution
 - **Structured data management** — Cloud file system (folders/JSON/Markdown/files), JSON Pointer table operations
 
+#### Authorization boundary
+
+- Human access is resolved only by `backend/src/platform/authorization/` as
+  `Organization context -> ProjectGrant -> optional child restriction`.
+- `project_members` is the sole explicit Human Project role source. Organization
+  membership supplies tenant context; an org-visible Project supplies only the
+  Viewer baseline. Never use a Runtime key, Git remote, scope, or Agent
+  visibility to create Human Project access.
+- Machine entry points resolve a `RuntimeGrant` bounded by an explicit
+  Project-root or Scope target, its resolved view, mode, policy, and credential
+  status. A RuntimeGrant cannot enter Team, Billing,
+  Project settings, members, sharing, or credential-management control planes.
+- The canonical PuppyOne Git remote is the only local-to-Cloud locator. Desktop
+  parses its Project-root or Scope target locally, then the current JWT must
+  authorize that exact Project target before Cloud UI is shown. A Git URL is a
+  locator, never authority. The Cloud does not register devices, folders, or
+  checkouts, and legacy secret-bearing remotes never identify Cloud UI context.
+
 ### Platform
 
 - **Agent management** — Create agents, bind tools, control access scope, SSE streaming chat
 - **Full CLI coverage** — Every operation available via command line, enabling AI coding tools like Claude Code to drive the platform directly
-- **Unified access management** — All access types (sync/agent/MCP/sandbox/filesystem) consolidated into a single `access_points` table with a single entry point
+- **Unified access management** — All access surface types (Git remote/CLI/agent/MCP/sandbox) are served through a single `/api/v1/access` entry point. `access_surfaces` targets Project root with `scope_id = NULL` or one real `repository_scopes` row; external SaaS data sources live separately in `connectors`.
 
 ## Active Development Directories
 
@@ -82,7 +111,7 @@ backend/
 │   ├── tool/                  # Tool registration & search index
 │   │
 │   ├── connectors/            # Access types
-│   │   ├── manager/           #   Unified access CRUD (connections table)
+│   │   ├── manager/           #   Access surface CRUD (Project-root or Scope target)
 │   │   ├── datasource/        #   SaaS data source providers (Gmail/GitHub/Notion/...)
 │   │   │   ├── gmail/         #     Gmail connector
 │   │   │   ├── github/        #     GitHub connector
@@ -119,7 +148,7 @@ backend/
 │   │   ├── scheduler/         #   Scheduled tasks (APScheduler)
 │   │   ├── sandbox/           #   Sandbox runtime (Docker/E2B execution engine)
 │   │   ├── turbopuffer/       #   Turbopuffer vector DB client
-│   │   └── mcp_server/        #   MCP Server management (health checks, cache, legacy mcps table)
+│   │   └── mcp_health.py      #   Remote MCP transport health probe only
 │   ├── ingest/                # File ingestion ETL (MineRU + LLM)
 │   ├── context_publish/       # Public JSON publishing (short links)
 │   ├── internal/              # Internal API (X-Internal-Secret)
@@ -138,31 +167,30 @@ backend/
 - **Fully async**: All I/O operations use `async/await`
 - **Pydantic models**: All request/response defined with Pydantic schemas
 - **Naming conventions**: Files `snake_case.py`, classes `PascalCase`, functions/variables `snake_case`
-- **DB table naming**: New tables use **plural snake_case** (e.g. `projects`, `access_points`, `version_transactions`). Deferred physical legacy names may appear only through `backend/src/version_engine/server/db_names.py`.
+- **DB table naming**: New tables use **plural snake_case** (e.g. `projects`, `access_surfaces`, `version_transactions`). Deferred physical legacy names may appear only through `backend/src/version_engine/server/db_names.py`.
 - **Route prefix**: Business APIs under `/api/v1`, internal APIs under `/internal`
 - **Module structure**: Each module typically contains `router.py`, `service.py`, `repository.py`, `schemas.py`
 
 ### Database Tables
 
-All tables use plural snake_case names. The "unified access" architecture stores agents, MCP endpoints, sandbox endpoints, and sync access points in a single `access_points` base table differentiated by `provider`. Sync-specific state lives in the `sync_state` satellite table; agent-specific config in `agent_profiles`.
+All tables use plural snake_case names. The "unified access" architecture serves agents, MCP endpoints, sandbox endpoints, and Git-remote/CLI credentials through `access_surfaces`, differentiated by `kind` and targeted by `(project_id, nullable scope_id)`. NULL means the Project-owned root; a non-NULL value references a true non-empty-path row in `repository_scopes`. Every machine secret lives hash-only in `access_surface_credentials` and is revealed only on issuance. Provider config must never contain credentials. External SaaS data-source integrations live separately in `connectors`.
 
 | Table | Repository | Description |
 |-------|-----------|-------------|
 | `projects` | `supabase/projects/repository.py` | Projects |
-| `project_members` | `project/repository.py`, `project/service.py` | Project membership |
+| `project_members` | `platform/authorization/repository.py` | Sole explicit Human Project membership/role fact |
 | `organizations` | `organization/repository.py` | Organizations |
 | `org_members` | `organization/repository.py` | Organization membership |
 | `org_invitations` | `organization/repository.py` | Organization invitations |
 | `profiles` | `profile/repository.py` | User profiles |
-| `access_points` | `connectors/manager/router.py`, `connectors/agent/config/repository.py` | Unified access points (agents/MCP/sandbox/sync) — base table |
-| `sync_state` | _(satellite table)_ | Sync-specific state (direction, cursor, last_synced_at, etc.) |
-| `agent_profiles` | _(satellite table)_ | Agent-specific config (model, system_prompt, etc.) |
-| `access_permissions` | `connectors/agent/config/repository.py` | Access point ↔ content node permissions |
-| `access_tools` | `connectors/agent/config/repository.py`, `tool/service.py` | Access point ↔ tool bindings |
+| `access_surfaces` | `connectors/manager/router.py`, `repo/access_surface_repository.py` | Unified access surfaces keyed by `kind`, targeting Project root or one Scope through nullable `scope_id` |
+| `repository_scopes` | `repo/scope_repository.py`, `repo/scope_service.py` | Non-root subtree geometry (`path`, `exclude`, `max_mode`); never a repository or credential owner |
+| `connectors` | `repo/connector_repository.py`, `repo/connector_service.py` | External SaaS data-source integrations (Gmail/GitHub/Notion/...) |
+| `access_permissions` | `connectors/agent/config/repository.py` | Access surface ↔ content node permissions |
+| `access_tools` | `connectors/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
 | `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
-| `mcps` | `supabase/mcps/repository.py`, `supabase/mcp_v2/repository.py` | MCP server instances |
-| `mcp_bindings` | `supabase/mcp_binding/repository.py` | MCP ↔ tool bindings |
+| `access_surface_credentials` | `repo/access_credentials.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
 | `chunks` | `chunking/repository.py` | Text chunks for search |
 | `uploads` | `upload/file/tasks/repository.py` | File upload/ingest tasks |
 | `etl_rules` | `upload/file/rules/repository_supabase.py` | ETL transformation rules |
@@ -199,7 +227,8 @@ All tables use plural snake_case names. The "unified access" architecture stores
 | `/api/v1/filesystem` | connectors/filesystem | Filesystem access lifecycle |
 | `/api/v1/ingest` | upload | File/URL ingestion ETL |
 | `/api/v1/ap-fs` | version_engine/routers/access_point_fs | Puppyone CLI scoped filesystem API |
-| `/git/{project_id}.git`, `/git/ap/{access_key}.git` | version_engine/adapters/git/router | Git smart-HTTP clone/fetch/push |
+| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | version_engine/entrypoints/git/router | Canonical Git smart-HTTP clone/fetch/push; credential is HTTP auth, not URL data |
+| `/git/ap/{access_key}.git` | version_engine/entrypoints/git/router | Bounded, instrumented legacy compatibility only; never construct for new clients |
 | `/api/v1/workspace` | workspace | Workspace management |
 | `/api/v1/db-connector` | db_connector | External database access |
 | `/api/v1/publishes` | context_publish | Public JSON short links |
@@ -240,6 +269,15 @@ Railway multi-service deployment (shared codebase, differentiated by `SERVICE_RO
 ---
 
 ## Frontend
+
+Workspace navigation and lifetime ownership are documented in
+[`docs/frontend/2026-09-20-workspace-refactor-design.md`](docs/frontend/2026-09-20-workspace-refactor-design.md).
+Route entries compose domain features; features must not import app route implementations.
+Workspace navigation uses `features/workspace/navigation` so links and command
+actions share leave protection. Next owns project/view/path identity; do not
+reintroduce a page-local history router. Files DOM lifetime belongs to its
+layout, editor drafts/writes to editor sessions, and pane geometry to the layout
+store. Preserve the existing desktop appearance during responsive changes.
 
 - **Framework**: Next.js 15 (App Router)
 - **Language**: TypeScript

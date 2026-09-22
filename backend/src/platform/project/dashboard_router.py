@@ -7,7 +7,7 @@ project info, node counts, all connections, tools, and active uploads.
 
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, status
 from fastapi.concurrency import run_in_threadpool
@@ -16,12 +16,12 @@ from pydantic import BaseModel
 
 from src.common_schemas import ApiResponse
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_verified_project
-from src.platform.project.models import Project
+from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
+from src.platform.authorization.models import ProjectAction
+from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -42,12 +42,18 @@ class DashboardNodeCounts(BaseModel):
 
 class DashboardConnection(BaseModel):
     id: str
+    scope_id: str | None = None
     provider: str
     name: str | None = None
     path: str | None = None
     direction: str | None = None
     status: str = "active"
+    # Backward-compatible field kept null. A dashboard list must never double
+    # as a machine-secret retrieval endpoint.
     access_key: str | None = None
+    has_credential: bool = False
+    credential_hint: str | None = None
+    scope_mode: str | None = None
     trigger: dict | None = None
     last_synced_at: str | None = None
     error_message: str | None = None
@@ -96,7 +102,9 @@ class ProjectDashboard(BaseModel):
     status_code=status.HTTP_200_OK,
 )
 async def get_project_dashboard(
-    project: Project = Depends(get_verified_project),
+    authorized: AuthorizedProject = Depends(
+        require_project_action(ProjectAction.PROJECT_READ)
+    ),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -108,6 +116,7 @@ async def get_project_dashboard(
     parallel collapses that to roughly the slowest single section
     (~600–900 ms). supabase-py is sync, so we offload via run_in_threadpool.
     """
+    project = authorized.project
     project_id = str(project.id)
     sb = SupabaseClient().client
 
@@ -215,19 +224,18 @@ def _scope_paths_and_keys_by_id(sb, scope_ids: list[str]) -> dict[str, dict]:
     if not ids:
         return {}
     try:
-        rows = (
-            sb.table("repo_scopes")
-            .select("id, path, access_key")
-            .in_("id", ids)
-            .execute()
-        ).data or []
+        from src.repo.access_surface_repository import AccessSurfaceRepository
+
+        rows = AccessSurfaceRepository(sb).scope_rows_for(
+            [{"scope_id": scope_id} for scope_id in ids]
+        ).values()
     except Exception:
-        logger.exception("[Dashboard] repo_scopes lookup failed")
+        logger.exception("[Dashboard] repository_scopes lookup failed")
         return {}
     return {
         row["id"]: {
             "path": row.get("path"),
-            "access_key": row.get("access_key"),
+            "max_mode": row.get("max_mode"),
         }
         for row in rows
     }
@@ -246,21 +254,6 @@ def _path_from_scope(row: dict, cfg: dict, scopes: dict[str, dict]) -> str | Non
     return path if path not in (None, "") else None
 
 
-def _access_surface_preview_key(cfg: dict, kind: str, scope_key: str | None) -> str | None:
-    """Map access-surface config to one credential string for dashboard preview."""
-    if not cfg:
-        cfg = {}
-    if kind == "agent":
-        return cfg.get("mcp_api_key")
-    if kind == "mcp":
-        return cfg.get("api_key")
-    if kind == "sandbox":
-        return cfg.get("access_key") or scope_key
-    if kind in {"git_remote", "cli"}:
-        return cfg.get("access_key") or scope_key
-    return None
-
-
 def _fetch_connections(sb, project_id: str) -> list[DashboardConnection]:
     """Load dashboard rows from canonical Connect and Access tables."""
     sync_rows = (
@@ -274,15 +267,17 @@ def _fetch_connections(sb, project_id: str) -> list[DashboardConnection]:
         .order("created_at")
         .execute()
     ).data or []
-    access_rows = (
-        sb.table("access_surfaces")
-        .select(
-            "id, kind, name, status, config, scope_id, created_at, updated_at"
-        )
-        .eq("project_id", project_id)
-        .order("created_at")
-        .execute()
-    ).data or []
+    from src.repo.access_surface_repository import AccessSurfaceRepository
+
+    access_rows = AccessSurfaceRepository(sb).list_by_project(project_id)
+    from src.repo.access_credentials import (
+        AccessCredentialRepository,
+        mask_access_token,
+    )
+
+    credential_map = AccessCredentialRepository(sb).list_active_by_surface(
+        [row["id"] for row in access_rows]
+    )
 
     scope_ids = [
         *(row.get("scope_id") for row in sync_rows),
@@ -306,12 +301,14 @@ def _fetch_connections(sb, project_id: str) -> list[DashboardConnection]:
         )
         connections.append(DashboardConnection(
             id=r["id"],
+            scope_id=r.get("scope_id"),
             provider=provider,
             name=name,
             path=_path_from_scope(r, cfg, scope_lookup),
             direction=r.get("direction"),
             status=r.get("status", "active"),
             access_key=None,
+            scope_mode=scope_lookup.get(r.get("scope_id"), {}).get("max_mode"),
             trigger=trigger,
             last_synced_at=_iso_string(r.get("last_synced_at")),
             error_message=r.get("error_message"),
@@ -325,19 +322,24 @@ def _fetch_connections(sb, project_id: str) -> list[DashboardConnection]:
         trigger = cfg.get("trigger")
         if isinstance(trigger, dict) and isinstance(trigger.get("config"), dict):
             trigger = {"type": trigger.get("type"), **trigger["config"]}
-        preview_key = _access_surface_preview_key(
-            cfg,
-            kind,
-            scope.get("access_key"),
+        credential = credential_map.get(r["id"])
+        credential_hint = (
+            mask_access_token(credential.get("key_prefix"), credential.get("key_last4"))
+            if credential
+            else None
         )
         connections.append(DashboardConnection(
             id=r["id"],
+            scope_id=r.get("scope_id"),
             provider=kind,
             name=r.get("name") or cfg.get("name") or kind,
             path=_path_from_scope(r, cfg, scope_lookup),
             direction=cfg.get("direction"),
             status=r.get("status", "active"),
-            access_key=_mask_key(preview_key, kind),
+            access_key=None,
+            has_credential=credential is not None,
+            credential_hint=credential_hint,
+            scope_mode=scope.get("max_mode"),
             trigger=trigger,
             last_synced_at=_iso_string(
                 cfg.get("last_seen_at") or cfg.get("last_run_at")
@@ -374,7 +376,7 @@ def _fetch_usage_buckets(
     if not ap_ids:
         return buckets
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=days - 1)
     cutoff_day = cutoff.date()
     today = now.date()
@@ -425,7 +427,7 @@ def _accumulate_run_buckets(
             run_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
         except (ValueError, AttributeError):
             continue
-        run_day = run_dt.astimezone(timezone.utc).date()
+        run_day = run_dt.astimezone(UTC).date()
         if run_day < cutoff_day or run_day > today:
             continue
         idx = (run_day - cutoff_day).days
@@ -506,24 +508,3 @@ def _fetch_uploads(sb, project_id: str) -> list[DashboardUpload]:
         )
         for u in upload_rows
     ]
-
-
-def _mask_key(key: str | None, provider: str | None = None) -> str | None:
-    if not key or len(key) < 8:
-        return key
-    # Scope access keys are paste-and-run credentials the project
-    # owner uses with Git Remote / FS CLI: the home-page onboarding
-    # block renders a connect command with the access URL and key, the
-    # access page exposes a Copy button next to the key, and SyncDetail
-    # in the data canvas does the same. Masking those broke every one
-    # of those flows (the rendered command included literal `cli_...XXX`
-    # which the backend can't resolve, so the connect command returned 401 /
-    # not found). Dashboard is JWT-gated to project members already, so
-    # an owner seeing their own scope key is the right exposure
-    # level — the mask only made sense for keys we hand out to
-    # third-party callers (sandbox, mcp), where the dashboard is just
-    # an "is it configured" preview.
-    if provider in {"git_remote", "cli"}:
-        return key
-    prefix_end = key.index("_") + 1 if "_" in key else 4
-    return key[:prefix_end] + "..." + key[-4:]

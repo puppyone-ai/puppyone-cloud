@@ -7,14 +7,16 @@ from fastapi import Depends, Request
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
+from src.version_engine.adapters.product.commands import VersionWriteCommandService
 from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.container import (
     VersionEngineContainer,
     build_version_engine_container,
 )
-from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.version_engine.infrastructure.supabase.version_ref_repository import VersionRefStore
+from src.version_engine.read.admin import VersionAdminService
+from src.version_engine.read.history_graph import HistoryGraphService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 
@@ -38,10 +40,22 @@ def get_repo_manager(
     return container.repo_manager
 
 
+def get_version_ref_store(
+    container: VersionEngineContainer = Depends(get_version_engine_container),
+) -> VersionRefStore:
+    return container.version_ref_store
+
+
 def get_version_admin_service(
     container: VersionEngineContainer = Depends(get_version_engine_container),
 ) -> VersionAdminService:
     return container.admin_service()
+
+
+def get_history_graph_service(
+    container: VersionEngineContainer = Depends(get_version_engine_container),
+) -> HistoryGraphService:
+    return container.history_graph()
 
 
 def get_product_operation_adapter(

@@ -106,9 +106,15 @@ class TodaySmoke:
     # ── Setup / teardown ─────────────────────────────────────────
 
     def setup_project(self):
+        org_id = self._resolve_org_id()
         r = self.client.post(
             "/api/v1/projects/",
-            json={"name": self.project_name, "type": "team", "description": ""},
+            headers={"Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "name": self.project_name,
+                "description": "",
+                "org_id": org_id,
+            },
         )
         body = self._expect(r, (200, 201), hint="create project")
         self.project_id = body["data"]["id"]
@@ -118,8 +124,9 @@ class TodaySmoke:
         if not self.project_id:
             return "no project"
         r = self.client.delete(f"/api/v1/projects/{self.project_id}")
-        if r.status_code in (200, 204):
-            return f"HTTP {r.status_code}"
+        if r.status_code == 202:
+            status = (r.json().get("data") or {}).get("status", "pending")
+            return f"HTTP 202 ({status})"
         return f"cleanup HTTP {r.status_code} (non-fatal)"
 
     # ── PUP-3 backend defense-in-depth ───────────────────────────

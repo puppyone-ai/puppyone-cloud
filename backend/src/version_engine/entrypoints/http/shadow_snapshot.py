@@ -59,10 +59,13 @@ from src.infra.s3.service import get_s3_service_instance
 from src.infra.supabase.client import SupabaseClient
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 from src.utils.logger import log_info, log_warning
-from src.version_engine.entrypoints.http.content_helpers import ensure_project_access
+from src.version_engine.entrypoints.http.content_helpers import (
+    ensure_project_access,
+    ensure_write_access,
+)
 
 
 router = APIRouter()
@@ -327,7 +330,7 @@ async def reap_stale_shadow_snapshots(
 )
 async def upsert_snapshot(
     body: UpsertShadowSnapshotRequest,
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Create or update a shadow snapshot. Identified by
@@ -347,7 +350,7 @@ async def upsert_snapshot(
     janitor (out of scope here) can sweep dead keys.
     """
 
-    ensure_project_access(project_service, current_user, body.project_id)
+    ensure_project_access(authorization, current_user, body.project_id)
     _enforce_entry_count(body)
 
     file_count = len(body.manifest)
@@ -585,6 +588,7 @@ class _BlobUploadResponse(BaseModel):
 async def upload_snapshot_blobs(
     snapshot_id: str,
     body: _BlobUploadRequest,
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Stream a batch of blob bodies into the project object store.
@@ -615,11 +619,11 @@ async def upload_snapshot_blobs(
         raise HTTPException(status_code=404, detail="snapshot not found")
 
     project_id = snap_row["project_id"]
-    # The snapshot row's ``user_id`` (matched in the SELECT above) is
-    # the security gate: a user can only push blobs to a project they
-    # already created a snapshot for. The snapshot creation path
-    # ran ``ensure_project_access`` so the project_id is necessarily
-    # one the user has access to.
+    # Re-validate project write-access at push time. The snapshot row's
+    # user_id match is NOT sufficient: a user's access may have been revoked
+    # after the snapshot was created, and blob upload mutates the project
+    # object store. Mirror the write-role gate the snapshot-create path uses.
+    ensure_write_access(authorization, current_user, project_id)
 
     from src.version_engine.bootstrap.dependencies import (
         build_worker_version_engine_container,
@@ -701,6 +705,7 @@ class _PromoteResponse(BaseModel):
 async def promote_snapshot(
     snapshot_id: str,
     body: _PromoteRequest,
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Turn a shadow manifest into a published Git commit.
@@ -737,6 +742,9 @@ async def promote_snapshot(
         raise HTTPException(status_code=404, detail="snapshot not found")
 
     project_id = snap_row["project_id"]
+    # Re-validate project write-access before landing a commit — matching the
+    # snapshot row's user_id is not enough (access may have been revoked).
+    ensure_write_access(authorization, current_user, project_id)
     manifest_doc = await _get_manifest_from_s3(project_id, snapshot_id)
     manifest = (manifest_doc or {}).get("manifest") or []
     if not manifest:

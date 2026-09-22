@@ -50,6 +50,8 @@ class Agent(BaseModel):
     is_default: bool = Field(default=False)
 
     mcp_api_key: Optional[str] = Field(None)
+    mcp_enabled: bool = Field(default=False)
+    mcp_key_last4: Optional[str] = Field(None)
 
     trigger_type: Optional[str] = Field(default="manual")
     trigger_config: Optional[dict] = Field(None)

@@ -10,8 +10,15 @@ import hashlib
 import os
 import shutil
 import time
+from pathlib import Path
 
 from src.connectors.datasource.schemas import SyncResult
+from src.platform.workspace.paths import (
+    absolute_path,
+    agent_child,
+    project_child,
+    validate_storage_segment,
+)
 from src.platform.workspace.provider import (
     WorkspaceChanges,
     WorkspaceInfo,
@@ -24,27 +31,43 @@ class FallbackWorkspaceProvider(WorkspaceProvider):
     """Full copy implementation (any platform)"""
 
     def __init__(self, base_dir: str = "/tmp/contextbase"):
-        self._base_dir = base_dir
-        self._lower_dir = os.path.join(base_dir, "lower")
-        self._workspaces_dir = os.path.join(base_dir, "workspaces")
+        self._base_dir = str(absolute_path(base_dir))
+        self._lower_dir = os.path.join(self._base_dir, "lower")
+        self._workspaces_dir = os.path.join(self._base_dir, "workspaces")
         self._registry: dict[str, WorkspaceInfo] = {}
 
+        if Path(self._lower_dir).is_symlink() or Path(self._workspaces_dir).is_symlink():
+            raise ValueError("workspace storage roots must not be symlinks")
         os.makedirs(self._lower_dir, exist_ok=True)
         os.makedirs(self._workspaces_dir, exist_ok=True)
 
     def get_lower_path(self, project_id: str) -> str:
-        return os.path.join(self._lower_dir, project_id)
+        return str(project_child(self._lower_dir, project_id))
 
     async def create_workspace(
         self, agent_id: str, project_id: str, base_commit_id: str | None = None
     ) -> WorkspaceInfo:
         """Create workspace via full copy"""
-        lower_path = self.get_lower_path(project_id)
-        workspace_path = os.path.join(self._workspaces_dir, agent_id)
+        validate_storage_segment(agent_id, label="agent_id")
+        validate_storage_segment(project_id, label="project_id")
+        existing = self._registry.get(agent_id)
+        if existing is not None and existing.project_id != project_id:
+            raise ValueError("agent_id is already bound to another Project workspace")
 
-        if os.path.exists(workspace_path):
+        lower_path = self.get_lower_path(project_id)
+        project_workspaces = project_child(self._workspaces_dir, project_id)
+        if project_workspaces.is_symlink():
+            raise ValueError("Project workspace path must not be a symlink")
+        project_workspaces.mkdir(parents=True, exist_ok=True)
+        workspace_path = str(agent_child(project_workspaces, agent_id))
+
+        if os.path.islink(workspace_path):
+            os.unlink(workspace_path)
+        elif os.path.exists(workspace_path):
             shutil.rmtree(workspace_path)
 
+        if os.path.islink(lower_path):
+            raise ValueError("Project Lower cache path must not be a symlink")
         if not os.path.exists(lower_path):
             os.makedirs(workspace_path, exist_ok=True)
             log_info(f"[Fallback] Created empty workspace for {agent_id}")
@@ -83,10 +106,22 @@ class FallbackWorkspaceProvider(WorkspaceProvider):
         )
 
     async def cleanup(self, agent_id: str) -> None:
-        info = self._registry.pop(agent_id, None)
-        if info and os.path.exists(info.path):
-            shutil.rmtree(info.path, ignore_errors=True)
+        validate_storage_segment(agent_id, label="agent_id")
+        info = self._registry.get(agent_id)
+        if info is not None:
+            expected = agent_child(
+                project_child(self._workspaces_dir, info.project_id),
+                info.agent_id,
+            )
+            if Path(info.path) != expected:
+                raise ValueError("workspace registry path escaped its Project root")
+        if info and os.path.islink(info.path):
+            os.unlink(info.path)
             log_debug(f"[Fallback] Cleaned up workspace for {agent_id}")
+        elif info and os.path.exists(info.path):
+            shutil.rmtree(info.path)
+            log_debug(f"[Fallback] Cleaned up workspace for {agent_id}")
+        self._registry.pop(agent_id, None)
 
     async def sync_lower(self, project_id: str) -> SyncResult:
         lower_path = self.get_lower_path(project_id)

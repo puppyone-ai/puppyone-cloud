@@ -11,7 +11,9 @@ push so callers can reason about a single contract regardless of
 whether they're a real Git client or an in-process consumer.
 
 Usage:
-    client = InProcessVersionClient(repo_manager, project_id, auth_context)
+    client = InProcessVersionClient(
+        repo_manager, project_id, projection, actor="agent:example"
+    )
     files = client.clone()           # full-content read path: {rel_path: bytes}
     client.push({"foo.md": b"new"}, deleted=["old.md"])
 """
@@ -22,6 +24,7 @@ import base64
 import asyncio
 from datetime import UTC
 
+from src.platform.repository_target.models import RepositoryPathProjection
 from src.version_engine.write_engine import tree as tree_mod
 from src.version_engine.write_engine.git_object_format import (
     MODE_DIR, MODE_FILE, TreeEntry, encode_object, encode_tree, hash_object,
@@ -44,7 +47,9 @@ class InProcessVersionClient:
         self,
         repo_manager: VersionRepoManager,
         project_id: str,
-        auth_context: dict,
+        projection: RepositoryPathProjection,
+        *,
+        actor: str,
         source_channel: str = "access_sandbox",
     ):
         """In-process client used by access-runtime / sandbox / connector flows.
@@ -59,7 +64,8 @@ class InProcessVersionClient:
 
         self._repo_manager = repo_manager
         self._project_id = project_id
-        self._auth = auth_context
+        self._projection = projection
+        self._actor = actor or "ephemeral"
         self._source_channel = source_channel or "access_sandbox"
 
         self._head_commit_id: str = ""
@@ -94,11 +100,9 @@ class InProcessVersionClient:
 
         The cached host-client model needs this because the client is
         reused across requests but each request comes from a different
-        authenticated user. ``record_audit`` reads ``auth["agent"]``, so
-        we update it before each push (under the per-scope lock so two
-        requests don't race on the field).
+        authenticated user, so the per-view lock updates it before each push.
         """
-        self._auth["agent"] = who or "puppyone-host"
+        self._actor = who or "puppyone-host"
 
     # ── Clone ────────────────────────────────────
 
@@ -116,7 +120,7 @@ class InProcessVersionClient:
         for unchanged files and only ship the new blob bytes.
         """
         repo = self._get_server_repo()
-        scope = self._auth["_scope"]
+        scope = self._projection.as_engine_projection()
 
         files_raw = repo.list_scope_files(scope)
         scope_tree_hash = repo.build_scope_tree(scope)
@@ -140,7 +144,7 @@ class InProcessVersionClient:
         self._file_hashes = None  # full-content path; hash index is unused
 
         try:
-            repo.record_audit("clone", self._auth["agent"], {
+            repo.record_audit("clone", self._actor, {
                 "scope": scope.get("path", ""),
                 "files": len(files_raw),
                 "commit_id": head_commit_id,
@@ -178,9 +182,9 @@ class InProcessVersionClient:
         repo = self._get_server_repo()
 
         # Mirror the full-content auth/scope plumbing without the heavy fetch.
-        scope = self._auth.get("_scope") or {}
-        scope_path = normalize_path(scope.get("path", ""))
-        excludes = [normalize_path(e) for e in scope.get("exclude", [])]
+        scope = self._projection.as_engine_projection()
+        scope_path = normalize_path(self._projection.path_prefix)
+        excludes = [normalize_path(e) for e in self._projection.excludes]
 
         scope_tree_hash = repo.build_scope_tree(scope)
         flat = self._parallel_tree_walk(repo.store, scope_tree_hash)
@@ -279,8 +283,8 @@ class InProcessVersionClient:
         Returns updated files or empty dict if up-to-date.
         """
         repo = self._get_server_repo()
-        scope = self._auth.get("_scope") or {}
-        scope_path = scope.get("path", "") or ""
+        scope = self._projection.as_engine_projection()
+        scope_path = self._projection.path_prefix
 
         current_head = repo.get_scope_head_commit_id(scope_path) or ""
         if current_head and current_head == self._head_commit_id:
@@ -331,7 +335,7 @@ class InProcessVersionClient:
         modified = modified or {}
         deleted = deleted or []
 
-        scope_path = self._auth.get("_scope", {}).get("path", "") or ""
+        scope_path = self._projection.path_prefix
         op_tag = f"[VersionClient][push scope={scope_path!r}]"
 
         t0 = _time.monotonic()
@@ -365,13 +369,13 @@ class InProcessVersionClient:
         for object_id, b64data in objects_b64.items():
             repo.store.put_loose(object_id, base64.b64decode(b64data))
 
-        scope = self._auth.get("_scope", {}) or {}
+        scope = self._projection.as_engine_projection()
         snapshot = body["snapshots"][-1]
         engine = VersionWriteEngine(self._repo_manager)
         intent = VersionSubmissionIntent(
             project_id=self._project_id,
             scope_path=scope.get("path", "") or "",
-            actor=self._auth.get("agent", "ephemeral"),
+            actor=self._actor,
             source_channel=self._source_channel,
             base_commit_id=body.get("base_commit_id", "") or "",
             proposed_tree_id=snapshot["root"],
@@ -492,7 +496,7 @@ class InProcessVersionClient:
                 "id": 1,
                 "root": snapshot_root,
                 "message": message or "ephemeral push",
-                "who": who or self._auth.get("agent", "unknown"),
+                "who": who or self._actor,
                 "time": _now_iso(),
             }],
             "objects": objects_b64,

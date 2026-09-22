@@ -26,9 +26,9 @@
 
 ### 🔑 关键发现:PuppyOne git remote 强制线性历史
 - **拒绝 non-fast-forward 推送**(标准):并发推同一 ref,第二个先 `! [rejected] (fetch first)`。
-- **还拒绝 merge commit**:推合并提交报 `...merge commits are not supported; fetch and rebase, or resolve through PuppyOne review`。
+- **还拒绝 merge commit**:推合并提交报 `...merge commits are not supported; fetch and rebase onto the remote main branch`。
 - **结论:并发协同的正确客户端工作流是 `git pull --rebase`(线性),不能用 merge。** 这对 Version Engine 的干净投影是合理设计。
-- **落地影响**:sandbox 里 clone 时应默认 `git config pull.rebase true`(已在测试中采用);文档/CLI 引导用户用 rebase;真正的内容冲突可走 PuppyOne 的 review 流。
+- **落地影响**:sandbox 里 clone 时应默认 `git config pull.rebase true`(已在测试中采用);文档/CLI 引导用户用 rebase;同源 Git race 的文本冲突在本地 rebase 中解决。
 
 ### 用 rebase 工作流的实测(server 端中立克隆验证真相)
 
@@ -49,6 +49,6 @@
 
 ## 5. 据此要做的(补进待办)
 - **sandbox provision 时默认 `git config pull.rebase true`**(否则用户用默认 merge 会被 server 拒、困惑)。已是测试用法,应固化进 in-sandbox provisioning。
-- 在 CLI/文档/前端引导:并发协同用 `git pull --rebase`;真正的同文件冲突走 PuppyOne review。
+- 在 CLI/文档/前端引导:并发协同用 `git pull --rebase`;同源 Git race 的同文件冲突在本地 rebase 中解决。
 - (承接之前的 5.1/5.2/5.3)session 状态外部化 + reaper 排程 + E2B 超时续期,才能让这套在生产长期稳定。
 - 真正的「sandbox 内每用户独立 working tree + 每用户身份/auth」(共享盒里 push 归属到人)仍需结合凭证层落地。

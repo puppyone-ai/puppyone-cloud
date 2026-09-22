@@ -24,6 +24,8 @@ implementation; its exact SDK calls SHOULD be validated against the installed
 from __future__ import annotations
 
 import asyncio
+import posixpath
+import re
 from typing import Protocol
 
 from src.platform.scope_sandbox.provider import (
@@ -52,6 +54,7 @@ class E2BClient(Protocol):
     def kill(self, sandbox_id: str) -> None: ...
     def get_state(self, sandbox_id: str) -> SandboxState: ...
     def exec(self, sandbox_id: str, command: str, background: bool = False) -> dict: ...
+    def write_file(self, sandbox_id: str, path: str, value: str) -> None: ...
     def set_timeout(self, sandbox_id: str) -> None: ...
 
 
@@ -115,6 +118,12 @@ class E2BProvider(SandboxProvider):
 
     async def exec(self, sandbox_id: str, command: str, *, background: bool = False) -> dict:
         return await asyncio.to_thread(self._client.exec, sandbox_id, command, background)
+
+    async def write_secret(
+        self, sandbox_id: str, relative_path: str, value: str
+    ) -> None:
+        path = _home_secret_path(self._username, relative_path)
+        await asyncio.to_thread(self._client.write_file, sandbox_id, path, value)
 
     async def extend(self, sandbox_id: str) -> None:
         # E2B sandboxes auto-kill at their timeout; reset it so an active
@@ -188,8 +197,34 @@ class SdkE2BClient(E2BClient):
             "stderr": getattr(result, "stderr", ""),
         }
 
+    def write_file(self, sandbox_id: str, path: str, value: str) -> None:
+        from e2b_code_interpreter import Sandbox
+
+        sbx = Sandbox.connect(sandbox_id, timeout=self._timeout)
+        parent = posixpath.dirname(path)
+        sbx.files.make_dir(parent)
+        sbx.files.write(path, value)
+        # The secret travels via the filesystem API. Only the non-secret path
+        # appears in the chmod command or provider logs.
+        result = sbx.commands.run(f"chmod 600 '{path}'")
+        if getattr(result, "exit_code", 0) not in (0, None):
+            raise RuntimeError("Unable to protect sandbox secret file")
+
     def set_timeout(self, sandbox_id: str) -> None:
         from e2b_code_interpreter import Sandbox
         # connect attaches to the running sandbox; set_timeout resets its
         # remaining lifetime to self._timeout from now.
         Sandbox.connect(sandbox_id, timeout=self._timeout).set_timeout(self._timeout)
+
+
+def _home_secret_path(username: str, relative_path: str) -> str:
+    raw = relative_path.strip().lstrip("/")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", raw):
+        raise ValueError("Sandbox secret path contains unsupported characters")
+    clean = posixpath.normpath(raw)
+    if clean in {"", "."} or clean == ".." or clean.startswith("../"):
+        raise ValueError("Sandbox secret path must stay below the user home")
+    user = username.strip() or "user"
+    if "/" in user or user in {".", ".."}:
+        raise ValueError("Sandbox username is invalid")
+    return f"/home/{user}/{clean}"

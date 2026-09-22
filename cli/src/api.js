@@ -1,4 +1,5 @@
 import { resolveAuth, loadConfig, saveConfig, getTargetAuth, saveTargetAuth } from "./config.js";
+import { repositoryContractHeaders } from "./repository-contract.js";
 
 export class ApiError extends Error {
   constructor(status, code, message, hint, data) {
@@ -143,7 +144,10 @@ function _makeClient(apiUrl, authHeaders, { autoRefresh = false, clientKind = "c
   // backend reads it during version access resolution and rejects the request when the
   // matching connector for the resolved scope is paused. Threaded into
   // a single source so both `request` and `rawRequest` / `upload` agree.
-  const channelHeaders = clientKind ? { "X-Puppy-Client": clientKind } : {};
+  const channelHeaders = {
+    ...repositoryContractHeaders(),
+    ...(clientKind ? { "X-Puppy-Client": clientKind } : {}),
+  };
 
   async function getAuthHeaders() {
     if (!autoRefresh) return authHeaders;

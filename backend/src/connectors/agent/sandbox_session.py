@@ -1,14 +1,14 @@
 """
-Agent sandbox session management — reuse version-backed sandboxes across chat messages.
+Request-scoped agent sandbox write-back state.
 
 Each AgentSandboxSession holds a InProcessVersionClient that was cloned once at
-session start. When the session ends (explicit or idle timeout), the client
-pushes modified files back through the Write Engine.
+request start. Before the response ends, it pushes modified files through the
+Write Engine and destroys the sandbox.
 
 Lifecycle:
   1. Agent chat starts → clone version scope → mount in sandbox → register session
-  2. Subsequent messages → reuse same sandbox + version client (touch heartbeat)
-  3. Chat ends / idle timeout → read changed files → client.push() → destroy sandbox
+  2. Request completion → read changed files → client.push()
+  3. Destroy sandbox; the next turn starts from the new canonical head
 """
 
 from __future__ import annotations
@@ -16,11 +16,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import time
 from dataclasses import dataclass, field
-from typing import Optional, Any
-
-from loguru import logger
+from typing import Any
 
 from src.version_engine.adapters.batch.in_process_client import InProcessVersionClient
 
@@ -49,9 +46,6 @@ class SandboxData:
     root_path: str = ""
     root_node_name: str = ""
     node_path_map: dict = field(default_factory=dict)
-
-
-IDLE_TIMEOUT_SECONDS = 4 * 60  # 4 minutes
 
 
 async def prepare_sandbox_data(
@@ -121,130 +115,6 @@ class AgentSandboxSession:
     project_id: str = ""
     parent_path: str = ""
     repo_manager: Any = None
-
-
-class AgentSandboxRegistry:
-    """In-memory registry of active agent sandbox sessions.
-
-    Keyed by chat_session_id for O(1) lookup on each message.
-    """
-
-    def __init__(self):
-        self._sessions: dict[str, AgentSandboxSession] = {}
-
-    def get(self, chat_session_id: str) -> Optional[AgentSandboxSession]:
-        return self._sessions.get(chat_session_id)
-
-    def register(
-        self,
-        chat_session_id: str,
-        sandbox_session_id: str,
-        agent_id: str,
-        version_client: InProcessVersionClient,
-        cloned_files: dict[str, bytes],
-        scope_path: str = "",
-        readonly: bool = False,
-        project_id: str = "",
-        parent_path: str = "",
-        repo_manager=None,
-    ) -> AgentSandboxSession:
-        now = time.time()
-        session = AgentSandboxSession(
-            sandbox_session_id=sandbox_session_id,
-            chat_session_id=chat_session_id,
-            agent_id=agent_id,
-            version_client=version_client,
-            cloned_files=cloned_files,
-            scope_path=scope_path,
-            created_at=now,
-            last_active=now,
-            readonly=readonly,
-            project_id=project_id,
-            parent_path=parent_path,
-            repo_manager=repo_manager,
-        )
-        self._sessions[chat_session_id] = session
-        logger.info(
-            f"[AgentSandbox] Registered: chat={chat_session_id} "
-            f"→ sandbox={sandbox_session_id} scope={scope_path}"
-        )
-        return session
-
-    def touch(self, chat_session_id: str) -> None:
-        session = self._sessions.get(chat_session_id)
-        if session:
-            session.last_active = time.time()
-
-    def remove(self, chat_session_id: str) -> Optional[AgentSandboxSession]:
-        return self._sessions.pop(chat_session_id, None)
-
-    def get_idle_sessions(self) -> list[AgentSandboxSession]:
-        now = time.time()
-        return [
-            s for s in self._sessions.values()
-            if (now - s.last_active) >= IDLE_TIMEOUT_SECONDS
-        ]
-
-    def all_sessions(self) -> list[AgentSandboxSession]:
-        return list(self._sessions.values())
-
-    @property
-    def active_count(self) -> int:
-        return len(self._sessions)
-
-
-# ── Write-back ────────────────────────────────────────────
-
-async def writeback_and_destroy(
-    session: AgentSandboxSession,
-    sandbox_service,
-) -> list[dict]:
-    """Read changed files from sandbox, push to the version engine, then destroy the container.
-
-    Returns list of updated node info dicts.
-    """
-    updated_nodes: list[dict] = []
-
-    if not session.readonly and session.project_id:
-        try:
-            modified, deleted = await _read_modified_files(
-                sandbox_service,
-                session.sandbox_session_id,
-                session.cloned_files,
-                "/workspace",
-                session.scope_path,
-            )
-            if modified or deleted:
-                from src.version_engine.derived.hooks import push_and_finalize
-                push_result = await push_and_finalize(
-                    session.version_client,
-                    session.project_id,
-                    repo_manager=session.repo_manager,
-                    modified=modified,
-                    deleted=deleted,
-                    message=f"Agent write-back ({len(modified)} modified, {len(deleted)} deleted)",
-                    who=f"agent:{session.agent_id}",
-                )
-                logger.info(
-                    f"[AgentSandbox] version push: commit={push_result.get('commit_id')} "
-                    f"merged={push_result.get('merged', False)} modified={len(modified)} deleted={len(deleted)}"
-                )
-                for path in modified:
-                    node_name = path.rsplit("/", 1)[-1] if "/" in path else path
-                    updated_nodes.append({
-                        "nodeId": path,
-                        "nodeName": node_name,
-                        "mergeStrategy": "version_push",
-                    })
-        except Exception as e:
-            logger.error(f"[AgentSandbox] Write-back failed: {e}")
-
-    try:
-        await sandbox_service.stop(session.sandbox_session_id)
-    except Exception as e:
-        logger.warning(f"[AgentSandbox] Failed to stop sandbox: {e}")
-
-    return updated_nodes
 
 
 async def _read_modified_files(
@@ -322,15 +192,3 @@ async def _read_modified_files(
     deleted = [p for p in original_files if p not in seen_version_paths]
 
     return modified, deleted
-
-
-# ── Singleton ─────────────────────────────────────────────
-
-_registry: Optional[AgentSandboxRegistry] = None
-
-
-def get_agent_sandbox_registry() -> AgentSandboxRegistry:
-    global _registry
-    if _registry is None:
-        _registry = AgentSandboxRegistry()
-    return _registry

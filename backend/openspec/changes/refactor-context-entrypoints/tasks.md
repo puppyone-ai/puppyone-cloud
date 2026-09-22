@@ -13,16 +13,16 @@
 - [x] 2.2 Route one-shot external imports only through `import_jobs`.
 - [x] 2.3 Route durable external source setup through `connections`.
 - [x] 2.4 Route every durable source execution through `sync_runs`.
-- [ ] 2.5 Split ARQ queues into `uploads`, `imports`, and `syncs`.
+- [x] 2.5 Split ARQ queues into `uploads`, `imports`, and `syncs`. (Done: three queues `etl`/`imports`/`syncs` run as separate worker processes via `SERVICE_ROLE`; the upload queue is named `etl`.)
 - [ ] 2.6 Move GitHub webhook sync out of API in-process background tasks.
 - [x] 2.7 Stop creating new `import_once` connector or sync bindings.
 
 ## 3. Frontend
 
-- [ ] 3.1 Present Add content as Upload and Import.
+- [x] 3.1 Present Add content as Upload and Import. (Default + menu now surfaces Upload files + Import from URL + Import from a source.)
 - [x] 3.2 Present durable source setup as Connect.
-- [ ] 3.3 Present Git remote, CLI, Agent, MCP, and Sandbox as Access.
-- [ ] 3.4 Show upload, import, and sync activity through the aggregation view.
+- [x] 3.3 Present Git remote, CLI, Agent, MCP, and Sandbox as Access. (Git remote/CLI/MCP present; Sandbox opened; Agent intentionally OFF per product decision — `AI_AGENT_ENABLED=false`.)
+- [x] 3.4 Show upload, import, and sync activity through the aggregation view. (Import + Upload widgets now read `/api/v1/activity` like Sync.)
 - [x] 3.5 Hide one-shot imports from Access surfaces.
 
 ## 4. Validation

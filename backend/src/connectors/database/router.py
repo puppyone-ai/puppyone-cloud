@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from src.platform.auth.models import CurrentUser
 from src.platform.auth.dependencies import get_current_user
 from src.common_schemas import ApiResponse
+from src.exceptions import AppException
 from src.connectors.database.service import DBConnectorService
 from src.connectors.database.dependencies import get_db_connector_service
 from src.connectors.database.schemas import (
@@ -65,6 +66,8 @@ async def create_connection(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AppException:
+        raise
     except Exception:
         raise HTTPException(status_code=400, detail="Access setup failed")
 
@@ -147,6 +150,8 @@ async def preview_table(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AppException:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Preview failed")
 
@@ -182,5 +187,7 @@ async def save_table(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except AppException:
+        raise
     except Exception:
         raise HTTPException(status_code=500, detail="Save failed")

@@ -5,11 +5,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from src.exceptions import BusinessException, ErrorCode, NotFoundException
-from src.infra.mcp_server.cache_invalidator import invalidate_mcp_cache
+from src.exceptions import (
+    BusinessException,
+    ErrorCode,
+    NotFoundException,
+    PermissionException,
+)
+from src.connectors.mcp_cache import invalidate_mcp_surface_cache
 from src.infra.supabase.dependencies import get_supabase_repository
 from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.platform.project.service import ProjectService
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 from src.tool.models import Tool
 from src.tool.repository import ToolRepositoryBase
 from src.tool.supabase_schemas import (
@@ -43,9 +49,9 @@ class ToolCreateParams:
 @lru_cache(maxsize=64)
 def _get_default_tool_description(tool_type: str) -> str | None:
     """
-    Read default tool description from `src/infra/mcp_server/description/{tool_type}.txt` (used as default for Tool.description).
+    Read the tool-owned default description for ``tool_type``.
     """
-    desc_dir = Path(__file__).resolve().parents[1] / "infra" / "mcp_server" / "description"
+    desc_dir = Path(__file__).resolve().parent / "descriptions"
     p = desc_dir / f"{tool_type}.txt"
     if not p.exists():
         return None
@@ -61,12 +67,12 @@ class ToolService:
         self,
         repo: ToolRepositoryBase,
         ops: ProductOperationAdapter,
-        project_service: ProjectService,
+        authorization: AuthorizationService,
         supabase_repository: Any | None = None,
     ):
         self.repo = repo
         self._ops = ops
-        self.project_service = project_service
+        self.authorization = authorization
         self._sb = supabase_repository
 
     def _get_supabase_repository(self):
@@ -89,10 +95,9 @@ class ToolService:
                 project_id = all_tools[0].project_id
 
         if project_id:
-            if not self.project_service.verify_project_access(project_id, user_id):
-                raise NotFoundException(
-                    f"Node not found: {path}", code=ErrorCode.NOT_FOUND
-                )
+            self.authorization.authorize(
+                project_id, user_id, ProjectAction.CONTENT_READ
+            )
             entry = self._ops.stat(project_id, path)
             if entry:
                 return SimpleNamespace(
@@ -112,30 +117,23 @@ class ToolService:
 
         Based on the connection_tool table structure:
         - Find all connection_tool records bound to this tool
-        - Get the corresponding Agent's mcp_api_key
-        - Invalidate MCP cache
+        - Invalidate by access-surface id, so rotation never needs to retrieve
+          a stored plaintext key.
         """
         from src.connectors.agent.config.repository import AgentRepository
 
         try:
-            response = self._get_supabase_repository()._client.table("access_tools").select("access_point_id").eq("tool_id", tool_id).execute()
-            if not response.data:
-                return
-
             agent_repo = AgentRepository()
-            seen_keys = set()
+            seen_surfaces = set()
 
-            for row in response.data:
-                conn_id = row.get("access_point_id")
-                if not conn_id:
-                    continue
+            for conn_id in agent_repo.list_access_point_ids_by_tool(tool_id):
                 agent = agent_repo.get_by_id(conn_id)
-                if not agent or not agent.mcp_api_key:
+                if not agent or not agent.mcp_enabled:
                     continue
-                if agent.mcp_api_key in seen_keys:
+                if agent.id in seen_surfaces:
                     continue
-                seen_keys.add(agent.mcp_api_key)
-                invalidate_mcp_cache(agent.mcp_api_key)
+                seen_surfaces.add(agent.id)
+                invalidate_mcp_surface_cache(agent.id)
         except Exception:
             pass
 
@@ -165,16 +163,9 @@ class ToolService:
         from src.connectors.agent.config.repository import AgentRepository
 
         try:
-            response = self._get_supabase_repository()._client.table("access_tools").select("access_point_id").eq("tool_id", tool_id).execute()
-            if not response.data:
-                return
-
             agent_repo = AgentRepository()
 
-            for row in response.data:
-                conn_id = row.get("access_point_id")
-                if not conn_id:
-                    continue
+            for conn_id in agent_repo.list_access_point_ids_by_tool(tool_id):
                 agent_tools = agent_repo.get_tools_by_agent_id(conn_id)
                 self._check_sibling_name_conflict(tool_id, user_id, new_name, conn_id, agent_tools)
         except BusinessException:
@@ -184,9 +175,12 @@ class ToolService:
             pass
 
     def list_org_tools(
-        self, org_id: str, *, skip: int = 0, limit: int = 100
+        self, user_id: str, org_id: str, *, skip: int = 0, limit: int = 100
     ) -> list[Tool]:
-        return self.repo.get_by_org_id(org_id, skip=skip, limit=limit)
+        rows = self.repo.get_by_org_id(org_id, skip=skip, limit=limit)
+        project_ids = [str(row.project_id) for row in rows if row.project_id]
+        allowed = set(self.authorization.accessible_project_ids(project_ids, user_id))
+        return [row for row in rows if not row.project_id or str(row.project_id) in allowed]
 
     def list_org_tools_by_path(
         self,
@@ -205,13 +199,25 @@ class ToolService:
     def get_by_id(self, tool_id: str) -> Tool | None:
         return self.repo.get_by_id(tool_id)
 
-    def get_by_id_with_access_check(self, tool_id: str, user_id: str) -> Tool:
+    def get_by_id_with_access_check(
+        self,
+        tool_id: str,
+        user_id: str,
+        action: ProjectAction = ProjectAction.AGENT_READ,
+    ) -> Tool:
         tool = self.repo.get_by_id(tool_id)
         if not tool:
             raise NotFoundException(
                 f"Tool not found: {tool_id}", code=ErrorCode.NOT_FOUND
             )
-        if tool.project_id and not self.project_service.verify_project_access(tool.project_id, user_id):
+        if tool.project_id:
+            try:
+                self.authorization.authorize(tool.project_id, user_id, action)
+            except (NotFoundException, PermissionException):
+                raise NotFoundException(
+                    f"Tool not found: {tool_id}", code=ErrorCode.NOT_FOUND
+                ) from None
+        elif tool.created_by and str(tool.created_by) != str(user_id):
             raise NotFoundException(
                 f"Tool not found: {tool_id}", code=ErrorCode.NOT_FOUND
             )
@@ -236,6 +242,11 @@ class ToolService:
         if description is None or not str(description).strip():
             description = _get_default_tool_description(str(params.type))
 
+        if project_id and created_by:
+            self.authorization.authorize(
+                project_id, created_by, ProjectAction.AGENT_MANAGE
+            )
+
         created = self.repo.create(
             SbToolCreate(
                 created_by=created_by,
@@ -258,7 +269,9 @@ class ToolService:
         return created
 
     def update(self, *, tool_id: str, user_id: str, patch: dict[str, Any]) -> Tool:
-        existing = self.get_by_id_with_access_check(tool_id, user_id)
+        existing = self.get_by_id_with_access_check(
+            tool_id, user_id, ProjectAction.AGENT_MANAGE
+        )
 
         # Only process fields that were passed in (router layer used exclude_unset to generate patch)
         name = patch.get("name")
@@ -267,7 +280,12 @@ class ToolService:
 
         path = patch.get("path")
         if path is not None:
-            self.get_path_with_access_check(user_id, path)
+            target = self.get_path_with_access_check(user_id, path)
+            if existing.project_id and target.project_id != existing.project_id:
+                raise BusinessException(
+                    "path does not belong to the Tool project",
+                    code=ErrorCode.VALIDATION_ERROR,
+                )
 
         updated = self.repo.update(
             tool_id,
@@ -304,17 +322,27 @@ class ToolService:
 
     def list_org_tools_by_project_id(
         self,
+        user_id: str,
         org_id: str,
         *,
         project_id: str,
         limit: int = 1000,
     ) -> list[Tool]:
+        grant = self.authorization.authorize(
+            project_id, user_id, ProjectAction.AGENT_READ
+        )
+        if grant.org_id != org_id:
+            raise NotFoundException(
+                f"Project not found: {project_id}", code=ErrorCode.NOT_FOUND
+            )
         return self.repo.get_by_org_id(
             org_id, skip=0, limit=limit, project_id=project_id
         )
 
     def delete(self, tool_id: str, user_id: str) -> None:
-        _ = self.get_by_id_with_access_check(tool_id, user_id)
+        _ = self.get_by_id_with_access_check(
+            tool_id, user_id, ProjectAction.AGENT_MANAGE
+        )
         ok = self.repo.delete(tool_id)
         if not ok:
             raise BusinessException(

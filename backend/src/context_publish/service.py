@@ -18,6 +18,8 @@ from src.context_publish.supabase_schemas import (
 )
 from src.exceptions import ErrorCode, NotFoundException, ValidationException
 from src.infra.supabase.exceptions import SupabaseDuplicateKeyError, SupabaseException
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 _BASE62_ALPHABET = string.ascii_letters + string.digits
 
@@ -40,14 +42,35 @@ def _generate_publish_key(*, length: int) -> str:
 
 class ContextPublishService:
     def __init__(
-        self, *, repo: ContextPublishRepositoryBase, table_service: TableService
+        self,
+        *,
+        repo: ContextPublishRepositoryBase,
+        table_service: TableService,
+        authorization: AuthorizationService,
     ):
         self.repo = repo
         self.table_service = table_service
+        self.authorization = authorization
         self.cache = PublishCache(ttl_seconds=int(settings.PUBLISH_CACHE_TTL_SECONDS))
 
     def _invalidate_cache(self, publish_key: str) -> None:
         self.cache.invalidate(publish_key)
+
+    def _authorize_publish_management(self, table_id: str, user_id: str) -> None:
+        """Authorize disclosure of Project content through a public link.
+
+        Publish ownership is a child-resource restriction, not a replacement
+        for the current Project grant.  A revoked member must not keep managing
+        an old public link merely because they created it in the past.
+        """
+        table = self.table_service.get_by_id(table_id)
+        if table is None or not table.project_id:
+            raise NotFoundException("Table not found", code=ErrorCode.NOT_FOUND)
+        self.authorization.authorize(
+            table.project_id,
+            user_id,
+            ProjectAction.SHARE_MANAGE,
+        )
 
     def create(
         self,
@@ -57,8 +80,7 @@ class ContextPublishService:
         json_path: str,
         expires_at: datetime | None,
     ) -> ContextPublish:
-        # Strict validation: table must belong to the current user
-        self.table_service.get_by_id_with_access_check(table_id, created_by)
+        self._authorize_publish_management(table_id, created_by)
 
         if expires_at is None:
             expires_at = _default_expires_at()
@@ -96,7 +118,19 @@ class ContextPublishService:
     def list_by_created_by(
         self, created_by: str, *, skip: int = 0, limit: int = 100
     ) -> list[ContextPublish]:
-        return self.repo.list_by_created_by(created_by, skip=skip, limit=limit)
+        items = self.repo.list_by_created_by(
+            created_by, skip=skip, limit=limit
+        )
+        visible: list[ContextPublish] = []
+        for item in items:
+            try:
+                self._authorize_publish_management(item.table_id, created_by)
+            except Exception:
+                # List endpoints must fail closed per resource: an old publish
+                # must not leak after Project access loss or fact-read failure.
+                continue
+            visible.append(item)
+        return visible
 
     def get_by_id_with_access_check(
         self, publish_id: int, created_by: str
@@ -104,6 +138,7 @@ class ContextPublishService:
         p = self.repo.get_by_id(publish_id)
         if not p or (p.created_by or "") != created_by:
             raise NotFoundException("Publish not found", code=ErrorCode.NOT_FOUND)
+        self._authorize_publish_management(p.table_id, created_by)
         return p
 
     def update(

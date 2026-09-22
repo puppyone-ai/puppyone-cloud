@@ -6,8 +6,10 @@ project-root Version Engine write -> connection state update.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import time
+from typing import Any
 
+from src.config import settings
 from src.connectors.datasource._base import AuthRequirement, Capability
 from src.connectors.datasource.registry import ConnectorRegistry
 from src.connectors.datasource.run_repository import SyncRunRepository
@@ -25,13 +27,22 @@ class IntegrationEngine:
         self,
         registry: ConnectorRegistry,
         repository: IntegrationRepository,
-        run_repo: Optional[SyncRunRepository] = None,
+        run_repo: SyncRunRepository | None = None,
         write_port: IntegrationVersionWritePort | None = None,
+        runtime_metering: Any | None = None,
     ):
         self.registry = registry
         self.repository = repository
         self.run_repo = run_repo
         self.write_port = write_port or VersionEngineWritePort()
+        self._runtime_metering = runtime_metering
+
+    def _runtime_meter(self):
+        if self._runtime_metering is None:
+            from src.platform.billing.runtime import get_runtime_metering_service
+
+            self._runtime_metering = get_runtime_metering_service()
+        return self._runtime_metering
 
     def _target_exists_as_file(self, project_id: str, target_path: str | None) -> bool:
         if not target_path:
@@ -53,26 +64,75 @@ class IntegrationEngine:
         trigger_type: str = "manual",
         *,
         run_id: str | None = None,
-    ) -> Optional[dict]:
+        _runtime_accounted: bool = False,
+    ) -> dict | None:
         connection = self.repository.get_by_id(connection_id)
         if not connection:
             log_error(f"[IntegrationEngine] Connection not found: {connection_id}")
             return None
 
         if connection.status not in ("active", "syncing", "error"):
-            log_debug(
-                f"[IntegrationEngine] Skipping {connection_id} "
-                f"(status={connection.status})"
-            )
+            log_debug(f"[IntegrationEngine] Skipping {connection_id} (status={connection.status})")
             return None
 
         connector = self.registry.get(connection.provider)
         if not connector:
             log_error(
-                f"[IntegrationEngine] No connector registered for "
-                f"provider: {connection.provider}"
+                f"[IntegrationEngine] No connector registered for provider: {connection.provider}"
             )
             return None
+
+        # Runtime is reserved at the common Connector execution boundary so
+        # API, scheduler and worker callers cannot accidentally bypass billing.
+        # Durable sync workers already supply run_id. Older direct callers get
+        # a per-invocation identity; when they have a run repository, prepare
+        # that durable run before reserving so crash retries reuse the same id.
+        if settings.RUNTIME_METERING_MODE != "disabled" and not _runtime_accounted:
+            from src.ingest.file.config import etl_config
+
+            prepared_run_id = run_id
+            if prepared_run_id is None and self.run_repo is not None:
+                try:
+                    if hasattr(type(self.run_repo), "create_queued_single_lane"):
+                        prepared, created = self.run_repo.create_queued_single_lane(
+                            connection.id,
+                            trigger_type=trigger_type,
+                        )
+                        if not created:
+                            log_debug(
+                                f"[IntegrationEngine] Skipping {connection_id} "
+                                f"(active run={prepared.id} status={prepared.status})"
+                            )
+                            return None
+                    else:
+                        prepared = self.run_repo.create(
+                            connection.id,
+                            trigger_type=trigger_type,
+                        )
+                    prepared_run_id = prepared.id
+                except Exception as exc:
+                    log_debug(f"[IntegrationEngine] Could not prepare metered run: {exc}")
+            billing_run_id = prepared_run_id or (
+                f"connector:direct:{connection.id}:{time.time_ns()}"
+            )
+            return await self._runtime_meter().execute(
+                audit_context={
+                    "run_id": f"connector:pull:{billing_run_id}",
+                    "source": "connector",
+                    "project_id": connection.project_id,
+                    "user_id": connection.created_by,
+                    "maximum_runtime_units": max(
+                        1,
+                        etl_config.sync_task_timeout // 60 + 1,
+                    ),
+                },
+                operation=lambda: self.execute(
+                    connection_id,
+                    trigger_type,
+                    run_id=prepared_run_id,
+                    _runtime_accounted=True,
+                ),
+            )
 
         run = None
         if self.run_repo:
@@ -84,8 +144,7 @@ class IntegrationEngine:
                         return None
                     if run.status in {"success", "completed", "failed", "cancelled", "skipped"}:
                         log_debug(
-                            f"[IntegrationEngine] Skipping run {run_id} "
-                            f"(status={run.status})"
+                            f"[IntegrationEngine] Skipping run {run_id} (status={run.status})"
                         )
                         return None
                 else:
@@ -213,7 +272,7 @@ class IntegrationEngine:
                 self.run_repo.complete(run.id, status="failed", error=str(exc))
             return None
 
-    async def execute_all(self, provider: Optional[str] = None) -> list[dict]:
+    async def execute_all(self, provider: str | None = None) -> list[dict]:
         connections = self.repository.list_active(provider)
         results = []
         for connection in connections:
@@ -226,12 +285,9 @@ class IntegrationEngine:
             log_info(f"[IntegrationEngine] execute_all: {len(results)} connections updated")
         return results
 
-    async def execute_for_connector(self, connector) -> Optional[str]:
+    async def execute_for_connector(self, connector) -> str | None:
         if connector.provider in ("cli", "agent", "sandbox", "git_remote"):
-            log_debug(
-                f"[IntegrationEngine] access connector cannot run on demand: "
-                f"{connector.id}"
-            )
+            log_debug(f"[IntegrationEngine] access connector cannot run on demand: {connector.id}")
             return None
         result = await self.execute(connector.id, trigger_type="manual")
         return (result or {}).get("run_id")
@@ -242,7 +298,9 @@ class IntegrationEngine:
         commit_id: str,
         content: Any,
         node_type: str,
-    ) -> Optional[dict]:
+        *,
+        _runtime_accounted: bool = False,
+    ) -> dict | None:
         connection = self.repository.find_owner_by_path(path)
         if not connection:
             return None
@@ -253,15 +311,30 @@ class IntegrationEngine:
 
         connector = self.registry.get(connection.provider)
         if not connector:
-            log_error(
-                f"[IntegrationEngine] push: no connector for provider "
-                f"{connection.provider}"
-            )
+            log_error(f"[IntegrationEngine] push: no connector for provider {connection.provider}")
             return None
 
         spec = connector.spec()
         if not (spec.capabilities & Capability.PUSH):
             return None
+
+        if settings.RUNTIME_METERING_MODE != "disabled" and not _runtime_accounted:
+            stable_commit = commit_id or f"unversioned:{time.time_ns()}"
+            return await self._runtime_meter().execute(
+                audit_context={
+                    "run_id": f"connector:push:{connection.id}:{stable_commit}",
+                    "source": "connector",
+                    "project_id": connection.project_id,
+                    "user_id": connection.created_by,
+                },
+                operation=lambda: self.push_execute(
+                    path=path,
+                    commit_id=commit_id,
+                    content=content,
+                    node_type=node_type,
+                    _runtime_accounted=True,
+                ),
+            )
 
         run = None
         if self.run_repo:
@@ -303,7 +376,9 @@ class IntegrationEngine:
         except NotImplementedError:
             if run and self.run_repo:
                 self.run_repo.complete(
-                    run.id, status="skipped", result_summary="Push not implemented",
+                    run.id,
+                    status="skipped",
+                    result_summary="Push not implemented",
                 )
             return None
         except Exception as exc:

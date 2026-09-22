@@ -12,6 +12,8 @@ import pytest
 
 from src.platform.activity.repository import ActivityRepository
 from src.platform.activity.service import ActivityService
+from src.exceptions import NotFoundException
+from tests.authorization_fakes import authorization_for
 
 
 # ── Fake Supabase client over the view ──────────────────────────────
@@ -134,36 +136,21 @@ def test_repo_queries_the_view_not_a_table():
 # ── Service (authorization boundary) ────────────────────────────────
 
 
-class FakeProjectService:
-    def __init__(self):
-        self.checked = None
-
-    def get_by_id_with_access_check(self, project_id, user_id):
-        self.checked = (project_id, user_id)
-        return SimpleNamespace(org_id="org-1")
-
-
 def test_service_enforces_project_access_before_returning():
-    proj = FakeProjectService()
     svc = ActivityService(
         repo=ActivityRepository(FakeSupabaseClient(_rows())),
-        project_service=proj,
+        authorization=authorization_for("p1"),
     )
     items = svc.list_for_project("p1", "user-1")
-    assert proj.checked == ("p1", "user-1")        # access checked first
     assert {i.id for i in items} == {"u1", "i1", "s1", "s2"}
 
 
 def test_service_denies_when_access_check_raises():
-    class Denier:
-        def get_by_id_with_access_check(self, *_a):
-            raise PermissionError("no access")
-
     svc = ActivityService(
         repo=ActivityRepository(FakeSupabaseClient(_rows())),
-        project_service=Denier(),
+        authorization=authorization_for(),
     )
-    with pytest.raises(PermissionError):
+    with pytest.raises(NotFoundException):
         svc.list_for_project("p1", "intruder")
 
 
@@ -172,7 +159,7 @@ def test_service_rejects_invalid_kind():
 
     svc = ActivityService(
         repo=ActivityRepository(FakeSupabaseClient(_rows())),
-        project_service=FakeProjectService(),
+        authorization=authorization_for("p1"),
     )
     with pytest.raises(HTTPException) as exc:
         svc.list_for_project("p1", "user-1", kind="bogus")

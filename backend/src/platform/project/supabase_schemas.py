@@ -4,8 +4,8 @@ Project Data Models
 Defines Pydantic models corresponding to the project table, used for type checking and data validation.
 """
 
-from datetime import datetime
 import secrets
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 

@@ -194,6 +194,9 @@ uv run uvicorn src.main:app --host 0.0.0.0 --port 9090 --reload --log-level info
 | `S3_BUCKET_NAME` | S3 Bucket 名称 | ✅ |
 | `S3_ACCESS_KEY_ID` | S3 Access Key | ✅ |
 | `S3_SECRET_ACCESS_KEY` | S3 Secret Key | ✅ |
+| `TEMPLATE_REGISTRY_MODE` | 模板来源：`disabled` / `builtin` / `remote` | 否（默认 `builtin`） |
+| `TEMPLATE_REGISTRY_URL` | 独立 Registry HTTPS 地址，仅 `remote` 模式需要 | 按需 |
+| `TEMPLATE_REGISTRY_TRUSTED_KEYS_JSON` | Registry Ed25519 公钥映射（JSON） | 远程生产环境 |
 | `MCP_SERVER_URL` | MCP Server 服务地址 | ✅ |
 | `INTERNAL_API_SECRET` | 内部服务通信密钥 | ✅ |
 | `OPENROUTER_API_KEY` | OpenRouter LLM 网关 Key | 按需 |
@@ -203,6 +206,11 @@ uv run uvicorn src.main:app --host 0.0.0.0 --port 9090 --reload --log-level info
 | `FIRECRAWL_API_KEY` | Firecrawl 网页抓取 Key | SaaS 摄取时 |
 | `ENABLE_ETL` | 是否启用 ETL 管道 (`true`/`false`) | 否 |
 | `SKIP_AUTH` | 跳过认证 (仅测试) | 否 |
+
+模板商店不直接连接当前应用的 Supabase 或 S3。开源部署默认仅提供随版本发布的
+`builtin` 示例；托管版或自托管方可将 `TEMPLATE_REGISTRY_MODE=remote`，连接独立部署、
+只读的 Registry 服务。协议、信任边界和 Bundle 格式见
+[`docs/architecture/14-template-registry.md`](../docs/architecture/14-template-registry.md)。
 
 **OAuth 配置** (每个平台需要 `CLIENT_ID` + `CLIENT_SECRET` + `REDIRECT_URI`):
 
@@ -253,6 +261,9 @@ Notion / GitHub / Google (Sheets, Gmail, Drive, Calendar, Docs) / Linear / Airta
 
 | 端点 | 说明 |
 |------|------|
+| `POST /api/v1/auth/desktop/start` | 启动 Desktop OAuth；必须提交 S256 PKCE challenge |
+| `POST /api/v1/auth/desktop/exchange` | 使用一次性 code、state、verifier 与原始 redirect URI 换取会话 |
+| `POST /api/v1/auth/logout` | 使用 `refresh_token` 撤销当前 Supabase session；已失效 token 幂等成功 |
 | `GET /api/v1/oauth/{provider}/authorize` | OAuth 授权 |
 | `GET /api/v1/oauth/{provider}/callback` | OAuth 回调 |
 | `GET /health` | 健康检查 |

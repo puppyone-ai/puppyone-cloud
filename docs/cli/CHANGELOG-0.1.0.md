@@ -1,5 +1,11 @@
 # PuppyOne CLI v0.1.0
 
+> Historical release note. The secret-bearing Git URL shown below was the
+> v0.1.0 contract and is now legacy-only. Current clients use
+> `/git/{project_id}.git` or `/git/{project_id}/scopes/{scope_id}.git` with a
+> separately issued HTTP credential; see
+> [the current CLI guide](../architecture/03-cli.md).
+
 PuppyOne CLI exposes two current access paths:
 
 - `puppyone fs ...` for scoped AP-FS commands over the backend API.

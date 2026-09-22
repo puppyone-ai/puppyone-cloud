@@ -31,7 +31,7 @@ in stages while old rows remain readable.
 | Import | `import_jobs` | Existing canonical one-shot external import task |
 | Integration | `connections` | Durable integration relationship and sync configuration |
 | Integration | `sync_runs` | One execution of an integration |
-| Access | `access_surfaces` | Scope-bound workspace entry points |
+| Access | `access_surfaces` | Project-root or Scope-targeted workspace entry points |
 | Activity | `context_activity_items` | Read-only aggregation of upload, import, and sync history |
 
 ## Upload
@@ -124,7 +124,9 @@ Integration service owns lifecycle, sync runs, and final write semantics.
 
 `access_surfaces` is the final table for workspace entry points.
 
-Access surfaces are scope-bound and permissioned. The canonical product
+Access surfaces are repository-target-bound and permissioned. `scope_id =
+NULL` means Project root; a non-NULL value references one real non-empty-path
+`repository_scopes` row. The canonical product
 families are:
 
 - `git_remote`
@@ -144,13 +146,13 @@ feature operating through an Access surface, typically Sandbox. Implementation
 or legacy rows may still carry names such as `agent`, `mcp`, or `filesystem`
 during migration, but those names are not product taxonomy.
 
-The target migration backfills `access_surfaces` from existing `repo_scopes` and
-built-in legacy connector rows. Runtime code reads `access_surfaces`; legacy
-rows are migration input and compatibility-facade history, not the target
-runtime model.
+The ISSUE-039 Contract migration maps legacy root associations to NULL and
+renames the remaining non-root geometry table to `repository_scopes`. Runtime
+code reads `access_surfaces` plus the explicit target union; synthetic root
+rows and legacy connector identities are not part of the final runtime model.
 
-Built-in access surfaces that should be unique per scope are constrained by
-partial unique indexes where appropriate. Product docs should present the
+Built-in access surfaces that should be unique per target are constrained with
+NULL-safe uniqueness. Product docs should present the
 families as Git, CLI/AP-FS, and Sandbox even if the migration keeps compatibility
 rows for older implementation names.
 

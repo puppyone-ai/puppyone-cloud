@@ -1,13 +1,8 @@
 'use client';
 
-import {
-  useRef,
-  useEffect,
-  forwardRef,
-  useImperativeHandle,
-  useState,
-} from 'react';
-import { Dots } from '@/components/loading';
+import { useRef, useLayoutEffect, forwardRef, useImperativeHandle, useId } from 'react';
+import { ArrowUp, LoaderCircle } from 'lucide-react';
+import styles from './AgentChatSurface.module.css';
 
 // Access 选项类型
 export interface AccessOption {
@@ -43,260 +38,82 @@ export interface ChatInputAreaRef {
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaRef, ChatInputAreaProps>(
-  function ChatInputArea(
-    {
-      inputValue,
-      onInputChange,
-      onKeyDown,
-      onSend,
-      isLoading,
-      showMentionMenu,
-      filteredMentionOptions,
-      mentionIndex,
-      onMentionSelect,
-      onMentionIndexChange,
-      onBlur,
-      placeholder,
-      disabled = false,
-    },
-    ref
-  ) {
+  function ChatInputArea({ inputValue, onInputChange, onKeyDown, onSend, isLoading,
+    showMentionMenu, filteredMentionOptions, mentionIndex, onMentionSelect,
+    onMentionIndexChange, onBlur, placeholder = 'Ask about this project', disabled = false }, ref) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const mentionMenuRef = useRef<HTMLDivElement>(null);
+    const highlightRef = useRef<HTMLDivElement>(null);
+    const menuId = useId();
+    const mentionOpen = showMentionMenu && filteredMentionOptions.length > 0;
 
     useImperativeHandle(ref, () => ({
       focus: () => textareaRef.current?.focus(),
-      setSelectionRange: (start: number, end: number) => {
+      setSelectionRange: (start, end) => {
         textareaRef.current?.focus();
         textareaRef.current?.setSelectionRange(start, end);
       },
     }));
 
-    // Auto-resize textarea：初始 28px，随内容增加而变高
-    useEffect(() => {
+    useLayoutEffect(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
-
-      // 先重置高度以获取正确的 scrollHeight
-      textarea.style.height = '32px';
-      const scrollHeight = textarea.scrollHeight;
-      // 最小 28px，最大 200px
-      const newHeight = Math.max(28, Math.min(scrollHeight, 200));
-      textarea.style.height = `${newHeight}px`;
-
-      // 同步更新容器高度
-      const container = textarea.parentElement;
-      if (container) {
-        container.style.height = `${newHeight}px`;
-      }
+      const resize = () => {
+        textarea.style.height = '45px';
+        textarea.style.height = `${Math.max(45, Math.min(textarea.scrollHeight, 144))}px`;
+        if (highlightRef.current) highlightRef.current.scrollTop = textarea.scrollTop;
+      };
+      resize();
+      // Reflow long drafts when the user resizes the sidebar.
+      let previousWidth = textarea.clientWidth;
+      const observer = new ResizeObserver(() => {
+        if (textarea.clientWidth === previousWidth) return;
+        previousWidth = textarea.clientWidth;
+        resize();
+      });
+      observer.observe(textarea);
+      return () => observer.disconnect();
     }, [inputValue]);
 
-    const defaultPlaceholder = 'Ask a question or let Agent help...';
-
     return (
-      <div style={{ padding: '8px 12px', flexShrink: 0 }}>
-        {/* Input Container - 上下排布 */}
-        <div
-          style={{
-            position: 'relative',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            boxSizing: 'border-box',
-            backgroundColor: 'var(--po-panel-raised)',
-            borderRadius: '12px',
-            padding: '10px 12px',
-            border: '1px solid var(--po-border-subtle)',
-          }}
-        >
-          {/* @ 提及补全菜单 */}
-          {showMentionMenu && filteredMentionOptions.length > 0 && (
-            <div
-              ref={mentionMenuRef}
-              style={{
-                position: 'absolute',
-                bottom: '100%',
-                left: 8,
-                marginBottom: 6,
-                width: 200,
-                maxHeight: 200,
-                background: 'var(--po-panel-raised)',
-                border: '1px solid var(--po-border-strong)',
-                borderRadius: 8,
-                boxShadow: '0 4px 16px var(--po-shadow)',
-                zIndex: 100,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  padding: '6px 8px',
-                  borderBottom: '1px solid var(--po-border-strong)',
-                  fontSize: 11,
-                  color: 'var(--po-text-subtle)',
-                }}
-              >
-                Select data path
-              </div>
-              <div style={{ overflowY: 'auto', maxHeight: 160 }}>
-                {filteredMentionOptions.map((key, index) => (
-                  <div
-                    key={key}
-                    onClick={() => onMentionSelect(key)}
-                    style={{
-                      padding: '6px 10px',
-                      fontSize: 12,
-                      color: index === mentionIndex ? 'var(--po-text)' : 'var(--po-text-muted)',
-                      background:
-                        index === mentionIndex
-                          ? 'var(--po-selected)'
-                          : 'transparent',
-                      cursor: 'pointer',
-                      fontFamily: 'var(--po-font-sans)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                    onMouseEnter={() => onMentionIndexChange(index)}
-                  >
-                    <span style={{ color: 'var(--po-accent)', opacity: 0.7 }}>@</span>
-                    {key}
-                  </div>
-                ))}
-              </div>
+      <div className={styles.dock}>
+        <div className={styles.composer} data-disabled={disabled || undefined}>
+          {mentionOpen && (
+            <div className={`${styles.popover} ${styles.mentionMenu}`} id={menuId} role='listbox' aria-label='Select data path'>
+              <div className={styles.menuHeading}>Select data path</div>
+              {filteredMentionOptions.map((key, index) => (
+                <button type='button' key={key} id={`${menuId}-${index}`} role='option'
+                  aria-selected={index === mentionIndex}
+                  aria-current={index === mentionIndex ? 'true' : undefined}
+                  className={styles.menuItem}
+                  onMouseDown={event => event.preventDefault()}
+                  onClick={() => onMentionSelect(key)}
+                  onMouseEnter={() => onMentionIndexChange(index)}>
+                  <span>@{key}</span>
+                </button>
+              ))}
             </div>
           )}
-
-          {/* 输入框容器 - 用于 @path 高亮 */}
-          <div style={{ position: 'relative', minHeight: '28px' }}>
-            {/* 高亮层 - 显示所有文本和样式 */}
-            <div
-              aria-hidden='true'
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                minHeight: '28px',
-                padding: '4px 0',
-                fontSize: '13px',
-                lineHeight: '20px',
-                fontFamily: 'inherit',
-                whiteSpace: 'pre-wrap',
-                wordWrap: 'break-word',
-                wordBreak: 'break-word',
-                pointerEvents: 'none',
-                overflow: 'hidden',
-              }}
-            >
-              {inputValue ? (
-                inputValue
-                  .split(/(@(?:\[\d+\]|[\w\u4e00-\u9fa5\.\-\_]+)+)/)
-                  .map((part, i) => {
-                    if (part && part.startsWith('@')) {
-                      return (
-                        <span
-                          key={i}
-                          style={{
-                            background: 'var(--po-selected)',
-                            color: 'var(--po-accent)',
-                            padding: '1px 0',
-                            borderRadius: 3,
-                            fontFamily: 'inherit',
-                            fontSize: 'inherit',
-                          }}
-                        >
-                          {part}
-                        </span>
-                      );
-                    }
-                    return (
-                      <span key={i} style={{ color: 'var(--po-text)' }}>
-                        {part}
-                      </span>
-                    );
-                  })
-              ) : (
-                <span style={{ color: 'var(--po-text-subtle)' }}>
-                  {placeholder || defaultPlaceholder}
-                </span>
-              )}
+          <div className={styles.inputRow}>
+            <div ref={highlightRef} className={styles.highlight} aria-hidden='true'>
+              {inputValue.split(/(@(?:\[\d+\]|[\w\u4e00-\u9fa5.\-_]+)+)/).map((part, index) => (
+                <span key={index} className={part.startsWith('@') ? styles.mention : undefined}>{part}</span>
+              ))}{'\n'}
             </div>
-
-            {/* 实际的 textarea - 文字透明，只保留光标 */}
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={onInputChange}
-              onKeyDown={onKeyDown}
-              onBlur={onBlur}
-              placeholder=''
-              disabled={disabled || isLoading}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '32px',
-                minHeight: '28px',
-                maxHeight: '200px',
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                color: 'transparent',
-                fontSize: '13px',
-                lineHeight: '20px',
-                resize: 'none',
-                fontFamily: 'inherit',
-                padding: '4px 0',
-                overflowY: 'auto',
-                caretColor: 'var(--po-text)',
-                letterSpacing: 'normal',
-              }}
-              rows={1}
-            />
+            <textarea ref={textareaRef} className={styles.input} value={inputValue}
+              aria-label='Message Agent' aria-controls={mentionOpen ? menuId : undefined}
+              aria-autocomplete='list' aria-activedescendant={mentionOpen ? `${menuId}-${mentionIndex}` : undefined}
+              onChange={onInputChange} onKeyDown={onKeyDown} onBlur={onBlur}
+              onScroll={event => { if (highlightRef.current) highlightRef.current.scrollTop = event.currentTarget.scrollTop; }}
+              placeholder={placeholder} disabled={disabled || isLoading} rows={1} />
           </div>
-
-          {/* 发送按钮 - 靠右对齐，正方形 */}
-          <button
-            onClick={onSend}
-            disabled={!inputValue.trim() || isLoading}
-            style={{
-              width: 30,
-              height: 30,
-              borderRadius: 6,
-              border: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: !inputValue.trim() || isLoading ? 'default' : 'pointer',
-              backgroundColor:
-                inputValue.trim() && !isLoading ? 'var(--po-text-disabled)' : 'var(--po-border)',
-              color: 'var(--po-text-inverse)',
-              transition: 'all 0.15s ease',
-              opacity: !inputValue.trim() || isLoading ? 0.5 : 1,
-              flexShrink: 0,
-              alignSelf: 'flex-end',
-            }}
-          >
-            {isLoading ? (
-              <Dots size="xs" />
-            ) : (
-              <svg
-                width='16'
-                height='16'
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='currentColor'
-                strokeWidth='2.5'
-                strokeLinecap='round'
-                strokeLinejoin='round'
-              >
-                <path d='M12 19v-14' />
-                <path d='M5 12l7-7 7 7' />
-              </svg>
-            )}
-          </button>
+          <div className={styles.toolbar}>
+            <span />
+            <button type='button' className={styles.send} onClick={onSend}
+              aria-label={isLoading ? 'Agent is responding' : 'Send message'}
+              aria-busy={isLoading || undefined} disabled={disabled || !inputValue.trim() || isLoading}>
+              {isLoading ? <LoaderCircle size={15} className={styles.spin} /> : <ArrowUp size={17} strokeWidth={1.6} />}
+            </button>
+          </div>
         </div>
       </div>
     );

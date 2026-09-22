@@ -1,31 +1,34 @@
-"""Sandbox endpoint repository over access_surfaces + repo_scopes."""
+"""Sandbox endpoint repository over access_surfaces + repository_scopes."""
 
-from typing import Dict, List, Optional
-import secrets
-
-from src.utils.id_generator import generate_uuid_v7
+from src.repo.access_credentials import AccessCredentialRepository
 from src.repo.scope_service import ScopeService
-
+from src.utils.id_generator import generate_uuid_v7
 
 PROVIDER = "sandbox"
 ACCESS_SURFACES_TABLE = "access_surfaces"
-SCOPES_TABLE = "repo_scopes"
+SCOPES_TABLE = "repository_scopes"
 
 
-def generate_sandbox_access_key() -> str:
-    return f"sbx_{secrets.token_urlsafe(32)}"
-
-
-def _row_to_endpoint(row: dict, scope_path: Optional[str] = None) -> dict:
+def _row_to_endpoint(
+    row: dict,
+    scope_path: str | None = None,
+    *,
+    credential: dict | None = None,
+    plaintext_access_key: str | None = None,
+) -> dict:
     """Reshape an access_surfaces row into the sandbox endpoint API dict."""
     config = row.get("config") or {}
     return {
         "id": row["id"],
+        "org_id": row.get("org_id"),
         "project_id": row["project_id"],
         "path": scope_path,
         "name": row.get("name") or config.get("name", "Sandbox"),
         "description": config.get("description"),
-        "access_key": config.get("access_key", ""),
+        "access_key": plaintext_access_key,
+        "has_key": bool(credential or plaintext_access_key),
+        "key_last4": (credential or {}).get("key_last4")
+        or ((plaintext_access_key or "")[-4:] or None),
         "mounts": config.get("mounts", []),
         "runtime": config.get("runtime", "alpine"),
         "timeout_seconds": config.get("timeout_seconds", 30),
@@ -37,56 +40,49 @@ def _row_to_endpoint(row: dict, scope_path: Optional[str] = None) -> dict:
 
 
 class SandboxEndpointRepository:
-
     TABLE = ACCESS_SURFACES_TABLE
 
     def __init__(self, supabase_client=None):
         if supabase_client is None:
             from src.infra.supabase.dependencies import get_supabase_client
+
             self._client = get_supabase_client()
         else:
             self._client = supabase_client
+        self._credentials = AccessCredentialRepository(self._client)
 
     def _project_org_id(self, project_id: str) -> str | None:
         resp = (
-            self._client.table("projects")
-            .select("org_id")
-            .eq("id", project_id)
-            .limit(1)
-            .execute()
+            self._client.table("projects").select("org_id").eq("id", project_id).limit(1).execute()
         )
         rows = resp.data or []
         return rows[0].get("org_id") if rows else None
 
     def _query(self):
-        return (
-            self._client.table(ACCESS_SURFACES_TABLE)
-            .select("*")
-            .eq("kind", PROVIDER)
-        )
+        return self._client.table(ACCESS_SURFACES_TABLE).select("*").eq("kind", PROVIDER)
 
-    def _scope_path_lookup(self, scope_ids: List[Optional[str]]) -> Dict[str, Optional[str]]:
+    def _scope_path_lookup(self, scope_ids: list[str | None]) -> dict[str, str | None]:
         unique = list({sid for sid in scope_ids if sid})
         if not unique:
             return {}
-        resp = (
-            self._client.table(SCOPES_TABLE)
-            .select("id, path")
-            .in_("id", unique)
-            .execute()
-        )
+        resp = self._client.table(SCOPES_TABLE).select("id, path").in_("id", unique).execute()
         return {s["id"]: s.get("path") for s in (resp.data or [])}
 
-    def _hydrate(self, rows: List[dict]) -> List[dict]:
+    def _hydrate(self, rows: list[dict]) -> list[dict]:
         if not rows:
             return []
         path_by_scope = self._scope_path_lookup([r.get("scope_id") for r in rows])
+        credentials = self._credentials.list_active_by_surface([row["id"] for row in rows])
         return [
-            _row_to_endpoint(r, path_by_scope.get(r.get("scope_id")))
-            for r in rows
+            _row_to_endpoint(
+                row,
+                path_by_scope.get(row.get("scope_id")),
+                credential=credentials.get(row["id"]),
+            )
+            for row in rows
         ]
 
-    def _scope_for_path(self, project_id: str, path: Optional[str]) -> dict:
+    def _scope_for_path(self, project_id: str, path: str | None) -> dict:
         normalized = (path or "").strip("/")
         scope_svc = ScopeService()
         for scope in scope_svc.list_for_project(project_id):
@@ -101,38 +97,38 @@ class SandboxEndpointRepository:
         )
         return {"id": scope.id, "path": scope.path}
 
-    def get_by_id(self, endpoint_id: str) -> Optional[dict]:
+    def get_by_id(self, endpoint_id: str) -> dict | None:
         resp = self._query().eq("id", endpoint_id).execute()
         rows = self._hydrate(resp.data or [])
         return rows[0] if rows else None
 
-    def get_by_access_key(self, access_key: str) -> Optional[dict]:
-        # access_key lives in access_surfaces.config (jsonb). Use
-        # postgrest-py's .filter(path, op, value) form for jsonb access —
-        # matches the convention already used elsewhere in this codebase.
-        resp = self._query().filter("config->>access_key", "eq", access_key).execute()
-        rows = self._hydrate(resp.data or [])
-        return rows[0] if rows else None
+    def get_by_access_key(self, access_key: str) -> dict | None:
+        credential = self._credentials.get_active_by_token(access_key)
+        if credential:
+            resp = self._query().eq("id", credential["access_surface_id"]).execute()
+            if resp.data:
+                row = resp.data[0]
+                if row.get("status") != "active":
+                    return None
+                path_by_scope = self._scope_path_lookup([row.get("scope_id")])
+                return _row_to_endpoint(
+                    row,
+                    path_by_scope.get(row.get("scope_id")),
+                    credential=credential,
+                    plaintext_access_key=access_key,
+                )
 
-    def list_by_project(self, project_id: str) -> List[dict]:
-        resp = (
-            self._query()
-            .eq("project_id", project_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
+        return None
+
+    def list_by_project(self, project_id: str) -> list[dict]:
+        resp = self._query().eq("project_id", project_id).order("created_at", desc=True).execute()
         return self._hydrate(resp.data or [])
 
-    def get_by_path(self, path: str) -> Optional[dict]:
+    def get_by_path(self, path: str) -> dict | None:
         # path lives on the scope, not the connector. Resolve scope first,
         # then fetch the connector attached to it.
         normalized = (path or "").strip("/")
-        scope_resp = (
-            self._client.table(SCOPES_TABLE)
-            .select("id")
-            .eq("path", normalized)
-            .execute()
-        )
+        scope_resp = self._client.table(SCOPES_TABLE).select("id").eq("path", normalized).execute()
         scope_ids = [s["id"] for s in (scope_resp.data or [])]
         if not scope_ids:
             return None
@@ -144,17 +140,16 @@ class SandboxEndpointRepository:
         self,
         project_id: str,
         name: str,
-        path: Optional[str] = None,
-        description: Optional[str] = None,
-        mounts: Optional[list] = None,
+        path: str | None = None,
+        description: str | None = None,
+        mounts: list | None = None,
         runtime: str = "alpine",
         timeout_seconds: int = 30,
-        resource_limits: Optional[dict] = None,
+        resource_limits: dict | None = None,
     ) -> dict:
         config = {
             "name": name,
             "description": description,
-            "access_key": generate_sandbox_access_key(),
             "mounts": mounts or [],
             "runtime": runtime,
             "timeout_seconds": timeout_seconds,
@@ -172,9 +167,23 @@ class SandboxEndpointRepository:
             "status": "active",
         }
         resp = self._client.table(self.TABLE).insert(row).execute()
-        return _row_to_endpoint(resp.data[0], scope["path"])
+        inserted = resp.data[0]
+        access_key = self._credentials.issue_bearer_token(
+            access_surface_id=inserted["id"],
+            org_id=inserted.get("org_id"),
+            project_id=inserted["project_id"],
+            prefix="sbx",
+            created_by=inserted.get("created_by"),
+        )
+        credential = self._credentials.get_active_by_surface(inserted["id"])
+        return _row_to_endpoint(
+            inserted,
+            scope["path"],
+            credential=credential,
+            plaintext_access_key=access_key,
+        )
 
-    def update(self, endpoint_id: str, **kwargs) -> Optional[dict]:
+    def update(self, endpoint_id: str, **kwargs) -> dict | None:
         current = self._query().eq("id", endpoint_id).execute()
         if not current.data:
             return None
@@ -183,8 +192,14 @@ class SandboxEndpointRepository:
         config = dict(row.get("config") or {})
         update_data = {}
 
-        config_keys = ("name", "description", "mounts", "runtime",
-                       "timeout_seconds", "resource_limits")
+        config_keys = (
+            "name",
+            "description",
+            "mounts",
+            "runtime",
+            "timeout_seconds",
+            "resource_limits",
+        )
         for key in config_keys:
             if key in kwargs and kwargs[key] is not None:
                 config[key] = kwargs[key]
@@ -196,37 +211,37 @@ class SandboxEndpointRepository:
             scope = self._scope_for_path(row["project_id"], kwargs["path"])
             update_data["scope_id"] = scope["id"]
         if "access_key" in kwargs:
-            config["access_key"] = kwargs["access_key"]
-            update_data["config"] = config
+            raise ValueError("Use regenerate_access_key for credential rotation")
         if "status" in kwargs:
             update_data["status"] = kwargs["status"]
 
-        resp = (
-            self._client.table(self.TABLE)
-            .update(update_data)
-            .eq("id", endpoint_id)
-            .execute()
-        )
-        return _row_to_endpoint(resp.data[0]) if resp.data else None
+        resp = self._client.table(self.TABLE).update(update_data).eq("id", endpoint_id).execute()
+        if not resp.data:
+            return None
+        return self._hydrate(resp.data)[0]
 
     def delete(self, endpoint_id: str) -> bool:
-        resp = (
-            self._client.table(self.TABLE)
-            .delete()
-            .eq("id", endpoint_id)
-            .execute()
-        )
+        resp = self._client.table(self.TABLE).delete().eq("id", endpoint_id).execute()
         return bool(resp.data)
 
-    def regenerate_access_key(self, endpoint_id: str) -> Optional[dict]:
-        new_key = generate_sandbox_access_key()
-        return self.update(endpoint_id, access_key=new_key)
-
-    def verify_access(self, endpoint_id: str, user_id: str) -> bool:
-        endpoint = self.get_by_id(endpoint_id)
-        if not endpoint:
-            return False
-        from src.platform.project.repository import ProjectRepositorySupabase
-        project_repo = ProjectRepositorySupabase()
-        role = project_repo.verify_project_access(endpoint["project_id"], user_id)
-        return role is not None
+    def regenerate_access_key(self, endpoint_id: str) -> dict | None:
+        current = self._query().eq("id", endpoint_id).execute()
+        if not current.data:
+            return None
+        row = current.data[0]
+        new_key = self._credentials.issue_bearer_token(
+            access_surface_id=row["id"],
+            org_id=row.get("org_id"),
+            project_id=row["project_id"],
+            prefix="sbx",
+            created_by=row.get("created_by"),
+            revoke_existing=True,
+        )
+        credential = self._credentials.get_active_by_surface(row["id"])
+        path_by_scope = self._scope_path_lookup([row.get("scope_id")])
+        return _row_to_endpoint(
+            row,
+            path_by_scope.get(row.get("scope_id")),
+            credential=credential,
+            plaintext_access_key=new_key,
+        )

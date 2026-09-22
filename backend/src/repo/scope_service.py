@@ -1,8 +1,6 @@
-"""Business logic for repo_scopes.
+"""Business logic for real repository Scopes.
 
 Responsibilities the repository deliberately does NOT have:
-  - access_key minting (canonical format: cli_<urlsafe-32>)
-  - root-scope protection (is_root rows are not user-deletable)
   - path canonicalization (mirror the version scope-state rules)
   - duplicate-scope rejection
   - bound-connector check on delete
@@ -11,14 +9,11 @@ Responsibilities the repository deliberately does NOT have:
 
 from __future__ import annotations
 
-import secrets
 from typing import Optional
 
-from src.exceptions import AppException, BusinessException, ErrorCode, NotFoundException
-from src.repo.access_surface_repository import AccessSurfaceRepository
-from src.repo.models import RepoScope
-from src.repo.scope_repository import RepoScopeRepository
-from src.utils.logger import log_info, log_warning
+from src.exceptions import AppException, ErrorCode, NotFoundException
+from src.repo.models import RepositoryScope
+from src.repo.scope_repository import RepositoryScopeRepository
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -26,9 +21,7 @@ from src.utils.logger import log_info, log_warning
 # ──────────────────────────────────────────────────────────────────────────
 
 def _canonicalize_path(p: str) -> str:
-    """Mirror canonical form used by version scope state and the
-    repo_scopes_path_canonical CHECK constraint:
-      - empty string '' for root
+    """Mirror the repository_scopes_path_canonical CHECK constraint:
       - no leading or trailing /
       - no // anywhere
     """
@@ -44,41 +37,31 @@ def _canonicalize_path(p: str) -> str:
     return s
 
 
-def _mint_access_key() -> str:
-    """Mint a scope access key."""
-    return f"cli_{secrets.token_urlsafe(32)}"
-
-
 # ──────────────────────────────────────────────────────────────────────────
 # Service
 # ──────────────────────────────────────────────────────────────────────────
 
 class ScopeService:
-    def __init__(self, repository: Optional[RepoScopeRepository] = None):
-        self._repo = repository or RepoScopeRepository()
-        self._access_surfaces = AccessSurfaceRepository()
+    def __init__(self, repository: Optional[RepositoryScopeRepository] = None):
+        self._repo = repository or RepositoryScopeRepository()
 
     # ── Reads ────────────────────────────────────────────────────────────
 
-    def list_for_project(self, project_id: str) -> list[RepoScope]:
+    def list_for_project(self, project_id: str) -> list[RepositoryScope]:
         return self._repo.list_by_project(project_id)
 
-    def get(self, scope_id: str) -> Optional[RepoScope]:
+    def get(self, scope_id: str) -> Optional[RepositoryScope]:
         return self._repo.get(scope_id)
-
-    def get_root(self, project_id: str) -> Optional[RepoScope]:
-        return self._repo.get_root_scope(project_id)
 
     def resolve_for_request(
         self, project_id: str, *, scope_id: Optional[str], request_path: Optional[str],
-    ) -> Optional[RepoScope]:
+    ) -> Optional[RepositoryScope]:
         """Used by version_engine auth: resolve the scope a request operates on.
 
         Priority:
           1. Explicit scope_id query param.
           2. Path-prefix inference (longest matching path in project).
-          3. Root scope.
-          4. None (caller decides whether to error).
+          3. None: the caller must represent Project root explicitly.
         """
         if scope_id:
             scope = self._repo.get(scope_id)
@@ -89,7 +72,7 @@ class ScopeService:
             inferred = self._repo.find_by_path_prefix(project_id, request_path)
             if inferred is not None:
                 return inferred
-        return self._repo.get_root_scope(project_id)
+        return None
 
     # ── Writes ───────────────────────────────────────────────────────────
 
@@ -100,72 +83,36 @@ class ScopeService:
         name: str,
         path: str,
         exclude: Optional[list[str]] = None,
-        mode: str = "rw",
-    ) -> RepoScope:
+        max_mode: str = "rw",
+    ) -> RepositoryScope:
         canonical = _canonicalize_path(path)
 
-        # Don't let the user create another root via this path.
-        # Root scopes only come from the project-create flow / backfill migration.
         if canonical == "":
-            existing_root = self._repo.get_root_scope(project_id)
-            if existing_root:
-                raise AppException(
-                    code=ErrorCode.BAD_REQUEST,
-                    status_code=409,
-                    message=(
-                        "Project already has a root scope. The root scope "
-                        "is auto-created and cannot be re-created."
-                    ),
-                )
-        else:
-            from src.platform.entitlements.service import EntitlementService
-            from src.platform.project.repository import ProjectRepositorySupabase
-
-            project = ProjectRepositorySupabase().get_by_id(project_id)
-            if project is None:
-                raise NotFoundException("Project not found")
-            existing_user_scopes = [
-                scope for scope in self._repo.list_by_project(project_id)
-                if not scope.is_root
-            ]
-            EntitlementService().require_capacity(
-                project.org_id,
-                "repo_scopes.max_per_project",
-                current_count=len(existing_user_scopes),
+            raise AppException(
+                code=ErrorCode.BAD_REQUEST,
+                status_code=422,
+                message="A Scope requires a non-empty repository path",
             )
 
-        scope = self._repo.insert(
+        from src.platform.entitlements.service import EntitlementService
+        from src.platform.project.repository import ProjectRepositorySupabase
+
+        project = ProjectRepositorySupabase().get_by_id(project_id)
+        if project is None:
+            raise NotFoundException("Project not found")
+        EntitlementService().require_capacity(
+            project.org_id,
+            "repo_scopes.max_per_project",
+            current_count=len(self._repo.list_by_project(project_id)),
+        )
+
+        return self._repo.insert(
             project_id=project_id,
             name=name,
             path=canonical,
             exclude=list(exclude or []),
-            mode=mode,
-            is_root=False,
-            access_key=_mint_access_key(),
+            max_mode=max_mode,
         )
-        self._access_surfaces.ensure_scope_defaults(scope)
-        return scope
-
-    def ensure_root_scope(self, project_id: str) -> RepoScope:
-        """Idempotent: returns the existing root scope, or creates one if
-        the project doesn't have one yet (defensive — the backfill migration
-        should have covered every existing project, but new projects need
-        this called from project creation)."""
-        existing = self._repo.get_root_scope(project_id)
-        if existing:
-            return existing
-        log_info(f"[scope] auto-creating root scope for project={project_id}")
-        scope = self._repo.insert(
-            project_id=project_id,
-            name="Root",
-            path="",
-            exclude=[],
-            mode="rw",
-            is_root=True,
-            access_key=_mint_access_key(),
-        )
-        self._access_surfaces.ensure_scope_defaults(scope)
-        return scope
 
     def update(
         self,
@@ -173,21 +120,18 @@ class ScopeService:
         *,
         name: Optional[str] = None,
         exclude: Optional[list[str]] = None,
-        mode: Optional[str] = None,
-    ) -> Optional[RepoScope]:
+        max_mode: Optional[str] = None,
+    ) -> Optional[RepositoryScope]:
         # `path` is intentionally not in the update signature — renaming a
         # scope's path means deleting + recreating, by design.
-        return self._repo.update(scope_id, name=name, exclude=exclude, mode=mode)
-
-    def regenerate_access_key(self, scope_id: str) -> Optional[str]:
-        new_key = _mint_access_key()
-        ok = self._repo.regenerate_access_key(scope_id, new_key)
-        return new_key if ok else None
+        return self._repo.update(
+            scope_id, name=name, exclude=exclude, max_mode=max_mode
+        )
 
     def delete(
         self, scope_id: str, *, has_bound_connectors: Optional[bool] = None,
     ) -> None:
-        """Delete a non-root scope.
+        """Delete a Scope.
 
         has_bound_connectors: if True, raises 409 with a "delete connectors first"
             hint. Caller passes the result of querying scope-bound entry points —
@@ -197,8 +141,6 @@ class ScopeService:
         scope = self._repo.get(scope_id)
         if scope is None:
             raise NotFoundException("Scope not found")
-        if scope.is_root:
-            raise BusinessException("Root scope cannot be deleted")
         if has_bound_connectors:
             raise AppException(
                 code=ErrorCode.BAD_REQUEST,
@@ -231,7 +173,7 @@ class ScopeService:
                 "name": _humanize(canonical) or "Folder",
                 "path": canonical,
                 "exclude": [],
-                "mode": "rw",
+                "max_mode": "rw",
             })
         return suggestions
 

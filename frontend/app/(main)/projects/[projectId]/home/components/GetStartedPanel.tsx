@@ -1,10 +1,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from '@/app/supabase/SupabaseAuthProvider';
-import { SkeletonBlock } from '@/components/loading';
-import { get } from '@/lib/apiClient';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { isGitRemoteProvider } from '@/lib/accessProviderRegistry';
+import { canonicalProjectGitUrl } from '@/lib/gitRemote';
 import { uploadFiles as uploadFilesApi } from '@/lib/uploadApi';
 import {
   addPendingTasks,
@@ -22,6 +21,7 @@ import { applyPolicy, collectIgnoreRulesFromDrop } from '@/lib/uploadPolicy';
 import { FileImportDialog } from '@/components/FileImportDialog';
 import { T } from '../lib/tokens';
 import type { DashboardConnection } from '../lib/types';
+import { GitCredentialIssuePanel } from '@/features/files/components/access-points/connect-methods/GitCredentialIssuePanel';
 
 // =====================================================================
 // GetStartedPanel — empty-state for a freshly created project's Home.
@@ -59,13 +59,6 @@ import type { DashboardConnection } from '../lib/types';
 // if the root Git Remote is not available, the full /access page owns
 // recovery and credential management.
 // =====================================================================
-
-interface AccessConnection {
-  id: string;
-  provider: string;
-  path: string | null;
-  access_key: string | null;
-}
 
 interface GetStartedPanelProps {
   projectId: string;
@@ -488,10 +481,10 @@ function DropFilesCard({
 // copyable terminal block.  No CTA and no hidden provider creation:
 // commands populate from the built-in Git Remote access surface.
 //
-// State derives from server truth (`connections` prop).  If the
-// dashboard already lists a root Git Remote AP with an access_key, we
-// seed the commands from that. Otherwise we read the canonical access
-// list API and show an error if credentials are unavailable.
+// State derives from server truth (`connections` prop). If the dashboard
+// lists a root Git Remote access surface, commands use the project's stable
+// canonical locator while credentials are issued separately and shown once.
+// Otherwise we show an error because there is no surface to authorize yet.
 // =====================================================================
 
 function GitSyncBlock({
@@ -502,70 +495,16 @@ function GitSyncBlock({
   connections: DashboardConnection[];
 }) {
   // Look for the built-in root Git Remote access surface in dashboard
-  // truth.  We accept '/' / null / '' as "root scope" because older
+  // truth. We accept '/' / null / '' as legacy Project-root encodings because older
   // rows may use different root path encodings.
-  const seededKey = useMemo(() => {
-    const gitRemote = connections.find(
+  const gitRemote = useMemo(() => (
+    connections.find(
       (c) =>
         isGitRemoteProvider(c.provider) &&
-        (c.path === '/' || c.path === null || c.path === '') &&
-        !!c.access_key,
-    );
-    const raw = gitRemote?.access_key ?? null;
-    if (raw && raw.includes('...')) return null;
-    return raw;
-  }, [connections]);
-
-  const [accessKey, setAccessKey] = useState<string | null>(seededKey);
-  const [credentialError, setCredentialError] = useState<string | null>(null);
+        (c.path === '/' || c.path === null || c.path === ''),
+    ) ?? null
+  ), [connections]);
   const [copied, setCopied] = useState<string | null>(null);
-
-  // Keep `accessKey` in sync with server truth — if connections updates
-  // (e.g. SWR revalidation surfaces an AP we didn't have before), we
-  // adopt it instead of holding stale local state.
-  useEffect(() => {
-    if (seededKey && seededKey !== accessKey) setAccessKey(seededKey);
-  }, [seededKey, accessKey]);
-
-  // Dashboard usually carries the full root Git Remote key.  If it does
-  // not, fall back to the access list API, which reads the canonical
-  // access_surfaces rows.  This is a lookup only; it does not create an
-  // old provider row.
-  useEffect(() => {
-    if (accessKey) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await get<AccessConnection[]>(
-          `/api/v1/access/?project_id=${encodeURIComponent(projectId)}&provider=git_remote`,
-        );
-        if (cancelled) return;
-        const root = rows.find(
-          (c) =>
-            isGitRemoteProvider(c.provider) &&
-            (c.path === '/' || c.path === null || c.path === '') &&
-            !!c.access_key,
-        );
-        const raw = root?.access_key ?? null;
-        if (raw && !raw.includes('...')) {
-          setAccessKey(raw);
-          setCredentialError(null);
-        } else {
-          setCredentialError('Git Remote credentials are not available yet.');
-        }
-      } catch (err) {
-        if (cancelled) return;
-        console.warn('Git Remote credential lookup failed:', err);
-        setCredentialError(
-          err instanceof Error ? err.message : 'Git Remote credentials unavailable',
-        );
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accessKey, projectId]);
 
   // The Git remote endpoint that backs this access point. Stock
   // `git clone`, `git push`, and `git pull --ff-only` all talk to it
@@ -576,7 +515,7 @@ function GitSyncBlock({
   const apiBase = typeof window !== 'undefined'
     ? (process.env.NEXT_PUBLIC_API_URL || window.location.origin)
     : '';
-  const apUrl = accessKey ? `${apiBase}/git/ap/${accessKey}.git` : '';
+  const apUrl = canonicalProjectGitUrl(apiBase, projectId);
 
   // The onboarding command for an EMPTY project bootstraps a fresh
   // git repo and pushes the user's local folder up. `clone` pulls
@@ -585,24 +524,11 @@ function GitSyncBlock({
   // files become the project's contents. Direction matches the
   // drop-zone above (local → server) instead of contradicting it.
   //
-  // CRITICAL: this command must be runnable as-is when pasted into a
-  // terminal inside the user's project folder. We DO include
-  // git-credential auth as the first line so the push doesn't prompt
-  // for a password — the access key plays the password role over
-  // Basic auth.
-  const apiHost = (() => {
-    try { return apUrl ? new URL(apUrl).host : ''; }
-    catch { return ''; }
-  })();
-  const connectCmd = accessKey
-    ? [
-        'git config --global credential.helper store',
-        String.raw`printf "https://x-access-token:%s@%s\n" "` + accessKey + `" "${apiHost}" >> ~/.git-credentials`,
-        'git init -b main',
-        `git remote add origin ${apUrl}`,
-        'git add -A && git commit -m "initial import" && git push -u origin main',
-      ].join('\n')
-    : '';
+  const connectCmd = [
+    'git init -b main',
+    `git remote add origin ${apUrl}`,
+    'git add -A && git commit -m "initial import" && git push -u origin main',
+  ].join('\n');
 
   const copy = useCallback((text: string, key: string) => {
     void navigator.clipboard.writeText(text);
@@ -654,17 +580,23 @@ function GitSyncBlock({
           </span>
           , then run:
         </ProseLabel>
-        {accessKey ? (
-          <CmdLine
-            cmd={connectCmd}
-            copied={copied === 'connect'}
-            onCopy={() => copy(connectCmd, 'connect')}
-            wrap
-          />
-        ) : credentialError ? (
-          <CmdLineError onRetry={() => location.reload()} />
+        {gitRemote ? (
+          <>
+            <GitCredentialIssuePanel
+              connectorId={gitRemote.id}
+              gitUrl={apUrl}
+              scopeMode={gitRemote.scope_mode === 'r' ? 'r' : 'rw'}
+              target={{ kind: 'project_root', project_id: projectId }}
+            />
+            <CmdLine
+              cmd={connectCmd}
+              copied={copied === 'connect'}
+              onCopy={() => copy(connectCmd, 'connect')}
+              wrap
+            />
+          </>
         ) : (
-          <CmdLineSkeleton />
+          <CmdLineError onRetry={() => location.reload()} />
         )}
       </div>
 
@@ -704,43 +636,7 @@ function ProseLabel({ children }: { children: React.ReactNode }) {
 }
 
 // =====================================================================
-// CmdLineSkeleton — placeholder rendered while credentials are loading.
-// Uses an animated grey bar instead of any text — a user can't
-// accidentally copy a skeleton.  No Copy button (don't even tempt the
-// click).  Layout matches `CmdLine` so the row doesn't jump when the
-// real command arrives.
-// =====================================================================
-
-function CmdLineSkeleton() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '8px 12px',
-        background: 'var(--po-inset)',
-        border: `1px solid ${T.cardBorder}`,
-        borderRadius: 6,
-      }}
-    >
-      <span
-        style={{
-          fontSize: 12,
-          color: T.text3,
-          fontFamily: T.fontMono,
-          flexShrink: 0,
-        }}
-      >
-        $
-      </span>
-      <SkeletonBlock width="100%" height={12} radius={2} style={{ flex: 1 }} />
-    </div>
-  );
-}
-
-// =====================================================================
-// CmdLineError — credential lookup failed.  Prose only, no `$`, no Copy button,
+// CmdLineError — Git Remote lookup failed. Prose only, no `$`, no Copy button,
 // nothing that could be mistaken for a runnable command.  Includes a
 // retry that simply reloads the page (rebuilds the whole component
 // tree, so the lookup re-fires from scratch on a fresh useEffect).
@@ -759,7 +655,7 @@ function CmdLineError({ onRetry }: { onRetry: () => void }) {
         lineHeight: 1.5,
       }}
     >
-      Couldn’t load Git Remote credentials.{' '}
+      Couldn’t load the root Git Remote.{' '}
       <button
         onClick={onRetry}
         style={{
@@ -785,8 +681,8 @@ function CmdLineError({ onRetry }: { onRetry: () => void }) {
 // CmdLine — single runnable command rendered as `$ <cmd>` plus a Copy
 // button.  Anything in here is a hard contract: it MUST be paste-and-
 // run safe, because users will copy it without reading.  Loading and
-// error states live in sibling components (`CmdLineSkeleton`,
-// `CmdLineError`) so this component never shows fake-command text.
+// error states live in a sibling `CmdLineError`, so this component never
+// shows fake-command text.
 //
 // `wrap` enables soft-wrap + word-break for long lines like the access-
 // point URL; default behaviour is single-line ellipsis.

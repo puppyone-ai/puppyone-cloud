@@ -50,6 +50,19 @@ def memory_store(tmp_path) -> ObjectStore:
     return ObjectStore(obj_dir)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_derived_hooks(monkeypatch):
+    """Typed-write tests are hermetic and must not contact Supabase/S3.
+
+    Derived-hook behavior has dedicated tests; scheduling a real background
+    hook here leaks threads into asyncio teardown and makes this in-memory
+    suite wait on whatever cloud URL happens to be in the developer's env.
+    """
+    from src.version_engine.derived import hooks
+
+    monkeypatch.setattr(hooks, "schedule_post_project_update_hook", lambda *_a, **_k: None)
+
+
 @pytest.fixture
 def server_repo(memory_store):
     """A PuppyOneServerRepo backed by in-memory fakes."""

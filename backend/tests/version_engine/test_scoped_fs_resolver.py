@@ -21,6 +21,9 @@ class _Query:
     def filter(self, *_args, **_kwargs):
         return self
 
+    def order(self, *_args, **_kwargs):
+        return self
+
     def limit(self, *_args, **_kwargs):
         return self
 
@@ -36,15 +39,6 @@ class _Supabase:
         return _Query(self._tables.get(name, []))
 
 
-class _McpEndpointRepo:
-    def __init__(self, endpoint: dict | None):
-        self._endpoint = endpoint
-
-    def get_by_api_key(self, api_key: str):
-        assert api_key == "mcp_key"
-        return self._endpoint
-
-
 def test_resolver_builds_writable_context_when_scope_and_access_are_rw(monkeypatch):
     endpoint = {
         "id": "endpoint-1",
@@ -53,20 +47,23 @@ def test_resolver_builds_writable_context_when_scope_and_access_are_rw(monkeypat
         "scope_id": "scope-1",
         "status": "active",
         "created_by": "user-1",
-        "accesses": [{"readonly": False}],
-        "tools_config": {},
+        "kind": "mcp",
     }
     sb = _Supabase({
-        "repo_scopes": [{
+        "repository_scopes": [{
             "id": "scope-1",
             "project_id": "proj-1",
             "path": "docs",
             "exclude": ["private"],
-            "mode": "rw",
+            "max_mode": "rw",
         }],
     })
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
-    monkeypatch.setattr(resolver, "McpEndpointRepository", lambda: _McpEndpointRepo(endpoint))
+    monkeypatch.setattr(
+        resolver,
+        "_resolve_surface",
+        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+    )
 
     ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
 
@@ -88,21 +85,24 @@ def test_resolver_downgrades_to_readonly_without_writable_access(monkeypatch):
         "project_id": "proj-1",
         "scope_id": "scope-1",
         "status": "active",
-        "accesses": [{"readonly": True}],
-        "tools_config": {},
+        "kind": "mcp",
     }
     sb = _Supabase({
-        "repo_scopes": [{
+        "repository_scopes": [{
             "id": "scope-1",
             "project_id": "proj-1",
             "path": "",
             "exclude": [],
-            "mode": "rw",
+            "max_mode": "rw",
         }],
         "projects": [{"created_by": "project-owner"}],
     })
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
-    monkeypatch.setattr(resolver, "McpEndpointRepository", lambda: _McpEndpointRepo(endpoint))
+    monkeypatch.setattr(
+        resolver,
+        "_resolve_surface",
+        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": True}]}}),
+    )
 
     ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
 
@@ -121,24 +121,26 @@ def test_resolver_applies_mcp_tools_config(monkeypatch):
         "scope_id": "scope-1",
         "status": "active",
         "created_by": "user-1",
-        "accesses": [{"readonly": False}],
-        "tools_config": {
-            "filesystem": {
-                "allowed": ["fs_ls", "fs_rm"],
-            },
-        },
+        "kind": "mcp",
     }
     sb = _Supabase({
-        "repo_scopes": [{
+        "repository_scopes": [{
             "id": "scope-1",
             "project_id": "proj-1",
             "path": "docs",
             "exclude": [],
-            "mode": "rw",
+            "max_mode": "rw",
         }],
     })
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
-    monkeypatch.setattr(resolver, "McpEndpointRepository", lambda: _McpEndpointRepo(endpoint))
+    monkeypatch.setattr(
+        resolver,
+        "_resolve_surface",
+        lambda _key: (endpoint, {
+            "fs_policy": {"accesses": [{"readonly": False}]},
+            "tools_policy": {"filesystem": {"allowed": ["fs_ls", "fs_rm"]}},
+        }),
+    )
 
     ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
 
@@ -150,3 +152,54 @@ def test_resolver_rejects_non_mcp_key():
         resolver.resolve_mcp_scoped_fs_context("cli_key")
 
     assert exc.value.status_code == 401
+
+
+# ── GAP-4: carved child-scope exclusion for MCP keys ──────────────────
+
+def test_merge_scope_excludes_carves_children_not_self_or_siblings():
+    out = resolver._merge_scope_excludes(
+        ["docs/secret.txt"], "docs",
+        [{"path": "docs"}, {"path": "docs/api"}, {"path": "docs/api/v1"}, {"path": "other"}],
+    )
+    assert "docs/api" in out and "docs/api/v1" in out  # declared children carved
+    assert "other" not in out and "docs" not in out     # sibling + self never carved
+    assert "docs/secret.txt" in out                      # user exclude preserved
+
+
+def test_merge_scope_excludes_root_carves_nothing():
+    # Root scope is the project-wide view — it sees all sub-scopes.
+    assert resolver._merge_scope_excludes([], "", [{"path": "docs"}, {"path": "docs/api"}]) == []
+
+
+def test_resolver_carves_child_scopes_for_parent_mcp_key(monkeypatch):
+    # An MCP key bound to a NON-ROOT parent scope must hide declared child
+    # scopes (GAP-4) — otherwise it could ls/cat/grep into their subtrees.
+    endpoint = {
+        "id": "endpoint-1",
+        "name": "Files",
+        "project_id": "proj-1",
+        "scope_id": "scope-1",
+        "status": "active",
+        "created_by": "user-1",
+        "kind": "mcp",
+    }
+    sb = _Supabase({
+        "repository_scopes": [
+            {"id": "scope-1", "project_id": "proj-1", "path": "docs", "exclude": ["private"], "max_mode": "rw"},
+            {"id": "scope-2", "project_id": "proj-1", "path": "docs/api", "exclude": [], "max_mode": "rw"},
+            {"id": "scope-3", "project_id": "proj-1", "path": "other", "exclude": [], "max_mode": "rw"},
+        ],
+    })
+    monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
+    monkeypatch.setattr(
+        resolver,
+        "_resolve_surface",
+        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+    )
+
+    ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
+
+    assert "docs/api" in ctx.exclude   # child scope carved out
+    assert "private" in ctx.exclude    # user-configured exclude preserved
+    assert "other" not in ctx.exclude  # sibling scope not carved
+    assert "docs" not in ctx.exclude   # the bound scope itself not carved

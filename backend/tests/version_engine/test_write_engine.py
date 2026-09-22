@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import asyncio
 import json
+import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -57,6 +59,22 @@ from src.version_engine.write_engine.engine import (
     VersionWriteEngine,
 )
 from src.version_engine.domain.intents import RollbackIntent, VersionSubmissionIntent
+from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.auth_context import repository_view_from_auth
+from src.platform.repository_target.models import (
+    ProjectRootTarget,
+    ResolvedRepositoryView,
+    ScopeTarget,
+)
+
+
+@pytest.fixture(autouse=True)
+def _use_hard_receive_cap_without_live_entitlement_lookup(monkeypatch):
+    """Git protocol tests are hermetic; entitlement resolution is covered separately."""
+    monkeypatch.setattr(
+        "src.version_engine.entrypoints.git.router._git_receive_max_body_bytes",
+        lambda _project_id: int(settings.GIT_MAX_RECEIVE_PACK_BYTES),
+    )
 
 
 async def submit_agent_push(repo_manager, project_id, auth, body):
@@ -66,21 +84,21 @@ async def submit_agent_push(repo_manager, project_id, auth, body):
     publish path.
     """
     repo = repo_manager.get_server_repo(project_id)
-    scope = auth["_scope"]
+    view = repository_view_from_auth(auth)
     for object_id, b64data in (body.get("objects") or {}).items():
         repo.store.put_loose(object_id, base64.b64decode(b64data))
     snapshot = body["snapshots"][-1]
     engine = VersionWriteEngine(repo_manager)
     result = await engine.submit_version(VersionSubmissionIntent(
         project_id=project_id,
-        scope_path=scope.get("path", "") or "",
+        scope_path=view.path_prefix,
         actor=auth.get("agent", ""),
         source_channel="agent",
         base_commit_id=body.get("base_commit_id", "") or "",
         proposed_tree_id=snapshot["root"],
         client_commit_id=snapshot.get("commit_id", ""),
         message=snapshot.get("message", ""),
-        scope_excludes=scope.get("exclude") or [],
+        scope_excludes=list(view.excludes),
         audit_detail={"snapshots": len(body.get("snapshots", []))},
         defer_projection=True,
     ))
@@ -97,16 +115,16 @@ async def submit_agent_push(repo_manager, project_id, auth, body):
 
 
 async def submit_version_rollback(repo_manager, project_id, auth, body):
-    scope = auth["_scope"]
+    view = repository_view_from_auth(auth)
     engine = VersionWriteEngine(repo_manager)
     result = await engine.rollback(RollbackIntent(
         project_id=project_id,
-        scope_path=scope.get("path", "") or "",
+        scope_path=view.path_prefix,
         actor=auth.get("agent", ""),
         source_channel="agent",
         target_commit_id=body["target_commit_id"],
         message=body.get("message", ""),
-        scope_excludes=scope.get("exclude") or [],
+        scope_excludes=list(view.excludes),
         defer_projection=True,
     ))
     return {
@@ -407,14 +425,26 @@ def _pkt_line(payload: bytes) -> bytes:
     return f"{len(payload) + 4:04x}".encode("ascii") + payload
 
 
-def _run_git(args: list[str], cwd, input_data: bytes | None = None) -> bytes:
-    proc = _run_git_raw(args, cwd, input_data)
+def _run_git(
+    args: list[str],
+    cwd,
+    input_data: bytes | None = None,
+    *,
+    env: dict[str, str] | None = None,
+) -> bytes:
+    proc = _run_git_raw(args, cwd, input_data, env=env)
     if proc.returncode != 0:
         raise AssertionError(proc.stderr.decode("utf-8", errors="replace"))
     return proc.stdout
 
 
-def _run_git_raw(args: list[str], cwd, input_data: bytes | None = None) -> subprocess.CompletedProcess:
+def _run_git_raw(
+    args: list[str],
+    cwd,
+    input_data: bytes | None = None,
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     # Force ``main`` as the local default branch regardless of the host
     # git config. Older / Windows git defaults to ``master`` which makes
     # every push test fail with ``src refspec main does not match any``
@@ -427,6 +457,7 @@ def _run_git_raw(args: list[str], cwd, input_data: bytes | None = None) -> subpr
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        env=env,
     )
     return proc
 
@@ -434,6 +465,30 @@ def _run_git_raw(args: list[str], cwd, input_data: bytes | None = None) -> subpr
 def _configure_git_identity(repo_dir) -> None:
     _run_git(["config", "user.name", "Git Smoke"], repo_dir)
     _run_git(["config", "user.email", "git-smoke@example.com"], repo_dir)
+
+
+def _standard_git_credential_env(tmp_path, token: str) -> dict[str, str]:
+    """Use Git's credential-helper protocol without putting a secret in a URL."""
+
+    helper = tmp_path / "git-credential-puppyone-test"
+    helper.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = get ]; then\n"
+        "  printf 'username=x-puppyone-token\\npassword=%s\\n' "
+        "\"$PUPPYONE_TEST_GIT_TOKEN\"\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    config = tmp_path / "gitconfig"
+    _run_git(["config", "--file", str(config), "credential.helper", str(helper)], tmp_path)
+    _run_git(["config", "--file", str(config), "credential.useHttpPath", "true"], tmp_path)
+    return {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": str(config),
+        "GIT_TERMINAL_PROMPT": "0",
+        "PUPPYONE_TEST_GIT_TOKEN": token,
+    }
 
 
 def _free_tcp_port() -> int:
@@ -499,16 +554,33 @@ def _git_access_auth(
     exclude: list[str] | None = None,
     user_identity: str = "",
 ) -> tuple[str, dict]:
+    normalized_path = scope_path.strip("/")
+    target = (
+        ScopeTarget(project_id="test-proj", scope_id=scope_id)
+        if normalized_path
+        else ProjectRootTarget(project_id="test-proj")
+    )
+    normalized_excludes = tuple(item.strip("/") for item in (exclude or []))
+    view = ResolvedRepositoryView(
+        target=target,
+        path_prefix=normalized_path,
+        excludes=normalized_excludes,
+        max_mode=(mode if normalized_path else "rw"),
+    )
     return (
         "test-proj",
         {
             "agent": f"scope:{scope_id}",
-            "_scope": {
-                "id": scope_id,
-                "path": scope_path,
-                "exclude": exclude or [],
-                "mode": mode,
-            },
+            "_runtime_grant": RuntimeGrant(
+                principal=RuntimePrincipal(
+                    principal_id=scope_id,
+                    credential_kind="test_access_key",
+                ),
+                target=target,
+                repository_view=view,
+                mode=RuntimeMode(mode),
+            ),
+            "_repo_facade": {"id": scope_id, "kind": "access_point"},
             "_project_id": "test-proj",
             "_user_identity": user_identity,
         },
@@ -531,6 +603,46 @@ def _patch_git_scope_auth(monkeypatch, mapping: dict[str, tuple]):
         "src.version_engine.entrypoints.git.router.resolve_access_point",
         fake_resolve,
     )
+
+
+def _patch_canonical_git_credentials(
+    monkeypatch,
+    *,
+    scope_id: str,
+    scope_path: str,
+    is_root: bool,
+    token: str = "git_secret",
+) -> None:
+    from src.version_engine.entrypoints.git import auth as git_auth
+
+    class _Credentials:
+        def __init__(self, _client):
+            pass
+
+        def resolve_git_runtime_credential(self, raw_token: str):
+            if raw_token != token:
+                return None
+            return {
+                "credential_id": "credential-canonical",
+                "project_id": "test-proj",
+                "access_surface_id": "surface-git",
+                "target_kind": "project_root" if is_root else "scope",
+                "scope_id": None if is_root else scope_id,
+                "path_prefix": "" if is_root else scope_path.strip("/"),
+                "excludes": [],
+                "target_max_mode": "rw",
+                "user_id": None,
+                "effective_mode": "rw",
+            }
+
+    monkeypatch.setattr(
+        git_auth,
+        "SupabaseClient",
+        lambda: type("_Supabase", (), {"client": object()})(),
+    )
+    monkeypatch.setattr(git_auth, "AccessCredentialRepository", _Credentials)
+    monkeypatch.setattr(git_auth.settings, "SKIP_AUTH", False)
+    monkeypatch.setattr(git_auth, "enforce_channel_pause", lambda *_a, **_k: None)
 
 
 def _receive_command_body(old_id: str, new_id: str, ref: str, pack: bytes = b"") -> bytes:
@@ -1109,10 +1221,8 @@ class TestVersionSubmissionAdapter:
             object_id: base64.b64encode(server_repo.store.get_loose(object_id)).decode()
             for object_id in reachable
         }
-        auth = {
-            "agent": "version-agent",
-            "_scope": {"id": "root", "path": "", "exclude": [], "mode": "rw"},
-        }
+        auth = _git_access_auth(scope_id="root", scope_path="")[1]
+        auth["agent"] = "version-agent"
 
         result = await submit_agent_push(
             repo_manager,
@@ -1152,15 +1262,12 @@ class TestVersionSubmissionAdapter:
             object_id: base64.b64encode(server_repo.store.get_loose(object_id)).decode()
             for object_id in reachable
         }
-        auth = {
-            "agent": "version-agent",
-            "_scope": {
-                "id": "docs-scope",
-                "path": "/docs/",
-                "exclude": ["/docs/secret/"],
-                "mode": "rw",
-            },
-        }
+        auth = _git_access_auth(
+            scope_id="docs-scope",
+            scope_path="/docs/",
+            exclude=["/docs/secret/"],
+        )[1]
+        auth["agent"] = "version-agent"
 
         with pytest.raises(PermissionError, match="outside its scope"):
             await submit_agent_push(
@@ -1323,8 +1430,8 @@ class TestGitNativeHardeningContracts:
             repo_manager,
             "test-proj",
             {
+                **_git_access_auth(scope_id="root", scope_path="")[1],
                 "agent": "version-agent",
-                "_scope": {"id": "root", "path": "", "exclude": [], "mode": "rw"},
             },
             {"protocol_version": PROTOCOL_VERSION, "target_commit_id": v1.commit_id},
         )
@@ -1512,6 +1619,17 @@ class TestGitNativeHardeningContracts:
         assert metadata["history_mode"] == "full"
         assert metadata["blob_mode"] == "included"
         assert metadata["cache_head"] == head_commit
+
+        # The cache is disposable: deleting it must rebuild from canonical
+        # object storage on the next transport request with identical content.
+        shutil.rmtree(cache_dir)
+        assert not cache_dir.exists()
+        with transport_bare_repo(server_repo, "docs") as rebuilt_bare:
+            rebuilt_metadata = json.loads(
+                (rebuilt_bare.parent / "view.json").read_text(encoding="utf-8")
+            )
+            assert rebuilt_metadata["cache_head"] == head_commit
+            assert (rebuilt_bare / "objects" / head_commit[:2] / head_commit[2:]).exists()
 
     def test_receive_quarantine_uses_blob_included_boundary_cache_by_default(
         self, tmp_path, server_repo, monkeypatch,
@@ -1745,10 +1863,13 @@ class TestGitNativeHardeningContracts:
 def test_git_protocol_routes_exist():
     paths = {route.path for route in git_router.routes}
     assert "/git/{project_id}.git/info/refs" in paths
+    assert "/git/{project_id}/scopes/{scope_id}.git/info/refs" in paths
     assert "/git/ap/{access_key}.git/info/refs" in paths
     assert "/git/{project_id}.git/git-receive-pack" in paths
+    assert "/git/{project_id}/scopes/{scope_id}.git/git-receive-pack" in paths
     assert "/git/ap/{access_key}.git/git-receive-pack" in paths
     assert "/git/{project_id}.git/git-upload-pack" in paths
+    assert "/git/{project_id}/scopes/{scope_id}.git/git-upload-pack" in paths
     assert "/git/ap/{access_key}.git/git-upload-pack" in paths
 
 
@@ -1937,7 +2058,8 @@ def test_git_project_receive_pack_requires_credentials(
 
     assert client_commit_id
     assert response.status_code == 401
-    assert response.json()["detail"] == "Missing Git credentials"
+    assert response.json()["detail"] == "Invalid Git credentials"
+    assert response.headers["www-authenticate"] == 'Basic realm="PuppyOne Git"'
     assert server_repo.get_scope_head_commit_id("") == ""
 
 
@@ -2247,6 +2369,142 @@ def test_real_git_cli_can_clone_commit_push_and_clone_again(
     }
     assert (second / "README.md").read_text(encoding="utf-8") == "hello through real git\n"
     assert _last_audit_event(server_repo, "access_git_push")["type"] == "access_git_push"
+
+
+@pytest.mark.parametrize(
+    ("scope_id", "scope_path", "remote_path", "expected_scope"),
+    [
+        ("root-scope", "", "/git/test-proj.git", ""),
+        (
+            "docs-scope",
+            "/docs/",
+            "/git/test-proj/scopes/docs-scope.git",
+            "docs",
+        ),
+    ],
+    ids=["project-root", "scoped"],
+)
+def test_real_git_cli_uses_canonical_locator_and_credential_helper(
+    monkeypatch,
+    tmp_path,
+    repo_manager,
+    server_repo,
+    scope_id,
+    scope_path,
+    remote_path,
+    expected_scope,
+):
+    """Stock Git authenticates without a key-bearing URL on both locators."""
+
+    server_repo.add_scope(scope_id, scope_path)
+    if not scope_path:
+        _init_empty_project_shell(server_repo)
+    _patch_canonical_git_credentials(
+        monkeypatch,
+        scope_id=scope_id,
+        scope_path=scope_path,
+        is_root=not bool(scope_path),
+    )
+    credential_env = _standard_git_credential_env(tmp_path, "git_secret")
+    app = FastAPI()
+    app.include_router(git_router)
+    app.dependency_overrides[get_repo_manager] = lambda: repo_manager
+
+    with _serve_git_app(app) as base_url:
+        remote = f"{base_url}{remote_path}"
+        first = tmp_path / "canonical-first"
+        second = tmp_path / "canonical-second"
+
+        _run_git(["clone", remote, str(first)], tmp_path, env=credential_env)
+        assert "git_secret" not in _run_git(
+            ["remote", "get-url", "origin"], first
+        ).decode("utf-8")
+        _configure_git_identity(first)
+        (first / "README.md").write_text(
+            f"canonical {scope_id}\n",
+            encoding="utf-8",
+        )
+        _run_git(["add", "README.md"], first)
+        _run_git(["commit", "-m", "canonical Git smoke"], first)
+        pushed_head = _run_git(["rev-parse", "HEAD"], first).decode("ascii").strip()
+        _run_git(["push", "origin", "main"], first, env=credential_env)
+        _run_git(["clone", remote, str(second)], tmp_path, env=credential_env)
+
+    assert server_repo.get_scope_head_commit_id(expected_scope) == pushed_head
+    assert _files_for_scope(server_repo, expected_scope) == {
+        "README.md": f"canonical {scope_id}\n".encode(),
+    }
+    assert (second / "README.md").read_text(encoding="utf-8") == (
+        f"canonical {scope_id}\n"
+    )
+
+
+def test_canonical_and_legacy_git_routes_share_one_scope_and_canonical_cas(
+    monkeypatch, tmp_path, repo_manager, server_repo,
+):
+    server_repo.add_scope("docs-scope", "/docs/")
+    _patch_canonical_git_credentials(
+        monkeypatch,
+        scope_id="docs-scope",
+        scope_path="/docs/",
+        is_root=False,
+    )
+    _patch_git_scope_auth(
+        monkeypatch,
+        {"legacy-key": ("docs-scope", "/docs/", "rw")},
+    )
+    credential_env = _standard_git_credential_env(tmp_path, "git_secret")
+    app = FastAPI()
+    app.include_router(git_router)
+    app.dependency_overrides[get_repo_manager] = lambda: repo_manager
+
+    with _serve_git_app(app) as base_url:
+        canonical = f"{base_url}/git/test-proj/scopes/docs-scope.git"
+        legacy = f"{base_url}/git/ap/legacy-key.git"
+        canonical_work = tmp_path / "canonical-work"
+        legacy_work = tmp_path / "legacy-work"
+        canonical_verify = tmp_path / "canonical-verify"
+
+        _run_git(
+            ["clone", canonical, str(canonical_work)],
+            tmp_path,
+            env=credential_env,
+        )
+        _configure_git_identity(canonical_work)
+        (canonical_work / "README.md").write_text("canonical v1\n", encoding="utf-8")
+        _run_git(["add", "README.md"], canonical_work)
+        _run_git(["commit", "-m", "canonical v1"], canonical_work)
+        _run_git(["push", "origin", "main"], canonical_work, env=credential_env)
+
+        _run_git(["clone", legacy, str(legacy_work)], tmp_path)
+        assert (legacy_work / "README.md").read_text(encoding="utf-8") == "canonical v1\n"
+        _configure_git_identity(legacy_work)
+        (legacy_work / "README.md").write_text("legacy v2\n", encoding="utf-8")
+        _run_git(["add", "README.md"], legacy_work)
+        _run_git(["commit", "-m", "legacy v2"], legacy_work)
+        final_head = _run_git(["rev-parse", "HEAD"], legacy_work).decode().strip()
+        _run_git(["push", "origin", "main"], legacy_work)
+
+        _run_git(
+            ["clone", canonical, str(canonical_verify)],
+            tmp_path,
+            env=credential_env,
+        )
+
+    assert server_repo.get_scope_head_commit_id("docs") == final_head
+    assert _files_for_scope(server_repo, "docs") == {"README.md": b"legacy v2\n"}
+    assert _files_for_scope(server_repo) == {"docs/README.md": b"legacy v2\n"}
+    assert (canonical_verify / "README.md").read_text(encoding="utf-8") == "legacy v2\n"
+    push_events = [
+        event
+        for event in server_repo.audit.events
+        if event.get("type") == "access_git_push"
+    ]
+    assert [event["detail"]["entry_point"] for event in push_events] == [
+        "project_git_remote",
+        "access_key_git_remote",
+    ]
+    assert {event["detail"]["scope"] for event in push_events} == {"docs"}
 
 
 def test_real_git_cli_degraded_history_clones_and_pushes_from_projected_head(
@@ -3616,8 +3874,10 @@ async def test_real_git_cli_rollback_of_git_commits_is_visible_to_git_clone(
             repo_manager,
             "test-proj",
             {
+                **_git_access_auth(
+                    scope_id="docs-scope", scope_path="/docs/"
+                )[1],
                 "agent": "rollback-agent",
-                "_scope": {"id": "docs-scope", "path": "/docs/", "exclude": [], "mode": "rw"},
             },
             {"protocol_version": PROTOCOL_VERSION, "target_commit_id": v1},
         )

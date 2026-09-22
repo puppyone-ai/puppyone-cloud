@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import uuid
 
@@ -14,6 +14,16 @@ TERMINAL_ITEM_STATUSES = {"completed", "failed", "cancelled", "skipped"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class UploadJobRepository:
@@ -106,6 +116,54 @@ class UploadJobRepository:
             "error_message": error[:10_000],
             "completed_at": _now(),
         }).eq("id", upload_job_id).execute()
+
+    def recover_stale_jobs(self, *, stale_seconds: int, limit: int = 100) -> list[str]:
+        """Fail upload jobs stuck `running` past the stale window.
+
+        Upload finalize runs INLINE in the API request (not a worker), so a job
+        only stays `running` forever if the API process died mid-finalize. A
+        legitimate finalize cannot outlast the HTTP request, so a `running` job
+        older than ``stale_seconds`` (set well above any request lifetime) is a
+        dead-process orphan. The update is guarded on ``status='running'`` so a
+        job that finalized between the scan and the write is never clobbered.
+        Returns the ids actually reaped.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(1, stale_seconds))
+        resp = (
+            self.client.table(self.JOBS)
+            .select("id, status, started_at, created_at")
+            .eq("status", "running")
+            .order("started_at", desc=False)
+            .limit(max(1, limit) * 4)
+            .execute()
+        )
+        recovered: list[str] = []
+        for row in (resp.data or []):
+            ref = _parse_dt(row.get("started_at")) or _parse_dt(row.get("created_at"))
+            if ref is None or ref >= cutoff:
+                continue
+            updated = (
+                self.client.table(self.JOBS)
+                .update({
+                    "status": "failed",
+                    "phase": "failed",
+                    "progress": 100,
+                    "message": "Upload finalize did not complete",
+                    "error_message": (
+                        f"upload did not finalize within {stale_seconds}s; "
+                        f"process presumed dead (reaped)"
+                    ),
+                    "completed_at": _now(),
+                })
+                .eq("id", row["id"])
+                .eq("status", "running")
+                .execute()
+            )
+            if updated.data:
+                recovered.append(row["id"])
+            if len(recovered) >= limit:
+                break
+        return recovered
 
     def refresh_job_from_items(self, upload_job_id: str) -> None:
         rows = (

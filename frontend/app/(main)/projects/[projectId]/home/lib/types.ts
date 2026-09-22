@@ -25,12 +25,17 @@ export type ApDirection = 'inbound' | 'outbound' | 'bidirectional';
 
 export interface DashboardConnection {
   id: string;
+  scope_id?: string | null;
   provider: string;
   name: string | null;
   path: string | null;
   direction: string | null;
   status: string;
+  /** Always null on list responses; machine credentials are one-time reveal. */
   access_key: string | null;
+  has_credential?: boolean;
+  credential_hint?: string | null;
+  scope_mode?: 'r' | 'rw' | null;
   trigger: any;
   last_synced_at: string | null;
   error_message: string | null;

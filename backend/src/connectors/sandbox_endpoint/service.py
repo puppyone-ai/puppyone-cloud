@@ -18,12 +18,6 @@ class SandboxEndpointService:
     def list_endpoints(self, project_id: str) -> List[dict]:
         return self._repo.list_by_project(project_id)
 
-    def verify_project_access(self, project_id: str, user_id: str) -> bool:
-        from src.platform.project.repository import ProjectRepositorySupabase
-
-        project_repo = ProjectRepositorySupabase()
-        return project_repo.verify_project_access(project_id, user_id) is not None
-
     def get_by_path(self, path: str) -> Optional[dict]:
         return self._repo.get_by_path(path)
 
@@ -63,6 +57,3 @@ class SandboxEndpointService:
 
     def regenerate_key(self, endpoint_id: str) -> Optional[dict]:
         return self._repo.regenerate_access_key(endpoint_id)
-
-    def verify_access(self, endpoint_id: str, user_id: str) -> bool:
-        return self._repo.verify_access(endpoint_id, user_id)

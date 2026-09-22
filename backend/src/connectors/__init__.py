@@ -12,7 +12,8 @@ Seven peer-level areas, backed by connectors bound to repo scopes:
   ├── mcp_endpoint/       MCP protocol endpoint CRUD & API key
   └── sandbox_endpoint/   Sandbox endpoint CRUD & command execution
 
-Sandbox runtime engine (E2B / Docker) lives in src/infra/sandbox/.
-MCP Server management (health checks, cache) lives in src/infra/mcp_server/.
+All sandbox providers and execution modes live in src/platform/scope_sandbox/.
+MCP health and cache transport boundaries live in src/infra/mcp_health.py and
+src/connectors/mcp_cache.py; endpoint/runtime logic uses scoped_fs.
 Workspace materialization (lower cache) lives in src/platform/workspace/.
 """

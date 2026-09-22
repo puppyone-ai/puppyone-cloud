@@ -20,23 +20,17 @@ export interface GitViewHealthPayload {
   fetch_usable: boolean;
   push_usable: boolean;
   read_only: boolean;
+  can_rebuild: boolean;
   reason: string;
   recommended_actions: GitHealthAction[];
 }
 
-// Back-compat alias: callers built against the AP-only world reference
-// ``GitAccessPointHealth``. The shape is identical to project-root
-// health so the alias is safe.
-export type GitAccessPointHealth = GitViewHealthPayload;
-
-export function getGitAccessPointHealth(accessKey: string): Promise<GitViewHealthPayload> {
-  return get<GitViewHealthPayload>(`/git/ap/${encodeURIComponent(accessKey)}.git/health`);
-}
-
 /** Health for the project-root Git remote — the user-visible mirror of the
- * canonical project tree. Same payload shape as the AP variant. */
+ * canonical project tree. */
 export function getGitProjectHealth(projectId: string): Promise<GitViewHealthPayload> {
-  return get<GitViewHealthPayload>(`/git/${encodeURIComponent(projectId)}.git/health`);
+  return get<GitViewHealthPayload>(
+    `/api/v1/projects/${encodeURIComponent(projectId)}/git-view/health`,
+  );
 }
 
 export interface GitCacheRebuildVariant {
@@ -57,17 +51,10 @@ export interface GitCacheRebuildResponse {
  * Engine facts. Both cache variants (full-history-with-blobs for clone/fetch
  * and receive-boundary-without-blobs for push advertisement) are rebuilt in
  * one call so the next request hits a warm cache regardless of direction.
- * Requires writable access (same gate as push). */
+ * Requires Project management access. */
 export function rebuildGitProjectCache(projectId: string): Promise<GitCacheRebuildResponse> {
   return post<GitCacheRebuildResponse>(
-    `/git/${encodeURIComponent(projectId)}.git/rebuild-cache`,
-    {},
-  );
-}
-
-export function rebuildGitAccessPointCache(accessKey: string): Promise<GitCacheRebuildResponse> {
-  return post<GitCacheRebuildResponse>(
-    `/git/ap/${encodeURIComponent(accessKey)}.git/rebuild-cache`,
+    `/api/v1/projects/${encodeURIComponent(projectId)}/git-view/rebuild-cache`,
     {},
   );
 }

@@ -114,6 +114,10 @@ class ChatService:
             existing = self.repo.get_session(session_id=session_id, user_id=user_id)
             if existing is None:
                 raise PermissionError("Invalid session_id for current user")
+            if agent_id and existing.agent_id and existing.agent_id != agent_id:
+                raise PermissionError(
+                    "session_id is bound to a different Project Agent"
+                )
             # Re-check pause state on every continuation: a session opened
             # while the agent was active stays valid, but if the user
             # later pauses the agent we want subsequent sends to bounce

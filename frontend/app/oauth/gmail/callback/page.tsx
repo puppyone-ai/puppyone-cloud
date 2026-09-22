@@ -12,13 +12,13 @@ function GmailCallbackContent() {
 
   useEffect(() => {
     const handleCallback = async () => {
-      const code = searchParams.get('code');
+      const code = searchParams?.get('code');
       // CSRF nonce issued by /authorize and round-tripped via Google's
       // OAuth `state` param. The backend's OAuthStateRepository.consume()
       // requires this — omitting it surfaces as a 500 "Failed to handle
       // Gmail callback: Invalid or expired OAuth state".
-      const state = searchParams.get('state') || undefined;
-      const error = searchParams.get('error');
+      const state = searchParams?.get('state') || undefined;
+      const error = searchParams?.get('error');
 
       if (error) {
         setStatus('error');

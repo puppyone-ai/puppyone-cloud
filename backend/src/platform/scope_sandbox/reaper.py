@@ -3,11 +3,9 @@
 The reclamation policy already lives in ``ScopeSandboxManager.reap()``; this just
 calls it on an interval (idle RUNNING → STOP, long-idle STOPPED → DESTROY).
 
-Wiring into the app scheduler is deferred: it needs a process-level manager
-singleton, and is only production-correct once the session store is
-externalized (roadmap #3) — otherwise each worker reaps only its own in-memory
-sessions. This module is the ready-to-wire loop + a one-shot helper, both
-unit-tested with a fake manager.
+The app lifecycle wires this loop when ``SCOPE_SANDBOX_REAPER_ENABLED`` is set.
+Production uses the external Supabase store, so every worker observes the same
+session records; provider operations remain idempotent under overlapping passes.
 """
 
 from __future__ import annotations

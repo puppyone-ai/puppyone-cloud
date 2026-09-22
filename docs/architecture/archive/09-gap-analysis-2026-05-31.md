@@ -12,7 +12,7 @@
 | GAP-1 | L0/L1 | MEDIUM | upload-pack 把 clone pack 全量加载进 Python 堆 ✅ 已修复 |
 | GAP-2 | L0/L6 | MEDIUM | GC 只扫 loose 对象，bundle/chunked 对象永不回收 ✅ 已修复 |
 | GAP-3 | L1 | **LARGE** | 只支持 `refs/heads/main`，无分支/PR/tag 🟡 Phase 1 已实现（branch/tag push+advertise+serve；merge/PR 待 Phase 2） |
-| GAP-4 | L1/L3 | **LARGE** | 嵌套 Scope `carved_excludes` 隔离完全未实现 |
+| GAP-4 | L1/L3 | **LARGE** | 嵌套 Scope `carved_excludes` 隔离 ✅ 已修复（admission git/CLI + MCP scoped_fs 读路径均自动 carve 子 scope；root 为项目全局视图不 carve） |
 | GAP-5 | L5 follow-up | MEDIUM | child-scope merge 全量下载 subtree blob（O(N×S)） ✅ 已修复 |
 | GAP-6 | L5 follow-up | MEDIUM | text index 删文件不清行；dedup key 退化为非内容寻址 ✅ 已修复 |
 | GAP-7 | L5/L6 | SMALL | DB rename `mut_*`→`version_*` Phase 2/3 未做 |

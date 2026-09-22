@@ -7,12 +7,11 @@ from fastapi import Depends
 from src.platform.imports.arq_client import ImportArqClient
 from src.platform.imports.repository import ImportJobRepository
 from src.platform.imports.service import ImportJobService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 
 _import_repo: ImportJobRepository | None = None
 _import_arq_client: ImportArqClient | None = None
-_import_service: ImportJobService | None = None
 
 
 def get_import_job_repository() -> ImportJobRepository:
@@ -30,13 +29,10 @@ def get_import_arq_client() -> ImportArqClient:
 
 
 def get_import_job_service(
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ) -> ImportJobService:
-    global _import_service
-    if _import_service is None:
-        _import_service = ImportJobService(
-            repo=get_import_job_repository(),
-            project_service=project_service,
-            arq_client=get_import_arq_client(),
-        )
-    return _import_service
+    return ImportJobService(
+        repo=get_import_job_repository(),
+        authorization=authorization,
+        arq_client=get_import_arq_client(),
+    )

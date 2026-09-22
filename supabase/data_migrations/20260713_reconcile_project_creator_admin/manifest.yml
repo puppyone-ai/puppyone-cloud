@@ -1,0 +1,11 @@
+api_version: 1
+id: 20260713_reconcile_project_creator_admin
+description: Restore tenant membership and explicit Project Admin grants for historical Project creators
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20260713010000"
+required_env: []
+timeout_seconds: 1800
+legacy: false

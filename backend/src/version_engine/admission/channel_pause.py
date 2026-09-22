@@ -7,6 +7,8 @@ import time
 
 from fastapi import HTTPException
 
+from src.platform.repository_target.auth_context import repository_target_from_auth
+from src.platform.repository_target.models import repository_target_scope_id
 from src.repo.connector_repository import ConnectorRepository
 from src.utils.logger import log_error, log_warning
 
@@ -77,21 +79,25 @@ def enforce_channel_pause(
 ) -> None:
     """Reject requests for paused built-in access surfaces.
 
-    Access keys resolve to a repo scope, while pause/resume is represented on
-    the scope-bound access surface. Keeping this gate in admission makes Git
+    Credentials resolve to an exact repository target, while pause/resume is
+    represented on that target's Access Surface. Keeping this gate in admission makes Git
     smart HTTP, version WebSocket, and scoped AP-FS routes enforce the same
     policy. The repository below is the legacy connector facade over
     access_surfaces.
     """
 
     normalized_channel = (channel or "").strip().lower()
-    scope = auth.get("_scope") or {}
-    scope_id = scope.get("id")
-    if normalized_channel in _KNOWN_CHANNELS and scope_id and scope_id != "_root":
-        cached = _get_cached_channel_pause(scope_id, normalized_channel)
+    if normalized_channel not in _KNOWN_CHANNELS:
+        return
+    target = repository_target_from_auth(auth)
+    scope_id = repository_target_scope_id(target)
+    target_key = f"{target.project_id}\n{scope_id or '<project-root>'}"
+    if normalized_channel in _KNOWN_CHANNELS:
+        cached = _get_cached_channel_pause(target_key, normalized_channel)
         if cached is None:
             try:
-                connector = ConnectorRepository().get_by_scope_provider(
+                connector = ConnectorRepository().get_by_target_provider(
+                    target.project_id,
                     scope_id,
                     normalized_channel,
                 )
@@ -104,12 +110,12 @@ def enforce_channel_pause(
                 # short TTL so we re-probe quickly when the repo recovers
                 # (and don't spam the log on every request).
                 log_error(
-                    f"{log_prefix} Channel-pause lookup failed for scope={scope_id} "
+                    f"{log_prefix} Channel-pause lookup failed for target={target_key} "
                     f"channel={normalized_channel}: {e}; failing open (pause UX only — "
                     f"membership/mode/excludes still enforced)"
                 )
                 _set_cached_channel_pause(
-                    scope_id, normalized_channel, None, None,
+                    target_key, normalized_channel, None, None,
                 )
                 connector_id = None
                 connector_status = None
@@ -117,7 +123,7 @@ def enforce_channel_pause(
                 connector_id = connector.id if connector is not None else None
                 connector_status = connector.status if connector is not None else None
                 _set_cached_channel_pause(
-                    scope_id,
+                    target_key,
                     normalized_channel,
                     connector_id,
                     connector_status,
@@ -127,7 +133,7 @@ def enforce_channel_pause(
 
         if connector_status == "paused":
             log_warning(
-                f"{log_prefix} Rejected {normalized_channel} request to scope={scope_id}: "
+                f"{log_prefix} Rejected {normalized_channel} request to target={target_key}: "
                 f"connector {connector_id} is paused"
             )
             raise HTTPException(

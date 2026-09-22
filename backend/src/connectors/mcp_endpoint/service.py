@@ -12,17 +12,8 @@ class McpEndpointService:
     def get_endpoint(self, endpoint_id: str) -> Optional[dict]:
         return self._repo.get_by_id(endpoint_id)
 
-    def get_by_api_key(self, api_key: str) -> Optional[dict]:
-        return self._repo.get_by_api_key(api_key)
-
     def list_endpoints(self, project_id: str) -> List[dict]:
         return self._repo.list_by_project(project_id)
-
-    def verify_project_access(self, project_id: str, user_id: str) -> bool:
-        from src.platform.project.repository import ProjectRepositorySupabase
-
-        project_repo = ProjectRepositorySupabase()
-        return project_repo.verify_project_access(project_id, user_id) is not None
 
     def get_by_path(self, path: str) -> Optional[dict]:
         return self._repo.get_by_path(path)
@@ -36,6 +27,7 @@ class McpEndpointService:
         accesses: Optional[List[McpAccessItem]] = None,
         tools_config: Optional[Any] = None,
         created_by: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> dict:
         return self._repo.create(
             project_id=project_id,
@@ -45,6 +37,7 @@ class McpEndpointService:
             accesses=[a.model_dump() for a in accesses] if accesses else [],
             tools_config=_dump_tools_config(tools_config),
             created_by=created_by,
+            api_key=api_key,
         )
 
     def update_endpoint(self, endpoint_id: str, **kwargs) -> Optional[dict]:
@@ -61,9 +54,6 @@ class McpEndpointService:
 
     def regenerate_key(self, endpoint_id: str) -> Optional[dict]:
         return self._repo.regenerate_api_key(endpoint_id)
-
-    def verify_access(self, endpoint_id: str, user_id: str) -> bool:
-        return self._repo.verify_access(endpoint_id, user_id)
 
 
 def _dump_tools_config(value: Any) -> Any:

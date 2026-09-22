@@ -20,7 +20,6 @@ from src.version_engine.write_engine.git_object_format import (
 )
 
 from src.version_engine.adapters.git.protocol import ZERO_ID, is_object_id
-from src.utils.logger import log_warning
 
 
 DEFAULT_RETENTION_SECONDS = 7 * 24 * 60 * 60
@@ -40,6 +39,10 @@ class GitObjectGcResult:
     kept_young_count: int
     kept_unknown_age_count: int
     kept_protected_descendant_count: int
+    quarantined_count: int = 0
+    unreachable_bytes: int = 0
+    eligible_bytes: int = 0
+    deleted_bytes: int = 0
     errors: list[str] = field(default_factory=list)
     deleted_sample: list[str] = field(default_factory=list)
     unreachable_sample: list[str] = field(default_factory=list)
@@ -56,6 +59,7 @@ def run_git_object_gc(
     dry_run: bool = True,
     retention_seconds: int = DEFAULT_RETENTION_SECONDS,
     max_delete: int | None = None,
+    quarantine_seconds: int = 0,
     now: datetime | None = None,
 ) -> GitObjectGcResult:
     """Collect unreachable objects for one repo and optionally delete them.
@@ -68,20 +72,17 @@ def run_git_object_gc(
 
     project_id = getattr(repo, "_project_id", "") or ""
     errors: list[str] = []
-    # Errors from WALKING the object graph are tracked separately so the
-    # fail-safe gate keys only off them. A read failure mid-walk is the precise
-    # cause of the "Damaged folder" corruption: a live subtree whose parent
-    # tree read transiently fails is never marked reachable, so its objects get
-    # mis-classified as orphans. (A failure while *collecting roots* is a
-    # different, pre-existing risk class — it can drop a whole disconnected
-    # commit, not create a dangling subtree under a live tree — and is left
-    # non-gating so a transient DB blip on one root source doesn't wedge GC.)
+    # Root discovery, reachability walking, inventory and age metadata are all
+    # proof inputs. Any incomplete input makes "unreachable" unprovable and
+    # therefore gates both dry-run actionability and destructive sweeping.
+    root_errors: list[str] = []
     walk_errors: list[str] = []
-    roots = collect_object_gc_roots(repo, errors=errors)
+    inventory_errors: list[str] = []
+    roots = collect_object_gc_roots(repo, errors=root_errors)
     reachable = mark_reachable_objects(repo, roots, errors=walk_errors)
 
-    all_objects = _all_object_ids(repo, errors=errors)
-    metadata = _object_metadata(repo, errors=errors)
+    all_objects = _all_object_ids(repo, errors=inventory_errors)
+    metadata = _object_metadata(repo, errors=inventory_errors)
     now = _aware_now(now)
 
     unreachable = sorted(
@@ -121,30 +122,65 @@ def run_git_object_gc(
     if max_delete is not None:
         eligible = eligible[:max(0, int(max_delete))]
 
-    # Fail-safe gate. The two ``mark_reachable_objects`` passes are what walk
-    # the object graph to decide which objects are live. If either logged an
-    # error — a tree/commit we couldn't read while walking (so its whole
-    # subtree was never marked reachable, or a young orphan's descendants
-    # weren't re-protected) — then the reachable / protected sets are
-    # potentially INCOMPLETE. Sweeping on an incomplete closure deletes live,
-    # still-referenced objects (e.g. a folder's subtree whose parent tree read
-    # transiently failed mid-walk) and permanently corrupts the repo — exactly
-    # the "Damaged folder" class we are fixing. A GC must fail safe: when it
-    # cannot PROVE an object is unreachable, it keeps it. So if the walk was not
-    # clean, we still report what WOULD be eligible (for observability) but
-    # delete nothing, even when ``dry_run`` is off.
-    closure_incomplete = len(walk_errors) > 0
-    errors = walk_errors + errors
+    proof_incomplete = bool(root_errors or walk_errors or inventory_errors)
+    errors = root_errors + walk_errors + inventory_errors
+    diagnostic_eligible = list(eligible)
+    if proof_incomplete:
+        # Never expose an incomplete candidate set as executable. Operators can
+        # still inspect unreachable_sample and the source-specific errors.
+        eligible = []
+        errors.append(
+            "sweep skipped for safety: reachability closure incomplete; "
+            "GC proof inputs incomplete "
+            f"({len(diagnostic_eligible)} untrusted candidate(s))"
+        )
+
+    candidate_count = len(eligible)
+    unreachable_bytes = sum(
+        int((metadata.get(object_id) or {}).get("size") or 0)
+        for object_id in unreachable
+    )
+    eligible_bytes = sum(
+        int((metadata.get(object_id) or {}).get("size") or 0)
+        for object_id in eligible
+    )
+    if not dry_run and not proof_incomplete and quarantine_seconds > 0:
+        sync_candidates = getattr(
+            getattr(repo, "history", None),
+            "sync_object_gc_candidates",
+            None,
+        )
+        if not callable(sync_candidates):
+            proof_incomplete = True
+            eligible = []
+            errors.append(
+                "sweep skipped for safety: durable GC quarantine registry unavailable"
+            )
+        else:
+            try:
+                eligible = list(sync_candidates(
+                    eligible,
+                    now=now,
+                    quarantine_seconds=quarantine_seconds,
+                ))
+            except Exception as exc:  # noqa: BLE001 - deletion must fail closed.
+                proof_incomplete = True
+                eligible = []
+                errors.append(f"sweep skipped for safety: GC quarantine sync failed: {exc}")
 
     deleted: list[str] = []
-    if not dry_run and closure_incomplete:
-        errors.append(
-            "sweep skipped for safety: reachability closure incomplete "
-            f"({len(eligible)} object(s) would have been eligible) — refusing "
-            "to delete to avoid sweeping live objects"
-        )
-    elif not dry_run:
+    if not dry_run and not proof_incomplete:
         deleted = _delete_eligible_objects(repo, eligible, errors=errors)
+        remove_candidates = getattr(
+            getattr(repo, "history", None),
+            "remove_object_gc_candidates",
+            None,
+        )
+        if deleted and callable(remove_candidates):
+            try:
+                remove_candidates(deleted)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"remove GC candidates after delete: {exc}")
 
     return GitObjectGcResult(
         project_id=project_id,
@@ -153,15 +189,22 @@ def run_git_object_gc(
         root_count=len(roots),
         reachable_count=len(reachable),
         unreachable_count=len(unreachable),
-        eligible_count=len(eligible),
+        eligible_count=candidate_count,
         deleted_count=len(deleted),
         kept_young_count=kept_young,
         kept_unknown_age_count=kept_unknown_age,
         kept_protected_descendant_count=len(protected_descendants),
+        quarantined_count=max(0, candidate_count - len(eligible)),
+        unreachable_bytes=unreachable_bytes,
+        eligible_bytes=eligible_bytes,
+        deleted_bytes=sum(
+            int((metadata.get(object_id) or {}).get("size") or 0)
+            for object_id in deleted
+        ),
         errors=errors,
         deleted_sample=deleted[:_SAMPLE_LIMIT],
         unreachable_sample=unreachable[:_SAMPLE_LIMIT],
-        sweep_skipped_for_safety=(closure_incomplete and not dry_run),
+        sweep_skipped_for_safety=proof_incomplete,
     )
 
 
@@ -172,8 +215,12 @@ def collect_object_gc_roots(repo, *, errors: list[str] | None = None) -> set[str
     roots: set[str] = set()
 
     def add(value: Any) -> None:
-        if isinstance(value, str) and is_object_id(value) and value != ZERO_ID:
-            roots.add(value)
+        if value in (None, "", ZERO_ID):
+            return
+        if not isinstance(value, str) or not is_object_id(value):
+            out_errors.append(f"invalid persisted GC root value: {value!r}")
+            return
+        roots.add(value)
 
     for getter_name in (
         "get_head_commit_id",
@@ -201,6 +248,7 @@ def collect_object_gc_roots(repo, *, errors: list[str] | None = None) -> set[str
     _add_outbox_roots(repo, add, out_errors)
     _add_pending_conflict_roots(repo, add, out_errors)
     _add_version_ref_roots(repo, add, out_errors)
+    _add_shadow_snapshot_roots(repo, add, out_errors)
     return roots
 
 
@@ -213,17 +261,38 @@ def _add_version_ref_roots(repo, add, errors: list[str]) -> None:
     branch/tag's objects after the retention window and serving that ref
     breaks.
     """
-    project_id = getattr(repo, "_project_id", "") or ""
-    if not project_id:
-        return
-    try:
-        from src.version_engine.infrastructure.supabase.version_ref_repository import (
-            VersionRefStore,
-        )
-        for commit_id in VersionRefStore().list_all_commit_ids(project_id):
-            add(commit_id)
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"version_ref roots: {exc}")
+    history = getattr(repo, "history", None)
+    getter = getattr(history, "list_version_ref_roots", None)
+    if callable(getter):
+        try:
+            for commit_id in getter():
+                add(commit_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"version_ref roots: {exc}")
+
+
+def _add_shadow_snapshot_roots(repo, add, errors: list[str]) -> None:
+    """Protect objects referenced by un-promoted shadow snapshots (ISSUE-012).
+
+    Shadow snapshots upload their referenced blobs into the canonical object
+    store *before* promotion and may sit un-promoted indefinitely. A pending
+    snapshot's ``tree_hash`` is not reachable from any ref, so without adding it
+    to the root set GC would reclaim the snapshot's objects once they age past
+    the retention window and break ``/promote``. Marking the tree then protects
+    the blobs it references transitively.
+
+    DB-only by design: the ``tree_hash`` lives on the ``local_shadow_snapshots``
+    row, so this stays synchronous. Reading the S3 manifest's ``blob_hashes``
+    from the sync GC root pass is intentionally avoided.
+    """
+    history = getattr(repo, "history", None)
+    getter = getattr(history, "list_shadow_snapshot_roots", None)
+    if callable(getter):
+        try:
+            for tree_hash in getter():
+                add(tree_hash)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"shadow_snapshot roots: {exc}")
 
 
 def mark_reachable_objects(
@@ -424,7 +493,10 @@ def _add_pending_conflict_roots(repo, add, errors: list[str]) -> None:
 
 def _add_nested_roots(value: Any, add) -> None:
     if isinstance(value, str):
-        add(value)
+        # Conflict/outbox payloads contain ordinary strings as well as hashes;
+        # only hash-shaped values are declared roots by this recursive scan.
+        if is_object_id(value):
+            add(value)
     elif isinstance(value, dict):
         for child in value.values():
             _add_nested_roots(child, add)

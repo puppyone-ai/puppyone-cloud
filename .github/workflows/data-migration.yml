@@ -1,0 +1,84 @@
+name: Data Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target protected database environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      migration_id:
+        description: Exact directory ID under supabase/data_migrations
+        required: true
+        type: string
+      operation:
+        description: Plan is read-only; run mutates and records; verify is read-only
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - run
+          - verify
+
+permissions:
+  contents: read
+
+jobs:
+  validate_protected_ref:
+    name: Validate protected source branch
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Enforce environment branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$TARGET_ENVIRONMENT" = "staging" ] && [ "$GITHUB_REF" != "refs/heads/qubits" ]; then
+            echo "::error::Staging data migrations must run from the qubits branch."
+            exit 1
+          fi
+          if [ "$TARGET_ENVIRONMENT" = "production" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Production data migrations must run from the main branch."
+            exit 1
+          fi
+
+  staging:
+    if: inputs.environment == 'staging'
+    needs: validate_protected_ref
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ inputs.migration_id }}
+      operation: ${{ inputs.operation }}
+
+  production_staging_evidence:
+    if: inputs.environment == 'production' && inputs.operation == 'run'
+    needs: validate_protected_ref
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: staging
+      migration_id: ${{ inputs.migration_id }}
+      operation: verify
+
+  production:
+    if: >-
+      always() &&
+      inputs.environment == 'production' &&
+      needs.validate_protected_ref.result == 'success' &&
+      (inputs.operation != 'run' || needs.production_staging_evidence.result == 'success')
+    needs:
+      - validate_protected_ref
+      - production_staging_evidence
+    uses: ./.github/workflows/_data-migration.yml
+    secrets: inherit
+    with:
+      environment: production
+      migration_id: ${{ inputs.migration_id }}
+      operation: ${{ inputs.operation }}

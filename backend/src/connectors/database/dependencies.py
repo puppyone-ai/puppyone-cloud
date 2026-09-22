@@ -4,8 +4,8 @@ from fastapi import Depends
 from src.infra.supabase.client import SupabaseClient
 from src.connectors.database.repository import DBConnectionRepository
 from src.connectors.database.service import DBConnectorService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 
 
 def _get_supabase_client() -> SupabaseClient:
@@ -20,6 +20,6 @@ def get_db_connection_repository(
 
 def get_db_connector_service(
     repo: DBConnectionRepository = Depends(get_db_connection_repository),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ) -> DBConnectorService:
-    return DBConnectorService(repo, project_service)
+    return DBConnectorService(repo, authorization)

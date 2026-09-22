@@ -19,16 +19,18 @@ import threading
 from collections import OrderedDict
 from typing import ClassVar
 
-from src.version_engine.write_engine.git_object_format import (
-    MODE_DIR, MODE_FILE, TreeEntry, encode_tree,
-)
-from src.version_engine.storage.object_store import ObjectStore
-from src.version_engine.write_engine.path_utils import normalize_path
-from src.version_engine.write_engine.tree import read_tree, tree_to_flat
-from src.version_engine.infrastructure.supabase.scope_manager import ScopeManager
-
 from src.version_engine.infrastructure.supabase.audit_backend import SupabaseAuditManager
 from src.version_engine.infrastructure.supabase.history_repository import SupabaseHistoryManager
+from src.version_engine.infrastructure.supabase.scope_manager import ScopeManager
+from src.version_engine.storage.object_store import ObjectStore
+from src.version_engine.write_engine.git_object_format import (
+    MODE_DIR,
+    MODE_FILE,
+    TreeEntry,
+    encode_tree,
+)
+from src.version_engine.write_engine.path_utils import normalize_path
+from src.version_engine.write_engine.tree import read_tree, tree_to_flat
 
 
 class PuppyOneServerRepo:
@@ -50,7 +52,9 @@ class PuppyOneServerRepo:
     # retry, AND the next request also benefits from the cache as long as
     # nothing mutated the scope. Putting the dict on the class gives both
     # behaviours from one cache.
-    _scope_files_cache: ClassVar[OrderedDict[tuple[str, str, str], dict[str, bytes]]] = OrderedDict()
+    _scope_files_cache: ClassVar[OrderedDict[tuple[str, str, str], dict[str, bytes]]] = (
+        OrderedDict()
+    )
     _scope_files_cache_lock: ClassVar[threading.Lock] = threading.Lock()
     _SCOPE_FILES_CACHE_MAX: ClassVar[int] = 32
 
@@ -83,8 +87,7 @@ class PuppyOneServerRepo:
 
     # ── Scope (delegated to ScopeManager) ──
 
-    def add_scope(self, scope_id: str, path: str,
-                  exclude: list | None = None) -> dict:
+    def add_scope(self, scope_id: str, path: str, exclude: list | None = None) -> dict:
         return self.scopes.add(scope_id, path, exclude)
 
     # ── Global Head Commit ──
@@ -161,7 +164,9 @@ class PuppyOneServerRepo:
         handler always passes the fresh commit id it just minted.
         """
         return self.history.cas_update_scope_hash(
-            scope_path, old_hash, new_hash,
+            scope_path,
+            old_hash,
+            new_hash,
             head_commit_id=head_commit_id,
         )
 
@@ -172,16 +177,26 @@ class PuppyOneServerRepo:
     # ── History ──
 
     def record_history(
-        self, commit_id: str, who: str, message: str,
-        scope_path: str, changes: list,
+        self,
+        commit_id: str,
+        who: str,
+        message: str,
+        scope_path: str,
+        changes: list,
         conflicts: list | None = None,
         scope_hash: str = "",
         root_hash: str = "",
         created_at_iso: str = "",
     ) -> None:
         self.history.record(
-            commit_id, who, message, scope_path, changes, conflicts,
-            root_hash=root_hash, scope_hash=scope_hash,
+            commit_id,
+            who,
+            message,
+            scope_path,
+            changes,
+            conflicts,
+            root_hash=root_hash,
+            scope_hash=scope_hash,
             created_at_iso=created_at_iso,
         )
 
@@ -209,6 +224,7 @@ class PuppyOneServerRepo:
         scope_hash: str = "",
         scope_head_commit_id: str = "",
         expected_scope_head_commit_id: str | None = None,
+        storage_measurement: dict | None = None,
     ) -> tuple[bool, int | None]:
         """Publish a product-level root transaction.
 
@@ -226,7 +242,7 @@ class PuppyOneServerRepo:
                 "product-root writes require the atomic publish path"
             )
 
-        return publish(
+        publish_kwargs = dict(
             old_root_hash=old_root_hash,
             new_root_hash=new_root_hash,
             scope_path=scope_path,
@@ -249,6 +265,13 @@ class PuppyOneServerRepo:
             proposed_tree_id=proposed_tree_id,
             intent_type=intent_type,
         )
+        # Keep the disabled-mode call contract identical to the pre-billing
+        # publisher. Besides supporting community adapters, this prevents a
+        # rollout from requiring every custom history backend to implement a
+        # no-op keyword before storage metering is enabled.
+        if storage_measurement is not None:
+            publish_kwargs["storage_measurement"] = storage_measurement
+        return publish(**publish_kwargs)
 
     def record_version_index(
         self,
@@ -274,8 +297,10 @@ class PuppyOneServerRepo:
         return latest() if callable(latest) else ""
 
     def get_history_since(
-        self, since_commit_id: str,
-        scope_path: str | None = None, limit: int = 0,
+        self,
+        since_commit_id: str,
+        scope_path: str | None = None,
+        limit: int = 0,
     ) -> list[dict]:
         return self.history.get_since(since_commit_id, scope_path, limit)
 
@@ -327,7 +352,7 @@ class PuppyOneServerRepo:
         """Read the files visible to a scope from the canonical root.
 
         Root-first architecture makes the project root the source of truth.
-        ``mut_scope_state`` is kept as a protocol/cache hint, so it is used only
+        ``version_scope_state`` is kept as a protocol/cache hint, so it is used only
         as a legacy fallback when the root has not yet been migrated.
 
         Cached on (project_id, scope_path, scope_hash). The cost we're
@@ -357,7 +382,10 @@ class PuppyOneServerRepo:
         return result
 
     def _compute_scope_files(
-        self, scope: dict, scope_path: str, scope_hash: str,
+        self,
+        scope: dict,
+        scope_path: str,
+        scope_hash: str,
     ) -> dict[str, bytes]:
         """Walk the tree and download every reachable blob (slow path).
 
@@ -370,7 +398,10 @@ class PuppyOneServerRepo:
         return {}
 
     def _cache_scope_files(
-        self, scope_path: str, scope_hash: str, files: dict[str, bytes],
+        self,
+        scope_path: str,
+        scope_hash: str,
+        files: dict[str, bytes],
     ) -> None:
         """Insert into the FIFO-bounded scope-files cache. Bytes are
         shared by reference — this is a dict-overhead cache, not a
@@ -382,8 +413,7 @@ class PuppyOneServerRepo:
             while len(self._scope_files_cache) > self._SCOPE_FILES_CACHE_MAX:
                 self._scope_files_cache.popitem(last=False)
 
-    def _files_from_tree(self, tree_hash: str, scope_path: str,
-                         scope: dict) -> dict[str, bytes]:
+    def _files_from_tree(self, tree_hash: str, scope_path: str, scope: dict) -> dict[str, bytes]:
         excludes = [normalize_path(e) for e in scope.get("exclude", [])]
         flat = tree_to_flat(self.store, tree_hash)
         result: dict[str, bytes] = {}
@@ -415,7 +445,9 @@ class PuppyOneServerRepo:
             # re-downloading every blob from S3. Saves the second of
             # the two slow passes per push.
             self._cache_scope_files(
-                normalize_path(scope_path), tree_hash, files,
+                normalize_path(scope_path),
+                tree_hash,
+                files,
             )
             return tree_hash
 
@@ -495,10 +527,7 @@ def _scope_key(scope: dict) -> str:
 
 
 def _is_excluded(full_rel: str, excludes: list[str]) -> bool:
-    return any(
-        full_rel.startswith(exc + "/") or full_rel == exc
-        for exc in excludes
-    )
+    return any(full_rel.startswith(exc + "/") or full_rel == exc for exc in excludes)
 
 
 def _write_nested_tree(store: ObjectStore, node: dict) -> str:
@@ -512,11 +541,13 @@ def _write_nested_tree(store: ObjectStore, node: dict) -> str:
     for name, val in sorted(node.items()):
         if isinstance(val, tuple):
             kind, sub_hash = val
-            entries.append(TreeEntry(
-                name=name,
-                mode=MODE_FILE if kind == "B" else MODE_DIR,
-                sha1_hex=sub_hash,
-            ))
+            entries.append(
+                TreeEntry(
+                    name=name,
+                    mode=MODE_FILE if kind == "B" else MODE_DIR,
+                    sha1_hex=sub_hash,
+                )
+            )
         else:
             sub_hash = _write_nested_tree(store, val)
             entries.append(TreeEntry(name=name, mode=MODE_DIR, sha1_hex=sub_hash))

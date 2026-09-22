@@ -24,6 +24,8 @@ validated against a live app before production.
 from __future__ import annotations
 
 import httpx
+import posixpath
+import re
 
 from src.platform.scope_sandbox.provider import (
     ConnectionInfo,
@@ -204,10 +206,7 @@ class FlyMachinesProvider(SandboxProvider):
         the few ``sudo`` steps still work. Raises on non-zero exit so provisioning
         failures surface (mirrors the E2B provider).
         """
-        wrapped = command
-        if self._username and self._username != "root":
-            esc = command.replace("'", "'\\''")
-            wrapped = f"su - {self._username} -c '{esc}'"
+        wrapped = self._as_user(command)
         resp = await self._request(
             "POST",
             f"{self._machine_path(sandbox_id)}/exec",
@@ -225,3 +224,48 @@ class FlyMachinesProvider(SandboxProvider):
                 f"{command!r}: {result['stderr'][:500]}"
             )
         return result
+
+    async def write_secret(
+        self, sandbox_id: str, relative_path: str, value: str
+    ) -> None:
+        path = _home_secret_path(self._username, relative_path)
+        parent = posixpath.dirname(path)
+        command = (
+            f"umask 077; mkdir -p '{parent}'; "
+            f"cat > '{path}'; chmod 600 '{path}'"
+        )
+        wrapped = self._as_user(command)
+        response = await self._request(
+            "POST",
+            f"{self._machine_path(sandbox_id)}/exec",
+            json={
+                "command": ["/bin/sh", "-c", wrapped],
+                "stdin": value,
+                "timeout": 60,
+            },
+        )
+        data = response.json()
+        if data.get("exit_code", 0) not in (0, None):
+            raise RuntimeError(
+                f"fly secret write failed on {sandbox_id}: "
+                f"{str(data.get('stderr') or '')[:500]}"
+            )
+
+    def _as_user(self, command: str) -> str:
+        if not self._username or self._username == "root":
+            return command
+        escaped = command.replace("'", "'\\''")
+        return f"su - {self._username} -c '{escaped}'"
+
+
+def _home_secret_path(username: str, relative_path: str) -> str:
+    raw = relative_path.strip().lstrip("/")
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", raw):
+        raise ValueError("Sandbox secret path contains unsupported characters")
+    clean = posixpath.normpath(raw)
+    if clean in {"", "."} or clean == ".." or clean.startswith("../"):
+        raise ValueError("Sandbox secret path must stay below the user home")
+    user = username.strip() or "puppy"
+    if "/" in user or user in {".", ".."}:
+        raise ValueError("Sandbox username is invalid")
+    return f"/home/{user}/{clean}"

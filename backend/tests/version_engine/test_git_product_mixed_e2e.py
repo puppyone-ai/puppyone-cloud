@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -33,6 +34,11 @@ from tests.version_engine.test_server_repo import FakeAuditManager, FakeHistoryM
 
 FRONTEND_HTTP_SAVE_BUDGET_MS = 2_000
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="concurrent real-git HTTP test deadlocks in Windows msvcrt file locks; Linux CI covers it",
+)
+
 
 @pytest.fixture
 def memory_store(tmp_path) -> ObjectStore:
@@ -46,6 +52,23 @@ def test_git_cli_and_frontend_native_writes_share_version_engine_under_concurren
     tmp_path,
     memory_store,
 ):
+    # This is an in-memory mixed-protocol test. Isolate the three optional
+    # control/derived seams that otherwise read the developer's Supabase URL
+    # from .env and leak slow background threads into the test.
+    from src.repo.connector_repository import ConnectorRepository
+    from src.version_engine.derived import outbox
+    from src.infra.search import text_indexer
+    from src.version_engine.infrastructure.supabase.version_ref_repository import (
+        VersionRefStore,
+    )
+
+    monkeypatch.setattr(
+        ConnectorRepository, "get_by_scope_provider", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(VersionRefStore, "list_refs", lambda *_a, **_k: [])
+    monkeypatch.setattr(text_indexer, "index_commit_delta", lambda *_a, **_k: None)
+    monkeypatch.setattr(outbox, "complete_version_outbox_for_commit", lambda *_a, **_k: True)
+
     from src.version_engine.write_engine.tree_objects import build_tree_from_files
     from src.version_engine.infrastructure.supabase.scope_manager import ScopeManager
     from src.version_engine.infrastructure.supabase.server_repo import PuppyOneServerRepo

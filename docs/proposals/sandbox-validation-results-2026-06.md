@@ -87,7 +87,7 @@ manager 的 `acquire` 对 RUNNING 记录直接 reuse、不校验 provider 真实
 
 **5.6 [低] E2B `exec` 有唤醒副作用**:`SdkE2BClient.exec` 走 `Sandbox.connect(id)` → 对 paused sandbox 会**自动 resume**。即 exec 隐含"确保运行"。属预期但要知道(别在 stopped 状态下做 exec 当只读探活)。
 
-**5.7 [低/债] 两套 sandbox 系统并存**:legacy `infra/sandbox` + `connectors/sandbox_endpoint`(JSON-edit/stateless exec)与 V2 `scope_sandbox` 并存。短期不冲突,但要规划:V2 成熟后把 access-surface sandbox 切到 V2,legacy 退役 / 仅留 agent JSON-edit 用途。
+**5.7 [已收敛] Sandbox 单一产品边界**:`infra/sandbox` 已退役。一次性 agent/endpoint 执行成为 `platform/scope_sandbox/execution` 模式，长驻 IDE workspace 使用同目录的 provider/manager；命令策略集中，长驻 session 默认使用 Supabase store，一次性执行在每个请求结束时写回并销毁。
 
 ### 未实现(对照 PUP §7,属计划内、非 bug)
 HTTP API + 鉴权;SSH 凭证签发/撤销;前端 provider 选择 + 项目设置存储;DB-backed registry;reaper job;sandbox 镜像(sshd+git+CLI);Fly 专用 IPv4;可观测(写 sync_runs / 修 GAP-8);自适应 metrics 调参(目前阈值是静态默认)。

@@ -1,5 +1,2 @@
-import { ProjectPageLoadingShell } from '@/components/loading';
-
-export default function DataSegmentLoading() {
-  return <ProjectPageLoadingShell />;
-}
+/** The parent Files layout owns the persistent content and its read states. */
+export default function FileRouteLoading() { return null; }

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
+from src.exceptions import CasRetriesExhausted
 from src.version_engine.domain.intents import TransactionResult, VersionSubmissionIntent
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.write_engine.audit import (
@@ -17,6 +18,7 @@ from src.version_engine.write_engine.audit import (
     log_done as _log_done,
     now_iso as _now_iso,
 )
+from src.version_engine.write_engine.cas_backoff import cas_backoff
 from src.version_engine.write_engine.conflict_policy import (
     QUEUE_POLICIES,
     merge_file_sets_for_policy,
@@ -101,6 +103,7 @@ class SubmissionWriter:
 
         last_error: Exception | None = None
         for attempt in range(_MAX_CAS_ATTEMPTS):
+            await cas_backoff(attempt)
             attempt_no = attempt + 1
             old_root_hash, base_root_hash = _get_project_root_state_for_write(repo)
             project_head_commit_id = _get_project_view_head(repo, old_root_hash)
@@ -499,7 +502,7 @@ class SubmissionWriter:
                 f"project={intent.project_id} scope={scope_norm!r}",
             )
 
-        raise RuntimeError(
+        raise CasRetriesExhausted(
             f"[version_engine][{intent.source_channel}_push] root CAS still failing "
             f"after {_MAX_CAS_ATTEMPTS} attempts "
             f"(project={intent.project_id}, scope={scope_norm!r}); "

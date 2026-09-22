@@ -15,15 +15,17 @@ Pre-existing missed events are reconciled by normal version refresh/fetch.
 
 Concurrency
 -----------
-The manager is process-wide singleton-style. Connections register
-via :meth:`register` and unregister on disconnect. All public methods
-are async-safe. We don't try to be cluster-aware — running multiple
-backend replicas means each only fans out to its own connections, and
-normal version refresh/fetch covers the rest.
+The manager is process-wide singleton-style. Connections register via
+:meth:`register` and unregister on disconnect. Redis distributes business
+events to every replica; each replica keeps only its live socket handles.
+Canonical history paging is the durable reconnect source when Pub/Sub delivery
+is interrupted.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -32,6 +34,9 @@ from datetime import datetime, timezone
 from fastapi import WebSocket
 
 from src.utils.logger import log_debug, log_info, log_warning
+
+# Redis channel for cross-replica commit_update fan-out (ISSUE-015).
+_PUBSUB_CHANNEL = "puppyone:version_notifications"
 
 
 @dataclass
@@ -58,7 +63,7 @@ class NotificationManager:
 
     _instance: "NotificationManager | None" = None
 
-    def __init__(self):
+    def __init__(self, *, redis_client=None):
         # (project_id, scope_path) → list of active connections.
         self._conns: dict[tuple[str, str], list[_ClientConn]] = defaultdict(list)
         # client_id → list of pending events for offline clients.
@@ -68,6 +73,13 @@ class NotificationManager:
         # against the iteration in broadcast which would otherwise
         # race a concurrent unregister.
         self._lock = asyncio.Lock()
+        # Cross-replica pub/sub (ISSUE-015). Disabled unless NOTIFICATIONS_REDIS_URL
+        # is set; origin id lets a replica ignore the events it published itself.
+        self._origin_id = uuid.uuid4().hex
+        self._redis = redis_client
+        self._injected_redis = redis_client is not None
+        self._pubsub_task: asyncio.Task | None = None
+        self._pubsub_started = False
 
     @classmethod
     def get(cls) -> "NotificationManager":
@@ -85,6 +97,7 @@ class NotificationManager:
         self, websocket: WebSocket, project_id: str,
         scope_path: str, agent: str,
     ) -> _ClientConn:
+        await self._ensure_pubsub_started()
         scope_norm = (scope_path or "").strip("/")
         conn = _ClientConn(
             websocket=websocket, project_id=project_id,
@@ -149,8 +162,29 @@ class NotificationManager:
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
 
+        await self._ensure_pubsub_started()
+        # Fan out to this replica's own connections...
+        await self._local_broadcast(
+            project_id, scope_norm, payload,
+            pushed_by=pushed_by, pusher_client_id=pusher_client_id,
+        )
+        # ...and to other replicas via Redis (no-op when pub/sub is disabled).
+        await self._publish({
+            "origin": self._origin_id,
+            "project_id": project_id,
+            "scope_norm": scope_norm,
+            "payload": payload,
+            "pushed_by": pushed_by,
+            "pusher_client_id": pusher_client_id,
+        })
+
+    async def _local_broadcast(
+        self, project_id: str, scope_norm: str, payload: dict, *,
+        pushed_by: str, pusher_client_id: str,
+    ) -> None:
+        """Fan a prepared commit_update payload out to THIS replica's clients."""
         # Targets: every connection on the same project whose scope
-        # contains the affected path. ``''`` (root scope) is the
+        # contains the affected path. ``''`` (Project root) is the
         # ancestor of everything.
         targets: list[_ClientConn] = []
         async with self._lock:
@@ -183,6 +217,76 @@ class NotificationManager:
                 f"sent={sent} dropped={dropped}"
             )
 
+    # ── cross-replica pub/sub (ISSUE-015) ──────────────
+
+    async def _ensure_pubsub_started(self) -> None:
+        """Lazily connect Redis + start the subscriber. Fail-open: any error
+        degrades to process-local fan-out (the pre-ISSUE-015 behaviour)."""
+        if self._pubsub_started:
+            return
+        self._pubsub_started = True  # only attempt once
+        if self._injected_redis:
+            self._pubsub_task = asyncio.create_task(self._subscriber_loop())
+            return
+        from src.config import settings
+        url = getattr(settings, "NOTIFICATIONS_REDIS_URL", "") or ""
+        if not url:
+            return
+        try:
+            import redis.asyncio as aioredis
+            self._redis = aioredis.from_url(url, encoding="utf-8", decode_responses=True)
+            self._pubsub_task = asyncio.create_task(self._subscriber_loop())
+            log_info("[NotificationManager] cross-replica pub/sub enabled")
+        except Exception as e:  # noqa: BLE001 — never break notifications on redis issues
+            log_warning(f"[NotificationManager] pub/sub disabled (init failed): {e}")
+            self._redis = None
+
+    async def _publish(self, routing: dict) -> None:
+        if not self._redis:
+            return
+        try:
+            await self._redis.publish(_PUBSUB_CHANNEL, json.dumps(routing))
+        except Exception as e:  # noqa: BLE001 — local fan-out already happened
+            log_warning(f"[NotificationManager] publish failed (local-only): {e}")
+
+    async def _subscriber_loop(self) -> None:
+        """Receive commit_updates published by OTHER replicas and fan them out
+        to this replica's local connections. Own-origin events are skipped."""
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe(_PUBSUB_CHANNEL)
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                try:
+                    data = json.loads(message["data"])
+                except Exception:  # noqa: BLE001
+                    continue
+                if data.get("origin") == self._origin_id:
+                    continue  # already fanned out locally by this replica
+                await self._local_broadcast(
+                    data.get("project_id", ""), data.get("scope_norm", ""),
+                    data.get("payload", {}),
+                    pushed_by=data.get("pushed_by", ""),
+                    pusher_client_id=data.get("pusher_client_id", ""),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log_warning(f"[NotificationManager] subscriber loop ended: {e}")
+
+    async def stop_pubsub(self) -> None:
+        """Cancel the subscriber + close Redis (call on app shutdown)."""
+        if self._pubsub_task:
+            self._pubsub_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._pubsub_task
+            self._pubsub_task = None
+        if self._redis:
+            with contextlib.suppress(Exception):
+                await self._redis.aclose()
+            self._redis = None
+
     def _enqueue_offline(self, client_id: str, payload: dict):
         q = self._offline[client_id]
         if len(q) >= self.MAX_OFFLINE_PER_CLIENT:
@@ -213,7 +317,7 @@ class NotificationManager:
 
 def _is_ancestor(maybe_ancestor: str, descendant: str) -> bool:
     """Return True if *maybe_ancestor* contains *descendant* as a path
-    prefix. Empty string is the root scope and an ancestor of everything.
+    prefix. Empty string is the Project root and an ancestor of everything.
     """
     if not maybe_ancestor:
         return True

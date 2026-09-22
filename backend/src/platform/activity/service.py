@@ -6,13 +6,16 @@ from fastapi import HTTPException, status
 
 from src.platform.activity.repository import ACTIVITY_KINDS, ActivityRepository
 from src.platform.activity.schemas import ActivityItemResponse
-from src.platform.project.service import ProjectService
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 
 class ActivityService:
-    def __init__(self, *, repo: ActivityRepository, project_service: ProjectService):
+    def __init__(
+        self, *, repo: ActivityRepository, authorization: AuthorizationService
+    ):
         self.repo = repo
-        self.project_service = project_service
+        self.authorization = authorization
 
     def list_for_project(
         self,
@@ -26,7 +29,7 @@ class ActivityService:
         # Authorization boundary: the view is read with the service-role
         # client, so we must verify the caller can access this project before
         # returning any rows. Mirrors ImportJobService.list_for_project.
-        self.project_service.get_by_id_with_access_check(project_id, user_id)
+        self.authorization.authorize(project_id, user_id, ProjectAction.HISTORY_READ)
 
         if kind is not None and kind not in ACTIVITY_KINDS:
             raise HTTPException(

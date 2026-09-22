@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _env_path = Path(__file__).resolve().parents[3] / ".env"
-load_dotenv(_env_path, override=True)
+load_dotenv(_env_path, override=False)
 
 from arq.connections import RedisSettings  # noqa: E402
 

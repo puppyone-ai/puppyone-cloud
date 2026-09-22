@@ -165,6 +165,23 @@ async def test_exec_raises_on_nonzero_exit():
         await _provider(handler).exec("m1", "false")
 
 
+async def test_secret_write_uses_stdin_not_command_arguments():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"stdout": "", "stderr": "", "exit_code": 0})
+
+    secret = "git-token-never-in-command"
+    await _provider(handler).write_secret(
+        "m1", ".config/puppyone/git-http-token", secret
+    )
+    body = json.loads(seen[0].content)
+    assert body["stdin"] == secret
+    assert secret not in " ".join(body["command"])
+    assert "git-http-token" in " ".join(body["command"])
+
+
 async def test_exec_single_quote_in_command_is_escaped():
     seen: list[httpx.Request] = []
 

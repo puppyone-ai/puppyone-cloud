@@ -33,6 +33,7 @@ from src.version_engine.adapters.git.view_projection import (
 )
 from src.version_engine.write_engine.git_object_format import (
     MODE_DIR,
+    MODE_FILE,
     decode_commit,
     decode_tree,
     encode_object,
@@ -82,7 +83,9 @@ def transport_bare_repo(
     )
     cache_dir = cache_key.cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = cache_dir / "cache.lock"
+    from src.version_engine.adapters.git.view_cache import view_lock_path
+
+    lock_path = view_lock_path(cache_dir)
     with file_exclusive_lock(lock_path):
         bare_dir = cache_dir / "repo.git"
         _ensure_bare_repo(bare_dir)
@@ -108,7 +111,9 @@ def transport_bare_repo(
             health_reason=view_head.reason,
             history_cut=view_head.history_cut,
         )
-    yield bare_dir
+        # Hold the lease while Git consumes the bare repo/alternates. Pruning
+        # uses a non-blocking attempt on the same lock and skips active views.
+        yield bare_dir
 
 
 @contextmanager
@@ -650,14 +655,21 @@ def official_receive_pack_quarantine(
 
 
 def _run_official_receive_pack(bare_dir: Path, request_path: Path) -> bytes:
+    # Bound wall-clock time so a hostile pack cannot hang receive-pack (ISSUE-014).
+    from src.config import settings
+    timeout = settings.GIT_SUBPROCESS_TIMEOUT_SECONDS or None
     with request_path.open("rb") as stdin:
-        proc = subprocess.run(
-            ["git", "receive-pack", "--stateless-rpc", str(bare_dir)],
-            stdin=stdin,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                ["git", "receive-pack", "--stateless-rpc", str(bare_dir)],
+                stdin=stdin,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"git receive-pack timed out after {timeout}s") from exc
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(stderr or "git receive-pack failed")
@@ -850,62 +862,6 @@ def _write_main_ref(bare_dir: Path, head: str) -> None:
 def _bare_has_object(bare_dir: Path, object_id: str) -> bool:
     loose = bare_dir / "objects" / object_id[:2] / object_id[2:]
     return loose.exists()
-
-
-def _missing_reachable_object_ids(repo, bare_dir: Path, roots: list[str]) -> set[str]:
-    missing: set[str] = set()
-    stack = [root for root in roots if is_object_id(root) and root != ZERO_ID]
-    while stack:
-        object_id = stack.pop()
-        if object_id in missing:
-            continue
-        if _bare_has_object(bare_dir, object_id):
-            continue
-        missing.add(object_id)
-        try:
-            obj_type, body = repo.store.get_object(object_id)
-        except Exception:
-            continue
-        if obj_type == "commit":
-            commit = decode_commit(body)
-            tree = commit.get("tree", "")
-            if is_object_id(tree):
-                stack.append(tree)
-            for parent in commit.get("parents") or []:
-                if is_object_id(parent):
-                    stack.append(parent)
-        elif obj_type == "tree":
-            for entry in decode_tree(body):
-                if is_object_id(entry.sha1_hex):
-                    stack.append(entry.sha1_hex)
-    return missing
-
-
-def _reachable_object_ids(repo, roots: list[str]) -> set[str]:
-    reachable: set[str] = set()
-    stack = [root for root in roots if is_object_id(root) and root != ZERO_ID]
-    while stack:
-        object_id = stack.pop()
-        if object_id in reachable:
-            continue
-        reachable.add(object_id)
-        try:
-            obj_type, body = repo.store.get_object(object_id)
-        except Exception:
-            continue
-        if obj_type == "commit":
-            commit = decode_commit(body)
-            tree = commit.get("tree", "")
-            if is_object_id(tree):
-                stack.append(tree)
-            for parent in commit.get("parents") or []:
-                if is_object_id(parent):
-                    stack.append(parent)
-        elif obj_type == "tree":
-            for entry in decode_tree(body):
-                if is_object_id(entry.sha1_hex):
-                    stack.append(entry.sha1_hex)
-    return reachable
 
 
 def _reachable_object_ids_from_bare(

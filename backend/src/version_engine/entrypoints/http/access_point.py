@@ -13,12 +13,9 @@ themselves (see ``adapters/git/router.py`` for Git smart-HTTP and
 longer mounts the old custom wire-protocol surface; access point traffic now
 enters through Git smart HTTP or AP-FS.
 
-An access key maps directly to a ``repo_scopes`` row. The row carries
-everything the auth context needs:
-
-  - project_id: which project to operate on
-  - path / exclude / mode: scope geometry
-  - access_key_revoked_at: null if active, timestamp if revoked
+An access key resolves through ``access_surface_credentials`` and an active
+CLI Access Surface to one exact ``repository_scopes`` target. Credential
+identity, Surface identity, and Scope geometry remain separate facts.
 """
 
 from __future__ import annotations
@@ -29,11 +26,15 @@ import time
 
 from fastapi import HTTPException
 
+from src.exceptions import ErrorCode
+from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.repo.models import ResolvedScopeCredential
+from src.utils.logger import log_error
 from src.version_engine.adapters.git.protocol import ACCESS_POINT_MAIN_REF
 from src.version_engine.infrastructure.supabase.scope_repository import (
-    find_scope_by_access_key,
+    resolve_scope_access_credential,
 )
-from src.utils.logger import log_error
 
 _ACCESS_POINT_CACHE_TTL_SECONDS = 5.0
 _access_point_cache: dict[str, tuple[float, str, dict]] = {}
@@ -66,30 +67,42 @@ def _set_cached_access_point(access_key: str, project_id: str, auth: dict) -> No
         )
 
 
-def _auth_context_from_scope_row(scope_row: dict) -> tuple[str, dict]:
-    """Materialize the L1 auth context from a ``repo_scopes`` row.
+def _auth_context_from_scope_credential(
+    resolved: ResolvedScopeCredential,
+) -> tuple[str, dict]:
+    """Materialize a typed RuntimeGrant from resolved credential facts."""
 
-    Raises 401 if the row is revoked — revocation must not silently
-    fall through to another policy model.
-    """
-    if scope_row.get("access_key_revoked_at"):
-        raise HTTPException(status_code=401, detail="Access point key has been revoked")
-    project_id = scope_row["project_id"]
+    scope = resolved.scope
+    project_id = scope.project_id
+    scope_id = scope.id
+    mode = RuntimeMode(scope.max_mode)
+    target = ScopeTarget(project_id=project_id, scope_id=scope_id)
+    runtime_grant = RuntimeGrant(
+        principal=RuntimePrincipal(
+            principal_id=resolved.credential_id,
+            credential_kind=resolved.credential_type,
+        ),
+        target=target,
+        repository_view=ResolvedRepositoryView(
+            target=target,
+            path_prefix=scope.path,
+            excludes=tuple(scope.exclude),
+            max_mode=mode.value,
+            ref=ACCESS_POINT_MAIN_REF,
+        ),
+        mode=mode,
+    )
     return project_id, {
-        "agent": f"scope:{scope_row['id']}",
-        "_scope": {
-            "id": scope_row["id"],
-            "path": scope_row.get("path", ""),
-            "exclude": scope_row.get("exclude") or [],
-            "mode": scope_row.get("mode", "rw"),
-        },
+        "agent": f"scope:{scope_id}",
+        "_runtime_grant": runtime_grant,
+        "_credential_id": resolved.credential_id,
+        "_access_surface_id": resolved.access_surface_id,
         "_repo_facade": {
-            "id": scope_row["id"],
+            "id": scope_id,
             "kind": "access_point",
             "ref": ACCESS_POINT_MAIN_REF,
             "object_store_scope": "project-shared",
         },
-        "_project_id": project_id,
         "_user_identity": "",
     }
 
@@ -97,9 +110,9 @@ def _auth_context_from_scope_row(scope_row: dict) -> tuple[str, dict]:
 def resolve_access_point(access_key: str) -> tuple[str, dict]:
     """Resolve an access_key to (project_id, auth_context).
 
-    ``repo_scopes`` is the canonical Access Point identity table. The old
-    config-scope resolution path has been removed so credentials
-    cannot resolve through two different policy models.
+    The bounded legacy route still resolves through the canonical credential,
+    Access Surface, and Scope repositories. No config or Scope-column fallback
+    exists.
 
     Raises:
         HTTPException 401 if key is invalid / revoked / unknown.
@@ -111,14 +124,22 @@ def resolve_access_point(access_key: str) -> tuple[str, dict]:
     from src.infra.supabase.client import SupabaseClient
 
     try:
-        scope_row = find_scope_by_access_key(SupabaseClient(), access_key)
+        resolved = resolve_scope_access_credential(SupabaseClient(), access_key)
     except Exception as e:
-        log_error(f"[AP] repo_scopes lookup error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid access point key") from e
+        log_error(f"[AP] credential target lookup error: {type(e).__name__}")
+        raise HTTPException(
+            status_code=503,
+            detail="Repository view is temporarily unavailable",
+            headers={
+                "X-PuppyOne-Error-Code": str(
+                    ErrorCode.REPOSITORY_STORAGE_UNAVAILABLE.value
+                )
+            },
+        ) from e
 
-    if scope_row is None:
+    if resolved is None:
         raise HTTPException(status_code=401, detail="Invalid access point key")
 
-    project_id, auth = _auth_context_from_scope_row(scope_row)
+    project_id, auth = _auth_context_from_scope_credential(resolved)
     _set_cached_access_point(access_key, project_id, auth)
     return project_id, auth

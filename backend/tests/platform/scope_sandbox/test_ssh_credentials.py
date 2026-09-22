@@ -22,7 +22,8 @@ def test_format_expiry_is_utc_yyyymmddhhmmss():
 
 def test_authorized_key_line_has_expiry_option_and_user_tag():
     line = sc.authorized_key_line(ED, "alice", "20260607000000")
-    assert line.startswith('expiry-time="20260607000000" ssh-ed25519 ')
+    assert line.startswith('expiry-time="20260607000000",no-agent-forwarding,')
+    assert 'command="/usr/local/bin/puppyone-ssh-policy" ssh-ed25519 ' in line
     assert line.endswith(" puppyone:user=alice")
 
 
@@ -119,7 +120,7 @@ async def test_provision_user_workspace_clones_into_user_dir():
 
     workdir = await sc.provision_user_workspace(
         Box(), "sb-1", "alice",
-        git_url="https://qubits-api.puppyone.ai/git/ap/KEY.git",
+        git_url="https://qubits-api.puppyone.ai/git/project-1/scopes/scope-1.git",
         user_email="alice@corp.com", user_name="Alice",
     )
     assert workdir == "alice"

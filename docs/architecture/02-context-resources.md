@@ -186,8 +186,14 @@ An access surface resolves to:
 External examples:
 
 ```text
-Git Remote:
-  https://<host>/git/ap/<access_key>.git
+Git Remote root locator:
+  https://<host>/git/{project_id}.git
+
+Git Remote scoped locator:
+  https://<host>/git/{project_id}/scopes/{scope_id}.git
+
+Git credential:
+  separate HTTP Basic password; never part of the locator
 
 CLI / AP-FS:
   /api/v1/ap-fs/*
@@ -196,6 +202,9 @@ CLI / AP-FS:
 Sandbox:
   scoped runtime session mounted on a workspace view
 ```
+
+The URL, credential, and legacy migration rules are owned by
+[Git Remote Locator, Credential, And Access Point Contract](05-git-remote-accesspoint.md).
 
 All Access families submit reads and writes through the same Version Engine
 boundary. They may behave externally like separate scoped workspaces, but

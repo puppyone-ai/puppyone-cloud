@@ -6,38 +6,31 @@ This class implements the Facade pattern, delegating to individual sub-module Re
 """
 
 from typing import List, Optional
+
 from supabase import Client
 
+from src.content.table.supabase_repo import TableRepository
+from src.content.table.supabase_schemas import (
+    TableCreate,
+    TableResponse,
+    TableUpdate,
+)
+from src.context_publish.supabase_repo import ContextPublishRepository
+from src.context_publish.supabase_schemas import (
+    ContextPublishCreate,
+    ContextPublishResponse,
+    ContextPublishUpdate,
+)
 from src.infra.supabase.client import SupabaseClient
 
 # Import each sub-module's Repository
 from src.platform.project.supabase_repo import ProjectRepository
-from src.content.table.supabase_repo import TableRepository
-from src.infra.mcp_server.supabase_repo import McpRepository
-from src.tool.supabase_repo import ToolRepository
-from src.context_publish.supabase_repo import ContextPublishRepository
-
 from src.platform.project.supabase_schemas import (
-    ProjectCreate,
-    ProjectUpdate,
     ProjectResponse,
+    ProjectUpdate,
 )
-from src.content.table.supabase_schemas import (
-    TableCreate,
-    TableUpdate,
-    TableResponse,
-)
-from src.infra.mcp_server.supabase_schemas import (
-    McpCreate,
-    McpUpdate,
-    McpResponse,
-)
-from src.tool.supabase_schemas import ToolCreate, ToolUpdate, ToolResponse
-from src.context_publish.supabase_schemas import (
-    ContextPublishCreate,
-    ContextPublishUpdate,
-    ContextPublishResponse,
-)
+from src.tool.supabase_repo import ToolRepository
+from src.tool.supabase_schemas import ToolCreate, ToolResponse, ToolUpdate
 
 
 class SupabaseRepository:
@@ -58,26 +51,10 @@ class SupabaseRepository:
         # Initialize sub-repositories
         self._project_repo = ProjectRepository(self._client)
         self._table_repo = TableRepository(self._client)
-        self._mcp_repo = McpRepository(self._client)
         self._tool_repo = ToolRepository(self._client)
         self._context_publish_repo = ContextPublishRepository(self._client)
 
     # ==================== Project Operations ====================
-
-    def create_project(self, project_data: ProjectCreate) -> ProjectResponse:
-        """
-        Create a project.
-
-        Args:
-            project_data: Project creation data
-
-        Returns:
-            Created project data
-
-        Raises:
-            SupabaseException: When creation fails
-        """
-        return self._project_repo.create(project_data)
 
     def get_project(self, project_id: str) -> Optional[ProjectResponse]:
         """
@@ -131,18 +108,6 @@ class SupabaseRepository:
             SupabaseException: When update fails
         """
         return self._project_repo.update(project_id, project_data)
-
-    def delete_project(self, project_id: str) -> bool:
-        """
-        Delete a project.
-
-        Args:
-            project_id: Project ID
-
-        Returns:
-            Whether deletion was successful
-        """
-        return self._project_repo.delete(project_id)
 
     # ==================== Table Operations ====================
 
@@ -225,131 +190,6 @@ class SupabaseRepository:
             Whether deletion was successful
         """
         return self._table_repo.delete(table_id)
-
-    # ==================== MCP Operations ====================
-
-    def create_mcp(self, mcp_data: McpCreate) -> McpResponse:
-        """
-        Create an MCP instance.
-
-        Args:
-            mcp_data: MCP creation data
-
-        Returns:
-            Created MCP instance data
-
-        Raises:
-            SupabaseException: When creation fails
-        """
-        return self._mcp_repo.create(mcp_data)
-
-    def get_mcp(self, mcp_id: str) -> Optional[McpResponse]:
-        """
-        Get MCP instance by ID.
-
-        Args:
-            mcp_id: MCP instance ID
-
-        Returns:
-            MCP instance data, or None if not found
-        """
-        return self._mcp_repo.get_by_id(mcp_id)
-
-    def get_mcp_by_api_key(self, api_key: str) -> Optional[McpResponse]:
-        """
-        Get MCP instance by API Key.
-
-        Args:
-            api_key: MCP API Key
-
-        Returns:
-            MCP instance data, or None if not found
-        """
-        return self._mcp_repo.get_by_api_key(api_key)
-
-    def get_mcps(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        project_id: Optional[str] = None,
-        table_id: Optional[str] = None,
-    ) -> List[McpResponse]:
-        """
-        Get MCP instance list (filtered by project_id, no longer by user_id).
-
-        Args:
-            skip: Number of records to skip
-            limit: Number of records to return
-            project_id: Optional, filter by project ID
-            table_id: Optional, filter by table ID
-
-        Returns:
-            List of MCP instances
-        """
-        return self._mcp_repo.get_list(
-            skip=skip,
-            limit=limit,
-            project_id=project_id,
-            table_id=table_id,
-        )
-
-    def update_mcp(self, mcp_id: str, mcp_data: McpUpdate) -> Optional[McpResponse]:
-        """
-        Update an MCP instance.
-
-        Args:
-            mcp_id: MCP instance ID
-            mcp_data: MCP update data
-
-        Returns:
-            Updated MCP instance data, or None if not found
-
-        Raises:
-            SupabaseException: When update fails
-        """
-        return self._mcp_repo.update(mcp_id, mcp_data)
-
-    def update_mcp_by_api_key(
-        self, api_key: str, mcp_data: McpUpdate
-    ) -> Optional[McpResponse]:
-        """
-        Update MCP instance by API Key.
-
-        Args:
-            api_key: MCP API Key
-            mcp_data: MCP update data
-
-        Returns:
-            Updated MCP instance data, or None if not found
-
-        Raises:
-            SupabaseException: When update fails
-        """
-        return self._mcp_repo.update_by_api_key(api_key, mcp_data)
-
-    def delete_mcp(self, mcp_id: str) -> bool:
-        """
-        Delete an MCP instance.
-
-        Args:
-            mcp_id: MCP instance ID
-
-        Returns:
-            Whether deletion was successful
-        """
-        return self._mcp_repo.delete(mcp_id)
-
-    def delete_mcp_by_api_key(self, api_key: str) -> bool:
-        """
-        Delete MCP instance by API Key.
-
-        Args:
-            api_key: MCP API Key
-
-        Returns:
-            Whether deletion was successful
-        """
-        return self._mcp_repo.delete_by_api_key(api_key)
 
     # ==================== Tool Operations ====================
 

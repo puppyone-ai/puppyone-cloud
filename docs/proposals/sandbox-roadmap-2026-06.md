@@ -15,7 +15,7 @@
 | 8 | 可观测(写 sync_runs/GAP-8)+ 调参 | P1/P2 | 用量可见 + 调 session 策略 | 调参需真实数据量 | — | **✅ 可观测已实现**:sidecar 持久化计数器(checkpoints/publishes/conflicts/integrations/holds/compactions/push_races + last_*_ts + chain_ahead),`status`(人读)/`metrics`(JSON)子命令暴露;服务端 `GET /scope-sync/stats` 聚合事件日志(publish 量、distinct origins/paths、per-source、latest head)。**调参半待真实用量数据** |
 | 9 | HTTP API + 前端 provider 选择 | P1(产品化) | 用户能用的最后一公里 | 核心未稳前做=返工 | 1,2,5 |
 | 10 | Fly 路径(镜像+IPv4+SSH) | P1/P2 | 推荐默认、原生 TCP SSH、便宜 | 卡绑支付+计费;E2B 已可验证可缓 | — | **代码侧就绪**:provider 生命周期+凭证+SSH 连接已 live-validated(2026-06-13);镜像烤入 sshd(硬化)+python3+git+procps+coreutils(sidecar 依赖齐全);connect 自动起 sidecar 走 self-detach(`setsid&`,Fly exec SSH 式存活,非 E2B background),`su -c` 嵌套引用已单测验证。**仅待**:生产公网 IPv4(绑卡 ~$3.6/mo)+ VSCode IDE 实走一遍 |
-| 11 | legacy 与 V2 退役 (5.7) | P2 | 少维护少混淆 | 现不冲突;过早合并牵扯 agent 用途 | — | **审计结论(2026-06-14):无可退役项**。`infra/sandbox`(一次性 exec,被 agent router/sandbox_endpoint/scheduler 2 个 job 引用)与 `connectors/sandbox_endpoint`(已注册 `/api/v1/sandbox-endpoints`,被 manager/internal 引用)均**在用且职责不同**——一次性 agent 执行 vs 我的长存 IDE 接入(`scope_sandbox`,provider.py 明确对比"legacy 一次性 `SandboxBase`")。无路由冲突、无 import 环、与团队 connector/integration 重构(connector=数据/运行时适配器,Integration=产品生命周期;不碰 sandbox/scope)清晰分层。**仅当 `scope_sandbox` 增加一次性会话能力以 subsume `infra/sandbox` 时才重谈退役。** |
+| 11 | legacy 与 V2 退役 (5.7) | **完成** | 单一 sandbox 产品边界 | 一次性与长驻生命周期仍是两个明确 mode | — | `infra/sandbox` 已迁入 `platform/scope_sandbox/execution`;所有调用方已切换。Agent turn 不再跨请求复用进程内 sandbox，长驻 scope session 默认 Supabase store。 |
 
 ## 推进顺序
 - **第一梯队(让 demo 变真功能 + 会话长存,单进程即见效)**:**#1 + #2**。

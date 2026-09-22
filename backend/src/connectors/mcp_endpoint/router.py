@@ -10,10 +10,22 @@ from src.connectors.mcp_endpoint.schemas import (
 from src.connectors.mcp_endpoint.dependencies import (
     get_mcp_endpoint_service,
     get_verified_mcp_endpoint,
+    get_writable_mcp_endpoint,
+    get_credential_mcp_endpoint,
 )
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.common_schemas import ApiResponse
+from src.config import settings
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+
+
+def _mcp_server_url() -> str:
+    """Public MCP proxy URL external clients connect to (auth via Authorization: Bearer)."""
+    base = (settings.PUBLIC_URL or "").rstrip("/")
+    return f"{base}/api/v1/mcp/proxy" if base else ""
 
 
 router = APIRouter(
@@ -36,6 +48,7 @@ def _to_out(row: dict) -> McpEndpointOut:
         api_key=row.get("api_key", ""),
         api_key_hint=row.get("api_key_hint", ""),
         api_key_revealed=bool(row.get("api_key_revealed", False)),
+        server_url=_mcp_server_url(),
         tools_config=row.get("tools_config", {}),
         accesses=row.get("accesses", []),
         created_by=row.get("created_by"),
@@ -55,9 +68,11 @@ def list_endpoints(
     project_id: str = Query(..., description="Project ID"),
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
-    if not service.verify_project_access(project_id, current_user.user_id):
-        raise HTTPException(status_code=403, detail="Access denied")
+    authorization.authorize(
+        project_id, current_user.user_id, ProjectAction.ACCESS_READ
+    )
     rows = service.list_endpoints(project_id)
     return ApiResponse.success(data=[_to_out(r) for r in rows])
 
@@ -82,12 +97,14 @@ def get_by_path(
     path: str,
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     row = service.get_by_path(path)
     if not row:
         raise HTTPException(status_code=404, detail="No MCP endpoint for this path")
-    if not service.verify_access(row["id"], current_user.user_id):
-        raise HTTPException(status_code=403, detail="Access denied")
+    authorization.authorize(
+        row["project_id"], current_user.user_id, ProjectAction.ACCESS_READ
+    )
     return ApiResponse.success(data=_to_out(row))
 
 
@@ -100,9 +117,11 @@ def create_endpoint(
     payload: McpEndpointCreate,
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
-    if not service.verify_project_access(payload.project_id, current_user.user_id):
-        raise HTTPException(status_code=403, detail="Access denied")
+    authorization.authorize(
+        payload.project_id, current_user.user_id, ProjectAction.MCP_MANAGE
+    )
     row = service.create_endpoint(
         project_id=payload.project_id,
         name=payload.name,
@@ -122,7 +141,7 @@ def create_endpoint(
 )
 def update_endpoint(
     payload: McpEndpointUpdate,
-    endpoint: dict = Depends(get_verified_mcp_endpoint),
+    endpoint: dict = Depends(get_writable_mcp_endpoint),
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
 ):
@@ -139,7 +158,7 @@ def update_endpoint(
     summary="Delete MCP endpoint",
 )
 def delete_endpoint(
-    endpoint: dict = Depends(get_verified_mcp_endpoint),
+    endpoint: dict = Depends(get_writable_mcp_endpoint),
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
 ):
@@ -153,7 +172,7 @@ def delete_endpoint(
     summary="Regenerate API key",
 )
 def regenerate_key(
-    endpoint: dict = Depends(get_verified_mcp_endpoint),
+    endpoint: dict = Depends(get_credential_mcp_endpoint),
     current_user: CurrentUser = Depends(get_current_user),
     service: McpEndpointService = Depends(get_mcp_endpoint_service),
 ):

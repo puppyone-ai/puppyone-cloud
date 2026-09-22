@@ -51,8 +51,9 @@ class TableService:
         return build_worker_version_engine_container().product_operations()
 
     def _get_write_commands(self):
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-        return build_worker_version_engine_container().write_commands()
+        from src.platform.project.write_lease import build_leased_worker_write_commands
+
+        return build_leased_worker_write_commands()
 
     def _table_version_path(self, _project_id: str, table_id: str) -> str:
         """Standard path for Table in the version tree"""
@@ -100,24 +101,6 @@ class TableService:
 
     def get_by_id(self, table_id: str) -> Table | None:
         return self.repo.get_by_id(table_id)
-
-    def get_by_id_with_access_check(self, table_id: str, user_id: str) -> Table:
-        table = self.get_by_id(table_id)
-        if not table:
-            raise NotFoundException(
-                f"Table not found: {table_id}", code=ErrorCode.NOT_FOUND
-            )
-
-        has_access = self.repo.verify_table_access(table_id, user_id)
-        if not has_access:
-            raise NotFoundException(
-                f"Table not found: {table_id}", code=ErrorCode.NOT_FOUND
-            )
-
-        return table
-
-    def verify_project_access(self, project_id: str, user_id: str) -> bool:
-        return self.repo.verify_project_access(project_id, user_id)
 
     # ================================================================
     # Write operations - all through Write Engine (ProductOperationAdapter)

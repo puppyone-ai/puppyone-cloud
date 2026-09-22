@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://puppyone.ai/schemas/data-migration-manifest-v1.json",
+  "title": "PuppyOne data migration manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "id",
+    "description",
+    "kind",
+    "entrypoint",
+    "verify",
+    "requires_schema"
+  ],
+  "properties": {
+    "api_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9]{8,14}_[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "description": { "type": "string", "minLength": 8, "maxLength": 240 },
+    "kind": { "enum": ["sql", "python"] },
+    "entrypoint": { "type": "string", "pattern": "^[a-z0-9_]+\\.(sql|py)$" },
+    "verify": { "type": "string", "pattern": "^[a-z0-9_]+\\.sql$" },
+    "requires_schema": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[0-9]{14}$" }
+    },
+    "required_env": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+    },
+    "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+    "batch_size": { "type": ["integer", "null"], "minimum": 1, "maximum": 100000 },
+    "contract_key": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "legacy": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "sql" } } },
+      "then": {
+        "properties": {
+          "entrypoint": { "type": "string", "pattern": "^[a-z0-9_]+\\.sql$" },
+          "batch_size": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "python" } } },
+      "then": {
+        "properties": {
+          "entrypoint": { "type": "string", "pattern": "^[a-z0-9_]+\\.py$" }
+        }
+      }
+    }
+  ]
+}

@@ -14,6 +14,7 @@
  */
 
 import { createClient } from "../api.js";
+import { buildMcpConnection } from "../mcp-config.js";
 import { createOutput } from "../output.js";
 import { requireProject, withErrors, formatDate } from "../helpers.js";
 
@@ -579,7 +580,11 @@ export function registerAccess(program) {
         name: (c.name || "").slice(0, 25),
         direction: c.direction || "\u2014",
         status: statusLabel(c.status),
-        key: maskKey(c.access_key),
+        // The list endpoint no longer returns the raw access_key (ISSUE-002);
+        // prefer the masked has_key/key_last4 fields, and fall back to masking a
+        // full key if an older backend still sends one. Use `access info <id>`
+        // to reveal the full key.
+        key: c.access_key ? maskKey(c.access_key) : (c.has_key ? `...${c.key_last4}` : "\u2014"),
         lastSync: c.last_synced_at ? timeAgo(c.last_synced_at) : "\u2014",
       })), [
         { key: "id", label: "ID" },
@@ -833,22 +838,28 @@ export function registerAccess(program) {
 // ── Type-specific guidance ──────────────────────────────────
 
 function _showAgentGuidance(out, agent, baseUrl) {
-  const key = agent.mcp_api_key || agent.access_key;
-  if (!key) return;
-  out.info(`\n  Access Key: ${key}\n`);
+  const connection = buildMcpConnection(agent, baseUrl);
+  if (!connection) return;
+  out.info(`\n  MCP API Key: ${connection.apiKey}`);
+  out.info("  (save this key — it won't be shown again)\n");
   out.info("  Chat:");
   out.info(`    puppyone chat ${agent.id}\n`);
-  out.info("  Connect from Claude / Cursor:");
-  out.info(`    npx -y mcp-remote ${baseUrl}/mcp?api_key=${key}`);
+  _showMcpClientConfig(out, connection);
 }
 
 function _showMcpGuidance(out, endpoint, baseUrl) {
-  const key = endpoint.api_key || endpoint.access_key;
-  if (!key) return;
-  out.info(`\n  API Key: ${key}`);
-  out.info("  (save this key \u2014 it won't be shown again)\n");
-  out.info("  Connect from Claude Desktop / Cursor:");
-  out.info(`    npx -y mcp-remote ${baseUrl}/mcp?api_key=${key}`);
+  const connection = buildMcpConnection(endpoint, baseUrl);
+  if (!connection) return;
+  out.info(`\n  API Key: ${connection.apiKey}`);
+  out.info("  (save this key — it won't be shown again)\n");
+  _showMcpClientConfig(out, connection);
+}
+
+function _showMcpClientConfig(out, connection) {
+  out.info(`  Server URL: ${connection.serverUrl}`);
+  out.info(`  Header: Authorization: ${connection.authorization}\n`);
+  out.info("  Claude Desktop / Cursor HTTP MCP config:");
+  out.info(JSON.stringify(connection.clientConfig, null, 2));
 }
 
 function _showSandboxGuidance(out, endpoint) {
@@ -888,13 +899,12 @@ function _showFsGuidance(out, connection, baseUrl, profileFallback = "file-acces
 
 function _showProviderGuidance(out, connection, baseUrl) {
   const { provider, access_key: key, id } = connection;
-  if (provider === "agent" && key) {
+  if (provider === "agent") {
     out.info("  \u2500 How to use this agent:");
-    out.info(`    Chat:         puppyone chat ${id}`);
-    out.info(`    MCP connect:  npx -y mcp-remote ${baseUrl}/mcp?api_key=${key}\n`);
-  } else if (provider === "mcp" && key) {
+    _showAgentGuidance(out, connection, baseUrl);
+  } else if (provider === "mcp") {
     out.info("  \u2500 How to connect:");
-    out.info(`    npx -y mcp-remote ${baseUrl}/mcp?api_key=${key}\n`);
+    _showMcpGuidance(out, connection, baseUrl);
   } else if (provider === "sandbox") {
     out.info("  \u2500 Execute via Agent or API.\n");
   } else if (provider === "direct" && key) {

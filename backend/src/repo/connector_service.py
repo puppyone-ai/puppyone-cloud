@@ -10,18 +10,22 @@ Responsibilities:
 from __future__ import annotations
 from typing import Any, Optional
 
-from src.exceptions import BusinessException, NotFoundException
+from src.exceptions import AppException, BusinessException, ErrorCode, NotFoundException
+from src.repo.access_surface_repository import AccessSurfaceRepository
 from src.repo.connector_repository import ConnectorRepository
 from src.repo.models import Connector
+from src.repo.scope_repository import RepositoryScopeRepository
+from src.platform.repository_target.models import (
+    ProjectRootTarget,
+    RepositoryTarget,
+    ScopeTarget,
+    repository_target_scope_id,
+)
 
 
 PROVIDERS_BIDIRECTIONAL = frozenset({"git_remote", "cli", "agent"})
-# The built-in Access surfaces that every scope ships with:
-#   - git_remote  — scoped Git smart-HTTP remote
-#   - cli         — FS CLI commands against the remote tree
-#   - agent       — in-app chat agent that can read/write the scope
-# These are created with the scope and are undeletable via the legacy API
-# (pause/resume only).
+# Built-in Access surfaces are explicitly enabled per repository target and
+# cannot be created through the third-party connector endpoint.
 PROVIDERS_OAUTH_BACKED = frozenset({
     "notion", "gmail", "google_sheets", "google_docs",
     "google_calendar", "google_drive", "google_search_console",
@@ -38,7 +42,7 @@ def _provider_default_name(provider: str) -> str:
     return provider.replace("_", " ").title()
 
 
-def _clear_connector_policy_cache(scope_id: str, provider: str) -> None:
+def _clear_connector_policy_cache(scope_id: str | None, provider: str) -> None:
     """Best-effort cache invalidation for hot-path admission checks."""
     try:
         from src.version_engine.admission.connector_policy import (
@@ -51,7 +55,7 @@ def _clear_connector_policy_cache(scope_id: str, provider: str) -> None:
         pass
 
 
-def _clear_connector_admission_cache(scope_id: str, provider: str) -> None:
+def _clear_connector_admission_cache(scope_id: str | None, provider: str) -> None:
     """Best-effort cache invalidation for all connector admission gates."""
     _clear_connector_policy_cache(scope_id, provider)
     try:
@@ -66,8 +70,15 @@ def _clear_connector_admission_cache(scope_id: str, provider: str) -> None:
 
 
 class ConnectorService:
-    def __init__(self, repository: Optional[ConnectorRepository] = None):
+    def __init__(
+        self,
+        repository: Optional[ConnectorRepository] = None,
+        surface_repository: Optional[AccessSurfaceRepository] = None,
+        scope_repository: Optional[RepositoryScopeRepository] = None,
+    ):
         self._repo = repository or ConnectorRepository()
+        self._surfaces = surface_repository or AccessSurfaceRepository()
+        self._scopes = scope_repository or RepositoryScopeRepository()
 
     # ── Reads ────────────────────────────────────────────────────────────
 
@@ -90,16 +101,13 @@ class ConnectorService:
     def get(self, connector_id: str) -> Optional[Connector]:
         return self._repo.get(connector_id)
 
-    def get_agent_by_mcp_key(self, mcp_api_key: str) -> Optional[Connector]:
-        return self._repo.get_agent_by_mcp_key(mcp_api_key)
-
     # ── Writes ───────────────────────────────────────────────────────────
 
     def create(
         self,
         *,
         project_id: str,
-        scope_id: str,
+        target: RepositoryTarget,
         provider: str,
         direction: str,
         name: Optional[str],
@@ -109,11 +117,11 @@ class ConnectorService:
         trigger: Optional[dict[str, Any]],
         created_by: Optional[str],
     ) -> Connector:
-        # Built-in Access surfaces are created with the scope; this legacy API
-        # never creates them.
+        # Built-in Access surfaces have a dedicated idempotent enable action;
+        # this third-party connector endpoint never creates them.
         if provider in PROVIDERS_BIDIRECTIONAL:
             raise BusinessException(
-                f"'{provider}' access surfaces are created per scope. "
+                f"'{provider}' access surfaces are created per repository target. "
                 "Edit the existing surface instead of creating a new one."
             )
 
@@ -138,17 +146,27 @@ class ConnectorService:
                 "then re-create this connector."
             )
 
-        # Verify scope exists and belongs to the same project before INSERT.
-        # Without this, an invalid scope_id surfaces as a raw FK violation
-        # that the global handler turns into a generic 500.
-        from src.repo.scope_repository import RepoScopeRepository
-        scope = RepoScopeRepository().get(scope_id)
-        if scope is None or scope.project_id != project_id:
-            raise NotFoundException(f"Scope {scope_id!r} not found in this project")
+        if target.project_id != project_id:
+            raise AppException(
+                code=ErrorCode.TARGET_KIND_MISMATCH,
+                status_code=422,
+                message="Repository target is not in this Project",
+            )
+        if isinstance(target, ScopeTarget):
+            # Without this, an invalid Scope target surfaces as a raw composite
+            # FK violation that the global handler turns into a generic 500.
+            scope = self._scopes.get(target.scope_id)
+            if scope is None or scope.project_id != project_id:
+                raise NotFoundException(
+                    f"Scope {target.scope_id!r} not found in this Project",
+                    code=ErrorCode.SCOPE_NOT_FOUND,
+                )
+        elif not isinstance(target, ProjectRootTarget):
+            raise NotFoundException("Unsupported repository target")
 
         return self._repo.insert(
             project_id=project_id,
-            scope_id=scope_id,
+            scope_id=repository_target_scope_id(target),
             provider=provider,
             name=name or _provider_default_name(provider),
             direction=direction,
@@ -159,6 +177,46 @@ class ConnectorService:
             created_by=created_by,
         )
 
+    def enable_target_defaults(
+        self,
+        *,
+        project_id: str,
+        target: RepositoryTarget,
+        created_by: str | None,
+    ) -> list[Connector]:
+        """Idempotently enable Git and CLI for one exact target."""
+
+        if target.project_id != project_id:
+            raise AppException(
+                code=ErrorCode.TARGET_KIND_MISMATCH,
+                status_code=422,
+                message="Repository target is not in this Project",
+            )
+        scope = None
+        if isinstance(target, ScopeTarget):
+            scope = self._scopes.get(target.scope_id)
+            if scope is None or scope.project_id != project_id:
+                raise NotFoundException(
+                    "Repository Scope not found in this Project",
+                    code=ErrorCode.SCOPE_NOT_FOUND,
+                )
+        elif not isinstance(target, ProjectRootTarget):
+            raise NotFoundException("Unsupported repository target")
+
+        self._surfaces.ensure_target_defaults(
+            project_id=project_id,
+            scope=scope,
+            created_by=created_by,
+        )
+        scope_id = repository_target_scope_id(target)
+        enabled = []
+        for kind in ("git_remote", "cli"):
+            row = self._surfaces.get_by_target_kind(project_id, scope_id, kind)
+            if row is None:
+                raise RuntimeError(f"{kind} Access Surface was not enabled")
+            enabled.append(self._repo.get(str(row["id"])))
+        return [connector for connector in enabled if connector is not None]
+
     def update(self, connector_id: str, patch: dict[str, Any]) -> Optional[Connector]:
         existing = self._repo.get(connector_id)
         if existing is None:
@@ -168,9 +226,8 @@ class ConnectorService:
             raise BusinessException(
                 "Built-in connector direction is fixed at 'bidirectional'."
             )
-        # Don't let updates change provider or scope_id (those are immutable
-        # post-create — re-create the connector if that's what you want).
-        for forbidden in ("provider", "scope_id", "project_id"):
+        # Target/provider identity is immutable after creation.
+        for forbidden in ("provider", "target", "scope_id", "project_id"):
             patch.pop(forbidden, None)
         updated = self._repo.update(connector_id, patch)
         if updated is not None:
@@ -178,12 +235,12 @@ class ConnectorService:
         return updated
 
     def activate_agent_connector(self, connector_id: str) -> Optional[Connector]:
-        """Activate the built-in chat Agent access surface for a scope.
+        """Activate the built-in chat Agent access surface for a target.
 
         The default AI Agent is an in-app chat runtime, not an external MCP
-        endpoint. Activation claims the auto-created ``kind='agent'`` surface
-        through the legacy connector facade by writing the chat-agent metadata
-        and scope binding into config. ``/agent-config`` then exposes the row
+        endpoint. Activation marks an existing ``kind='agent'`` surface ready
+        and writes its resolved repository view into config. ``/agent-config``
+        then exposes the row
         as a normal saved Agent, and the frontend can open ``agent_chat``
         directly.
         """
@@ -193,22 +250,38 @@ class ConnectorService:
         if existing.provider != "agent":
             raise BusinessException("Only built-in agent connectors can be activated.")
 
-        from src.repo.scope_repository import RepoScopeRepository
-        scope = RepoScopeRepository().get(existing.scope_id)
-        if scope is None or scope.project_id != existing.project_id:
-            raise NotFoundException("Agent scope not found")
+        scope = None
+        if isinstance(existing.target, ScopeTarget):
+            scope = self._scopes.get(existing.target.scope_id)
+            if scope is None or scope.project_id != existing.project_id:
+                raise NotFoundException(
+                    "Agent repository Scope not found",
+                    code=ErrorCode.SCOPE_NOT_FOUND,
+                )
 
         config = dict(existing.config or {})
-        config.setdefault("name", existing.name or scope.name or "AI Agent")
+        config.setdefault("name", existing.name or (scope.name if scope else "AI Agent"))
         config.setdefault("icon", "✨")
         config["type"] = "chat"
         config["activated"] = True
-        config["scope"] = {
-            "id": scope.id,
-            "path": scope.path,
-            "exclude": scope.exclude,
-            "mode": scope.mode,
+        config["repository_view"] = {
+            "target": {
+                "kind": "scope" if scope else "project_root",
+                "project_id": existing.project_id,
+                **({"scope_id": scope.id} if scope else {}),
+            },
+            "path_prefix": scope.path if scope else "",
+            "excludes": scope.exclude if scope else [],
+            "max_mode": scope.max_mode if scope else "rw",
         }
+        config.setdefault(
+            "bash_view",
+            {
+                "path_prefix": scope.path if scope else "",
+                "excludes": scope.exclude if scope else [],
+                "max_mode": scope.max_mode if scope else "rw",
+            },
+        )
 
         updated = self._repo.update(
             connector_id,
@@ -227,9 +300,9 @@ class ConnectorService:
             raise NotFoundException("Connector not found")
         if existing.is_builtin:
             raise BusinessException(
-                "Built-in Access surfaces are managed by "
-                "their scope. Delete the scope to remove them, or pause the "
-                "surface instead."
+                "Standard Access surfaces are managed by their repository "
+                "target. Pause the surface instead of deleting it through "
+                "the connector API."
             )
         self._repo.delete(connector_id)
 

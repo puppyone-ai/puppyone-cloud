@@ -47,7 +47,9 @@ class SandboxEndpointOut(BaseModel):
     path: Optional[str] = None
     name: str
     description: Optional[str] = None
-    access_key: str
+    access_key: Optional[str] = None
+    has_key: bool = False
+    key_last4: Optional[str] = None
     mounts: list = Field(default_factory=list)
     runtime: str
     timeout_seconds: int

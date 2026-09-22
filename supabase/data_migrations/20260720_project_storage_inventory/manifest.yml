@@ -1,0 +1,21 @@
+api_version: 1
+id: 20260720_project_storage_inventory
+description: Inventory legacy Project-owned S3 namespaces before opening deletion admission
+kind: python
+entrypoint: run.py
+verify: verify.sql
+requires_schema:
+  - "20260716020000"
+  - "20260717000000"
+  - "20260718000000"
+  - "20260720000000"
+required_env:
+  - SUPABASE_URL
+  - SUPABASE_KEY
+  - S3_BUCKET_NAME
+  - S3_REGION
+  - S3_ACCESS_KEY_ID
+  - S3_SECRET_ACCESS_KEY
+timeout_seconds: 7200
+batch_size: 1000
+legacy: false

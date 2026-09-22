@@ -1,0 +1,15 @@
+{
+  "name": "@puppyone/shared-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/styles/tokens.css",
+    "./shared-ui.css": "./src/styles/shared-ui.css",
+    "./editor.css": "./src/styles/editor.css",
+    "./data-workspace.css": "./src/styles/data-workspace.css",
+    "./jsoneditor.css": "./src/styles/jsoneditor.css"
+  }
+}
+

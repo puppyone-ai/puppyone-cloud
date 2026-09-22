@@ -68,6 +68,7 @@ export type ResizableSidebarColumnProps = {
   /** Optional fully-controlled mode (skips localStorage entirely). */
   width?: number;
   onWidthChange?: (width: number) => void;
+  resizable?: boolean;
 
   /** Pass-through to the outer wrapper element. */
   className?: string;
@@ -106,6 +107,7 @@ export function ResizableSidebarColumn({
   maxWidth = 480,
   width: controlledWidth,
   onWidthChange,
+  resizable = true,
   className,
   style,
   children,
@@ -121,6 +123,7 @@ export function ResizableSidebarColumn({
 
   const [isResizing, setIsResizing] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!resizable) setIsResizing(false); }, [resizable]);
 
   const [isReady, setIsReady] = useState(false);
   useIsomorphicLayoutEffect(() => {
@@ -199,7 +202,8 @@ export function ResizableSidebarColumn({
           : 'transition-[width] duration-150 ease-out',
         className
       )}
-      style={{ width, minWidth: 0, ...style }}
+      data-sidebar-column=''
+      style={{ width: `var(--navigation-width, ${width}px)`, minWidth: 0, ...style }}
     >
       {children}
 
@@ -207,16 +211,26 @@ export function ResizableSidebarColumn({
           handle exactly: 4px wide, anchored 2px past the right edge
           so the hit area straddles the column's border-right. Higher
           z-index than typical sidebar content but below modals. */}
-      <div
+      {resizable && <div
         role='separator'
         aria-orientation='vertical'
         aria-label='Resize sidebar'
+        data-panel-resizer=''
+        tabIndex={0}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        aria-valuenow={width}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          commitWidth(width + (event.key === 'ArrowRight' ? 16 : -16));
+        }}
         onMouseDown={handleMouseDown}
         className={clsx(
           'absolute top-0 right-[-2px] z-20 h-full w-1 cursor-col-resize',
           isResizing ? 'bg-[var(--po-active)]' : 'hover:bg-[var(--po-active)]'
         )}
-      />
+      />}
     </div>
   );
 }

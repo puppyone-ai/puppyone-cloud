@@ -13,6 +13,13 @@ from src.version_engine.entrypoints.http import access_point_fs as apfs
 from src.version_engine.entrypoints.http.access_point_fs import _filter_entries
 from src.version_engine.read.tree_reader import VersionTreeReader
 from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.models import (
+    ProjectRootTarget,
+    ResolvedRepositoryView,
+    ScopeTarget,
+)
+from src.version_engine.infrastructure.supabase.scope_repository import SupabaseScopeBackend
 
 
 def _entry(path: str, type_: str = "file", size_bytes: int | None = None):
@@ -89,6 +96,16 @@ class _BulkExistsBackend(StorageBackend):
 
 
 def _patch_auth(monkeypatch, scope_path: str = ""):
+    if scope_path:
+        target = ScopeTarget(project_id="project-id", scope_id="test-scope")
+    else:
+        target = ProjectRootTarget(project_id="project-id")
+    view = ResolvedRepositoryView(
+        target=target,
+        path_prefix=scope_path.strip("/"),
+        excludes=(),
+        max_mode="rw",
+    )
     monkeypatch.setattr(
         apfs,
         "resolve_access_point",
@@ -96,16 +113,30 @@ def _patch_auth(monkeypatch, scope_path: str = ""):
             "project-id",
             {
                 "agent": "test-ap",
-                "_scope": {
-                    "id": "_root",
-                    "path": scope_path,
-                    "exclude": [],
-                    "mode": "rw",
-                },
+                "_runtime_grant": RuntimeGrant(
+                    principal=RuntimePrincipal(
+                        principal_id="test-credential",
+                        credential_kind="test",
+                    ),
+                    target=target,
+                    repository_view=view,
+                    mode=RuntimeMode.READ_WRITE,
+                ),
             },
         ),
     )
+    monkeypatch.setattr(SupabaseScopeBackend, "list_all_strict", lambda _self: [])
     monkeypatch.setattr(apfs, "admit_cli_fs_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        apfs,
+        "_run_grep_indexed_payload",
+        lambda **_kwargs: {"index_status": "missing"},
+    )
+    monkeypatch.setattr(
+        apfs,
+        "_upload_max_bytes_for_project",
+        lambda _project_id: apfs.POLICY_PER_FILE_MAX_BYTES,
+    )
 
 
 @pytest.mark.asyncio
@@ -113,6 +144,7 @@ def _patch_auth(monkeypatch, scope_path: str = ""):
     ("handler_name", "expected_command", "kwargs"),
     [
         ("list_dir", "ls", {}),
+        ("semantics", "semantics", {}),
         ("tree", "tree", {}),
         ("grep", "grep", {"pattern": "needle"}),
         (
@@ -178,6 +210,12 @@ class _FakeOps:
             raise FileNotFoundError(path)
         return self.files[path]
 
+    def read_file_in_scope(self, project_id, scope_path, path):
+        full = f"{scope_path.strip('/')}/{path.strip('/')}".strip("/")
+        if full in self.files:
+            return self.files[full]
+        return self.read_file(project_id, path.strip("/"))
+
     def read_file_range(self, _project_id, path, *, start=0, limit=None):
         if path not in self.files:
             raise FileNotFoundError(path)
@@ -195,10 +233,19 @@ class _FakeOps:
         self.stat_calls.append({"path": path, "include_size": include_size})
         return self.stats.get(path)
 
+    def stat_in_scope(self, project_id, scope_path, path, *, include_size=False):
+        full = f"{scope_path.strip('/')}/{path.strip('/')}".strip("/")
+        self.stat_calls.append({"path": full, "include_size": include_size})
+        return self.stats.get(full) or self.stats.get(path.strip("/"))
+
     def list_dir(self, _project_id, _path, *, include_size=False):
         if _path in self.list_by_path:
             return self.list_by_path[_path]
         return self.listing
+
+    def list_dir_in_scope(self, project_id, scope_path, path, *, include_size=False):
+        full = f"{scope_path.strip('/')}/{path.strip('/')}".strip("/")
+        return self.list_dir(project_id, full, include_size=include_size)
 
     def list_tree(
         self, _project_id, _path, max_depth=-1, *, include_size=False,
@@ -207,6 +254,19 @@ class _FakeOps:
         if max_entries is None:
             return self.tree_entries
         return self.tree_entries[:max_entries]
+
+    def list_tree_in_scope(
+        self, project_id, scope_path, path, max_depth=-1, *, include_size=False,
+        max_entries=None,
+    ):
+        full = f"{scope_path.strip('/')}/{path.strip('/')}".strip("/")
+        return self.list_tree(
+            project_id,
+            full,
+            max_depth=max_depth,
+            include_size=include_size,
+            max_entries=max_entries,
+        )
 
     def get_head_commit_id(self, _project_id):
         self.head_calls += 1
@@ -713,9 +773,12 @@ async def test_raw_file_can_return_byte_slice(monkeypatch):
 @pytest.mark.asyncio
 async def test_upload_writes_raw_bytes_through_product_operation_adapter(monkeypatch):
     _patch_auth(monkeypatch)
+    monkeypatch.setattr(apfs, "_upload_max_bytes_for_project", lambda _project_id: 1024 * 1024)
     ops = _FakeOps()
 
     class _Request:
+        headers = {}
+
         async def body(self):
             return b"\x00bytes"
 
@@ -883,6 +946,393 @@ async def test_tree_missing_path_raises_not_found(monkeypatch):
         )
 
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_semantics_returns_backend_scoped_fs_capabilities(monkeypatch):
+    _patch_auth(monkeypatch, scope_path="docs")
+
+    result = await apfs.semantics(
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+    )
+
+    assert result.data["scope"]["path"] == "docs"
+    assert result.data["fs_semantics"]["summary"]
+    assert "grep_guidance" in result.data["fs_semantics"]
+    assert any(tool["name"] == "fs_grep" for tool in result.data["tools"])
+
+
+@pytest.mark.asyncio
+async def test_find_uses_canonical_backend_conditions(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    result = await apfs.find_index(
+        path="docs",
+        conditions=json.dumps([
+            {"kind": "name", "value": "*.md", "negate": False},
+            {"kind": "path", "value": "docs/tmp/*", "negate": True},
+        ]),
+        mindepth=1,
+        max_depth=2,
+        limit=10,
+        include_hidden=True,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(
+            stats={"docs": _entry("docs", "folder")},
+            tree=[
+                _entry("docs/a.md", "markdown"),
+                _entry("docs/tmp/a.md", "markdown"),
+                _entry("docs/readme.txt", "file"),
+            ],
+        ),
+    )
+
+    assert result.data["source"] == "live_tree"
+    assert result.data["path"] == "docs"
+    assert result.data["entries"] == [{
+        "name": "a.md",
+        "path": "docs/a.md",
+        "type": "markdown",
+        "content_hash": None,
+        "size_bytes": None,
+        "mime_type": None,
+        "children_count": None,
+        "integrity_status": None,
+        "created_at": None,
+        "modified_at": None,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_grep_uses_authoritative_indexed_backend(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    def _indexed_payload(**kwargs):
+        body = kwargs["body"]
+        return {
+            "scope": "docs",
+            "pattern": body.pattern,
+            "regex": body.regex,
+            "ignore_case": body.ignore_case,
+            "invert_match": body.invert_match,
+            "only_matching": body.only_matching,
+            "limit": body.limit,
+            "per_file_limit": body.per_file_limit,
+            "candidate_limit": body.candidate_limit,
+            "candidates_examined": 1,
+            "hits": [{
+                "path": "docs/a.md",
+                "line": 2,
+                "col": 7,
+                "match": "hello indexed",
+                "context_before": ["before"],
+                "context_after": ["after"],
+                "content_hash": "blob-hash",
+            }],
+            "truncated": False,
+            "index_status": "indexed",
+            "index_freshness": {
+                "indexed_commit_id": "head",
+                "head_commit_id": "head",
+                "commits_behind": 0,
+            },
+            "head_commit_id": "head",
+        }
+
+    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
+    result = await apfs.grep(
+        pattern="hello",
+        path="docs",
+        regex=False,
+        ignore_case=False,
+        include_hidden=False,
+        limit=10,
+        max_files=10,
+        max_bytes=1000,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(stats={"docs": _entry("docs", "folder")}),
+    )
+
+    assert result.data["search_backend"] == "indexed"
+    assert result.data["index_status"] == "indexed"
+    assert result.data["returned_count"] == 1
+    assert result.data["matches"][0]["path"] == "docs/a.md"
+    assert result.data["matches"][0]["line_text"] == "hello indexed"
+    assert result.data["files"] == [{
+        "path": "docs/a.md",
+        "version_path": "docs/a.md",
+        "match_count": 1,
+        "content_hash": "blob-hash",
+    }]
+    assert result.data["scanned_files"] == 0
+
+
+@pytest.mark.asyncio
+async def test_grep_require_file_list_skips_indexed_backend(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    def _unexpected_index(**_kwargs):
+        raise AssertionError("indexed grep should not run when a complete file list is required")
+
+    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _unexpected_index)
+    result = await apfs.grep(
+        pattern="hello",
+        path="",
+        regex=False,
+        ignore_case=False,
+        include_hidden=False,
+        require_file_list=True,
+        limit=10,
+        max_files=10,
+        max_bytes=1000,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(
+            stats={"": _entry("", "folder")},
+            tree=[
+                _entry("a.md", "markdown"),
+                _entry("b.md", "markdown"),
+            ],
+            files={
+                "a.md": b"hello\n",
+                "b.md": b"no match\n",
+            },
+        ),
+    )
+
+    assert "search_backend" not in result.data
+    assert result.data["require_file_list"] is True
+    assert result.data["files"] == [
+        {
+            "path": "a.md",
+            "version_path": "a.md",
+            "match_count": 1,
+            "content_hash": None,
+        },
+        {
+            "path": "b.md",
+            "version_path": "b.md",
+            "match_count": 0,
+            "content_hash": None,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_grep_indexed_backend_still_applies_walk_filters(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    def _indexed_payload(**_kwargs):
+        return {
+            "scope": "",
+            "pattern": "needle",
+            "regex": False,
+            "ignore_case": False,
+            "invert_match": False,
+            "only_matching": False,
+            "limit": 10,
+            "per_file_limit": 0,
+            "candidate_limit": 10,
+            "candidates_examined": 5,
+            "hits": [
+                {
+                    "path": "docs/keep.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle keep",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "keep-hash",
+                },
+                {
+                    "path": ".hidden/skip.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle hidden",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "hidden-hash",
+                },
+                {
+                    "path": "docs/secret.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle secret",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "secret-hash",
+                },
+                {
+                    "path": "vendor/keep.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle vendor",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "vendor-hash",
+                },
+                {
+                    "path": "docs/not-md.txt",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle txt",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "txt-hash",
+                },
+            ],
+            "truncated": False,
+            "index_status": "indexed",
+            "index_freshness": {
+                "indexed_commit_id": "head",
+                "head_commit_id": "head",
+                "commits_behind": 0,
+            },
+            "head_commit_id": "head",
+        }
+
+    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
+    result = await apfs.grep(
+        pattern="needle",
+        path="",
+        regex=False,
+        ignore_case=False,
+        include_hidden=False,
+        include="*.md",
+        exclude="secret*",
+        exclude_dir="vendor",
+        limit=10,
+        max_files=10,
+        max_bytes=1000,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(stats={"": _entry("", "folder")}),
+    )
+
+    assert result.data["search_backend"] == "indexed"
+    assert [match["path"] for match in result.data["matches"]] == ["docs/keep.md"]
+    assert result.data["matched_files"] == 1
+    assert result.data["skipped"]["filtered"] == 4
+
+
+@pytest.mark.asyncio
+async def test_grep_indexed_backend_honors_max_depth(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    def _indexed_payload(**_kwargs):
+        return {
+            "scope": "docs",
+            "pattern": "needle",
+            "regex": False,
+            "ignore_case": False,
+            "invert_match": False,
+            "only_matching": False,
+            "limit": 10,
+            "per_file_limit": 0,
+            "candidate_limit": 10,
+            "candidates_examined": 2,
+            "hits": [
+                {
+                    "path": "docs/keep.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle keep",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "keep-hash",
+                },
+                {
+                    "path": "docs/deep/skip.md",
+                    "line": 1,
+                    "col": 1,
+                    "match": "needle deep",
+                    "context_before": [],
+                    "context_after": [],
+                    "content_hash": "deep-hash",
+                },
+            ],
+            "truncated": False,
+            "index_status": "indexed",
+            "index_freshness": {
+                "indexed_commit_id": "head",
+                "head_commit_id": "head",
+                "commits_behind": 0,
+            },
+            "head_commit_id": "head",
+        }
+
+    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
+    result = await apfs.grep(
+        pattern="needle",
+        path="docs",
+        regex=False,
+        ignore_case=False,
+        include_hidden=True,
+        max_depth=0,
+        limit=10,
+        max_files=10,
+        max_bytes=1000,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(stats={"docs": _entry("docs", "folder")}),
+    )
+
+    assert result.data["search_backend"] == "indexed"
+    assert [match["path"] for match in result.data["matches"]] == ["docs/keep.md"]
+    assert result.data["skipped"]["filtered"] == 1
+
+
+@pytest.mark.asyncio
+async def test_grep_stale_index_falls_back_to_live_scan(monkeypatch):
+    _patch_auth(monkeypatch)
+
+    monkeypatch.setattr(
+        apfs,
+        "_run_grep_indexed_payload",
+        lambda **_kwargs: {
+            "index_status": "stale",
+            "hits": [{
+                "path": "stale.md",
+                "line": 1,
+                "col": 1,
+                "match": "stale",
+                "context_before": [],
+                "context_after": [],
+                "content_hash": "stale-hash",
+            }],
+        },
+    )
+    result = await apfs.grep(
+        pattern="fresh",
+        path="",
+        regex=False,
+        ignore_case=False,
+        include_hidden=False,
+        limit=10,
+        max_files=10,
+        max_bytes=1000,
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+        ops=_FakeOps(
+            stats={"": _entry("", "folder")},
+            tree=[_entry("fresh.md", "markdown")],
+            files={"fresh.md": b"fresh\n"},
+        ),
+    )
+
+    assert "search_backend" not in result.data
+    assert result.data["scanned_files"] == 1
+    assert [match["path"] for match in result.data["matches"]] == ["fresh.md"]
 
 
 @pytest.mark.asyncio

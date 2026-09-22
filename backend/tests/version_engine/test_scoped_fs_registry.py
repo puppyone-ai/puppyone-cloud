@@ -68,6 +68,28 @@ def test_tool_definitions_include_full_mcp_contract_fields():
     assert tool["annotations"]["openWorldHint"] is False
 
 
+def test_find_and_grep_schemas_match_canonical_fs_fields():
+    tools = _tools(writable=False)
+    find_props = tools["fs_find"]["inputSchema"]["properties"]
+    grep_props = tools["fs_grep"]["inputSchema"]["properties"]
+
+    assert {"conditions", "mindepth", "max_depth", "include_hidden"}.issubset(find_props)
+    assert find_props["conditions"]["items"]["properties"]["kind"]["enum"] == ["name", "iname", "path", "type"]
+    assert {
+        "invert_match",
+        "only_matching",
+        "include_hidden",
+        "include",
+        "exclude",
+        "exclude_dir",
+        "max_depth",
+        "max_count",
+        "require_file_list",
+        "include_offsets",
+        "word_match",
+    }.issubset(grep_props)
+
+
 def test_write_and_delete_tools_carry_mutation_annotations():
     tools = {
         tool["name"]: tool

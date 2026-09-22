@@ -11,8 +11,14 @@ import pytest
 from unittest.mock import MagicMock
 
 from src.version_engine.admission.repo_facade import (
+    RepositoryViewResolutionError,
     compute_carved_excludes,
     repo_facade_from_auth,
+)
+from src.platform.repository_target.models import (
+    ProjectRootTarget,
+    ResolvedRepositoryView,
+    ScopeTarget,
 )
 
 
@@ -68,18 +74,26 @@ class TestComputeCarvedExcludes:
 
 class TestRepoFacadeCarvedExcludes:
     def _make_auth(self, scope_path: str = "", user_exclude: list[str] | None = None) -> dict:
+        target = (
+            ScopeTarget(project_id="proj", scope_id="test-scope")
+            if scope_path
+            else ProjectRootTarget(project_id="proj")
+        )
         return {
-            "_scope": {
-                "id": "test-scope",
-                "path": scope_path,
-                "exclude": user_exclude or [],
-                "mode": "rw",
-            }
+            "_repository_view": ResolvedRepositoryView(
+                target=target,
+                path_prefix=scope_path,
+                excludes=tuple(user_exclude or ()),
+                max_mode="rw",
+            )
         }
 
     def _make_backend(self, all_scopes=None) -> MagicMock:
         backend = MagicMock()
         backend.list_all.return_value = all_scopes if all_scopes is not None else ALL_SCOPES
+        backend.list_all_strict.return_value = (
+            all_scopes if all_scopes is not None else ALL_SCOPES
+        )
         return backend
 
     def test_no_scope_backend_uses_only_user_excludes(self):
@@ -110,21 +124,17 @@ class TestRepoFacadeCarvedExcludes:
         for name in ("docs", "docs/api", "src", "src/lib"):
             assert name not in facade.excludes, f"root must not carve {name}"
 
-    def test_root_scope_still_honours_user_excludes(self):
-        auth = self._make_auth(scope_path="", user_exclude=["secrets"])
-        facade = repo_facade_from_auth("proj", auth, kind="access_point",
-                                       scope_backend=self._make_backend())
-        assert "secrets" in facade.excludes        # explicit user exclude kept
-        assert "docs" not in facade.excludes        # but sub-scopes not auto-carved
+    def test_project_root_cannot_carry_scope_exclusions(self):
+        with pytest.raises(ValueError, match="Project root view"):
+            self._make_auth(scope_path="", user_exclude=["secrets"])
 
-    def test_scope_backend_failure_falls_back_gracefully(self):
-        """A DB error must not crash the auth flow — fall back to user excludes."""
+    def test_scope_backend_failure_fails_closed(self):
+        """A DB error must never widen the target by dropping child excludes."""
         backend = MagicMock()
         backend.list_all.side_effect = RuntimeError("supabase hiccup")
+        backend.list_all_strict.side_effect = RuntimeError("supabase hiccup")
         auth = self._make_auth(scope_path="docs", user_exclude=["docs/private"])
-        # must not raise
-        facade = repo_facade_from_auth("proj", auth, kind="access_point",
-                                       scope_backend=backend)
-        assert "docs/private" in facade.excludes
-        # carved ones absent because DB failed — graceful degradation
-        assert "docs/api" not in facade.excludes
+        with pytest.raises(RepositoryViewResolutionError):
+            repo_facade_from_auth(
+                "proj", auth, kind="access_point", scope_backend=backend
+            )

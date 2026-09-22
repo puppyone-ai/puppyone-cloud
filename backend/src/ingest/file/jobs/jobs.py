@@ -19,13 +19,19 @@ from typing import Any
 from src.infra.supabase.client import SupabaseClient
 from src.ingest.file.config import etl_config
 from src.ingest.file.exceptions import ETLTransformationError
-from src.ingest.file.ocr.base import OCRProvider, OCRProviderError
+from src.ingest.file.ocr.base import (
+    OCRExternalJob,
+    OCRExternalJobCompletion,
+    OCRProvider,
+    OCRProviderError,
+)
+from src.ingest.file.ocr.lifecycle import run_ocr_lifecycle_under_project_lease
 from src.ingest.file.rules.engine import RuleEngine
 from src.ingest.file.rules.repository_supabase import RuleRepositorySupabase
 from src.ingest.file.state.models import ETLPhase, ETLRuntimeState
 from src.ingest.file.state.repository import ETLStateRepositoryRedis
 from src.ingest.file.tasks.models import ETLTaskResult, ETLTaskStatus
-from src.version_engine.write_engine.git_object_format import encode_object
+from src.platform.project.write_lease import ProjectWriteLease
 from src.version_engine.adapters.product.operation_adapter import BlobRef
 
 logger = logging.getLogger(__name__)
@@ -168,50 +174,44 @@ async def _head_object_size(s3, key: str) -> int:
     return int(response["ContentLength"])
 
 
-async def _stage_blob_for_version(
-    s3,
-    *,
-    project_id: str,
-    src_key: str,
-    content: bytes,
-) -> str:
-    """Stage a blob from in-memory ``content``.
-
-    Encodes ``content`` as a Git blob object and writes the loose object bytes
-    to the version object key. New callers should use :func:`stage_blob_from_s3`.
-    """
-    blob_hash, loose_bytes = encode_object("blob", content)
-    dst_key = _version_object_key(project_id, blob_hash)
-    # Same legacy-raw-bytes hazard as ``stage_blob_from_s3``; see the
-    # comment there for the rationale behind size-checked dedup.
-    try:
-        existing_meta = await s3.get_file_metadata(dst_key)
-    except Exception:
-        existing_meta = None
-    if existing_meta is not None and existing_meta.size == len(loose_bytes):
-        logger.info(
-            f"_stage_blob_for_version: blob {blob_hash[:12]} already at "
-            f"{dst_key} ({existing_meta.size} bytes), skipping upload",
-        )
-        return blob_hash
-    if existing_meta is not None:
-        logger.warning(
-            f"_stage_blob_for_version: blob {blob_hash[:12]} at {dst_key} "
-            f"has unexpected size {existing_meta.size} (expected "
-            f"{len(loose_bytes)}); overwriting to recover from legacy "
-            f"raw-bytes finalize",
-        )
-    await s3.upload_file(
-        dst_key,
-        loose_bytes,
-        content_type="application/octet-stream",
-    )
-    return blob_hash
-
-
 def _creator_id(task) -> str:
     """Creator ID for S3 paths (created_by or project_id fallback for legacy)."""
     return task.created_by or task.project_id or "unknown"
+
+
+def _reload_task_before_project_storage_write(repo, task_id: str | int, task):
+    """Revalidate the durable Project-owned task immediately before S3 PUT.
+
+    Project deletion cascades ``uploads`` in the same transaction that emits
+    the durable object-cleanup job.  OCR/LLM calls can outlive the cleanup
+    quiescence window, so a worker must not trust the task object it loaded
+    before an external wait.  Missing/cancelled/rebound rows close the write
+    fence; repository failures propagate so ARQ retries without writing.
+    """
+
+    durable = repo.get_task(task_id)
+    if durable is None:
+        logger.info(
+            "project storage write skipped because durable task disappeared: %s",
+            task_id,
+        )
+        return None
+    if durable.status == ETLTaskStatus.CANCELLED:
+        logger.info(
+            "project storage write skipped because durable task was cancelled: %s",
+            task_id,
+        )
+        return None
+    if (
+        durable.project_id != task.project_id
+        or _creator_id(durable) != _creator_id(task)
+    ):
+        logger.warning(
+            "project storage write skipped because durable task ownership changed: %s",
+            task_id,
+        )
+        return None
+    return durable
 
 
 def _artifact_markdown_key(task_id: str | int, creator_id: str, project_id: str) -> str:
@@ -290,11 +290,65 @@ async def etl_ocr_job(ctx: dict, task_id: str | int) -> dict:
             source_key, expires_in=3600
         )
 
-        # Use pluggable OCR provider (MineRU, Reducto, etc.)
-        parsed = await ocr_provider.parse_document(
+        async def persist_provider_handle(
+            provider_job: OCRExternalJob,
+            *,
+            terminal: bool,
+        ) -> None:
+            metadata = {
+                **provider_job.persistence_metadata(),
+                "provider_task_terminal": terminal,
+            }
+            state.provider_name = provider_job.provider
+            state.provider_task_id = provider_job.task_id
+            state.provider_task_external = provider_job.external
+            state.provider_task_terminal = terminal
+            state.metadata.update(metadata)
+            state.touch()
+            # Do not begin the provider wait (or report it terminal) until both
+            # durable discovery sources contain the exact same handle.
+            await state_repo.set(state)
+            task.metadata.update(metadata)
+            persisted = await asyncio.to_thread(repo.update_task, task)
+            if persisted is None:
+                raise RuntimeError(
+                    "Unable to persist OCR provider lifecycle in SQL"
+                )
+
+        async def on_created(provider_job: OCRExternalJob) -> None:
+            await persist_provider_handle(
+                provider_job,
+                terminal=not provider_job.external,
+            )
+
+        async def on_terminal(completion: OCRExternalJobCompletion) -> None:
+            await persist_provider_handle(completion.job, terminal=True)
+
+        # The renewable Project lease spans provider creation, durable handle
+        # persistence, the external wait, and local materialization. Deletion
+        # can therefore snapshot only after this lifecycle is terminal.
+        parsed = await run_ocr_lifecycle_under_project_lease(
+            lease_factory=ctx.get("project_write_lease_factory", ProjectWriteLease),
+            project_id=task.project_id,
+            provider=ocr_provider,
             file_url=presigned_url,
             data_id=str(task_id),
+            on_created=on_created,
+            on_terminal=on_terminal,
         )
+
+        if state.provider_task_id is None:
+            # Inline providers expose no remote cancellable job, but persisting
+            # their terminal identity makes historical cleanup classification
+            # explicit instead of relying on a provider-name default.
+            await persist_provider_handle(
+                OCRExternalJob(
+                    provider=ocr_provider.name,
+                    task_id=parsed.task_id,
+                    external=False,
+                ),
+                terminal=True,
+            )
 
         # If user cancelled while we were waiting on provider, honor cancellation and avoid overwriting terminal state.
         latest = await state_repo.get(task_id)
@@ -309,6 +363,8 @@ async def etl_ocr_job(ctx: dict, task_id: str | int) -> dict:
         await state_repo.set(state)
 
         # Upload markdown artifact to S3
+        if _reload_task_before_project_storage_write(repo, task_id, task) is None:
+            return {"ok": True, "skipped": "task_not_live"}
         md_key = _artifact_markdown_key(task_id, _creator_id(task), task.project_id)
         await s3.upload_file(
             key=md_key,
@@ -493,8 +549,9 @@ async def finalize_upload_to_version(
             f"task={task_id} ({ref.size}B)"
         )
 
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-        commands = build_worker_version_engine_container().write_commands()
+        from src.platform.project.write_lease import build_leased_worker_write_commands
+
+        commands = build_leased_worker_write_commands()
         # ``verify_blobs=False`` because we just wrote the blob to
         # its version object key inside ``stage_blob_from_s3`` — it IS
         # there, no need to round-trip a HEAD.
@@ -822,8 +879,9 @@ async def finalize_uploads_to_version_batch(
     # ``verify_blobs=False`` is safe here because we just wrote each blob to
     # its version object key inside ``stage_blob_from_s3`` above — they ARE present, no
     # need to round-trip a HEAD per ref.
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-    commands = build_worker_version_engine_container().write_commands()
+    from src.platform.project.write_lease import build_leased_worker_write_commands
+
+    commands = build_leased_worker_write_commands()
     first_task = survivors[0]["task"]
     who = f"upload:{first_task.created_by or 'unknown'}"
     message = (
@@ -1053,6 +1111,8 @@ async def etl_postprocess_job(ctx: dict, task_id: str | int) -> dict:
         output_json = json.dumps(output_obj, indent=2, ensure_ascii=False).encode(
             "utf-8"
         )
+        if _reload_task_before_project_storage_write(repo, task_id, task) is None:
+            return {"ok": True, "skipped": "task_not_live"}
         await s3.upload_file(
             key=output_key,
             content=output_json,
@@ -1072,8 +1132,9 @@ async def etl_postprocess_job(ctx: dict, task_id: str | int) -> dict:
         mount_json_path = task.metadata.get("mount_json_path") or ""
         mount_key = task.metadata.get("mount_key") or Path(task.filename).name
 
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-        commands = build_worker_version_engine_container().write_commands()
+        from src.platform.project.write_lease import build_leased_worker_write_commands
+
+        commands = build_leased_worker_write_commands()
 
         if not mount_path:
             auto_name = task.metadata.get("auto_node_name") or f"{task_id}"

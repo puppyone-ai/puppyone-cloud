@@ -4,6 +4,8 @@ module.exports = {
   content: [
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
+    // Domain components live here after extraction from app route entries.
+    './features/**/*.{js,ts,jsx,tsx,mdx}',
     './lib/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
@@ -47,7 +49,6 @@ module.exports = {
   },
   plugins: [],
 };
-
 
 
 

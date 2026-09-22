@@ -15,6 +15,7 @@ To add a new built-in template, drop a folder under ``builtin/`` — see
 from .loader import (
     TEMPLATES,
     get_template,
+    get_template_detail,
     list_templates,
     seed_template_content,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "ProjectTemplate",
     "TEMPLATES",
     "get_template",
+    "get_template_detail",
     "list_templates",
     "seed_template_content",
 ]

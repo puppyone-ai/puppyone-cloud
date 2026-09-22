@@ -6,20 +6,22 @@ path traversal, resource exhaustion, and other input-based attacks.
 
 from __future__ import annotations
 
-import base64
 import re
 
 from fastapi import HTTPException
 
 # ── Limits ──
 
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+# Mandatory infrastructure ceiling. Plan-specific limits are enforced at the
+# authoritative publish boundary from the PuppyPay entitlement snapshot.
+MAX_FILE_SIZE = 500 * 1024 * 1024
 MAX_FILES_PER_PUSH = 1000
 MAX_PATH_LENGTH = 500
 MAX_PUSH_BODY_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB total push payload
 
 
 # ── Helpers ──
+
 
 def _format_size(num_bytes: int) -> str:
     """Render a byte count as a short human label (e.g. ``53.4 MB``)."""
@@ -31,9 +33,9 @@ def _format_size(num_bytes: int) -> str:
 
 
 _SINGLE_FILE_HINT = (
-    "Single file exceeds the 100 MB ceiling. Split the file (e.g. "
-    "`split -b 80m large.bin part-`) before committing, or remove it from "
-    "this push and store it via the file-upload API instead."
+    "Split the file into smaller parts before committing, or remove it from "
+    "this push and use the file-upload API. The active organization plan may "
+    "apply a lower per-file limit at publish time."
 )
 _TOTAL_BODY_HINT = (
     "Total push payload exceeds 2 GB. Split into smaller commits "
@@ -41,8 +43,7 @@ _TOTAL_BODY_HINT = (
     "binary blobs separately via the file-upload API."
 )
 _TOO_MANY_FILES_HINT = (
-    "Too many files in one push. Stage and push in batches of <=1000 "
-    "files at a time."
+    "Too many files in one push. Stage and push in batches of <=1000 files at a time."
 )
 
 # ── Path Validation ──

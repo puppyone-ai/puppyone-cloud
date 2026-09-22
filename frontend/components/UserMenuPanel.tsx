@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '../app/supabase/SupabaseAuthProvider';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useWorkspaceRouter as useRouter } from '@/features/workspace/navigation';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import {
   getGithubStatus,
   disconnectGithub,
@@ -20,7 +20,8 @@ import {
   type SaasType,
 } from '../lib/oauthApi';
 import { refreshProjects } from '../lib/hooks/useData';
-import { createProject } from '../lib/projectsApi';
+import { instantiateTemplate } from '../lib/templatesApi';
+import { useOrganization } from '@/contexts/OrganizationContext';
 import { PageLoading, SkeletonBlock } from './loading';
 import { ThemeToggle } from './theme/ThemeToggle';
 import { ActionButton } from './ui/ActionButton';
@@ -60,7 +61,10 @@ const T = {
 interface UserMenuPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: UserMenuTab;
 }
+
+export type UserMenuTab = 'account' | 'appearance' | 'integrations' | 'about';
 
 // Platform types for integrations tab
 type PlatformId = 'github' | 'google-sheets' | 'google-docs' | 'gmail' | 'google-calendar' | 'google-drive';
@@ -149,14 +153,18 @@ const getDefaultPlatformStates = (): Record<PlatformId, PlatformState> =>
     {} as Record<PlatformId, PlatformState>
   );
 
-export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
+export default function UserMenuPanel({
+  isOpen,
+  onClose,
+  initialTab = 'account',
+}: UserMenuPanelProps) {
+  const mobilePanelRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const { session, signOut, isAuthReady } = useAuth();
+  const { currentOrg } = useOrganization();
   const [isRendered, setIsRendered] = React.useState(false);
   const [animateIn, setAnimateIn] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'account' | 'appearance' | 'integrations' | 'about'>(
-    'account'
-  );
+  const [activeTab, setActiveTab] = React.useState<UserMenuTab>(initialTab);
 
   const accountIdentityLoading = !isAuthReady || !session;
   const email = session?.user?.email ?? '';
@@ -180,6 +188,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [starterRepoLoading, setStarterRepoLoading] = useState(false);
   const [starterRepoError, setStarterRepoError] = useState<string | null>(null);
+  const starterRepoOperationKey = useRef<string | null>(null);
   const [disconnectConfirmation, setDisconnectConfirmation] = useState<{
     visible: boolean;
     platformId: PlatformId | null;
@@ -380,14 +389,20 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     setStarterRepoLoading(true);
     setStarterRepoError(null);
     try {
-      const created = await createProject(
-        'Get Started',
-        'A guided starter repo seeded from the new-user onboarding template.',
-        undefined,
-        false,
-        'get-started',
-      );
-      await refreshProjects();
+      if (!currentOrg?.id) {
+        throw new Error('Select an organization before creating a project.');
+      }
+      starterRepoOperationKey.current ??= crypto.randomUUID();
+      const result = await instantiateTemplate('get-started', {
+        org_id: currentOrg.id,
+        name: 'Get Started',
+        description:
+          'A guided starter repo seeded from the new-user onboarding template.',
+        idempotencyKey: starterRepoOperationKey.current,
+      });
+      starterRepoOperationKey.current = null;
+      const created = result.project;
+      await refreshProjects(currentOrg.id);
       onClose();
       router.push(`/projects/${created.id}/data`);
     } catch (error) {
@@ -399,7 +414,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     } finally {
       setStarterRepoLoading(false);
     }
-  }, [onClose, router, starterRepoLoading]);
+  }, [currentOrg?.id, onClose, router, starterRepoLoading]);
 
   const closeDisconnectModal = () => {
     setDisconnectConfirmation({ visible: false, platformId: null });
@@ -433,6 +448,36 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen || !isRendered) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = mobilePanelRef.current;
+    const firstVisible = Array.from(panel?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []).find(button => button.getClientRects().length);
+    firstVisible?.focus({ preventScroll: true });
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.defaultPrevented || !panel) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')).filter(item => item.getClientRects().length);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (first && (!panel.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last))) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener('keydown', trap);
+    return () => {
+      document.removeEventListener('keydown', trap);
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [isOpen, isRendered]);
+
+  // Each launcher owns the user's entry point: the avatar opens Account,
+  // while the gear opens Appearance. Reset only when the dialog opens so
+  // navigating between tabs inside the dialog remains stable.
+  React.useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+  }, [initialTab, isOpen]);
 
   // Animation handling
   React.useEffect(() => {
@@ -468,7 +513,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
     label,
     icon,
   }: {
-    id: 'account' | 'appearance' | 'integrations' | 'about';
+    id: UserMenuTab;
     label: string;
     icon?: React.ReactNode;
   }) => {
@@ -527,7 +572,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
   const socialLinks = [
     {
       name: 'GitHub',
-      url: 'https://github.com/puppyone-ai/puppyone',
+      url: 'https://github.com/puppyone-ai/puppyone-cloud',
       icon: (
         <svg width='16' height='16' viewBox='0 0 24 24' fill='currentColor'>
           <path d='M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z' />
@@ -606,6 +651,8 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           + a soft drop-shadow now matches the rest of the chrome
           (page cards, dropdown menus, dialogs). */}
       <div
+        className='workspace-account-dialog'
+        ref={mobilePanelRef}
         onClick={e => e.stopPropagation()}
         style={{
           position: 'fixed',
@@ -624,7 +671,11 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           transition: 'all 400ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       >
+        <button type='button' className='workspace-account-close' aria-label='Close account settings' onClick={onClose}>
+          <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='1.8' aria-hidden='true'><path d='m6 6 12 12M18 6 6 18' /></svg>
+        </button>
         <div
+          className='workspace-account-layout'
           style={{
             display: 'flex',
             height: '100%',
@@ -636,6 +687,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           {/* Left Navigation — uses the same border-alpha as every
               other rail divider in the product. */}
           <div
+            className='workspace-account-nav'
             style={{
               width: 176,
               height: '100%',
@@ -739,7 +791,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
           </div>
 
           {/* Right Content */}
-          <div
+          <div className='workspace-account-content'
             style={{
               flex: 1,
               display: 'flex',
@@ -752,7 +804,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
             {/* Tab heading — 14px / 600 / `T.text1`. A notch smaller
                 than the previous 16px so the heading doesn't shout
                 over the 15px card titles directly below it
-                (workspace name / "Free" plan), and the modal feels
+                (workspace name / billing handoff), and the modal feels
                 like the same scale as the page-level Settings header
                 (13px / 500 across /(main)). */}
             <div
@@ -886,6 +938,68 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
                   </div>
                 </div>
 
+                <div
+                  style={{
+                    border: `1px solid ${T.cardBorder}`,
+                    borderRadius: 10,
+                    background: T.cardBg,
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      marginBottom: 8,
+                      padding: '0 8px',
+                      color: T.text3,
+                      fontSize: 11,
+                      fontWeight: 500,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Workspace
+                  </div>
+                  {[
+                    { label: 'Team', path: '/team' },
+                    { label: 'Billing', path: '/billing' },
+                    { label: 'Templates', path: '/templates' },
+                  ].map(item => (
+                    <button
+                      key={item.path}
+                      type='button'
+                      onClick={() => {
+                        onClose();
+                        router.push(item.path);
+                      }}
+                      style={{
+                        width: '100%',
+                        height: 32,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 8px',
+                        border: 'none',
+                        borderRadius: 6,
+                        background: 'transparent',
+                        color: T.text2,
+                        cursor: 'pointer',
+                        fontFamily: T.fontSans,
+                        fontSize: 13,
+                        textAlign: 'left',
+                      }}
+                      onMouseEnter={event => {
+                        event.currentTarget.style.background = 'var(--po-hover)';
+                        event.currentTarget.style.color = T.text1;
+                      }}
+                      onMouseLeave={event => {
+                        event.currentTarget.style.background = 'transparent';
+                        event.currentTarget.style.color = T.text2;
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Subscription card — same surface treatment.
                     Plan label uses the same overline/value pattern as
                     the project dashboard cards (small caps-ish label,
@@ -909,7 +1023,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
                         textTransform: 'uppercase',
                       }}
                     >
-                      Plan
+                      Billing
                     </div>
                     <div
                       style={{
@@ -918,7 +1032,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
                         color: T.text1,
                       }}
                     >
-                      Free
+                      PuppyOne Desktop
                     </div>
                     <div
                       style={{
@@ -934,7 +1048,7 @@ export default function UserMenuPanel({ isOpen, onClose }: UserMenuPanelProps) {
                         lineHeight: 1.6,
                       }}
                     >
-                      Manage your subscription and billing settings.
+                      View the authoritative plan, usage, and billing settings in the Desktop app.
                     </div>
                   </div>
                 </div>

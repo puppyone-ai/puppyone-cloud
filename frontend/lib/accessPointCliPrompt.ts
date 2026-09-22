@@ -92,6 +92,8 @@ export function buildGitSyncPrompt({
     accessPointName ? `Access Point: ${accessPointName}` : null,
     `Scope: ${scopeName}`,
     `Remote: ${remote}`,
+    'Authentication: generate a Git credential in Puppyone, use username `x-puppyone-token`, and let an OS-backed Git credential helper store the password.',
+    'Never put the password in the remote URL, command arguments, or `.git/config`.',
     '',
     'Clone to a new local folder:',
     '```bash',

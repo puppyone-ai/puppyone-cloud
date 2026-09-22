@@ -16,13 +16,25 @@ export type ProjectInfo = {
    *  field yet, hence optional on the wire. */
   bound_git_branch?: string;
   updated_at?: string;
-  access_point_count?: number;
+  access_point_count?: number | null;
+  /** Server-resolved human authorization. Missing fields fail closed in UI. */
+  effective_role?: 'admin' | 'editor' | 'viewer';
+  grant_source?: 'org_owner' | 'project_member' | 'org_visibility';
+  capabilities?: string[];
 };
+
+export function projectAllows(
+  project: ProjectInfo | null | undefined,
+  capability: string,
+): boolean {
+  return project?.capabilities?.includes(capability) === true;
+}
 
 export interface UpdateProjectPayload {
   name?: string;
   description?: string;
   bound_git_branch?: string;
+  visibility?: 'org' | 'private';
 }
 
 // 保留 TableInfo 用于兼容性
@@ -44,7 +56,8 @@ export type TableData = {
 
 // 项目相关API
 export async function getProjects(orgId?: string): Promise<ProjectInfo[]> {
-  const params = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
+  // Navigation needs project metadata/grants, never access statistics or trees.
+  const params = `?include_access_counts=false${orgId ? `&org_id=${encodeURIComponent(orgId)}` : ''}`;
   return apiRequest<ProjectInfo[]>(`/api/v1/projects/${params}`);
 }
 
@@ -52,21 +65,33 @@ export async function getProject(projectId: string): Promise<ProjectInfo> {
   return apiRequest<ProjectInfo>(`/api/v1/projects/${projectId}`);
 }
 
-export async function createProject(
-  name: string,
-  description?: string,
-  orgId?: string,
-  seed?: boolean,
-  template?: string
-): Promise<ProjectInfo> {
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  /** Plain project creation is always owned by one explicit organization. */
+  orgId: string;
+  /**
+   * Stable UUIDv4 for this user operation. Reuse it when retrying an
+   * uncertain response; generate a new key only for a new create intent.
+   */
+  idempotencyKey: string;
+}
+
+export async function createProject({
+  name,
+  description,
+  orgId,
+  idempotencyKey,
+}: CreateProjectInput): Promise<ProjectInfo> {
   return apiRequest<ProjectInfo>('/api/v1/projects/', {
     method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
     body: JSON.stringify({
       name,
       description,
       org_id: orgId,
-      seed: seed ?? false,
-      template: template ?? null,
     }),
   });
 }
@@ -106,8 +131,14 @@ export async function updateProject(
   });
 }
 
-export async function deleteProject(projectId: string): Promise<void> {
-  return apiRequest<void>(`/api/v1/projects/${projectId}`, {
+export interface ProjectDeletionStatus {
+  project_id: string;
+  deletion_job_id: string;
+  status: 'pending' | 'running' | 'failed' | 'completed';
+}
+
+export async function deleteProject(projectId: string): Promise<ProjectDeletionStatus> {
+  return apiRequest<ProjectDeletionStatus>(`/api/v1/projects/${projectId}`, {
     method: 'DELETE',
   });
 }

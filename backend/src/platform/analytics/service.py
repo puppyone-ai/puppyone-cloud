@@ -83,6 +83,8 @@ async def log_bash_execution(
     output: str | None = None,
     latency_ms: int | None = None,
     error_message: str | None = None,
+    source: str = "unknown",
+    decision: str = "allowed",
 ) -> None:
     """Log a bash command execution."""
     # Truncate output
@@ -102,6 +104,8 @@ async def log_bash_execution(
             "command": command,
             "output_preview": output_preview,
             "sandbox_session_id": sandbox_session_id,
+            "source": source,
+            "decision": decision,
         },
     )
 
@@ -183,10 +187,12 @@ def log_context_access(
     try:
         supabase = get_supabase_client()
 
+        # NOTE: access_logs has no "path" column (schema uses node_name); inserting
+        # "path" previously made every write fail silently in the except below.
+        # The accessed-node identifier lands in node_name (falling back to path).
         supabase.table("access_logs").insert({
-            "path": path,
             "node_type": node_type,
-            "node_name": node_name,
+            "node_name": node_name or path,
             "user_id": user_id,
             "agent_id": agent_id,
             "session_id": session_id,

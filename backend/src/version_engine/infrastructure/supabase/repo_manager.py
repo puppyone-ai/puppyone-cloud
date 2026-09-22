@@ -31,6 +31,7 @@ from src.version_engine.write_engine.merge import ConflictResolver
 from src.version_engine.storage.object_store import ObjectStore
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
+from src.platform.repository_target.models import RepositoryPathProjection
 from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.infrastructure.supabase import safe_data
 from src.version_engine.storage.backends.s3 import CachedStorageBackend, S3StorageBackend
@@ -230,16 +231,12 @@ class VersionRepoManager:
         # Slow path: build + index OUTSIDE the lock so other scopes can
         # progress concurrently and a stuck index walk can never freeze the
         # whole process.
-        auth = {
-            "agent": who,
-            "_scope": {
-                "id": who,
-                "path": scope_path or "",
-                "exclude": [],
-                "mode": "rw",
-            },
-        }
-        client = InProcessVersionClient(self, project_id, auth)
+        client = InProcessVersionClient(
+            self,
+            project_id,
+            RepositoryPathProjection(path_prefix=scope_path or ""),
+            actor=who,
+        )
         client.load_scope_index()
         new_handle = HostClientHandle(client=client, lock=threading.Lock())
 

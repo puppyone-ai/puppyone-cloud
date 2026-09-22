@@ -102,14 +102,6 @@ class OCRProviderFactory:
         cls.register("reducto", ReductoProvider)
         cls.register("deepseek", DeepSeekOCRProvider)
 
-    @classmethod
-    def list_providers(cls) -> list[str]:
-        """List available provider names."""
-        if not cls._providers:
-            cls._register_default_providers()
-        return list(cls._providers.keys())
-
-
 def get_ocr_provider(name: str | None = None) -> OCRProvider:
     """
     Convenience function to get an OCR provider.

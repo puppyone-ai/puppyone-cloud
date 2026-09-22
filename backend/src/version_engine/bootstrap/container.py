@@ -12,10 +12,12 @@ from dataclasses import dataclass
 
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.version_engine.read.admin import VersionAdminService
-from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
+from src.version_engine.infrastructure.supabase.version_ref_repository import VersionRefStore
+from src.version_engine.read.admin import VersionAdminService
+from src.version_engine.read.history_graph import HistoryGraphService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 
@@ -24,9 +26,14 @@ class VersionEngineContainer:
     """App/worker scoped Version Engine object graph."""
 
     repo_manager: VersionRepoManager
+    version_ref_store: VersionRefStore
+    history_graph_service: HistoryGraphService
 
     def admin_service(self) -> VersionAdminService:
         return VersionAdminService(self.repo_manager)
+
+    def history_graph(self) -> HistoryGraphService:
+        return self.history_graph_service
 
     def product_operations(self) -> ProductOperationAdapter:
         return ProductOperationAdapter(self.repo_manager)
@@ -59,7 +66,12 @@ def build_version_engine_container(
     if probe:
         _probe_dependencies(s3_svc, supa)
     repo_manager = VersionRepoManager(s3_svc, supa)
-    return VersionEngineContainer(repo_manager=repo_manager)
+    version_ref_store = VersionRefStore(client=supa)
+    return VersionEngineContainer(
+        repo_manager=repo_manager,
+        version_ref_store=version_ref_store,
+        history_graph_service=HistoryGraphService(repo_manager, version_ref_store),
+    )
 
 
 def _probe_dependencies(s3_svc: S3Service, supa: SupabaseClient) -> None:

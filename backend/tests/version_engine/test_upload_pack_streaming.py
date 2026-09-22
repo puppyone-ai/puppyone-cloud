@@ -8,12 +8,17 @@ These lock in the streaming generator's contract:
 """
 from __future__ import annotations
 
+import asyncio
 import io
+import threading
 from pathlib import Path
 
 import pytest
 
 from src.version_engine.adapters.git import upload_pack as up
+from src.version_engine.adapters.git._async_context import (
+    enter_sync_context_off_loop,
+)
 from src.version_engine.adapters.git.upload_pack import (
     _stream_upload_pack,
     _upload_pack_wants,
@@ -53,6 +58,24 @@ class FakePopen:
         self._done = True
 
 
+class BlockingCM:
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.exited = threading.Event()
+        self.enter_thread = 0
+
+    def __enter__(self):
+        self.enter_thread = threading.get_ident()
+        self.entered.set()
+        self.release.wait(timeout=5)
+        return self
+
+    def __exit__(self, *_args):
+        self.exited.set()
+        return False
+
+
 @pytest.fixture
 def spool(tmp_path) -> Path:
     p = tmp_path / "req"
@@ -79,6 +102,35 @@ def test_upload_pack_wants_ignores_non_want_and_bad_oids():
         + flush_pkt()
     )
     assert _upload_pack_wants(body) == []
+
+
+async def test_blocking_transport_context_enters_off_event_loop():
+    cm = BlockingCM()
+    event_loop_thread = threading.get_ident()
+    task = asyncio.create_task(enter_sync_context_off_loop(cm))
+
+    while not cm.entered.is_set():
+        await asyncio.sleep(0)
+    assert cm.enter_thread != event_loop_thread
+    assert not task.done()
+
+    cm.release.set()
+    assert await task is cm
+    cm.__exit__(None, None, None)
+
+
+async def test_cancelled_context_entry_releases_late_acquired_lock():
+    cm = BlockingCM()
+    task = asyncio.create_task(enter_sync_context_off_loop(cm))
+
+    while not cm.entered.is_set():
+        await asyncio.sleep(0)
+    task.cancel()
+    cm.release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cm.exited.wait(timeout=1)
 
 
 def test_stream_yields_chunks_and_tears_down(monkeypatch, spool):

@@ -6,6 +6,7 @@ import {
   getServerSupabaseUrl,
   getSupabaseAnonKey,
   getRequestOrigin,
+  isSafeRelativePath,
 } from '@/lib/server-env';
 
 /**
@@ -22,7 +23,11 @@ export async function GET(request: Request) {
   const origin = getRequestOrigin(request);
   const token_hash = requestUrl.searchParams.get('token_hash');
   const type = requestUrl.searchParams.get('type') as EmailOtpType | null;
-  const next = requestUrl.searchParams.get('next') ?? '/home';
+  // Ignore attacker-controlled `next` values (e.g. `//evil.com`) that would
+  // escape the origin in the `${origin}${next}` redirect below; fall back to
+  // the safe default when it isn't a same-origin relative path.
+  const rawNext = requestUrl.searchParams.get('next');
+  const next = isSafeRelativePath(rawNext) ? rawNext : '/home';
 
   if (!token_hash || !type) {
     console.error('Auth confirm: missing token_hash or type');

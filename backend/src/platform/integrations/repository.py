@@ -16,7 +16,6 @@ from src.connectors.datasource.run_repository import (
 from src.connectors.datasource.schemas import Sync as IntegrationConnection
 from src.infra.supabase.client import SupabaseClient
 from src.platform.integrations.paths import canonical_provider, normalize_path
-from src.repo.scope_service import ScopeService
 
 
 VALID_CONNECTION_TRIGGER_TYPES = {"manual", "scheduled", "webhook", "realtime"}
@@ -66,7 +65,7 @@ def _cursor_to_model(value: Any) -> int | None:
 
 class IntegrationRepository:
     CONNECTIONS = "connections"
-    SCOPES = "repo_scopes"
+    SCOPES = "repository_scopes"
 
     def __init__(self, supabase_client: SupabaseClient):
         self.client = supabase_client.client
@@ -85,12 +84,6 @@ class IntegrationRepository:
         )
         rows = resp.data or []
         return rows[0].get("org_id") if rows else None
-
-    def _root_scope_id(self, project_id: str) -> str | None:
-        try:
-            return ScopeService().ensure_root_scope(project_id).id
-        except Exception:
-            return None
 
     def _target_path_from_row(self, row: dict) -> str:
         return normalize_path(row.get("target_path"))
@@ -193,7 +186,7 @@ class IntegrationRepository:
         row = self._insert_connection({
             "org_id": self._project_org_id(project_id),
             "project_id": project_id,
-            "scope_id": self._root_scope_id(project_id),
+            "scope_id": None,
             "target_path": target_path,
             "provider": canonical,
             "name": external_resource_label or canonical.replace("_", " ").title(),

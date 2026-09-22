@@ -99,6 +99,17 @@ class FailedSyncRunItem(BaseModel):
     trigger_type: Optional[str] = None
 
 
+# Credential-bearing keys that the repository stashes inside ``config`` for
+# sync execution. They must never be echoed back to API clients.
+_REDACTED_CONFIG_KEYS = ("credentials_ref", "access_key")
+
+
+def _redact_config(config) -> dict | None:
+    if not isinstance(config, dict):
+        return config
+    return {k: v for k, v in config.items() if k not in _REDACTED_CONFIG_KEYS}
+
+
 def connection_to_response(connection) -> dict:
     return {
         "id": connection.id,
@@ -106,7 +117,7 @@ def connection_to_response(connection) -> dict:
         "path": connection.path,
         "direction": connection.direction,
         "provider": connection.provider,
-        "config": connection.config,
+        "config": _redact_config(connection.config),
         "status": connection.status,
         "last_sync_commit_id": connection.last_sync_commit_id,
         "error_message": connection.error_message,

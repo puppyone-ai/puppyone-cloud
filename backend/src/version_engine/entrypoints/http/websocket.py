@@ -21,6 +21,7 @@ from starlette.websockets import WebSocketState
 
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.admission.identity import PuppyOneAuthenticator
+from src.platform.repository_target.auth_context import repository_view_from_auth
 from src.version_engine.derived.notifications import NotificationManager
 from src.utils.logger import log_debug, log_error
 
@@ -99,8 +100,7 @@ async def version_ws(websocket: WebSocket, project_id: str):
                               reason="auth failed")
         return
 
-    scope = auth.get("_scope") or {}
-    scope_path = scope.get("path", "") or ""
+    scope_path = repository_view_from_auth(auth).path_prefix
     agent = auth.get("agent", "")
 
     if accept_subprotocol:

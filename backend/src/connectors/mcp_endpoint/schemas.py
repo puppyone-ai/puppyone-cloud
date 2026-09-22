@@ -3,6 +3,11 @@ from pydantic import BaseModel, Field
 
 
 class McpAccessItem(BaseModel):
+    # NOTE: scoping is currently whole-scope — the resolver governs reads/writes
+    # by the BOUND scope's path/exclude/mode and only consumes `readonly` here
+    # (collapsed across all accesses into a single writable flag). `path` and
+    # `json_path` are stored but NOT yet used to narrow access, so do not rely on
+    # them for restriction. Narrowing by path/json_path would be a new feature.
     path: str
     json_path: str = ""
     readonly: bool = True
@@ -40,6 +45,10 @@ class McpEndpointOut(BaseModel):
     api_key: str = ""
     api_key_hint: str = ""
     api_key_revealed: bool = False
+    # Canonical MCP server URL an external client (ChatGPT / Claude Desktop)
+    # connects to. Auth is the api_key sent as `Authorization: Bearer <key>`,
+    # so the URL is the same for every endpoint — the key selects the endpoint.
+    server_url: str = ""
     tools_config: Any = Field(default_factory=dict)
     accesses: list = Field(default_factory=list)
     created_by: Optional[str] = None

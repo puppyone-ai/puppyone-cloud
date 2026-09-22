@@ -1,84 +1,30 @@
-import { get, post, put, del } from './apiClient';
+/**
+ * Web binding for the shared sandbox-endpoint API (ISSUE-022).
+ *
+ * Contracts + types live in `@puppyone/cloud-core` (shared with the desktop
+ * cloud panel); this binds them to the web transport and re-exports the same
+ * names, so existing call sites are unchanged.
+ */
+import { createSandboxEndpointsApi } from '@puppyone/cloud-core';
 
-export interface SandboxMountPermissions {
-  read: boolean;
-  write: boolean;
-  exec: boolean;
-}
+import { webCloudTransport } from './cloudCoreTransport';
 
-export interface SandboxMount {
-  path: string;
-  mount_path: string;
-  permissions: SandboxMountPermissions;
-}
+export type {
+  SandboxEndpoint,
+  SandboxMount,
+  SandboxMountPermissions,
+  SandboxResourceLimits,
+  SandboxRuntime,
+  CreateSandboxEndpointParams,
+  UpdateSandboxEndpointParams,
+} from '@puppyone/cloud-core';
 
-export interface SandboxResourceLimits {
-  memory_mb: number;
-  cpu_shares: number;
-}
+const api = createSandboxEndpointsApi(webCloudTransport);
 
-export interface SandboxEndpoint {
-  id: string;
-  project_id: string;
-  path: string | null;
-  name: string;
-  description: string | null;
-  access_key: string;
-  mounts: SandboxMount[];
-  runtime: 'alpine' | 'python' | 'node';
-  timeout_seconds: number;
-  resource_limits: SandboxResourceLimits;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export async function listSandboxEndpoints(projectId: string): Promise<SandboxEndpoint[]> {
-  return get<SandboxEndpoint[]>(`/api/v1/sandbox-endpoints?project_id=${projectId}`);
-}
-
-export async function getSandboxEndpoint(id: string): Promise<SandboxEndpoint> {
-  return get<SandboxEndpoint>(`/api/v1/sandbox-endpoints/${id}`);
-}
-
-export async function getSandboxEndpointByPath(path: string): Promise<SandboxEndpoint | null> {
-  try {
-    return await get<SandboxEndpoint>(`/api/v1/sandbox-endpoints/by-path/${path}`);
-  } catch {
-    return null;
-  }
-}
-
-export async function createSandboxEndpoint(params: {
-  project_id: string;
-  name?: string;
-  path?: string;
-  description?: string;
-  mounts?: { path: string; mount_path?: string; permissions?: Partial<SandboxMountPermissions> }[];
-  runtime?: 'alpine' | 'python' | 'node';
-  timeout_seconds?: number;
-  resource_limits?: Partial<SandboxResourceLimits>;
-}): Promise<SandboxEndpoint> {
-  return post<SandboxEndpoint>('/api/v1/sandbox-endpoints', params);
-}
-
-export async function updateSandboxEndpoint(id: string, params: Partial<{
-  name: string;
-  description: string;
-  path: string;
-  status: string;
-  mounts: { path: string; mount_path?: string; permissions?: Partial<SandboxMountPermissions> }[];
-  runtime: 'alpine' | 'python' | 'node';
-  timeout_seconds: number;
-  resource_limits: Partial<SandboxResourceLimits>;
-}>): Promise<SandboxEndpoint> {
-  return put<SandboxEndpoint>(`/api/v1/sandbox-endpoints/${id}`, params);
-}
-
-export async function deleteSandboxEndpoint(id: string): Promise<void> {
-  await del(`/api/v1/sandbox-endpoints/${id}`);
-}
-
-export async function regenerateSandboxEndpointKey(id: string): Promise<SandboxEndpoint> {
-  return post<SandboxEndpoint>(`/api/v1/sandbox-endpoints/${id}/regenerate-key`, {});
-}
+export const listSandboxEndpoints = api.listSandboxEndpoints;
+export const getSandboxEndpoint = api.getSandboxEndpoint;
+export const getSandboxEndpointByPath = api.getSandboxEndpointByPath;
+export const createSandboxEndpoint = api.createSandboxEndpoint;
+export const updateSandboxEndpoint = api.updateSandboxEndpoint;
+export const deleteSandboxEndpoint = api.deleteSandboxEndpoint;
+export const regenerateSandboxEndpointKey = api.regenerateSandboxEndpointKey;

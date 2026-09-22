@@ -12,13 +12,13 @@ function NotionCallbackContent() {
 
   useEffect(() => {
     const handleCallback = async () => {
-      const code = searchParams.get('code');
+      const code = searchParams?.get('code');
       // CSRF nonce — backend's OAuthStateRepository.consume() requires it.
       // Note: this used to be a `provider` query-param hack stuffed into
       // the body's `state` field — but the backend now uses `state` for
       // CSRF validation, so we read the real OAuth `state` instead.
-      const state = searchParams.get('state') || undefined;
-      const error = searchParams.get('error');
+      const state = searchParams?.get('state') || undefined;
+      const error = searchParams?.get('error');
 
       if (error) {
         setStatus('error');

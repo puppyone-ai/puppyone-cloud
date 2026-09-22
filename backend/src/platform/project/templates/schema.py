@@ -25,3 +25,9 @@ class ProjectTemplate:
     author: str | None = None
     tags: tuple[str, ...] = ()
     order: int = 100  # lower → appears first in the picker
+
+    # Marketplace metadata (all optional — older templates keep loading).
+    category: str | None = None              # gallery grouping key, e.g. "agents"
+    cover: str | None = None                 # cover image URL / website asset path
+    screenshots: tuple[str, ...] = ()        # detail-page gallery image URLs
+    long_description: str | None = None      # markdown shown on the detail page

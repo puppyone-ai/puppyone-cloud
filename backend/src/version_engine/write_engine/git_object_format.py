@@ -168,6 +168,29 @@ def decode_commit(content: bytes) -> dict:
     return info
 
 
+def decode_tag(content: bytes) -> dict:
+    """Decode an annotated Git tag body into its target metadata.
+
+    Lightweight tags point directly at a commit and have no tag object. This
+    helper covers the annotated form whose first-class object can itself point
+    at either a commit or another annotated tag.
+    """
+
+    text = content.decode("utf-8")
+    head, _, message = text.partition("\n\n")
+    info: dict = {"message": message.rstrip("\n")}
+    for line in head.split("\n"):
+        if not line:
+            continue
+        key, _, value = line.partition(" ")
+        if key in {"object", "type", "tag", "tagger"}:
+            info[key] = value
+    if not info.get("object") or not info.get("type"):
+        raise ValueError("annotated tag is missing object/type headers")
+    _validate_sha1_hex(info["object"])
+    return info
+
+
 def split_author_line(line: str) -> tuple[str, str]:
     """Split ``Name <email> <unix_ts> <tz>`` into identity and time."""
 

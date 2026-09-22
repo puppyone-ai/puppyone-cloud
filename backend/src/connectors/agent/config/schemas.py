@@ -80,6 +80,8 @@ class AgentOut(BaseModel):
     updated_at: str
 
     mcp_api_key: Optional[str] = Field(None, description="MCP API key for external access")
+    mcp_enabled: bool = Field(False, description="Whether an active MCP credential exists")
+    mcp_key_last4: Optional[str] = Field(None, description="Last four characters of the active MCP credential")
 
     trigger_type: Optional[str] = Field(default="manual")
     trigger_config: Optional[dict] = None

@@ -24,6 +24,11 @@ template instead. The exec steps below are the spec for that template.
 
 from __future__ import annotations
 
+from src.platform.scope_sandbox.execution_policy import (
+    SSH_POLICY_WRAPPER_PATH,
+    ssh_policy_wrapper_install_command,
+)
+
 # Pinned static musl build (matches the Windows client build used in tests).
 WEBSOCAT_LINUX_URL = (
     "https://github.com/vi/websocat/releases/download/v1.13.0/"
@@ -88,6 +93,7 @@ def provision_steps(
         "sudo ssh-keygen -A && sudo mkdir -p /run/sshd",
         # publickey-only config (see SSHD_HARDENED_CONFIG): access == authorized_keys.
         f"printf '%s' '{config}' | sudo tee {SSHD_CONFIG_PATH} >/dev/null",
+        ssh_policy_wrapper_install_command(),
         "command -v websocat >/dev/null 2>&1 || "
         f"(sudo curl -fsSL -o /usr/local/bin/websocat {WEBSOCAT_LINUX_URL} "
         "&& sudo chmod +x /usr/local/bin/websocat)",
@@ -116,6 +122,7 @@ def fast_provision_steps(
         )
     else:
         steps.append("touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys")
+    steps.append(f"test -x {SSH_POLICY_WRAPPER_PATH}")
     steps.append(f"puppyone-ssh-up {forward_port}")
     return steps
 

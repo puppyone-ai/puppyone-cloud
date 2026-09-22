@@ -1,0 +1,118 @@
+@import "./editor.css";
+@import "./data-workspace.css";
+
+.po-button,
+.po-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  letter-spacing: 0;
+}
+
+.po-button {
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.po-button--neutral {
+  background: var(--po-control);
+  color: var(--po-text);
+}
+
+.po-button--primary {
+  background: var(--po-accent);
+  color: var(--po-text-inverse);
+}
+
+.po-button--danger {
+  background: color-mix(in srgb, var(--po-danger) 16%, transparent);
+  color: var(--po-danger);
+}
+
+.po-button:hover,
+.po-icon-button:hover {
+  background: var(--po-hover);
+  color: var(--po-text);
+}
+
+.po-icon-button {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  color: var(--po-text-muted);
+}
+
+.po-empty-state {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  color: var(--po-text-muted);
+  text-align: center;
+}
+
+.po-empty-state strong {
+  color: var(--po-text);
+  font-size: 14px;
+}
+
+.po-empty-state span {
+  font-size: 12px;
+}
+
+.po-empty-state__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--po-control);
+  color: var(--po-text-muted);
+}
+
+.po-status-badge,
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.po-status-badge--neutral {
+  background: var(--po-control);
+  color: var(--po-text-muted);
+}
+
+.po-status-badge--success,
+.status-pill.created {
+  background: color-mix(in srgb, var(--po-success) 14%, transparent);
+  color: var(--po-success);
+}
+
+.po-status-badge--warning,
+.status-pill.modified {
+  background: color-mix(in srgb, var(--po-warning) 14%, transparent);
+  color: var(--po-warning);
+}
+
+.po-status-badge--danger,
+.status-pill.deleted {
+  background: color-mix(in srgb, var(--po-danger) 13%, transparent);
+  color: var(--po-danger);
+}
+
+.po-status-badge--info,
+.status-pill.moved {
+  background: color-mix(in srgb, var(--po-info) 13%, transparent);
+  color: var(--po-info);
+}
+

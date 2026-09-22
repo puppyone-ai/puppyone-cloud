@@ -2,7 +2,7 @@
 Unified Sync — Data Models
 
 Sync is the in-process DTO for one external provider binding. Persistence is
-canonicalized as connectors rows bound to repo_scopes.
+canonicalized as connections against a Project repository target.
 """
 
 from dataclasses import dataclass, field
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 @dataclass
 class Sync:
     """
-    Unified sync binding derived from connectors + repo_scopes.
+    Unified sync binding derived from Project connections.
 
     Each row represents one sync relationship between a version path
     and an external resource, carrying both connection config and

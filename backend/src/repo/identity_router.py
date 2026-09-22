@@ -1,6 +1,6 @@
 """Repo identity endpoint — the single "access point" page surface.
 
-Returns the project's Git/CLI access surface + prompt template + per-scope keys. This is
+Returns the project's Git/CLI access surface + prompt template + scope metadata. This is
 what the new frontend /access page renders.
 
 Path: /api/v1/projects/{project_id}/access-point
@@ -14,21 +14,21 @@ from src.common_schemas import ApiResponse
 from src.config import settings
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.platform.project.dependencies import (
-    get_project_service, get_verified_project,
-)
-from src.platform.project.models import Project
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
+from src.platform.authorization.models import ProjectAction
+from src.platform.repository_target.protocol import require_repository_target_contract
 from src.repo.scope_service import ScopeService
 from src.repo.scope_router import get_scope_service
 from src.repo.schemas import (
     RepoIdentityOut, RepoIdentityScopeOut, RepoIdentityPatch,
 )
+from src.version_engine.entrypoints.git.locator import canonical_git_url
 
 
 router = APIRouter(
     prefix="/projects/{project_id}/access-point",
     tags=["repo-identity"],
+    dependencies=[Depends(require_repository_target_contract)],
 )
 
 
@@ -38,15 +38,15 @@ def _build_repo_url(project_id: str, request: Request) -> str:
     V1 post-hash-removal: the project-level Git smart-HTTP surface
     lives at ``/git/{project_id}.git``; the legacy ``/api/v1/version/{project_id}``
     endpoint was deleted with the wire protocol. Prefer
-    ``settings.PUBLIC_API_URL`` when set (production); fall back to the
+    ``settings.PUBLIC_URL`` when set (production); fall back to the
     request's own host header so dev / staging show the right thing
     without extra config.
     """
-    base = getattr(settings, "PUBLIC_API_URL", None) or ""
+    base = settings.PUBLIC_URL
     if not base:
         # Best-effort fallback — request.url.scheme/netloc.
         base = f"{request.url.scheme}://{request.url.netloc}"
-    return f"{base.rstrip('/')}/git/{project_id}.git"
+    return canonical_git_url(base, project_id)
 
 
 @router.get(
@@ -56,15 +56,14 @@ def _build_repo_url(project_id: str, request: Request) -> str:
 )
 def get_access_point(
     request: Request,
-    project: Project = Depends(get_verified_project),
+    authorized: AuthorizedProject = Depends(
+        require_project_action(ProjectAction.ACCESS_READ)
+    ),
     scope_service: ScopeService = Depends(get_scope_service),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
 ):
+    project = authorized.project
     scopes = scope_service.list_for_project(str(project.id))
-    # Defensive: ensure root exists. Idempotent — just returns existing if so.
-    if not any(s.is_root for s in scopes):
-        scope_service.ensure_root_scope(str(project.id))
-        scopes = scope_service.list_for_project(str(project.id))
 
     head_commit_id = ops.get_head_commit_id(str(project.id)) or ""
 
@@ -78,8 +77,14 @@ def get_access_point(
                     id=s.id,
                     name=s.name,
                     path=s.path,
-                    is_root=s.is_root,
-                    access_key=s.access_key,        # visible to project members
+                    git_url=canonical_git_url(
+                        (
+                            settings.PUBLIC_URL
+                            or f"{request.url.scheme}://{request.url.netloc}"
+                        ),
+                        str(project.id),
+                        s.id,
+                    ),
                 )
                 for s in scopes
             ],
@@ -97,9 +102,11 @@ def get_access_point(
 )
 def update_access_point(
     payload: RepoIdentityPatch,
-    project: Project = Depends(get_verified_project),
-    project_service: ProjectService = Depends(get_project_service),
+    authorized: AuthorizedProject = Depends(
+        require_project_action(ProjectAction.PROJECT_MANAGE)
+    ),
 ):
+    project = authorized.project
     if payload.prompt_template is not None:
         # Reuse the project service if it has an update method; otherwise
         # write directly via Supabase client. (Keeping this loose so the

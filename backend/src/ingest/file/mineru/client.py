@@ -101,8 +101,7 @@ class MineRUClient:
                 if response.status_code != 200:
                     error_msg = response.text
                     logger.error(
-                        f"MineRU API error: status={response.status_code}, "
-                        f"message={error_msg}"
+                        f"MineRU API error: status={response.status_code}, message={error_msg}"
                     )
                     raise MineRUAPIError(response.status_code, error_msg)
 
@@ -150,8 +149,7 @@ class MineRUClient:
                 if response.status_code != 200:
                     error_msg = response.text
                     logger.error(
-                        f"MineRU API error: status={response.status_code}, "
-                        f"message={error_msg}"
+                        f"MineRU API error: status={response.status_code}, message={error_msg}"
                     )
                     raise MineRUAPIError(response.status_code, error_msg)
 
@@ -186,16 +184,13 @@ class MineRUClient:
         """
         start_time = asyncio.get_event_loop().time()
         logger.info(
-            f"Waiting for MineRU task {task_id} to complete "
-            f"(max wait: {self.max_wait_time}s)"
+            f"Waiting for MineRU task {task_id} to complete (max wait: {self.max_wait_time}s)"
         )
 
         while True:
             elapsed = asyncio.get_event_loop().time() - start_time
             if elapsed > self.max_wait_time:
-                logger.error(
-                    f"MineRU task {task_id} timed out after {self.max_wait_time}s"
-                )
+                logger.error(f"MineRU task {task_id} timed out after {self.max_wait_time}s")
                 raise MineRUTimeoutError(task_id, self.max_wait_time)
 
             status = await self.get_task_status(task_id)
@@ -248,9 +243,7 @@ class MineRUClient:
 
         async with httpx.AsyncClient(**client_kwargs) as client:
             try:
-                logger.info(
-                    f"Downloading MineRU result for task {task_id} from {zip_url[:100]}..."
-                )
+                logger.info(f"Downloading MineRU result for task {task_id} from {zip_url[:100]}...")
                 response = await client.get(zip_url)
 
                 if response.status_code != 200:
@@ -336,9 +329,7 @@ class MineRUClient:
                 md_files = list(cache_dir.glob("**/*.md"))
                 if md_files:
                     markdown_path = md_files[0]
-                    logger.info(
-                        f"Found markdown file via recursive glob: {markdown_path}"
-                    )
+                    logger.info(f"Found markdown file via recursive glob: {markdown_path}")
 
         if not markdown_path:
             # List directory contents for debugging
@@ -353,9 +344,7 @@ class MineRUClient:
         with open(markdown_path, encoding="utf-8") as f:
             content = f.read()
 
-        logger.info(
-            f"Extracted Markdown from {markdown_path} ({len(content)} characters)"
-        )
+        logger.info(f"Extracted Markdown from {markdown_path} ({len(content)} characters)")
         return content
 
     async def parse_document(
@@ -387,6 +376,19 @@ class MineRUClient:
         # Wait for completion
         status = await self.wait_for_completion(task_id)
 
+        return await self.materialize_task(task_id, status)
+
+    async def materialize_task(
+        self,
+        task_id: str,
+        status: TaskStatusResponse,
+    ) -> ParsedResult:
+        """Download and materialize an already completed MineRU task."""
+
+        if status.task_id != task_id:
+            raise MineRUAPIError(0, "MineRU completion task ID does not match handle")
+        if status.state != MineRUTaskState.COMPLETED:
+            raise MineRUAPIError(0, f"MineRU task is not complete: {status.state}")
         if not status.full_zip_url:
             raise MineRUAPIError(0, "No ZIP URL in completed task")
 

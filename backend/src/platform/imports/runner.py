@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import posixpath
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from src.connectors.datasource._base import AuthRequirement, FetchResult
 from src.connectors.datasource.dependencies import get_connector_registry
 from src.platform.imports.repository import ImportJob
-
+from src.platform.project.write_lease import (
+    ProjectWriteLease,
+    ProjectWriteLeaseFactory,
+    build_leased_worker_write_commands,
+)
 
 PhaseCallback = Callable[[str, int, str], Awaitable[None]]
 
@@ -82,6 +86,13 @@ def _result_mount_path(job: ImportJob, result: FetchResult) -> str:
 class OneTimeImportRunner:
     """Execute a connector fetch and write the result as a one-time import."""
 
+    def __init__(
+        self,
+        *,
+        write_lease_factory: ProjectWriteLeaseFactory = ProjectWriteLease,
+    ) -> None:
+        self._write_lease_factory = write_lease_factory
+
     async def run(
         self,
         job: ImportJob,
@@ -119,10 +130,9 @@ class OneTimeImportRunner:
         mount_path = _result_mount_path(job, result)
         actor = f"import:{job.provider}:{job.id}"
 
-        from src.version_engine.bootstrap.dependencies import (
-            build_worker_version_engine_container,
+        commands = build_leased_worker_write_commands(
+            write_lease_factory=self._write_lease_factory
         )
-        commands = build_worker_version_engine_container().write_commands()
 
         if result.files is not None:
             files = {

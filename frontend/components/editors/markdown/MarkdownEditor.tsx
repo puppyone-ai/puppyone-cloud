@@ -1,20 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import dynamic from 'next/dynamic';
-import { EditorLoadingSurface } from '@/components/loading';
-
-const EditorLoader = () => <EditorLoadingSurface label="Loading editor..." />;
-
-const MonacoMarkdownEditor = dynamic(() => import('./MonacoMarkdownEditor'), {
-  ssr: false,
-  loading: EditorLoader,
-});
-
-const MilkdownEditor = dynamic(() => import('./MilkdownEditor'), {
-  ssr: false,
-  loading: EditorLoader,
-});
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { EditorView } from '@codemirror/view';
+import { preserveMarkdownScroll } from '@/features/files/editor/preserveMarkdownScroll';
+import { MarkdownCodeMirrorEditor } from '@/shared-ui/src/editor/markdown/MarkdownCodeMirrorEditor';
 
 export type MarkdownViewMode = 'wysiwyg' | 'source';
 
@@ -37,26 +26,36 @@ export function MarkdownEditor({
   viewMode: controlledViewMode,
   onViewModeChange,
 }: MarkdownEditorProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const [internalViewMode, setInternalViewMode] = useState<MarkdownViewMode>(defaultMode);
+  const [localContent, setLocalContent] = useState(content);
   const isControlled = controlledViewMode !== undefined;
   const rawViewMode = isControlled ? controlledViewMode : internalViewMode;
   const viewMode: MarkdownViewMode = rawViewMode === 'source' ? 'source' : 'wysiwyg';
-  const setViewMode = isControlled ? (mode: MarkdownViewMode) => onViewModeChange?.(mode) : setInternalViewMode;
-  const [localContent, setLocalContent] = useState(content);
+  const canEdit = !readOnly && Boolean(onChange);
 
   useEffect(() => {
     setLocalContent(content);
   }, [content]);
 
-  const handleMilkdownChange = useCallback((newContent: string) => {
+  const setViewMode = isControlled ? (mode: MarkdownViewMode) => onViewModeChange?.(mode) : setInternalViewMode;
+
+  const handleChange = useCallback((newContent: string) => {
     setLocalContent(newContent);
     if (onChange && !readOnly) onChange(newContent);
   }, [onChange, readOnly]);
 
-  const canEdit = !readOnly && Boolean(onChange);
+  useLayoutEffect(() => {
+    // CodeMirror exposes its view via the public DOM lookup API. Keep this
+    // cloud-only layout adapter outside the shared Cloud/Desktop editor.
+    const editor = hostRef.current?.querySelector<HTMLElement>('.cm-editor');
+    const view = editor ? EditorView.findFromDOM(editor) : null;
+    if (view) return preserveMarkdownScroll(view);
+  }, [documentKey, viewMode]);
 
   return (
     <div
+      ref={hostRef}
       style={{
         height: '100%',
         width: '100%',
@@ -64,89 +63,55 @@ export function MarkdownEditor({
         background: 'var(--po-editor-bg)',
       }}
     >
-      {viewMode === 'wysiwyg' && (
-        <MilkdownEditor
-          key={documentKey ?? 'markdown-live-view'}
-          content={localContent}
-          onChange={canEdit ? handleMilkdownChange : undefined}
-          readOnly={!canEdit}
-        />
-      )}
-
-      {viewMode === 'source' && (
-        <MonacoMarkdownEditor
-          content={localContent}
-          onChange={(value) => {
-            setLocalContent(value);
-            if (onChange && !readOnly) onChange(value);
-          }}
-          readOnly={readOnly}
-        />
-      )}
+      <MarkdownCodeMirrorEditor
+        key={`${documentKey ?? 'markdown'}:${viewMode}`}
+        value={localContent}
+        onChange={canEdit ? handleChange : undefined}
+        readOnly={!canEdit}
+        livePreview={viewMode === 'wysiwyg'}
+      />
 
       {!isControlled && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 12,
-            right: 12,
-            zIndex: 20,
-            display: 'flex',
-            background: 'var(--po-control)',
-            borderRadius: 6,
-            padding: 2,
-            gap: 1,
-            border: '1px solid var(--po-border)',
-            boxShadow: '0 4px 12px var(--po-shadow)',
-          }}
-        >
+        <div className="editor-mode-toggle" aria-label="Markdown editor mode">
           <button
+            className={viewMode === 'wysiwyg' ? 'active' : ''}
+            type="button"
             onClick={() => setViewMode('wysiwyg')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 24,
-              height: 24,
-              borderRadius: 4,
-              border: 'none',
-              background: viewMode === 'wysiwyg' ? 'var(--po-selected)' : 'transparent',
-              color: viewMode === 'wysiwyg' ? 'var(--po-text)' : 'var(--po-text-subtle)',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
             title="Live view"
+            aria-label="Live view"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
+            <PencilIcon />
           </button>
           <button
+            className={viewMode === 'source' ? 'active' : ''}
+            type="button"
             onClick={() => setViewMode('source')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 24,
-              height: 24,
-              borderRadius: 4,
-              border: 'none',
-              background: viewMode === 'source' ? 'var(--po-selected)' : 'transparent',
-              color: viewMode === 'source' ? 'var(--po-text)' : 'var(--po-text-subtle)',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
             title="Source"
+            aria-label="Source"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
-            </svg>
+            <CodeIcon />
           </button>
         </div>
       )}
     </div>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </svg>
+  );
+}
+
+function CodeIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
   );
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react';
-import { useAuth } from '../supabase/SupabaseAuthProvider';
+import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PulseGrid, Dots } from '@/components/loading';
 
@@ -103,6 +103,8 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const {
+    supabase,
+    session,
     signInWithProvider,
     signInWithEmail,
     signUpWithEmail,
@@ -121,7 +123,13 @@ function LoginPageInner() {
     if (!raw) return null;
     if (!raw.startsWith('/')) return null;
     if (raw.startsWith('//')) return null; // protocol-relative
+    if (raw.startsWith('/\\')) return null; // backslash → protocol-relative
     return raw;
+  }, [searchParams]);
+  const desktopAuthState = React.useMemo(() => {
+    if (searchParams?.get('client') !== 'desktop') return null;
+    const state = searchParams.get('desktop_state') ?? searchParams.get('state');
+    return state?.trim() || null;
   }, [searchParams]);
 
   const [view, setView] = useState<AuthView>('main');
@@ -141,6 +149,8 @@ function LoginPageInner() {
   const [redirecting, setRedirecting] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSubmittedRef = useRef(false);
+  const autoOAuthProviderRef = useRef<'google' | 'github' | null>(null);
+  const autoDesktopCompleteRef = useRef(false);
 
   const clearFeedback = useCallback(() => {
     setError(null);
@@ -222,10 +232,69 @@ function LoginPageInner() {
     clearFeedback();
   }, [clearFeedback]);
 
+  const completeDesktopAuth = useCallback(async () => {
+    if (!desktopAuthState) return false;
+    if (!supabase) throw new Error('Auth client is not ready.');
+
+    const { data } = await supabase.auth.getSession();
+    let currentSession = data.session;
+    if (!currentSession?.access_token || !currentSession.refresh_token) {
+      throw new Error('Sign-in succeeded but no session was returned.');
+    }
+
+    const submit = (accessToken: string, refreshToken: string) => fetch(
+      backendApiUrl('/auth/desktop/complete'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          state: desktopAuthState,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_in: currentSession?.expires_in,
+          user_email: currentSession?.user?.email ?? null,
+        }),
+      },
+    );
+
+    let resp = await submit(currentSession.access_token, currentSession.refresh_token);
+    if (resp.status === 401) {
+      // A browser can briefly expose an old session while Supabase finishes
+      // rotating it after sign-in. Refresh once and retry once; never spin a
+      // render-driven request loop against the desktop completion endpoint.
+      const refreshed = await supabase.auth.refreshSession();
+      currentSession = refreshed.data.session;
+      if (!refreshed.error && currentSession?.access_token && currentSession.refresh_token) {
+        resp = await submit(currentSession.access_token, currentSession.refresh_token);
+      }
+    }
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok) {
+      throw new Error(getBackendErrorMessage(json, 'Desktop sign-in failed.'));
+    }
+    const redirectUrl = json?.data?.redirect_url;
+    if (typeof redirectUrl !== 'string' || !redirectUrl) {
+      throw new Error('Desktop sign-in did not return a callback URL.');
+    }
+    window.location.href = redirectUrl;
+    return true;
+  }, [desktopAuthState, supabase]);
+
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
+    if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
     clearFeedback();
     setLoading(provider);
     try {
+      if (desktopAuthState) {
+        const url = backendApiUrl(
+          `/auth/desktop/login?state=${encodeURIComponent(desktopAuthState)}&provider=${encodeURIComponent(provider)}`,
+        );
+        window.location.href = url;
+        return;
+      }
       await signInWithProvider(provider);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Sign-in failed');
@@ -233,6 +302,32 @@ function LoginPageInner() {
       setLoading(null);
     }
   };
+
+  useEffect(() => {
+    const queryEmail = searchParams?.get('email')?.trim();
+    if (!queryEmail) return;
+    setEmail((current) => current || queryEmail);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const provider = searchParams?.get('provider');
+    if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
+    if (provider !== 'google' && provider !== 'github') return;
+    if (autoOAuthProviderRef.current === provider) return;
+
+    autoOAuthProviderRef.current = provider;
+    void handleOAuthSignIn(provider);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
+    autoDesktopCompleteRef.current = true;
+    setRedirecting(true);
+    completeDesktopAuth().catch((e: unknown) => {
+      setRedirecting(false);
+      setError(e instanceof Error ? e.message : 'Desktop sign-in failed.');
+    });
+  }, [desktopAuthState, session, redirecting, completeDesktopAuth]);
 
   const handleContinue = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,6 +367,11 @@ function LoginPageInner() {
     setLoading('password');
     try {
       await signInWithEmail(email, password);
+      if (desktopAuthState) {
+        setRedirecting(true);
+        await completeDesktopAuth();
+        return;
+      }
       // Show full-screen overlay BEFORE router.push — the navigation is
       // async (chunk load + (main) layout init + projects fetch) and we
       // need a continuous loading UI for the entire gap. Don't reset
@@ -281,6 +381,7 @@ function LoginPageInner() {
       router.push(redirectAfterAuth ?? '/home');
       return;
     } catch (e: unknown) {
+      setRedirecting(false);
       const msg = e instanceof Error ? e.message : 'Sign-in failed';
       setError(msg);
       if (msg.toLowerCase().includes('email not confirmed')) {
@@ -333,6 +434,11 @@ function LoginPageInner() {
         goToVerifyOtp(`We sent a 6-digit code to ${email}.`);
         setPassword('');
       } else {
+        if (desktopAuthState) {
+          setRedirecting(true);
+          await completeDesktopAuth();
+          return;
+        }
         // Auto-confirmed signup (rare in our default config) — initialize
         // and go straight to the seeded demo project so first-time UX
         // mirrors the OTP / OAuth paths.
@@ -364,6 +470,7 @@ function LoginPageInner() {
         return;
       }
     } catch (e: unknown) {
+      setRedirecting(false);
       setError(e instanceof Error ? e.message : 'Sign-up failed');
     } finally {
       setLoading(null);
@@ -380,6 +487,11 @@ function LoginPageInner() {
     setLoading('verify');
     try {
       await verifyEmailOtp(email, code);
+      if (desktopAuthState) {
+        setRedirecting(true);
+        await completeDesktopAuth();
+        return;
+      }
       // Initialize profile + org (idempotent — same as OAuth callback).
       // On first sign-in this also seeds a "Get Started" demo project so
       // we can land the user inside it instead of an empty dashboard.
@@ -409,6 +521,7 @@ function LoginPageInner() {
       );
       return;
     } catch (e: unknown) {
+      setRedirecting(false);
       const msg = e instanceof Error ? e.message : 'Invalid or expired code';
       setError(msg);
       setOtpCode('');
@@ -416,7 +529,7 @@ function LoginPageInner() {
     } finally {
       setLoading(null);
     }
-  }, [loading, clearFeedback, verifyEmailOtp, email, getAccessToken, router, redirectAfterAuth]);
+  }, [loading, clearFeedback, verifyEmailOtp, email, desktopAuthState, completeDesktopAuth, getAccessToken, router, redirectAfterAuth]);
 
   // Auto-submit when 6 digits are entered (industry-standard UX).
   useEffect(() => {
@@ -483,7 +596,7 @@ function LoginPageInner() {
                 <h1 className="text-2xl font-semibold text-[var(--po-text)]">Sign in or sign up</h1>
               </div>
 
-              <div className="flex flex-col gap-3">
+              {process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY !== 'true' && <><div className="flex flex-col gap-3">
                 <ProviderButton
                   icon={<GoogleIcon />}
                   label="Continue with Google"
@@ -502,7 +615,7 @@ function LoginPageInner() {
                 />
               </div>
 
-              <AuthDivider />
+              <AuthDivider /></>}
 
               <div>
                 <form onSubmit={handleContinue} className="flex flex-col gap-3">

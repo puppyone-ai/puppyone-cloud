@@ -15,6 +15,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from src.platform.repository_target.schemas import RepositoryTargetSchema
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Scopes
@@ -27,15 +29,15 @@ RoleLiteral = Literal["admin", "editor", "reader", "denied"]
 
 class ScopeIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    path: str = Field(..., max_length=512)        # '' for root; service rejects creating duplicate root
+    path: str = Field(..., min_length=1, max_length=512)
     exclude: list[str] = Field(default_factory=list)
-    mode: ModeLiteral = "rw"
+    max_mode: ModeLiteral = "rw"
 
 
 class ScopePatch(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     exclude: Optional[list[str]] = None
-    mode: Optional[ModeLiteral] = None
+    max_mode: Optional[ModeLiteral] = None
 
 
 class ScopeOut(BaseModel):
@@ -44,10 +46,7 @@ class ScopeOut(BaseModel):
     name: str
     path: str
     exclude: list[str]
-    mode: ModeLiteral
-    is_root: bool
-    access_key: Optional[str] = None      # populated only for callers with admin/editor on the project
-    access_key_revoked: bool = False
+    max_mode: ModeLiteral
     created_at: datetime
     updated_at: datetime
 
@@ -71,13 +70,12 @@ class RepoIdentityScopeOut(BaseModel):
     id: str
     name: str
     path: str
-    is_root: bool
-    access_key: Optional[str] = None      # only visible to admin/editor
+    git_url: str
 
 
 class RepoIdentityOut(BaseModel):
     project_id: str
-    url: str                              # https://<api>/api/v1/version/<project_id>
+    url: str                              # canonical credential-free root Git URL
     prompt_template: str
     scopes: list[RepoIdentityScopeOut]
     content_initialized: bool = False
@@ -99,7 +97,7 @@ class TriggerSpec(BaseModel):
 
 
 class ConnectorIn(BaseModel):
-    scope_id: str
+    target: RepositoryTargetSchema
     provider: str = Field(..., min_length=1, max_length=64)        # service rejects 'cli' and 'agent' (auto-only)
     direction: DirectionLiteral
     name: Optional[str] = None
@@ -107,6 +105,12 @@ class ConnectorIn(BaseModel):
     policy: dict[str, Any] = Field(default_factory=dict)
     oauth_connection_id: Optional[int] = None
     trigger: TriggerSpec = Field(default_factory=TriggerSpec)
+
+
+class TargetAccessEnableIn(BaseModel):
+    """Explicitly enable the standard machine entry points for one target."""
+
+    target: RepositoryTargetSchema
 
 
 class ConnectorPatch(BaseModel):
@@ -121,8 +125,7 @@ class ConnectorPatch(BaseModel):
 
 class ConnectorOut(BaseModel):
     id: str
-    project_id: str
-    scope_id: str
+    target: RepositoryTargetSchema
     provider: str
     name: str
     direction: DirectionLiteral

@@ -78,6 +78,22 @@ class ETLTaskRepositoryBase(ABC):
             List of tasks
         """
 
+    def list_tasks_strict(
+        self,
+        project_id: str | None = None,
+        status: ETLTaskStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ETLTask]:
+        """List tasks, surfacing storage failure to strict cleanup callers."""
+
+        return self.list_tasks(
+            project_id=project_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
     @abstractmethod
     def count_tasks(
         self,
@@ -127,9 +143,7 @@ class ETLTaskRepositorySupabase(ETLTaskRepositoryBase):
             if "id" not in insert_data or not insert_data["id"]:
                 insert_data["id"] = str(uuid.uuid4())
 
-            response = (
-                self.supabase.table(self.TABLE_NAME).insert(insert_data).execute()
-            )
+            response = self.supabase.table(self.TABLE_NAME).insert(insert_data).execute()
 
             if not response.data or len(response.data) == 0:
                 raise Exception("Failed to create task: no data returned")
@@ -216,35 +230,43 @@ class ETLTaskRepositorySupabase(ETLTaskRepositoryBase):
     ) -> list[ETLTask]:
         """List tasks with optional filters (only ETL upload types)."""
         try:
+            return self.list_tasks_strict(
+                project_id=project_id,
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+        except Exception as e:
+            logger.error(f"Error listing tasks: {e}")
+            return []
+
+    def list_tasks_strict(
+        self,
+        project_id: str | None = None,
+        status: ETLTaskStatus | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ETLTask]:
+        """List ETL tasks without converting repository failure to emptiness."""
+
+        try:
             query = self.supabase.table(self.TABLE_NAME).select("*")
-
-            # Restrict to ETL-related upload types
             query = query.in_("type", ETL_UPLOAD_TYPES)
-
-            # Use project_id for listing (created_by is audit-only)
             if project_id is not None:
                 query = query.eq("project_id", project_id)
             if status is not None:
                 query = query.eq("status", status.value)
-
-            query = query.range(offset, offset + limit - 1).order(
-                "created_at", desc=True
-            )
-
+            query = query.range(offset, offset + limit - 1).order("created_at", desc=True)
             response = query.execute()
-
             tasks = [ETLTask.from_dict(row) for row in response.data]
-
             logger.info(
                 f"Listed {len(tasks)} tasks "
                 f"(project_id={project_id}, status={status}, "
                 f"offset={offset}, limit={limit})"
             )
             return tasks
-
         except Exception as e:
-            logger.error(f"Error listing tasks: {e}")
-            return []
+            raise handle_supabase_error(e, "list ETL tasks") from e
 
     def count_tasks(
         self,
@@ -275,12 +297,7 @@ class ETLTaskRepositorySupabase(ETLTaskRepositoryBase):
     def delete_task(self, task_id: str) -> bool:
         """Delete task by ID."""
         try:
-            response = (
-                self.supabase.table(self.TABLE_NAME)
-                .delete()
-                .eq("id", task_id)
-                .execute()
-            )
+            response = self.supabase.table(self.TABLE_NAME).delete().eq("id", task_id).execute()
 
             if not response.data or len(response.data) == 0:
                 logger.warning(f"Task not found for deletion: {task_id}")

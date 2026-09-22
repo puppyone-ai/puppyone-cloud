@@ -1,19 +1,33 @@
-const DEFAULT_PUBLIC_API_URL = 'http://localhost:9090';
-const DEFAULT_PUBLIC_SUPABASE_URL = 'http://localhost:8000';
+/**
+ * True iff `next` is a safe same-origin relative path — i.e. safe to
+ * concatenate onto an origin for a redirect without allowing an open
+ * redirect to an attacker-controlled host.
+ *
+ * Rejects:
+ *   - non-string / empty
+ *   - anything not starting with `/` (absolute URLs, `http:…`, etc.)
+ *   - `//evil.com` (protocol-relative — browsers treat as absolute)
+ *   - `/\evil.com` (backslash variant some parsers normalise to `//`)
+ */
+export function isSafeRelativePath(next: string | null | undefined): next is string {
+  if (!next || typeof next !== 'string') return false;
+  if (!next.startsWith('/')) return false;
+  if (next.startsWith('//')) return false; // protocol-relative
+  if (next.startsWith('/\\')) return false; // backslash → protocol-relative
+  return true;
+}
 
 export function getServerApiBaseUrl(): string {
-  return (
-    process.env.API_INTERNAL_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    DEFAULT_PUBLIC_API_URL
+  return requireConfiguredHttpUrl(
+    process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL,
+    'API_INTERNAL_URL or NEXT_PUBLIC_API_URL must configure the backend API URL',
   );
 }
 
 export function getServerSupabaseUrl(): string {
-  return (
-    process.env.SUPABASE_INTERNAL_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    DEFAULT_PUBLIC_SUPABASE_URL
+  return requireConfiguredHttpUrl(
+    process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+    'SUPABASE_INTERNAL_URL or NEXT_PUBLIC_SUPABASE_URL must configure Supabase',
   );
 }
 
@@ -28,30 +42,50 @@ export function getSupabaseAnonKey(): string {
 /**
  * Resolve the public-facing origin for server-side redirects.
  *
- * Behind a reverse proxy (Railway, Vercel, etc.) `request.url` may reflect the
- * internal container address (e.g. http://localhost:8080). This helper checks,
- * in order:
- *   1. NEXT_PUBLIC_APP_URL env var (preferred, explicit)
- *   2. NEXT_PUBLIC_SITE_URL env var (legacy alias)
- *   3. x-forwarded-host + x-forwarded-proto headers (set by most proxies)
- *   4. host header
- *   5. request.url fallback
+ * Behind a reverse proxy, request/forwarded host headers are deployment input
+ * and must not become an authentication redirect authority. The public origin
+ * is explicit configuration so callbacks cannot be redirected by a spoofed
+ * Host header.
  */
-export function getRequestOrigin(request: Request): string {
-  const siteUrl =
-    process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL;
-  if (siteUrl) return siteUrl.replace(/\/+$/, '');
+export function getRequestOrigin(_request: Request): string {
+  const siteUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!siteUrl) throw new Error('NEXT_PUBLIC_APP_URL must configure the frontend origin');
+  return requirePublicAppOrigin(siteUrl);
+}
 
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  if (forwardedHost) {
-    const proto = request.headers.get('x-forwarded-proto') || 'https';
-    return `${proto}://${forwardedHost}`;
+function requireConfiguredHttpUrl(value: string | undefined, message: string): string {
+  if (!value) throw new Error(message);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(message);
   }
-
-  const host = request.headers.get('host');
-  if (host && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
-    return `https://${host}`;
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error(message);
   }
+  return url.toString().replace(/\/$/, '');
+}
 
-  return new URL(request.url).origin;
+function requirePublicAppOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('NEXT_PUBLIC_APP_URL must configure a valid frontend origin');
+  }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (
+    (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+    || url.username
+    || url.password
+    || (url.pathname !== '/' && url.pathname !== '')
+    || url.search
+    || url.hash
+  ) {
+    throw new Error(
+      'NEXT_PUBLIC_APP_URL must be an HTTPS origin, or a loopback HTTP origin for local development',
+    );
+  }
+  return url.origin;
 }

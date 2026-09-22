@@ -26,12 +26,11 @@ import hashlib
 import os
 import sys
 import time
-import json
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-
 
 API = os.environ.get("PUPPYONE_API_URL", "https://qubits-api.puppyone.ai").rstrip("/")
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
@@ -111,10 +110,20 @@ class V2Smoke:
 
     def setup_project(self):
         def run():
-            r = self.client.post("/api/v1/projects/", json={
-                "name": self.test_project_name,
-                "description": "v2 features deep test — safe to delete",
-            })
+            orgs = self._expect_ok(
+                self.client.get("/api/v1/organizations/"),
+                hint="list organizations",
+            )["data"]
+            assert orgs, "authenticated user has no organization"
+            r = self.client.post(
+                "/api/v1/projects/",
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+                json={
+                    "name": self.test_project_name,
+                    "description": "v2 features deep test — safe to delete",
+                    "org_id": orgs[0]["id"],
+                },
+            )
             body = self._expect_ok(r, hint="create project")
             self.test_project_id = body["data"]["id"]
             return f"project={self.test_project_id[:12]}"
@@ -125,7 +134,8 @@ class V2Smoke:
             if not self.test_project_id:
                 return "no project"
             r = self.client.delete(f"/api/v1/projects/{self.test_project_id}")
-            return f"HTTP {r.status_code}"
+            body = self._expect(r, (202,), hint="accept Project deletion")
+            return f"HTTP 202 ({(body.get('data') or {}).get('status', 'pending')})"
         self.step("99. Cleanup", run)
 
     # ── OpenAPI advertisement ────────────────────────────────
@@ -165,7 +175,7 @@ class V2Smoke:
 
     @staticmethod
     def _git_blob_sha1(data: bytes) -> str:
-        return hashlib.sha1(  # noqa: S324 — git convention
+        return hashlib.sha1(
             f"blob {len(data)}\0".encode() + data,
         ).hexdigest()
 

@@ -1,0 +1,39 @@
+{
+  "contract": "puppyone.repository-target",
+  "version": 2,
+  "request_header": {
+    "name": "X-PuppyOne-Repository-Contract",
+    "value": "2"
+  },
+  "targets": {
+    "project_root": {
+      "kind": "project_root",
+      "project_id": "project-1"
+    },
+    "scope": {
+      "kind": "scope",
+      "project_id": "project-1",
+      "scope_id": "scope-docs"
+    }
+  },
+  "canonical_git_urls": {
+    "project_root": "https://cloud.example/git/project-1.git",
+    "scope": "https://cloud.example/git/project-1/scopes/scope-docs.git"
+  },
+  "association_rows": {
+    "project_root": {
+      "project_id": "project-1",
+      "scope_id": null
+    },
+    "scope": {
+      "project_id": "project-1",
+      "scope_id": "scope-docs"
+    }
+  },
+  "errors": {
+    "client_upgrade_required": 1007,
+    "target_kind_mismatch": 1008,
+    "scope_not_found": 1009,
+    "repository_storage_unavailable": 1010
+  }
+}

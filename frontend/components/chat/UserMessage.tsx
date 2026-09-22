@@ -54,23 +54,26 @@ export default function UserMessage({
       flexDirection: 'row-reverse',
     },
     messageWrapper: {
+      position: 'relative',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'flex-end',
-      maxWidth: '85%',
+      width: '100%',
+      maxWidth: '100%',
     },
     bubble: {
-      padding: '4px 10px',
-      borderRadius: '12px',
+      width: '100%',
+      padding: '8px 12px',
+      borderRadius: '8px',
       boxShadow: 'none',
       position: 'relative',
-      background: 'var(--po-control)',
+      background: 'var(--po-hover)',
       color: 'var(--po-text)',
-      border: 'none',
+      border: '1px solid color-mix(in srgb, var(--po-divider) 62%, transparent)',
       cursor: 'default',
     },
     content: {
-      fontSize: '13px',
+      fontSize: '14px',
       whiteSpace: 'normal',
       lineHeight: '1.5',
       margin: 0,
@@ -125,6 +128,9 @@ export default function UserMessage({
       borderBottom: '1px solid var(--po-border)',
     },
     metaBar: {
+      position: 'absolute',
+      top: '100%',
+      right: 0,
       display: 'flex',
       alignItems: 'center',
       gap: '8px',
@@ -171,7 +177,7 @@ export default function UserMessage({
                   .replace(/\r\n/g, '\n')
                   .replace(/\n{3,}/g, '\n\n')}
                 componentsStyle={{
-                  p: { margin: '4px 0', lineHeight: '1.5' },
+                  p: { margin: 0, lineHeight: '1.5', fontSize: '14px' },
                   h1: styles.h1,
                   h2: styles.h2,
                   h3: styles.h3,

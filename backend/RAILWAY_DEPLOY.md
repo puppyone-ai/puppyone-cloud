@@ -74,6 +74,14 @@ DEBUG=False
 APP_NAME=ContextBase
 VERSION=1.0.0
 
+# Template Registry（开源默认可保持 builtin）
+TEMPLATE_REGISTRY_MODE=builtin
+# 托管版启用独立 Registry 时设置以下三项：
+# TEMPLATE_REGISTRY_MODE=remote
+# TEMPLATE_REGISTRY_URL=https://templates.example.com
+# TEMPLATE_REGISTRY_TRUSTED_KEYS_JSON={"official-2026":"<base64url-ed25519-public-key>"}
+TEMPLATE_REGISTRY_REQUIRE_SIGNATURE=true
+
 # CORS（生产环境建议指定具体域名）
 ALLOWED_HOSTS=https://your-frontend.com
 

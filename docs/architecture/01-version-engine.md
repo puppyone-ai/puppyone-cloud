@@ -5,6 +5,12 @@ scope boundaries, optimistic merge, hosted conflict review, audit, projection,
 and outbox repair live above Git in the Version Engine. The server does not
 maintain a second version-control protocol.
 
+Repository identity follows
+[Project-Owned Repository Targets](15-project-owned-repository-targets.md):
+Project is the sole root repository identity, while every persisted Scope is a
+non-empty path boundary. “Root” below names an empty-path Project projection,
+never a synthetic Scope resource.
+
 ## Architecture
 
 ```text
@@ -42,7 +48,7 @@ maintain a second version-control protocol.
   +---------------------------+       +-------------------------------+
   | Git object storage        |       | Supabase control plane        |
   |                           |       |                               |
-  | version/<project>/objects |       | repo_scopes                   |
+  | version/<project>/objects |       | repository_scopes             |
   | version/<project>/bundles |       | canonical projects root column|
   | blob/tree/commit bytes    |       | scope-state and commit rows   |
   | object-location index     |       | conflicts, transactions       |
@@ -74,11 +80,11 @@ Scopes = path-bounded access wrappers over that root.
 Scope-state rows = derived/cache/compatibility state, never authority.
 ```
 
-Concretely, the project root hash column (`projects.mut_root_hash`, later
+Concretely, the project root hash column (`projects.version_root_hash`, formerly
 `projects.version_root_hash`) is the canonical tree for the project. Product
 writes, Access Point writes, Git pushes, CLI FS writes, and connector writes all
 land by applying a path-scoped patch to that root and conditionally publishing a
-new root. `repo_scopes` defines who can touch which path; it does not define a
+new root. `repository_scopes` defines optional path boundaries; it does not define a
 separate project truth.
 
 This is the same architectural shape as Git-backed systems: one repository view
@@ -89,7 +95,7 @@ replace the canonical root as truth.
 
 ### Legacy Scope-State Compatibility
 
-Existing deployments still contain `mut_scope_state` and older scoped heads. That
+Existing deployments may still expose the restricted `mut_scope_state` compatibility view and older scoped heads. The canonical table is `version_scope_state`. That
 state is compatibility data during migration and may be used to rebuild or repair
 the canonical root for legacy projects, but new root-first writes must not treat
 per-scope heads as independent sources of truth.
@@ -275,7 +281,8 @@ Updates from the previous diagram:
   same permission vocabulary: target scope, mode, excludes, allowed actions,
   connector status, and audit identity.
 - "AP scope auth" means the product concept, not the removed historical
-  table model. The canonical runtime model is `repo_scopes + connectors`.
+  table model. The canonical runtime model is Project-owned repository state +
+  `repository_scopes` + target-bound `access_surfaces`.
 - Write side effects are behind `VersionTransactionLedger`. The
   Write Engine decides the lifecycle facts; Supabase persistence lives in
   `version_engine/infrastructure/supabase/transaction_ledger.py`.
@@ -418,6 +425,13 @@ A broken derived view must never become an empty project. If the root is healthy
 and a derived cache is missing, stale, or damaged, the system should rebuild from
 the root or fail loudly with a repairable error.
 
+The rebuild implementation remains a derived L5 follow-up operation. Git
+clients reach it through the machine `/git/.../rebuild-cache` entry point after
+RuntimeGrant admission; human Web operators reach the same implementation
+through the Project control-plane adapter after ProjectGrant authorization.
+The adapter boundary must not make JWT a valid Git transport credential or
+create another publication path.
+
 ## Rules
 
 1. Git owns version facts: objects, trees, commits, refs, clone/fetch/push.
@@ -552,8 +566,13 @@ backend/src/version_engine/
     projection.py
 
   read/
-    admin.py
-    history_changes.py
+    admin.py                       # narrow orchestration for legacy/admin reads
+    history_cache.py               # bounded LRU/TTL + per-snapshot single-flight
+    history_cursor.py              # authenticated immutable-ref paging cursors
+    history_facts.py               # canonical head + immutable commit decoding
+    history_graph.py               # all-ref DAG traversal and page projection
+    history_models.py              # typed History read-model contracts/errors
+    history_changes.py             # persisted change normalization
     text_detection.py
     tree_reader.py
 
@@ -575,26 +594,59 @@ backend/src/version_engine/
 
 ## Persistent DB Names
 
-Database renames are intentionally deferred. Runtime code may reference these
-names only through `infrastructure/supabase/db_names.py`:
+Canonical physical names are exposed through
+`infrastructure/supabase/db_names.py`:
 
 ```text
-mut_commits
-mut_scope_state
-mut_version_index
-mut_version_outbox
-mut_object_locations
-mut_conflicts
-projects.mut_root_hash
-github_sync_log.mut_commit_id
-publish_mut_project_update
-get_mut_project_write_state
-claim/complete/fail_mut_version_outbox
+version_commits
+version_scope_state
+version_view_commits
+version_outbox
+version_object_locations
+version_conflicts
+projects.version_root_hash
+github_sync_log.version_commit_id
+publish_version_project_update
+get_version_project_write_state
+get_version_project_history_refs
+claim/complete/fail_version_outbox
 ```
 
-These names are storage compatibility, not architecture. Product code,
+The deployment migration temporarily retains restricted `mut_*` compatibility
+views/wrappers and dual-write columns so old and new pods can overlap. Runtime
+code never targets them. Product code,
 frontend code, CLI code, logs, and API metadata should use Version Engine,
 Git Remote, Puppyone CLI, scope, conflict, and audit language.
+
+## Project History Read Model
+
+Cloud project History is a dedicated read model over immutable Git objects; it
+is not a second source of truth and does not participate in writes. The first
+topological page obtains canonical main plus root-scope branch/tag refs from
+`get_version_project_history_refs` in one PostgreSQL MVCC snapshot. The RPC
+resolves main against `projects.version_root_hash`, then uses the persisted
+project-view index and compatibility rows only as ordered fallbacks.
+
+Pagination is bound to that exact ref snapshot. An authenticated, stateless
+cursor carries the ordered root commit IDs, snapshot digest, canonical head,
+and exclusive anchor, so continuation requests do not reread mutable refs and
+remain valid across API replicas. Ref metadata is returned only on the first
+page (`refs_included=true`); clients retain it while appending pages and reject
+a different `snapshot_id`.
+
+`read/history_graph.py` owns traversal and deterministic child-before-parent
+ordering. It reports unreadable objects as an explicit degraded graph instead
+of silently claiming completeness. Traversal has a hard commit/ref budget, and
+the app-scoped cache is bounded by TTL, snapshot count, and retained-container
+weight with single-flight builds. Each actual build logs root count, commit
+count, unreadable count, and elapsed time; those measurements are the gate for
+any future persistent graph index. The legacy linear catch-up contract remains
+independent of the named-ref control-plane read.
+
+For this commit-graph read model, annotated (including nested) tags are peeled
+to their commit target exactly as `git log --all` does. The persisted Git ref
+still points at the original tag object; only the History response's
+`commit_id` is the peeled target used for traversal and label placement.
 
 ## Access Point Model
 
@@ -602,7 +654,7 @@ Each access point behaves externally like a repo endpoint, but internally it is
 a scoped facade over the canonical project root:
 
 ```text
-repo_scopes row
+RepositoryTarget + ResolvedRepositoryView
   -> RepoFacade(project_id, repo_id, scope_path, excludes, mode, ref)
   -> Git transport / CLI FS scoped view
   -> Version Engine transaction
@@ -612,6 +664,29 @@ repo_scopes row
 
 This keeps the GitHub-like external product model without creating one physical
 Git repository per scope and without creating one source of truth per scope.
+
+The public Git locator and credential contract lives in
+[Git Remote Locator, Credential, And Access Point Contract](05-git-remote-accesspoint.md).
+Its canonical routes are a root Project locator and an exact scoped
+locator:
+
+```text
+/git/{project_id}.git
+/git/{project_id}/scopes/{scope_id}.git
+```
+
+The route supplies non-secret target identity and HTTP authorization supplies
+the opaque credential. L2 must prove that credential owner, Access Surface,
+Scope, Project, lifecycle, current ProjectGrant, and effective mode all match
+before emitting a RuntimeGrant. From that grant onward the existing Version Engine contract is
+unchanged: RepoFacade, GitViewHead, cache identity, quarantine, scope/exclude
+admission, VersionSubmissionIntent, canonical-root CAS, audit, and repair do not
+depend on the URL family or raw credential.
+
+In particular, the Git view cache remains keyed by effective content geometry
+(`project_id + scope_path + excludes + projection/storage variants`), not by
+credential, user, route family, local checkout, or Scope ID. Credential rotation
+therefore never creates a new content view or invalidates a transport cache.
 
 ## 嵌套 Scope 拓扑 —— 用户行为对照表
 
@@ -632,8 +707,8 @@ Root
 
 ### 一、从 Root 入口提交
 
-入口包括产品 Web 保存、API、CLI 带 root access key、root scope 的 access
-point。Root 入口能看见整棵树，触达任意路径都是合法的。
+入口包括产品 Web 保存、API、Project-root CLI/Git Access Surface。Root 入口能
+看见整棵树，触达任意路径都是合法的。
 
 | # | 触达路径 | 我们怎么做 | 为什么 |
 |---|---|---|---|
@@ -651,16 +726,16 @@ point。Root 入口能看见整棵树，触达任意路径都是合法的。
 
 1. 客户端提交的就是整棵 root 的新版本，**新 root 树直接拿来用**（不用 graft，root 入口就是站在 root 上写的）。
 2. build 一条新的 root commit `C_canon`，parent = 当前 root 的 head commit。
-3. 拿 `(旧 root_hash → 新 root_hash)` 去 CAS `projects.mut_root_hash`。撞车就拿新 root 重新 graft + rebuild commit 再 CAS，重试到上限为止。
+3. 拿 `(旧 root_hash → 新 root_hash)` 去 CAS `projects.version_root_hash`。撞车就拿新 root 重新 graft + rebuild commit 再 CAS，重试到上限为止。
 4. CAS 成功后**同一个数据库事务里**做完下面这些：
-   - 写 `mut_scope_state[scope_path='']`：`scope_hash = 新 root_hash`、`head_commit_id = C_canon`（这一行就是"root scope 的视图缓存"）。
-   - 写 `mut_commits` 一行（canonical commit 记录）。
+   - 写 `version_scope_state[scope_path='']`：`scope_hash = 新 root_hash`、`head_commit_id = C_canon`（这一行是 Project-root 投影视图缓存，不是 Scope 资源）。
+   - 写 `version_commits` 一行（canonical commit 记录）。
    - 写 `version_transactions` 一行（事务记录）。
    - 写 `audit_logs` 一行。
-   - 写 `mut_version_outbox` 一行 `project_version_committed`（通知用）。
+   - 写 `version_outbox` 一行 `project_version_committed`（通知用）。
 5. 事务提交后，**按 changed_paths 一一处理被波及的子 scope 视图**：对每个声明过的 scope `S`（A、B、C 都要看），判断 `changed_paths` 跟"S 自己看得见的路径集合"（= S 自己的 path 子集 - S 已声明的孙 scope）有没有交集：
    - 没交集 → 这个 scope 视图就不动，head 保持原值。
-   - 有交集 → 从新 root 按 `S.path` 派生出 `S` 的新 scope_hash；用这个 scope_hash build 一条**合成 commit**（author = `puppyone-scope-view`，message = `Puppyone scope view for <C_canon>`，parent = 该 scope 上一次的 head）；CAS 写 `mut_scope_state[S]` 一行 `(scope_hash, head=合成 commit)`。
+   - 有交集 → 从新 root 按 `S.path` 派生出 `S` 的新 scope_hash；用这个 scope_hash build 一条**合成 commit**（author = `puppyone-scope-view`，message = `Puppyone scope view for <C_canon>`，parent = 该 scope 上一次的 head）；CAS 写 `version_scope_state[S]` 一行 `(scope_hash, head=合成 commit)`。
 6. outbox 投递通知 → 受影响 scope 上挂着的 SSE / connector / Git client 拿到 push 通知，下一次 fetch 就看到新 head。
 
 **几个具体场景的差别**（接 上表行号）：
@@ -693,7 +768,7 @@ A 默认看不到 `/A/C/*`（已声明的子 scope 在父视图里自动隐藏�
 | 5 | 动 Root 直辖区（往父跑） | 拒绝 | 越界。要动父就用 root access key 或走产品 API。 |
 
 **拒绝的 4 行（#2~#5）怎么处理**：在 admission（L3）期就判完，请求**不进** Write
-Engine，没有任何 git object 落盘、没有 root_hash 改动、没有 mut_scope_state 改动。
+Engine，没有任何 git object 落盘、没有 root_hash 改动、没有 version_scope_state 改动。
 错误码统一 `out_of_scope`，response 带着违规路径和"请去 Scope X push"的建议。
 
 **接受的 #1（只动 A 自己）我们干啥（按顺序）：**
@@ -703,11 +778,11 @@ Engine，没有任何 git object 落盘、没有 root_hash 改动、没有 mut_s
 1. **splice 出 A 的新子树**：把客户端提交的 tree（A 视图下那棵树）作为 A 的新子树；C 子树在 A 视图里是 carved 隐藏的，**原样从老的 root 里钉回来**——也就是说客户端那棵树即使在 A 看不见的位置摸了 `/A/C/*`，我们也不让它进。
 2. **graft 回 root**：拿当前 root 的整棵树，把 `/A` 那一格替换成步骤 1 得到的 A 新子树，得到 candidate 新 root 树。
 3. build canonical root commit `C_canon`，parent = 当前 root 的 head commit。message trailer 里写 `PuppyOne-Original-Commit: C_client`，方便溯源。
-4. CAS `projects.mut_root_hash: 旧 → 新`。撞车就拿当时新的 root 重新 graft（步骤 2）+ 重新 build commit（步骤 3）再 CAS。重试期间客户端 SHA `C_client` 一直**不变**——只换 canonical root commit 的 parent。**但 publish 时必须同时带上 A 当前 head 的 expected base；如果 A 的 head 已经从客户端 base 前进了，整次事务失败并返回 `non-fast-forward`，不能继续把 `C_client` 写成 A 的 head。**
+4. CAS `projects.version_root_hash: 旧 → 新`。撞车就拿当时新的 root 重新 graft（步骤 2）+ 重新 build commit（步骤 3）再 CAS。重试期间客户端 SHA `C_client` 一直**不变**——只换 canonical root commit 的 parent。**但 publish 时必须同时带上 A 当前 head 的 expected base；如果 A 的 head 已经从客户端 base 前进了，整次事务失败并返回 `non-fast-forward`，不能继续把 `C_client` 写成 A 的 head。**
 5. CAS 成功后同一个事务里：
-   - 写 `mut_scope_state[scope_path='']`：`scope_hash = 新 root_hash`、`head = C_canon`（root 行用服务端 SHA）。
-   - 写 `mut_scope_state[scope_path='/A']`：`scope_hash = A 的新子树 hash`、`head = C_client`（**源 scope 行刻意沿用客户端 SHA**，这样 A 上 `git fetch` 是 fast-forward，客户端不需要 REWRITE 协议）。
-   - 写 `mut_commits` / `version_transactions` / `audit_logs` / `mut_version_outbox` 各一行（同根入口）。
+   - 写 `version_scope_state[scope_path='']`：`scope_hash = 新 root_hash`、`head = C_canon`（root 行用服务端 SHA）。
+   - 写 `version_scope_state[scope_path='/A']`：`scope_hash = A 的新子树 hash`、`head = C_client`（**源 scope 行刻意沿用客户端 SHA**，这样 A 上 `git fetch` 是 fast-forward，客户端不需要 REWRITE 协议）。
+   - 写 `version_commits` / `version_transactions` / `audit_logs` / `version_outbox` 各一行（同根入口）。
 6. 事务提交后看 changed_paths（只在 A 自己的地盘里）：
    - A 自己：源 scope，**显式跳过**，否则会把 A 行的 `C_client` 覆盖成合成 commit，fast-forward 链立刻断。
    - C：A 写不到 /A/C/*（admission 拦了），所以与 C 视图必然不相交 → 不刷。
@@ -749,8 +824,8 @@ C 是最里层，没有更深的子 scope。
 3. build canonical root commit `C_canon`，parent = 当前 root head。trailer 写 `PuppyOne-Original-Commit: C_client`。
 4. CAS root_hash，撞车 rebase 重试（同 A 入口）。**但 publish 时必须同时带上 C 当前 head 的 expected base；如果 C 的 head 已经从客户端 base 前进了，整次事务失败并返回 `non-fast-forward`。**
 5. CAS 成功后同一个事务里：
-   - 写 `mut_scope_state[scope_path='']`，head = `C_canon`。
-   - 写 `mut_scope_state[scope_path='/A/C']`，head = `C_client`（**源 scope 用客户端 SHA**）。
+   - 写 `version_scope_state[scope_path='']`，head = `C_canon`。
+   - 写 `version_scope_state[scope_path='/A/C']`，head = `C_client`（**源 scope 用客户端 SHA**）。
    - 写 commits / transactions / audit / outbox 各一行。
 6. 事务提交后看 changed_paths（都在 /A/C/* 里）跟各 scope 视图相交情况：
    - C：源 scope，跳过。
@@ -787,8 +862,8 @@ B 是最简单的形态——独立子树，没有子 scope，跟 A、C 都不�
 3. build canonical commit `C_canon`，parent = 当前 root head，trailer 带 `C_client`。
 4. CAS root_hash，撞车 rebase 重试。**但 publish 时必须同时带上 B 当前 head 的 expected base；如果 B 的 head 已经从客户端 base 前进了，整次事务失败并返回 `non-fast-forward`。**
 5. 事务里：
-   - 写 `mut_scope_state['']`，head = `C_canon`。
-   - 写 `mut_scope_state['/B']`，head = `C_client`。
+   - 写 `version_scope_state['']`，head = `C_canon`。
+   - 写 `version_scope_state['/B']`，head = `C_client`。
    - commits / transactions / audit / outbox。
 6. changed_paths 都在 /B/* 里：B 是源 scope 跳过；A、C 完全不相交 → **没有任何派生 scope 需要刷新**。
 7. notify。
@@ -801,10 +876,10 @@ B 是最简单的形态——独立子树，没有子 scope，跟 A、C 都不�
 
 | 场景 | 我们怎么做 |
 |---|---|
-| 从 Root 入口删掉整棵 `/A/C` 子树 | 接受。Scope C 的 `repo_scopes` 声明保留，C 视图变成空（clone 出来无 ref）。dashboard 弹一条告警："Scope C 的挂载点被根写清空。" C 的所有者可以继续 push 来重建。 |
+| 从 Root 入口删掉整棵 `/A/C` 子树 | 接受。Scope C 的 `repository_scopes` 声明保留，C 视图变成空（clone 出来无 ref）。dashboard 弹一条告警："Scope C 的挂载点被根写清空。" C 的所有者可以继续 push 来重建。 |
 | 从 Root 入口把 `/A/C` 这个目录改成一个文件 | 走冲突策略。生成 pending conflict，归属 C；由 C 所有者或管理员决定是接受类型变更（C 之后变空）还是回滚。 |
 | 跨 scope 边界的 rename / move（如 `/A/x.md` → `/A/C/x.md`） | 子 scope 入口（A 或 C）都做不了：源或目标必有一端越界。这种动作只能从 Root 入口走。 |
-| 在已有内容上新声明一个子 scope（如新增 `/A/D` 的 `repo_scopes` 行） | 不搬动任何字节。声明落盘后 A 的下一次 push 触达 `/A/D/*` 会开始被拒；`/A/D` 作为 Scope D 自己可写。 |
+| 在已有内容上新声明一个子 scope（如新增 `/A/D` 的 `repository_scopes` 行） | 不搬动任何字节。声明落盘后 A 的下一次 push 触达 `/A/D/*` 会开始被拒；`/A/D` 作为 Scope D 自己可写。 |
 | 只读 scope（`mode = r`）上 push | 一律拒绝（403），不区分触达路径。 |
 | 子 scope push 与并发根写撞同一文件 | 走 L5 标准冲突策略。冲突行归属 = 路径的声明 scope（如 `/A/C/*` 归属 C）；`audit_detail.actor_source_scope` 留下写入者来源。 |
 
@@ -853,7 +928,7 @@ PuppyOne 的并发处理建立在两条公理上：
 
 **关键不变量**（必须始终成立）：
 
-> 任何一行 `mut_scope_state[scope].head_commit_id` 所指 commit 的 tree，必须等于该行的 `scope_hash`。
+> 任何一行 `version_scope_state[scope].head_commit_id` 所指 commit 的 tree，必须等于该行的 `scope_hash`。
 
 这条不变量从根上禁止了"head 指针和 scope_hash 是两棵不同 tree"的状态。任何未来代码改动只要违反它就 publish 失败。
 
@@ -934,7 +1009,7 @@ Git 原生 `git push --force` 允许非 fast-forward。puppyone 默认禁用，�
 
 #### 九、首次 push（scope 还没 head）
 
-新声明的 scope 第一次被 push，`mut_scope_state` 里压根没这行。
+新声明的 scope 第一次被 push，`version_scope_state` 里压根没这行。
 
 - 源 scope CAS 的 expected = 空（或 null）。
 - publish 的 upsert 走 INSERT 分支——没有现存行可以比对，自动通过。
@@ -975,7 +1050,7 @@ Git 原生 `git push --force` 允许非 fast-forward。puppyone 默认禁用，�
 整套并发处理底下只有两条不变量：
 
 1. **写源 scope 行必须带客户端 base（Git）或当时读到的 head（非 Git），CAS 不过整事务回滚。**
-2. **`mut_scope_state[scope].head_commit_id` 所指 commit 的 tree 必须等于该行的 `scope_hash`。**
+2. **`version_scope_state[scope].head_commit_id` 所指 commit 的 tree 必须等于该行的 `scope_hash`。**
 
 任何并发场景的正确性都从这两条推出来。**修复落地前，运维上对 Git 客户端用户文档加一条提示：并发 push 到同一 scope 可能出现 view drift；产品端短期把单 scope 写串行化（节流到 1 QPS/scope）。修复落地后这条提示可以撤掉。**
 
@@ -983,6 +1058,6 @@ Git 原生 `git push --force` 允许非 fast-forward。puppyone 默认禁用，�
 
 未来如果想在某个 scope 上 opt-in "透明可见"（子 scope 的内容能在父 view
 里看见、父 push 能写子的地盘），可以加一个
-`repo_scopes.nested_visibility = transparent` 设置。Transparent 模式下，
+`repository_scopes.nested_visibility = transparent` 设置。Transparent 模式下，
 "父入口写子地盘"要走对子 scope head 的 base-version 校验；该开关存在
 之前，所有嵌套 scope 都按上面表格里的方式处理。

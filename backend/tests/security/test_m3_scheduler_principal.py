@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.infra.scheduler.jobs.agent_job import _execute_agent_task_async
+from tests.authorization_fakes import authorization_for
 
 
 def _stub_supabase_with_agent_row(row: dict):
@@ -49,10 +50,9 @@ async def test_principal_no_longer_member_aborts_with_principal_invalid():
     with patch(
         "src.infra.supabase.client.SupabaseClient", return_value=sb,
     ), patch(
-        "src.platform.project.repository.ProjectRepositorySupabase"
-    ) as repo_cls:
-        # Critical setup: the persisted user no longer has project access.
-        repo_cls.return_value.verify_project_access.return_value = None
+        "src.platform.authorization.factory.build_authorization_service",
+        return_value=authorization_for(),
+    ):
 
         result = await _execute_agent_task_async("agent-1")
 
@@ -77,15 +77,15 @@ async def test_principal_access_check_error_aborts():
         "project": {"created_by": "user-x", "org_id": "org-1"},
     }
     sb = _stub_supabase_with_agent_row(agent_row)
+    authorization = MagicMock()
+    authorization.allows.side_effect = RuntimeError("DB outage")
 
     with patch(
         "src.infra.supabase.client.SupabaseClient", return_value=sb,
     ), patch(
-        "src.platform.project.repository.ProjectRepositorySupabase"
-    ) as repo_cls:
-        repo_cls.return_value.verify_project_access.side_effect = RuntimeError(
-            "DB outage"
-        )
+        "src.platform.authorization.factory.build_authorization_service",
+        return_value=authorization,
+    ):
         result = await _execute_agent_task_async("agent-1")
 
     assert result["status"] == "failed"
@@ -136,16 +136,19 @@ async def test_agent_owner_preferred_over_project_creator():
 
     captured_user = {}
 
-    def fake_verify(project_id, user_id):
+    def fake_verify(project_id, user_id, action):
         captured_user["uid"] = user_id
-        return None  # short-circuit so we don't run the real task
+        return False  # short-circuit so we don't run the real task
+
+    authorization = MagicMock()
+    authorization.allows.side_effect = fake_verify
 
     with patch(
         "src.infra.supabase.client.SupabaseClient", return_value=sb,
     ), patch(
-        "src.platform.project.repository.ProjectRepositorySupabase"
-    ) as repo_cls:
-        repo_cls.return_value.verify_project_access.side_effect = fake_verify
+        "src.platform.authorization.factory.build_authorization_service",
+        return_value=authorization,
+    ):
         await _execute_agent_task_async("agent-1")
 
     assert captured_user["uid"] == "agent-owner", (

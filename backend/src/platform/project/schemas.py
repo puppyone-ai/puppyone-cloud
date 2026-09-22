@@ -4,8 +4,9 @@ Project API Schemas
 Defines frontend API request/response models, matching the frontend ProjectInfo type.
 """
 
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProjectOut(BaseModel):
@@ -23,25 +24,56 @@ class ProjectOut(BaseModel):
     visibility: str = "org"
     bound_git_branch: str = "main"
     updated_at: str | None = None
-    access_point_count: int = 0
+    access_point_count: int | None = 0
+    effective_role: Literal["admin", "editor", "viewer"]
+    grant_source: Literal["org_owner", "project_member", "org_visibility"]
+    capabilities: list[str]
+
+
+class ProjectAuthorizationOut(BaseModel):
+    project_id: str
+    org_id: str
+    effective_role: Literal["admin", "editor", "viewer"]
+    grant_source: Literal["org_owner", "project_member", "org_visibility"]
+    capabilities: list[str]
+
+
+class ProjectDeletionOut(BaseModel):
+    """Public state of durable Project deletion; storage prefixes stay private."""
+
+    project_id: str
+    deletion_job_id: str
+    status: Literal["pending", "running", "failed", "completed"]
 
 
 class ProjectCreate(BaseModel):
-    """Create project request"""
+    """Strict empty-Project creation request.
 
-    name: str
+    Seeded/template workflows have their own explicit endpoints and are not
+    compatibility fields on this operation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
     description: str | None = None
-    org_id: str | None = None
-    seed: bool = False
-    template: str | None = None
+    org_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator("org_id")
+    @classmethod
+    def normalize_org_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("org_id must not be blank")
+        return normalized
 
 
 class ProjectUpdate(BaseModel):
     """Update project request"""
 
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
-    visibility: str | None = None
+    visibility: Literal["org", "private"] | None = None
     bound_git_branch: str | None = None
 
 
@@ -53,7 +85,7 @@ class ProjectMemberOut(BaseModel):
     email: str | None = None
     display_name: str | None = None
     avatar_url: str | None = None
-    role: str
+    role: Literal["admin", "editor", "viewer"]
     created_at: str
 
 
@@ -61,10 +93,10 @@ class AddProjectMember(BaseModel):
     """Add project member"""
 
     user_id: str
-    role: str = "editor"
+    role: Literal["admin", "editor", "viewer"] = "editor"
 
 
 class UpdateProjectMemberRole(BaseModel):
     """Update project member role"""
 
-    role: str
+    role: Literal["admin", "editor", "viewer"]

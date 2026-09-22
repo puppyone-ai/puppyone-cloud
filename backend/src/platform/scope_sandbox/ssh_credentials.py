@@ -22,7 +22,11 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timezone
 
-from src.platform.scope_sandbox.scope_provision import provision_scope_steps
+from src.platform.scope_sandbox.scope_provision import (
+    DEFAULT_GIT_CREDENTIAL_FILE,
+    provision_scope_steps,
+)
+from src.platform.scope_sandbox.execution_policy import SSH_POLICY_WRAPPER_PATH
 
 TAG = "puppyone"
 AUTHORIZED_KEYS = "~/.ssh/authorized_keys"
@@ -47,7 +51,11 @@ def user_comment(user_id: str) -> str:
 def authorized_key_line(public_key: str, user_id: str, expiry: str) -> str:
     """A tagged, self-expiring authorized_keys line for one user."""
     pk = public_key.strip().replace("\n", " ")
-    return f'expiry-time="{expiry}" {pk} {user_comment(user_id)}'
+    options = (
+        f'expiry-time="{expiry}",no-agent-forwarding,no-X11-forwarding,'
+        f'command="{SSH_POLICY_WRAPPER_PATH}"'
+    )
+    return f'{options} {pk} {user_comment(user_id)}'
 
 
 def _line_user(line: str) -> str | None:
@@ -131,10 +139,17 @@ async def provision_user_workspace(
     git_url: str,
     user_email: str,
     user_name: str,
+    credential_file: str = DEFAULT_GIT_CREDENTIAL_FILE,
 ) -> str:
     """Clone the scope into the user's OWN working tree (~/<user_id>) with their
     git identity (rebase-default). Returns the workdir. (roadmap #7)"""
     workdir = user_id
-    for cmd in provision_scope_steps(git_url, workdir, user_email, user_name):
+    for cmd in provision_scope_steps(
+        git_url,
+        workdir,
+        user_email,
+        user_name,
+        credential_file,
+    ):
         await provider.exec(sandbox_id, cmd)
     return workdir

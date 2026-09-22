@@ -1,3 +1,0 @@
-Provide Bash / shell access for the scoped JSON data in read-only mode.
-Use this tool only to inspect data; do not modify files under the scope.
-

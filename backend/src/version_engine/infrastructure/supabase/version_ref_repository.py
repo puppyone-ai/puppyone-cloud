@@ -3,7 +3,7 @@
 Backs the ``version_refs`` table (migration
 ``20260531000000_version_refs_table.sql``). A ref is a named pointer to an
 already-promoted commit object; storing one here does NOT advance the
-scope head (``mut_scope_state``) — only a landing/merge does that.
+scope head (``version_scope_state``) — only a landing/merge does that.
 
 Design: ``docs/proposals/PUP-multi-branch-design.md`` (Phase 1).
 
@@ -15,8 +15,9 @@ to expose branch/tag views.
 from __future__ import annotations
 
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.infrastructure.supabase import safe_data
 from src.utils.logger import log_error
+from src.version_engine.infrastructure.supabase import safe_data
+from src.version_engine.infrastructure.supabase.db_names import PROJECT_HISTORY_REFS_RPC
 from src.version_engine.write_engine.path_utils import normalize_path
 
 
@@ -44,8 +45,19 @@ class VersionRefStore:
     def __init__(self, client: SupabaseClient | None = None) -> None:
         self._client = (client or SupabaseClient()).client
 
-    def list_refs(self, project_id: str, scope_path: str = "") -> list[dict]:
-        """All branch/tag refs for one (project, scope), newest update first."""
+    def list_refs(
+        self,
+        project_id: str,
+        scope_path: str = "",
+        *,
+        strict: bool = False,
+    ) -> list[dict]:
+        """All branch/tag refs for one (project, scope), newest update first.
+
+        Transport advertisement keeps the historical best-effort behavior.
+        Read models that promise an all-branches view pass ``strict=True`` so
+        a control-plane outage cannot silently masquerade as a single branch.
+        """
         try:
             resp = (
                 self._client.table(_TABLE)
@@ -57,7 +69,30 @@ class VersionRefStore:
             )
         except Exception as exc:  # noqa: BLE001
             log_error(f"[VersionRefs] list_refs failed: {exc}")
+            if strict:
+                raise RuntimeError("version refs are unavailable") from exc
             return []
+        return safe_data(resp) or []
+
+    def list_project_history_refs(self, project_id: str) -> list[dict]:
+        """Read canonical main plus root-scope named refs in one DB snapshot.
+
+        History pagination must not combine a main head from one transaction
+        with named refs from another.  The SQL function resolves the canonical
+        project-view head against ``projects.version_root_hash`` and returns it
+        together with ``version_refs`` from one PostgreSQL statement/MVCC
+        snapshot.  There is deliberately no scattered-read fallback: silently
+        returning a mixed snapshot would make a supposedly stable graph lie.
+        """
+
+        try:
+            resp = self._client.rpc(
+                PROJECT_HISTORY_REFS_RPC,
+                {"p_project_id": project_id},
+            ).execute()
+        except Exception as exc:  # noqa: BLE001
+            log_error(f"[VersionRefs] project history ref snapshot failed: {exc}")
+            raise RuntimeError("project history refs are unavailable") from exc
         return safe_data(resp) or []
 
     def list_all_commit_ids(self, project_id: str) -> list[str]:

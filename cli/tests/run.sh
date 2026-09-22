@@ -182,6 +182,7 @@ if section "basic"; then
 
   assert_exit 0 "puppyone auth --help" $CLI auth --help
   assert_exit 0 "puppyone project --help" $CLI project --help
+  assert_exit 0 "puppyone template --help" $CLI template --help
   assert_exit 0 "puppyone org --help" $CLI org --help
   assert_exit 0 "puppyone access --help" $CLI access --help
   assert_exit 0 "puppyone chat --help" $CLI chat --help

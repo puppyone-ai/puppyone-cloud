@@ -5,7 +5,7 @@ Connect rows record runs in ``sync_runs``; scheduled agents record in
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from src.platform.project.dashboard_router import _fetch_connections, _fetch_usage_buckets
@@ -28,6 +28,10 @@ class FakeTable:
 
     def in_(self, col, ids):
         self._in_filters.append((col, set(ids)))
+        return self
+
+    def is_(self, col, value):
+        self._eq_filters.append((col, None if value == "null" else value))
         return self
 
     def gte(self, _col, val):
@@ -60,7 +64,7 @@ class FakeSB:
 
 
 def _today_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def test_usage_buckets_union_connector_and_agent_runs():
@@ -86,7 +90,7 @@ def test_usage_buckets_union_connector_and_agent_runs():
     assert sum(buckets["mcp1"]) == 0
 
 
-def test_fetch_connections_reads_target_tables_and_scope_key():
+def test_fetch_connections_never_rehydrates_scope_plaintext_key():
     today = _today_iso()
     sb = FakeSB({
         "connections": [{
@@ -113,10 +117,10 @@ def test_fetch_connections_reads_target_tables_and_scope_key():
             "scope_id": "scope-root",
             "created_at": today,
         }],
-        "repo_scopes": [{
+        "repository_scopes": [{
             "id": "scope-root",
             "path": "",
-            "access_key": "cli_secretkey123456",
+            "max_mode": "r",
         }],
         "sync_runs": [{"connection_id": "sync1", "started_at": today}],
     })
@@ -126,7 +130,10 @@ def test_fetch_connections_reads_target_tables_and_scope_key():
     assert [row.provider for row in rows] == ["gmail", "cli"]
     assert rows[0].trigger == {"schedule": "0 9 * * *", "type": "scheduled"}
     assert rows[0].usage_buckets[-1] == 1
-    assert rows[1].access_key == "cli_secretkey123456"
+    assert rows[1].access_key is None
+    assert rows[1].has_credential is False
+    assert rows[1].credential_hint is None
+    assert rows[1].scope_mode == "r"
 
 
 def test_usage_buckets_one_failing_source_does_not_zero_other():

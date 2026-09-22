@@ -1,128 +1,37 @@
-"""
-RPC客户端模块
-用于MCP Server调用主服务的Internal API
+"""Minimal RPC adapter from MCP transport to the canonical backend runtime."""
 
-MCP service 调主服务内部端点：
-- /internal/agent-by-mcp-key/{mcp_api_key} - 获取 Agent 及其 bash 访问权限和 tools
-- /internal/mcp-endpoint/resolve - 获取 standalone MCP endpoint 配置
-- /internal/mcp-runtime/* - standalone MCP endpoint scoped filesystem runtime
-- /internal/tables/{table_id}/context-* - 数据操作端点
-- /internal/tools/{tool_id}/search - Search Tool 查询端点
-"""
+from __future__ import annotations
+
+from typing import Any
+
 import httpx
-from typing import Any, Optional, Dict, List
-
-
-def _acting_user_header(acting_user_id: Optional[str]) -> Dict[str, str]:
-    """Build the X-Acting-User-Id header dict (empty if no user_id given).
-
-    The /internal/nodes/* endpoints REQUIRE this header (security: C-3) — any
-    call without it will fail at the server with HTTP 400. Pass-through
-    callers must thread the agent / access-key owner's user_id.
-    """
-    return {"X-Acting-User-Id": acting_user_id} if acting_user_id else {}
 
 
 class InternalApiClient:
-    """
-    Internal API客户端
-    用于MCP Server调用主服务的内部API。
-    """
-    
-    def __init__(
-        self,
-        base_url: str,
-        secret: str,
-        timeout: float = 30.0
-    ):
-        """
-        初始化客户端
-        
-        Args:
-            base_url: 主服务的基础URL
-            secret: 内部API的SECRET
-            timeout: 请求超时时间（秒）
-        """
+    """The transport has no product/data methods of its own."""
+
+    def __init__(self, base_url: str, secret: str, timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
-        self.secret = secret
-        self.timeout = timeout
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers={"X-Internal-Secret": secret},
-            trust_env=False
+            trust_env=False,
         )
-    
-    async def close(self):
-        """关闭客户端"""
+
+    async def close(self) -> None:
         await self._client.aclose()
-    
+
     async def __aenter__(self):
         return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         await self.close()
-    
-    # ============================================================
-    # Agent 模式端点（整合后唯一支持的模式）
-    # ============================================================
-    
-    async def get_mcp_endpoint_by_key(self, api_key: str) -> Optional[Dict[str, Any]]:
-        """Query MCP endpoint from access_points table (provider='mcp')."""
-        try:
-            url = f"{self.base_url}/internal/mcp-endpoint/resolve"
-            response = await self._client.post(url, json={"api_key": api_key})
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError:
-            return None
-        except httpx.RequestError:
-            return None
 
-    async def get_agent_by_mcp_key(self, mcp_api_key: str) -> Optional[Dict[str, Any]]:
-        """Query agent-based MCP config from access_points table (provider='agent')."""
-        try:
-            url = f"{self.base_url}/internal/agent-by-mcp-key/{mcp_api_key}"
-            response = await self._client.get(url)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error fetching Agent by MCP key: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"获取 Agent 失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error fetching Agent by MCP key: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"获取 Agent 失败: {str(e)}") from e
-
-    async def resolve_mcp_config(self, api_key: str) -> Optional[Dict[str, Any]]:
-        """Dual-source resolution: MCP endpoint first (provider='mcp'), then agent fallback."""
-        result = await self.get_mcp_endpoint_by_key(api_key)
-        if result:
-            ep = result.get("endpoint", {})
-            return {
-                "agent": {
-                    "id": ep.get("id"),
-                    "name": ep.get("name"),
-                    "project_id": ep.get("project_id"),
-                    "type": "mcp_endpoint",
-                    "user_id": ep.get("user_id", ""),
-                },
-                "accesses": result.get("accesses", []),
-                "tools": result.get("tools", []),
-            }
-        return await self.get_agent_by_mcp_key(api_key)
-
-    async def list_mcp_runtime_tools(self, api_key: str) -> Dict[str, Any]:
-        """List tools for a standalone MCP endpoint runtime."""
-        url = f"{self.base_url}/internal/mcp-runtime/tools"
-        response = await self._client.post(url, json={"api_key": api_key})
+    async def list_mcp_runtime_tools(self, api_key: str) -> dict[str, Any]:
+        response = await self._client.post(
+            f"{self.base_url}/internal/mcp-runtime/tools",
+            json={"api_key": api_key},
+        )
         response.raise_for_status()
         return response.json()
 
@@ -130,456 +39,34 @@ class InternalApiClient:
         self,
         api_key: str,
         name: str,
-        arguments: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Execute one standalone MCP endpoint runtime tool."""
-        url = f"{self.base_url}/internal/mcp-runtime/call"
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
         response = await self._client.post(
-            url,
+            f"{self.base_url}/internal/mcp-runtime/call",
             json={"api_key": api_key, "name": name, "arguments": arguments or {}},
         )
-        if response.status_code >= 400:
-            try:
-                detail = response.json().get("detail")
-            except ValueError:
-                detail = response.text
-            return {
-                "isError": True,
-                "error": detail,
-                "status_code": response.status_code,
-            }
-        return response.json()
-
-    # ============================================================
-    # 数据操作端点（Context Data CRUD）
-    # ============================================================
-
-    async def get_context_schema(self, table_id: str, json_path: str = "") -> Any:
-        """获取挂载点结构（不包含值）"""
-        try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-schema"
-            params = {"json_path": json_path}
-            response = await self._client.get(url, params=params)
-            response.raise_for_status()
+        if response.status_code < 400:
             return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error fetching context schema: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"获取数据结构失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error fetching context schema: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"获取数据结构失败: {str(e)}") from e
-
-    async def get_context_data(self, table_id: str, json_path: str = "") -> Any:
-        """获取挂载点全部数据"""
         try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-data"
-            params = {"json_path": json_path}
-            response = await self._client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error fetching context data: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"获取数据失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error fetching context data: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"获取数据失败: {str(e)}") from e
-
-    async def query_context_data(self, table_id: str, json_path: str, query: str) -> Any:
-        """对挂载点数据做 JMESPath 查询"""
-        try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-data"
-            params = {"json_path": json_path, "query": query}
-            response = await self._client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error querying context data: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"JMESPath 查询失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error querying context data: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"JMESPath 查询失败: {str(e)}") from e
-    
-    async def create_table_data(
-        self,
-        table_id: str,
-        json_path: str,
-        elements: List[Dict[str, Any]]
-    ) -> bool:
-        """
-        创建表格数据
-        
-        Args:
-            table_id: 表格ID
-            json_path: 挂载点 JSON Pointer 路径
-            elements: 要创建的元素列表
-            
-        Returns:
-            是否成功
-        """
-        try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-data"
-            payload = {
-                "json_path": json_path,
-                "elements": elements
-            }
-            response = await self._client.post(url, json=payload)
-            response.raise_for_status()
-            return True
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error creating table data: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"创建元素失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error creating table data: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"创建元素失败: {str(e)}") from e
-    
-    async def update_table_data(
-        self,
-        table_id: str,
-        json_path: str,
-        elements: List[Dict[str, Any]]
-    ) -> bool:
-        """
-        更新表格数据
-        
-        Args:
-            table_id: 表格ID
-            json_path: 挂载点 JSON Pointer 路径
-            elements: 要更新的元素列表
-            
-        Returns:
-            是否成功
-        """
-        try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-data"
-            payload = {
-                "json_path": json_path,
-                "elements": elements
-            }
-            response = await self._client.put(url, json=payload)
-            response.raise_for_status()
-            return True
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error updating table data: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"更新元素失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error updating table data: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"更新元素失败: {str(e)}") from e
-    
-    async def delete_table_data(
-        self,
-        table_id: str,
-        json_path: str,
-        keys: List[str]
-    ) -> bool:
-        """
-        删除表格数据
-        
-        Args:
-            table_id: 表格ID
-            json_path: 挂载点 JSON Pointer 路径
-            keys: 要删除的key列表
-            
-        Returns:
-            是否成功
-        """
-        try:
-            url = f"{self.base_url}/internal/tables/{table_id}/context-data"
-            payload = {
-                "json_path": json_path,
-                "keys": keys
-            }
-            response = await self._client.request("DELETE", url, json=payload)
-            response.raise_for_status()
-            return True
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error deleting table data: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"删除元素失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error deleting table data: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"删除元素失败: {str(e)}") from e
-
-    # ============================================================
-    # Tree API 端点 (path-based, Version Engine backed)
-    # ============================================================
-
-    async def list_dir(
-        self,
-        project_id: str,
-        path: str = "",
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """List directory entries at the given path."""
-        try:
-            url = f"{self.base_url}/internal/nodes/list"
-            params = {"project_id": project_id, "path": path}
-            response = await self._client.get(
-                url,
-                params=params,
-                headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"列出目录失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"列出目录失败: {str(e)}") from e
-
-    async def read_file(
-        self,
-        project_id: str,
-        path: str,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Read file content at the given path."""
-        try:
-            url = f"{self.base_url}/internal/nodes/read"
-            params = {"project_id": project_id, "path": path}
-            response = await self._client.get(
-                url, params=params, headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"读取文件失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"读取文件失败: {str(e)}") from e
-
-    async def stat(
-        self,
-        project_id: str,
-        path: str,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Get file/folder metadata at the given path."""
-        try:
-            url = f"{self.base_url}/internal/nodes/resolve-path"
-            payload = {"project_id": project_id, "path": path}
-            response = await self._client.post(
-                url, json=payload, headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"获取文件信息失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"获取文件信息失败: {str(e)}") from e
-
-    async def write_file(
-        self,
-        project_id: str,
-        path: str,
-        content: Any,
-        file_type: Optional[str] = None,
-        message: Optional[str] = None,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Write content to a file at the given path (creates if not exists)."""
-        try:
-            url = f"{self.base_url}/internal/nodes/write"
-            payload: Dict[str, Any] = {
-                "project_id": project_id,
-                "path": path,
-                "content": content,
-            }
-            if message:
-                payload["operator_id"] = "mcp_agent"
-            response = await self._client.put(
-                url, json=payload, headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"写入文件失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"写入文件失败: {str(e)}") from e
-
-    async def mkdir(
-        self,
-        project_id: str,
-        path: str,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Create a directory at the given path."""
-        try:
-            url = f"{self.base_url}/internal/nodes/create"
-            payload = {
-                "project_id": project_id,
-                "path": path,
-                "node_type": "folder",
-            }
-            response = await self._client.post(
-                url, json=payload, headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"创建目录失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"创建目录失败: {str(e)}") from e
-
-    async def move(
-        self,
-        project_id: str,
-        src: str,
-        dst: str,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Move/rename a file or folder."""
-        try:
-            dst_parts = dst.rsplit("/", 1)
-            new_parent_path = dst_parts[0] if len(dst_parts) > 1 else ""
-            new_name = dst_parts[-1]
-
-            src_name = src.rsplit("/", 1)[-1]
-            if new_name != src_name:
-                url = f"{self.base_url}/internal/nodes/rename"
-                payload = {
-                    "project_id": project_id,
-                    "path": src,
-                    "new_name": new_name,
-                }
-                response = await self._client.post(
-                    url, json=payload, headers=_acting_user_header(acting_user_id),
-                )
-                response.raise_for_status()
-                return response.json()
-            else:
-                url = f"{self.base_url}/internal/nodes/move"
-                payload = {
-                    "project_id": project_id,
-                    "path": src,
-                    "new_parent_path": new_parent_path,
-                }
-                response = await self._client.post(
-                    url, json=payload, headers=_acting_user_header(acting_user_id),
-                )
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"移动文件失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"移动文件失败: {str(e)}") from e
-
-    async def delete(
-        self,
-        project_id: str,
-        path: str,
-        acting_user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Delete a file or folder from the project tree."""
-        try:
-            url = f"{self.base_url}/internal/nodes/rm"
-            payload = {"project_id": project_id, "path": path}
-            response = await self._client.post(
-                url, json=payload, headers=_acting_user_header(acting_user_id),
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            raise RuntimeError(
-                f"删除失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"删除失败: {str(e)}") from e
-
-    # ============================================================
-    # Search Tool 端点
-    # ============================================================
-
-    async def search_tool_query(
-        self,
-        tool_id: str,
-        query: str,
-        top_k: int = 5
-    ) -> Dict[str, Any]:
-        """
-        调用 Search Tool 执行语义向量检索
-        
-        Args:
-            tool_id: Tool ID
-            query: 搜索查询
-            top_k: 返回结果数量
-            
-        Returns:
-            搜索结果
-        """
-        try:
-            url = f"{self.base_url}/internal/tools/{tool_id}/search"
-            payload = {
-                "query": query,
-                "top_k": top_k
-            }
-            response = await self._client.post(url, json=payload)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            body = (e.response.text or "").strip()
-            print(
-                f"Error executing search tool: status={e.response.status_code} url={e.request.url} body={body}"
-            )
-            raise RuntimeError(
-                f"搜索失败: HTTP {e.response.status_code} - {body}"
-            ) from e
-        except httpx.RequestError as e:
-            print(f"Error executing search tool: request_failed url={e.request.url} error={e}")
-            raise RuntimeError(f"搜索失败: {str(e)}") from e
+            body = response.json()
+        except ValueError:
+            body = response.text
+        if isinstance(body, dict):
+            detail = body.get("data") or body.get("detail") or body.get("message") or body
+        else:
+            detail = body
+        return {
+            "isError": True,
+            "error": detail,
+            "status_code": response.status_code,
+        }
 
 
-# 创建全局客户端实例
 def create_client() -> InternalApiClient:
-    """创建Internal API客户端实例"""
     from ..settings import settings
+
     return InternalApiClient(
         base_url=settings.MAIN_SERVICE_URL,
         secret=settings.INTERNAL_API_SECRET,
-        timeout=settings.RPC_TIMEOUT
+        timeout=settings.RPC_TIMEOUT,
     )

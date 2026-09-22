@@ -21,13 +21,17 @@ API split (intentional):
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from src.utils.logger import log_error, log_info
 
 if TYPE_CHECKING:
     from src.platform.organization.repository import OrganizationRepository
     from src.platform.profile.repository import ProfileRepositorySupabase
+    from src.platform.project.control_plane import ProjectControlPlaneService
     from src.platform.project.service import ProjectService
 
 
@@ -41,6 +45,23 @@ _DEMO_PROJECT_DESCRIPTION = (
 )
 
 
+def _demo_project_operation_key(user_id: str, org_id: str) -> str:
+    """Stable canonical UUIDv4 identity for one user's onboarding Project.
+
+    The value is not a credential.  Setting the UUID version/variant bits on a
+    deterministic digest gives retries one accepted UUIDv4 key without adding
+    mutable device/session state or creating a fresh Project on every sign-in.
+    Bump the namespace suffix only for a genuinely new onboarding intent.
+    """
+
+    raw = bytearray(
+        hashlib.sha256(f"puppyone:demo-project:v1:{user_id}:{org_id}".encode()).digest()[:16]
+    )
+    raw[6] = (raw[6] & 0x0F) | 0x40
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return str(UUID(bytes=bytes(raw)))
+
+
 class UserInitializationService:
     """Idempotent user initialization: same result no matter how many times it runs."""
 
@@ -49,10 +70,12 @@ class UserInitializationService:
         profile_repo: ProfileRepositorySupabase,
         org_repo: OrganizationRepository,
         project_service: ProjectService,
+        project_control_plane: ProjectControlPlaneService,
     ):
         self._profile_repo = profile_repo
         self._org_repo = org_repo
         self._project_service = project_service
+        self._project_control_plane = project_control_plane
 
     # ── Sync core: profile + org + membership ────────────────────────
 
@@ -77,9 +100,7 @@ class UserInitializationService:
         profile = self._profile_repo.get_or_create(user_id, email)
         if not profile:
             log_error(f"Failed to get/create profile for user {user_id}")
-            raise RuntimeError(
-                f"Cannot initialize user {user_id}: profile creation failed"
-            )
+            raise RuntimeError(f"Cannot initialize user {user_id}: profile creation failed")
 
         # 2. Ensure at least one organization exists
         orgs = self._org_repo.list_by_user(user_id)
@@ -95,6 +116,7 @@ class UserInitializationService:
         # 3. Ensure profile.default_org_id is set
         if not profile.default_org_id:
             from src.platform.profile.models import ProfileUpdate
+
             self._profile_repo.update(
                 user_id,
                 ProfileUpdate(default_org_id=org.id),
@@ -143,8 +165,7 @@ class UserInitializationService:
         if existing:
             self._profile_repo.mark_onboarded(user_id=user_id)
             log_info(
-                f"User {user_id} already had projects; marking onboarded "
-                f"without seeding a demo"
+                f"User {user_id} already had projects; marking onboarded without seeding a demo"
             )
             return None
 
@@ -167,50 +188,45 @@ class UserInitializationService:
         """Create the Get Started project, init its version tree, and seed
         template content. Returns the new project id, or None on failure
         (failures are logged but never block sign-in)."""
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
+        from src.platform.project.orchestration import create_project_with_tree
         from src.platform.project.templates import seed_template_content
+        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
         try:
-            project = self._project_service.create(
+            from src.platform.entitlements.service import EntitlementService
+
+            project_limit = await asyncio.to_thread(
+                EntitlementService().enforced_limit_value,
+                org_id,
+                "projects.max",
+            )
+            container = build_worker_version_engine_container()
+            publication = await create_project_with_tree(
+                control_plane=self._project_control_plane,
+                version_engine=container.write_engine(),
+                operation_key=_demo_project_operation_key(user_id, org_id),
                 name=_DEMO_PROJECT_NAME,
                 description=_DEMO_PROJECT_DESCRIPTION,
                 org_id=org_id,
                 created_by=user_id,
+                project_limit=project_limit,
+                publication_mode="empty",
+                source_fingerprint={
+                    "kind": "onboarding-demo",
+                    "template_id": _DEMO_TEMPLATE_ID,
+                    "version": 1,
+                },
             )
         except Exception as e:
-            log_error(
-                f"Demo project: row create failed for user={user_id} "
-                f"org={org_id}: {e}"
-            )
+            log_error(f"Demo project: publication failed for user={user_id} org={org_id}: {e}")
             return None
 
+        project = publication.project
         project_id = str(project.id)
 
-        # version tree init and seed are best-effort. If either fails the
-        # user still ends up with an empty "Get Started" project they
-        # can delete — strictly better than today's empty dashboard.
-        try:
-            admin = build_worker_version_engine_container().admin_service()
-            await admin.init_tree(project_id)
-        except Exception as e:
-            log_error(
-                f"Demo project {project_id}: hash init_tree failed: {e}"
-            )
-            return project_id
-
-        # Same root-scope auto-create as the regular create_project router
-        # (cf. platform/project/router.py:create_project). Without this,
-        # the demo project has zero scopes — /scopes is empty, access-key auth
-        # can't resolve a key, and the post-redesign UI's data view sees
-        # no entry point.
-        try:
-            from src.repo.scope_service import ScopeService
-            ScopeService().ensure_root_scope(project_id)
-        except Exception as e:
-            log_error(
-                f"Demo project {project_id}: ensure_root_scope failed: {e}"
-            )
-
+        # The Project is already a valid, ready canonical Git repository.
+        # Starter content is an optional post-publication enhancement; a
+        # failure can never expose a missing-root/half-created Project.
         try:
             await seed_template_content(
                 project_id=project_id,
@@ -222,9 +238,7 @@ class UserInitializationService:
                 f"'{_DEMO_TEMPLATE_ID}' for user {user_id}"
             )
         except Exception as e:
-            log_error(
-                f"Demo project {project_id}: template seed failed: {e}"
-            )
+            log_error(f"Demo project {project_id}: template seed failed: {e}")
 
         return project_id
 
@@ -242,5 +256,21 @@ class UserInitializationService:
             user_id=user_id,
             role="owner",
         )
+
+        from src.config import settings
+
+        if settings.ENTITLEMENTS_MODE == "db":
+            try:
+                from src.platform.billing.provisioning import EntitlementProvisioningService
+
+                EntitlementProvisioningService().enqueue(
+                    org_id=org.id,
+                    actor_user_id=user_id,
+                )
+            except Exception as exc:
+                log_error(
+                    "Failed to enqueue initial entitlement provisioning "
+                    f"org={org.id} error_type={type(exc).__name__}"
+                )
 
         return org

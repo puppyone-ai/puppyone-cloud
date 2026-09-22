@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import uuid
 
@@ -19,6 +19,36 @@ ACTIVE_STATUSES = (
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _job_is_stale(
+    *, status: str, started_at: str | None, created_at: str | None,
+    updated_at: str | None, cutoff: datetime,
+) -> bool:
+    """True when an ACTIVE import job's last meaningful activity predates cutoff.
+
+    RUNNING jobs are judged by ``started_at`` (when work began), QUEUED jobs by
+    ``created_at`` (when they entered the lane); ``updated_at``/``created_at`` are
+    fallbacks. With no usable timestamp we never reap (fail-safe). Callers must
+    set ``cutoff`` above the worker ``job_timeout`` so a still-live job — which
+    ARQ kills at job_timeout — can never be judged stale.
+    """
+    ref = _parse_dt(started_at if status == ImportJobStatus.RUNNING.value else created_at)
+    if ref is None:
+        ref = _parse_dt(updated_at) or _parse_dt(created_at)
+    if ref is None:
+        return False
+    return ref < cutoff
 
 
 @dataclass
@@ -284,3 +314,43 @@ class ImportJobRepository:
             message="Import cancelled",
             completed_at=_now(),
         )
+
+    def recover_stale_active_jobs(
+        self, *, stale_seconds: int, limit: int = 100,
+    ) -> list[ImportJob]:
+        """Fail active import jobs whose worker never finished them.
+
+        A live import cannot exceed the worker ``job_timeout`` (ARQ cancels it,
+        which marks it failed); so an active row still untouched after
+        ``stale_seconds`` (set above job_timeout) means the worker process died
+        or the job was never consumed. Without this such rows sit QUEUED/RUNNING
+        forever. ``mark_failed`` uses ``active_only`` so a job that finishes
+        between the scan and the write is never clobbered.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(1, stale_seconds))
+        resp = (
+            self.client.table(self.TABLE)
+            .select("*")
+            .in_("status", list(ACTIVE_STATUSES))
+            .order("created_at", desc=False)
+            .limit(max(1, limit) * 4)
+            .execute()
+        )
+        recovered: list[ImportJob] = []
+        for row in (resp.data or []):
+            job = ImportJob.from_row(row)
+            if not _job_is_stale(
+                status=job.status, started_at=job.started_at,
+                created_at=job.created_at, updated_at=job.updated_at, cutoff=cutoff,
+            ):
+                continue
+            updated = self.mark_failed(
+                job.id,
+                f"import did not complete within {stale_seconds}s; "
+                f"worker presumed dead (reaped)",
+            )
+            if updated and updated.status == ImportJobStatus.FAILED.value:
+                recovered.append(updated)
+            if len(recovered) >= limit:
+                break
+        return recovered

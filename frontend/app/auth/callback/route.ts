@@ -6,6 +6,7 @@ import {
   getServerSupabaseUrl,
   getSupabaseAnonKey,
   getRequestOrigin,
+  isSafeRelativePath,
 } from '@/lib/server-env';
 
 /**
@@ -71,8 +72,11 @@ export async function GET(request: Request) {
   // If the caller explicitly passed ?next=, honour it. Otherwise prefer
   // the demo project so first-time users see populated content; fall back
   // to /home for returning users (or if seeding failed).
+  // Only honour ?next= when it's a safe same-origin relative path;
+  // otherwise a value like `//evil.com` would escape the origin in the
+  // `${origin}${target}` concatenation below (open redirect).
   const explicitNext = requestUrl.searchParams.get('next');
-  const target = explicitNext
+  const target = isSafeRelativePath(explicitNext)
     ? explicitNext
     : demoProjectId
       ? `/projects/${demoProjectId}/data`

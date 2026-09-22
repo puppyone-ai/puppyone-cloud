@@ -41,6 +41,8 @@ rules (PR + required reviews + required status checks).
 - `docs/<short-slug>`
 - `chore/<short-slug>`
 - `hotfix/<short-slug>` (urgent fix targeting production)
+- `db/expand-<short-slug>`, `db/data-<short-slug>`,
+  `db/cutover-<short-slug>`, or `db/contract-<short-slug>`
 - `temp/<short-slug>` (may be auto-cleaned once merged and idle >14 days)
 - `revert-<sha-or-slug>`
 
@@ -51,12 +53,12 @@ rules (PR + required reviews + required status checks).
 1. Fork the repo on GitHub.
 2. Create a feature branch **from `qubits`** (not `main`):
    ```bash
-   git remote add upstream https://github.com/puppyone-ai/puppyone.git
+   git remote add upstream https://github.com/puppyone-ai/puppyone-cloud.git
    git fetch upstream
    git checkout -b feat/my-change upstream/qubits
    ```
 3. Commit, push to your fork, then open a Pull Request:
-   - **Base repository**: `puppyone-ai/puppyone`
+   - **Base repository**: `puppyone-ai/puppyone-cloud`
    - **Base branch**: `qubits` (not `main` — `main` is reserved for releases and hotfixes)
    - **Compare**: `your-fork:feat/my-change`
 4. CI does not run automatically on first-time external PRs. A maintainer will
@@ -94,6 +96,8 @@ rules (PR + required reviews + required status checks).
 | **Frontend Build**   | PRs that touch `frontend/**`             | `main`, `qubits`                    |
 | **Run Gitleaks**     | All PRs, push to `main`, weekly schedule | `main`, `qubits`                    |
 | **Main Release Gate** | PRs targeting `main`                    | `main` (release/hotfix source + owner gate) |
+| **Database validation result** | All PRs; heavy jobs only for database paths | `main`, `qubits` |
+| **Deploy Schema to Qubits** | schema push to `qubits` | exact-SHA prerequisite for database releases |
 | **E2E Visual Tests** | Manual (`workflow_dispatch`)            | (manual release/debug check)        |
 | **Supabase Preview** | All PRs                                  | (advisory, not blocking)            |
 | **Branch housekeeping** | Weekly schedule                       | n/a (cleanup job)                   |
@@ -127,6 +131,31 @@ uv run pytest -v -m "not e2e"
 - Include a clear description and test plan in PRs (the PR template will prompt you).
 - Link related issues with `Fixes #123` or `Refs #123`.
 - Do not include unrelated changes in the same PR — keep PRs focused so review and rollback stay easy.
+
+### Database changes
+
+Read [Database Release Governance](docs/architecture/13-database-release-governance.md)
+before changing a shared database.
+
+- `supabase/migrations` contains official Supabase schema history and bounded,
+  transactional SQL only.
+- Complex/long/Python/secret-dependent backfills use immutable
+  `supabase/data_migrations/<id>` artifacts.
+- One PR owns one phase: Expand, Data, Cutover, or Contract.
+- Never edit a shared/applied migration. Add a forward artifact.
+- Never place “run this Python script next” instructions in schema SQL.
+- Never write to a shared remote database from SQL Editor or a laptop except
+  through the documented incident break-glass process.
+
+Database commit examples:
+
+```text
+feat(db-expand): add project membership facts
+chore(data-migration): backfill project memberships
+refactor(db-cutover): read canonical project memberships
+refactor(db-contract): remove legacy permission table
+fix(db): add forward repair for membership constraint
+```
 
 ## Security
 

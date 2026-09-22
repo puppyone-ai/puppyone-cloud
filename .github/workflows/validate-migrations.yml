@@ -1,174 +1,261 @@
-name: Validate Migrations (PR Check)
+name: Validate Database Changes
 
 on:
   pull_request:
-    paths:
-      - "supabase/migrations/**"
+
+permissions:
+  contents: read
 
 jobs:
-  lint-rpc-signatures:
-    name: Lint RPC parameter types (new migrations)
+  railway_release_contract:
+    name: Validate Railway release contract
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Qubits service inventory and database gate
+        run: python backend/scripts/check_railway_release_gate.py
+
+  database_change_scope:
+    name: Detect database changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
-      # Catch the exact class of bug from 2026-04-17: CAS RPCs were declared
-      # with p_project_id UUID while projects.id / mut_*.project_id are TEXT,
-      # producing PostgreSQL error 42883 ("operator does not exist: text = uuid")
-      # at runtime. Only newly added migrations are checked so historical bug
-      # fixes (which keep both the original and the fix migration) still pass.
-      - name: Enforce p_project_id TEXT in new migrations
+      - name: Detect database release paths
+        id: detect
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          BASE_REF="${{ github.base_ref }}"
           git fetch origin "$BASE_REF" --depth=1
-          NEW_MIGRATIONS=$(git diff --diff-filter=A --name-only "origin/$BASE_REF...HEAD" -- 'supabase/migrations/*.sql' || true)
+          set +e
+          git diff --quiet "origin/$BASE_REF...HEAD" -- \
+            'supabase/migrations/**' \
+            'supabase/data_migrations/**' \
+            'supabase/releases/**' \
+            'supabase/tests/**' \
+            'supabase/test_fixtures/**' \
+            'backend/src/infra/data_migrations/**' \
+            'backend/tests/infra/data_migrations/**' \
+            'backend/tests/security/test_credential_backfill_ci_contract.py' \
+            'backend/tests/security/test_unified_authorization_architecture.py' \
+            'backend/pyproject.toml' \
+            'backend/uv.lock' \
+            '.github/workflows/*migration*.yml' \
+            '.github/workflows/migrate-*.yml' \
+            '.github/workflows/_schema-deploy.yml' \
+            '.github/workflows/validate-migrations.yml' \
+            '.github/workflows/main-release-gate.yml'
+          status=$?
+          set -e
+          case "$status" in
+            0) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
 
-          if [ -z "$NEW_MIGRATIONS" ]; then
-            echo "No new migrations in this PR; skipping RPC signature lint."
+  repository_policy:
+    name: Validate immutable migration artifacts
+    needs: database_change_scope
+    if: needs.database_change_scope.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked backend environment
+        working-directory: backend
+        run: |
+          python -m pip install "uv==0.5.11"
+          uv sync --locked
+
+      - name: Validate manifests and repository database policy
+        working-directory: backend
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE_REF" --depth=1
+          uv run puppyone-db lint
+          uv run puppyone-db policy --base-ref "origin/$BASE_REF"
+
+      - name: Run data migration and workflow regression tests
+        working-directory: backend
+        run: |
+          uv run pytest \
+            tests/infra/data_migrations \
+            tests/security/test_credential_backfill_ci_contract.py \
+            tests/security/test_unified_authorization_architecture.py \
+            -q
+
+  validate_local_database:
+    name: Verify fresh install and existing-data upgrade
+    needs: database_change_scope
+    if: needs.database_change_scope.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: "2.107.0"
+
+      - name: Ensure PostgreSQL client is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq postgresql-client
+          fi
+
+      - name: Install locked backend environment
+        working-directory: backend
+        run: |
+          python -m pip install "uv==0.5.11"
+          uv sync --locked
+
+      - name: Start ephemeral Supabase
+        run: supabase start
+
+      - name: Verify fresh install contract path
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: |
+          supabase db reset --no-seed
+          supabase test db
+
+      - name: Verify historical Project creator repair, retry, and receipt
+        env:
+          DATA_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: |
+          supabase db reset --no-seed
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/test_fixtures/project_creator_admin_repair.sql
+          cd backend
+          uv run puppyone-db run 20260713_reconcile_project_creator_admin
+          uv run puppyone-db run 20260713_reconcile_project_creator_admin
+          cd ..
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+            -f supabase/data_migrations/20260713_reconcile_project_creator_admin/test_assert.sql
+
+      - name: Verify legacy credential upgrade and pre-write admission
+        working-directory: backend
+        env:
+          TEST_LEGACY_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: uv run pytest tests/infra/data_migrations/test_legacy_credentials_postgres.py -q
+
+      - name: Verify repository-target upgrade, concurrency, and dirty-data blocking
+        env:
+          DATA_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: scripts/test-repository-target-migration.sh
+
+      - name: Stop ephemeral Supabase
+        if: always()
+        run: supabase stop --no-backup
+
+  lint_rpc_signatures:
+    name: Lint RPC parameter types
+    needs: database_change_scope
+    if: needs.database_change_scope.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce p_project_id TEXT in new migrations
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=1
+          new_migrations=$(git diff --diff-filter=A --name-only \
+            "origin/$BASE_REF...HEAD" -- 'supabase/migrations/*.sql' || true)
+          if [ -z "$new_migrations" ]; then
             exit 0
           fi
-
-          echo "Scanning new migrations:"
-          echo "$NEW_MIGRATIONS"
-          echo ""
-
-          VIOLATIONS=""
-          for f in $NEW_MIGRATIONS; do
-            [ -f "$f" ] || continue
-            # Flag any p_project_id parameter declared as a non-TEXT type.
-            MATCH=$(grep -niE 'p_project_id[[:space:]]+(UUID|INT|BIGINT|BIGSERIAL|SERIAL|VARCHAR|CHAR)\b' "$f" || true)
-            if [ -n "$MATCH" ]; then
-              VIOLATIONS="${VIOLATIONS}${f}:${MATCH}"$'\n'
+          violations=""
+          for file in $new_migrations; do
+            [ -f "$file" ] || continue
+            match=$(grep -niE \
+              'p_project_id[[:space:]]+(UUID|INT|BIGINT|BIGSERIAL|SERIAL|VARCHAR|CHAR)\b' \
+              "$file" || true)
+            if [ -n "$match" ]; then
+              violations="${violations}${file}:${match}"$'\n'
             fi
           done
-
-          if [ -n "$VIOLATIONS" ]; then
-            echo "::error::New migration(s) declare p_project_id with a non-TEXT type."
-            echo "project_id columns in this repo are TEXT (values are UUID strings)."
-            echo "See docs/design/mut-scope-concurrency.md for the type convention."
-            echo ""
-            echo "$VIOLATIONS"
+          if [ -n "$violations" ]; then
+            echo "::error::New migrations must declare p_project_id as TEXT."
+            echo "$violations"
             exit 1
           fi
 
-          echo "OK: all new migrations use TEXT for p_project_id."
-
-  validate-staging:
-    name: Dry-run against Staging DB
+  database_validation_result:
+    name: Database validation result
+    if: always()
+    needs:
+      - railway_release_contract
+      - database_change_scope
+      - repository_policy
+      - validate_local_database
+      - lint_rpc_signatures
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
-
+      CHANGE_SCOPE_RESULT: ${{ needs.database_change_scope.result }}
+      DATABASE_CHANGED: ${{ needs.database_change_scope.outputs.changed }}
+      POLICY_RESULT: ${{ needs.repository_policy.result }}
+      LOCAL_DATABASE_RESULT: ${{ needs.validate_local_database.result }}
+      RPC_LINT_RESULT: ${{ needs.lint_rpc_signatures.result }}
+      RAILWAY_RELEASE_RESULT: ${{ needs.railway_release_contract.result }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Link to staging project
-        run: supabase link --project-ref ${{ secrets.STAGING_PROJECT_ID }}
-
-      - name: Validate migrations (dry-run)
-        run: supabase db push --dry-run
-
-      # If this PR touches migration files, `supabase db diff --linked` can
-      # naturally output transient changes because the linked DB has a
-      # different migration history than the PR checkout. The dry-run above is
-      # the migration safety gate for these PRs. Drift is checked on PRs that
-      # do not touch migration files.
-      - name: Detect touched migrations in this PR
-        id: touched-migrations
+      - name: Publish one stable required-check result
+        shell: bash
         run: |
           set -euo pipefail
-          BASE_REF="${{ github.base_ref }}"
-          git fetch origin "$BASE_REF" --depth=1
-          TOUCHED=$(git diff --diff-filter=ACDMRT --name-only "origin/$BASE_REF...HEAD" -- 'supabase/migrations/*.sql' || true)
-          if [ -z "$TOUCHED" ]; then
-            echo "count=0" >> "$GITHUB_OUTPUT"
-            echo "No migration files touched in this PR."
-          else
-            echo "$TOUCHED" | wc -l | xargs -I{} echo "count={}" >> "$GITHUB_OUTPUT"
-            echo "Touched migration files in this PR:"
-            echo "$TOUCHED"
-          fi
-
-      - name: Check for schema drift
-        if: steps.touched-migrations.outputs.count == '0'
-        run: |
-          DIFF=$(supabase db diff --linked 2>&1) || true
-          if [ -n "$DIFF" ] && ! echo "$DIFF" | grep -q "No schema changes found"; then
-            echo "::warning::Staging DB has schema drift — manual changes exist that are not in migrations"
-            echo "$DIFF"
-          fi
-
-      - name: Drift check skipped (PR touches migrations)
-        if: steps.touched-migrations.outputs.count != '0'
-        run: |
-          echo "::notice::Drift check skipped because this PR touches migration file(s)."
-          echo "Migration changes naturally produce transient output in 'supabase db diff --linked'"
-          echo "until they are reconciled with the linked DB. The next PR with no migration changes"
-          echo "will re-run the drift check and catch any real manual drift."
-
-  validate-production:
-    name: Dry-run against Production DB
-    runs-on: ubuntu-latest
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.PRODUCTION_DB_PASSWORD }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Link to production project
-        run: supabase link --project-ref ${{ secrets.PRODUCTION_PROJECT_ID }}
-
-      - name: Validate migrations (dry-run)
-        run: supabase db push --dry-run
-
-      # See validate-staging block for the rationale on this guard.
-      - name: Detect touched migrations in this PR
-        id: touched-migrations
-        run: |
-          set -euo pipefail
-          BASE_REF="${{ github.base_ref }}"
-          git fetch origin "$BASE_REF" --depth=1
-          TOUCHED=$(git diff --diff-filter=ACDMRT --name-only "origin/$BASE_REF...HEAD" -- 'supabase/migrations/*.sql' || true)
-          if [ -z "$TOUCHED" ]; then
-            echo "count=0" >> "$GITHUB_OUTPUT"
-            echo "No migration files touched in this PR."
-          else
-            echo "$TOUCHED" | wc -l | xargs -I{} echo "count={}" >> "$GITHUB_OUTPUT"
-            echo "Touched migration files in this PR:"
-            echo "$TOUCHED"
-          fi
-
-      - name: Check for schema drift
-        if: steps.touched-migrations.outputs.count == '0'
-        run: |
-          DIFF=$(supabase db diff --linked 2>&1) || true
-          if [ -n "$DIFF" ] && ! echo "$DIFF" | grep -q "No schema changes found"; then
-            echo "::error::Production DB has schema drift — manual changes exist that are not in migrations"
-            echo "$DIFF"
+          if [ "$CHANGE_SCOPE_RESULT" != "success" ]; then
+            echo "::error::Database change detection failed."
             exit 1
           fi
-
-      - name: Drift check skipped (PR touches migrations)
-        if: steps.touched-migrations.outputs.count != '0'
-        run: |
-          echo "::notice::Drift check skipped because this PR touches migration file(s)."
-          echo "Migration changes naturally produce transient output in 'supabase db diff --linked'"
-          echo "until they are reconciled with the linked DB. The next PR with no migration changes"
-          echo "will re-run the drift check and catch any real manual drift."
+          if [ "$RAILWAY_RELEASE_RESULT" != "success" ]; then
+            echo "::error::Railway release contract validation failed."
+            exit 1
+          fi
+          if [ "$DATABASE_CHANGED" != "true" ]; then
+            echo "No database release paths changed."
+            exit 0
+          fi
+          for result in "$POLICY_RESULT" "$LOCAL_DATABASE_RESULT" "$RPC_LINT_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required database validation job did not succeed."
+              exit 1
+            fi
+          done
+          echo "All database release validations succeeded."

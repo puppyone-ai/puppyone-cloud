@@ -60,7 +60,7 @@ export default function TeamPage() {
     isMembersLoading,
     refreshMembers,
     refreshOrgs,
-  } = useOrganization();
+  } = useOrganization({ includeMembers: true });
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
   const [inviting, setInviting] = useState(false);

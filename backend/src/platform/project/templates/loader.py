@@ -86,6 +86,10 @@ def _build_template(template_dir: Path) -> ProjectTemplate:
         author=manifest.get("author"),
         tags=tuple(manifest.get("tags", [])),
         order=manifest.get("order", 100),
+        category=manifest.get("category"),
+        cover=manifest.get("cover"),
+        screenshots=tuple(manifest.get("screenshots", [])),
+        long_description=manifest.get("long_description"),
     )
 
 
@@ -151,7 +155,7 @@ def _build_preview(files: dict[str, bytes], limit: int = 6) -> list[dict]:
 
 
 def list_templates() -> list[dict]:
-    """Return template metadata (without file contents) for the frontend."""
+    """Return template card metadata (without file contents) for the gallery."""
     sorted_templates = sorted(TEMPLATES.values(), key=lambda t: (t.order, t.id))
     return [
         {
@@ -159,10 +163,57 @@ def list_templates() -> list[dict]:
             "name": t.name,
             "description": t.description,
             "icon": t.icon,
+            "category": t.category,
+            "cover": t.cover,
+            "author": t.author,
+            "tags": list(t.tags),
             "preview": _build_preview(t.files),
         }
         for t in sorted_templates
     ]
+
+
+def _pick_preview_doc(files: dict[str, bytes], limit: int = 20000) -> Optional[dict]:
+    """Choose a representative document to render on the detail page: a
+    top-level README.md, else the first markdown file, else the first file.
+    Returns {path, content} with content decoded as text (truncated)."""
+    md_files = [p for p in files if p.lower().endswith(".md")]
+    readme = next(
+        (p for p in md_files if p.lower().rsplit("/", 1)[-1] == "readme.md"), None
+    )
+    target = readme or (md_files[0] if md_files else None)
+    if target is None:
+        target = next(iter(files), None)
+    if target is None:
+        return None
+    return {
+        "path": target,
+        "content": files[target].decode("utf-8", errors="replace")[:limit],
+    }
+
+
+def get_template_detail(template_id: str) -> Optional[dict]:
+    """Full template metadata + a rich preview (file tree + a rendered doc) for
+    the marketplace detail page. No raw file bytes are exposed."""
+    t = get_template(template_id)
+    if t is None:
+        return None
+    return {
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "icon": t.icon,
+        "category": t.category,
+        "cover": t.cover,
+        "screenshots": list(t.screenshots),
+        "long_description": t.long_description,
+        "author": t.author,
+        "tags": list(t.tags),
+        "version": t.version,
+        "file_tree": sorted(t.files.keys()),
+        "preview": _build_preview(t.files),
+        "preview_doc": _pick_preview_doc(t.files),
+    }
 
 
 async def seed_template_content(
@@ -171,13 +222,13 @@ async def seed_template_content(
     created_by: str,
 ) -> dict:
     """Write a template's files into a project through the L3 command service."""
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
+    from src.platform.project.write_lease import build_leased_worker_write_commands
 
     tmpl = get_template(template_id)
     if tmpl is None:
         return {"error": f"Unknown template: {template_id}"}
 
-    commands = build_worker_version_engine_container().write_commands()
+    commands = build_leased_worker_write_commands()
     await commands.bulk_write(
         project_id,
         tmpl.files,

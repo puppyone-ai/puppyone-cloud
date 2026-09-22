@@ -43,10 +43,13 @@ mypy.ini
 
 # next.js
 **/.next/
+**/.next-check/
+**/.next.broken-*/
 /out/
 
 # production
 /build
+desktop/release/
 
 # misc
 .DS_Store
@@ -72,6 +75,9 @@ frontend/logs/
 
 # vercel
 .vercel
+
+# local tool scratch
+.railway-config-pull-*/
 
 # typescript
 *.tsbuildinfo

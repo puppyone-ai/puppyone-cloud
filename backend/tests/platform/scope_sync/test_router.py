@@ -9,9 +9,11 @@ from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
+from src.platform.scope_sync.events import InMemoryEventStore
 from src.platform.scope_sync.router import router
 from src.platform.scope_sync.service import ScopeSyncService, get_scope_sync_service
+from src.platform.scope_sync.settings_store import InMemorySettingsStore
+from tests.authorization_fakes import authorization_for, install_authorization
 
 
 @dataclass
@@ -19,18 +21,10 @@ class _Scope:
     id: str
     project_id: str
     path: str
-    is_root: bool
 
 
-from src.platform.scope_sync.events import InMemoryEventStore
-
-_SCOPES = [_Scope("s1", "proj-1", "docs", False), _Scope("s-root", "proj-1", "", True)]
+_SCOPES = [_Scope("s1", "proj-1", "docs")]
 _LOOKUP = {s.id: s for s in _SCOPES}
-
-
-class _FakeProjectService:
-    def get_by_id_with_access_check(self, project_id, user_id):
-        return {"id": project_id} if project_id == "proj-1" else None
 
 
 def _service() -> ScopeSyncService:
@@ -38,6 +32,7 @@ def _service() -> ScopeSyncService:
         scope_lookup=lambda sid: _LOOKUP.get(sid),
         scopes_lister=lambda pid: [(s.id, s.path) for s in _SCOPES if s.project_id == pid],
         event_store=InMemoryEventStore(),
+        settings_store=InMemorySettingsStore(),
         scope_by_access_key=lambda k: _LOOKUP.get("s1") if k == "AKEY" else None,
     )
 
@@ -49,7 +44,7 @@ def _app(svc: ScopeSyncService | None = None) -> FastAPI:
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
         user_id="u1", email="u1@corp.com", role="authenticated", user_metadata={},
     )
-    app.dependency_overrides[get_project_service] = lambda: _FakeProjectService()
+    install_authorization(app, authorization_for("proj-1"))
     app.dependency_overrides[get_scope_sync_service] = lambda: svc
     return app
 

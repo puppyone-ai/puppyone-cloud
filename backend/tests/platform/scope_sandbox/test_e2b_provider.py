@@ -17,6 +17,7 @@ class FakeE2BClient(E2BClient):
         self.calls: list[tuple[str, str]] = []
         self._n = 0
         self.states: dict[str, SandboxState] = {}
+        self.files: dict[tuple[str, str], str] = {}
 
     def create(self, spec: SandboxSpec) -> str:
         self._n += 1
@@ -46,6 +47,10 @@ class FakeE2BClient(E2BClient):
 
     def set_timeout(self, sandbox_id: str) -> None:
         self.calls.append(("set_timeout", sandbox_id))
+
+    def write_file(self, sandbox_id: str, path: str, value: str) -> None:
+        self.calls.append(("write_file", sandbox_id, path))
+        self.files[(sandbox_id, path)] = value
 
     def count(self, op: str) -> int:
         return sum(1 for c in self.calls if c[0] == op)
@@ -89,6 +94,15 @@ async def test_e2b_extend_calls_set_timeout():
     created = await prov.create(_spec())
     await prov.extend(created.sandbox_id)
     assert client.count("set_timeout") == 1
+
+
+async def test_e2b_secret_uses_file_channel_not_exec_command():
+    client = FakeE2BClient()
+    prov = E2BProvider(client)
+    created = await prov.create(_spec())
+    await prov.write_secret(created.sandbox_id, ".config/puppyone/token", "secret")
+    assert client.files[(created.sandbox_id, "/home/user/.config/puppyone/token")] == "secret"
+    assert client.count("exec") == 0
 
 
 async def test_e2b_connection_is_wss_tunnel_not_native_tcp():

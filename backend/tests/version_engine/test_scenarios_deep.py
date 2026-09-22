@@ -32,11 +32,16 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.repo.models import RepositoryScope, ResolvedScopeCredential
 from src.version_engine.adapters.git.submission import submit_git_tree
+from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
 from src.version_engine.admission.permission import (
     ensure_mode_writable,
     ensure_repo_readable,
@@ -60,7 +65,28 @@ from src.version_engine.write_engine.tree_objects import (
     build_tree_from_files,
     flatten_tree_to_bytes,
 )
-from fastapi import HTTPException
+
+
+def _scope_auth(
+    *, project_id: str = "p", scope_id: str = "x", path: str = "scope"
+) -> dict:
+    target = ScopeTarget(project_id=project_id, scope_id=scope_id)
+    return {
+        "_runtime_grant": RuntimeGrant(
+            principal=RuntimePrincipal(
+                principal_id="test-credential",
+                credential_kind="test",
+            ),
+            target=target,
+            repository_view=ResolvedRepositoryView(
+                target=target,
+                path_prefix=path,
+                excludes=(),
+                max_mode="rw",
+            ),
+            mode=RuntimeMode.READ_WRITE,
+        )
+    }
 
 
 # ════════════════════════════════════════════════════════════════
@@ -567,47 +593,73 @@ class TestAuth:
     """Direct admission/identity layer tests — verify the L2 gates."""
 
     def test_revoked_access_key_is_rejected_by_lookup(self, monkeypatch):
-        """``find_scope_by_access_key`` returns the row; identity must
-        check ``access_key_revoked_at`` and refuse."""
-        from src.version_engine.admission import identity
+        """Revoked credentials are absent from the canonical active lookup."""
         from unittest.mock import MagicMock
 
-        # Stub the repo function to return a revoked row.
+        from src.version_engine.admission import identity
+
         monkeypatch.setattr(
             identity,
-            "find_scope_by_access_key",
-            lambda supa, key: {
-                "id": "scope-1",
-                "project_id": "test-proj",
-                "path": "",
-                "exclude": [],
-                "mode": "rw",
-                "access_key_revoked_at": "2026-05-22T00:00:00Z",
-            },
+            "resolve_scope_access_credential",
+            lambda _supa, _key: None,
         )
         auth = identity.PuppyOneAuthenticator(MagicMock())
         result = auth._try_access_key("revoked-key", "test-proj")
         assert result is None, "revoked key must not authenticate"
 
     def test_access_key_project_mismatch_refused(self, monkeypatch):
-        from src.version_engine.admission import identity
         from unittest.mock import MagicMock
 
+        from src.version_engine.admission import identity
+
+        now = datetime.now(timezone.utc)
+        resolved = ResolvedScopeCredential(
+            credential_id="credential-1",
+            credential_type="bearer_token",
+            access_surface_id="surface-1",
+            scope=RepositoryScope(
+                id="scope-1",
+                project_id="OTHER-PROJECT",
+                name="Docs",
+                path="docs",
+                exclude=[],
+                max_mode="rw",
+                created_at=now,
+                updated_at=now,
+            ),
+        )
         monkeypatch.setattr(
             identity,
-            "find_scope_by_access_key",
-            lambda supa, key: {
-                "id": "scope-1",
-                "project_id": "OTHER-PROJECT",
-                "path": "",
-                "exclude": [],
-                "mode": "rw",
-                "access_key_revoked_at": None,
-            },
+            "resolve_scope_access_credential",
+            lambda _supa, _key: resolved,
         )
         auth = identity.PuppyOneAuthenticator(MagicMock())
         result = auth._try_access_key("any-key", "test-proj")
         assert result is None, "project mismatch must not authenticate"
+
+    def test_access_key_storage_failure_is_retryable(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from src.version_engine.admission import identity
+
+        auth = identity.PuppyOneAuthenticator(MagicMock())
+        monkeypatch.setattr(identity.settings, "SKIP_AUTH", False)
+        monkeypatch.setattr(auth, "_try_jwt", lambda _token: None)
+
+        def _unavailable(*_args, **_kwargs):
+            raise RuntimeError("storage down")
+
+        monkeypatch.setattr(
+            identity,
+            "resolve_scope_access_credential",
+            _unavailable,
+        )
+
+        with pytest.raises(HTTPException) as error:
+            auth.authenticate("token", "test-proj")
+
+        assert error.value.status_code == 503
+        assert error.value.headers == {"X-PuppyOne-Error-Code": "1010"}
 
     def test_channel_pause_blocks_paused_connector(self, monkeypatch):
         """Connector status='paused' → HTTPException 403."""
@@ -622,7 +674,8 @@ class TestAuth:
             status = "paused"
 
         class StubRepo:
-            def get_by_scope_provider(self, scope_id, channel):
+            def get_by_target_provider(self, project_id, scope_id, channel):
+                assert project_id == "p"
                 return StubConn()
 
         monkeypatch.setattr(
@@ -631,7 +684,7 @@ class TestAuth:
             lambda: StubRepo(),
         )
 
-        auth = {"_scope": {"id": "real-scope-id"}}
+        auth = _scope_auth(scope_id="real-scope-id")
         with pytest.raises(HTTPException) as exc:
             channel_pause.enforce_channel_pause(auth, "cli")
         assert exc.value.status_code == 403
@@ -648,16 +701,16 @@ class TestAuth:
             channel_pause,
             "ConnectorRepository",
             lambda: type("R", (), {
-                "get_by_scope_provider": lambda self, s, c: StubConn(),
+                "get_by_target_provider": lambda self, p, s, c: StubConn(),
             })(),
         )
 
-        auth = {"_scope": {"id": "real-scope-id"}}
+        auth = _scope_auth(scope_id="real-scope-id")
         channel_pause.enforce_channel_pause(auth, "cli")  # no raise
 
     def test_channel_pause_skips_unknown_channels(self):
         from src.version_engine.admission import channel_pause
-        auth = {"_scope": {"id": "real-scope-id"}}
+        auth = _scope_auth(scope_id="real-scope-id")
         # Should NOT consult connector repo at all.
         channel_pause.enforce_channel_pause(auth, "webhook-xyz")
         channel_pause.enforce_channel_pause(auth, None)
@@ -702,7 +755,7 @@ class TestPermission:
             project_id="p", repo_id="s", kind="access_point",
             scope_path="", excludes=(), mode="r",
         )
-        auth = {"_scope": {"id": "x"}}
+        auth = _scope_auth()
 
         # Read action OK.
         admission = admit_target(
@@ -724,7 +777,7 @@ class TestPermission:
             project_id="p", repo_id="s", kind="access_point",
             scope_path="", excludes=(), mode="rw",
         )
-        auth = {"_scope": {"id": "x"}}
+        auth = _scope_auth()
         admission = admit_target(auth, facade, action="write", source_channel="papi")
         assert admission.allows("write")
         assert admission.allows("read")
@@ -740,7 +793,7 @@ class TestPermission:
         )
         with pytest.raises(HTTPException) as exc:
             admit_target(
-                {"_scope": {"id": "x"}}, facade,
+                _scope_auth(), facade,
                 action="invalid_xyz", source_channel="papi",
             )
         assert exc.value.status_code == 400
@@ -785,8 +838,10 @@ class TestShadowSnapshotCaps:
 
     def test_oversize_entry_count_raises_413(self):
         from fastapi import HTTPException
+
         from src.version_engine.entrypoints.http.shadow_snapshot import (
-            _enforce_entry_count, _MAX_FILES_PER_SNAPSHOT,
+            _MAX_FILES_PER_SNAPSHOT,
+            _enforce_entry_count,
         )
         # Build a manifest one entry past the cap. Use unique paths so
         # pydantic doesn't reject duplicates before we hit the cap check.
@@ -1004,25 +1059,18 @@ class TestBatchAdapterThirdParty:
     """
 
     def _client(self, repo_manager, scope_path="", excludes=()):
+        from src.platform.repository_target.models import RepositoryPathProjection
         from src.version_engine.adapters.batch.in_process_client import (
             InProcessVersionClient,
         )
-        # Use a minimal auth shape — the client takes (repo_manager,
-        # project_id, auth_context). We give it a writable rw scope so
-        # it can publish.
-        auth_context = {
-            "agent": "sync:gmail-connector",
-            "_scope": {
-                "id": f"scope-{scope_path or 'root'}",
-                "path": scope_path,
-                "exclude": list(excludes),
-                "mode": "rw",
-            },
-        }
         return InProcessVersionClient(
             repo_manager,
             project_id="test-proj",
-            auth_context=auth_context,
+            projection=RepositoryPathProjection(
+                path_prefix=scope_path,
+                excludes=tuple(excludes),
+            ),
+            actor="sync:gmail-connector",
         )
 
     def test_connector_initial_push(self, repo_manager, server_repo):
@@ -1068,8 +1116,8 @@ class TestBatchAdapterThirdParty:
 class TestHealthPayload:
     def _payload_for_state(self, state, monkeypatch):
         """Stub resolve_git_view_head to force a state and capture payload."""
-        from src.version_engine.adapters.git.view_projection import GitViewHead
         from src.version_engine.adapters.git import health
+        from src.version_engine.adapters.git.view_projection import GitViewHead
 
         monkeypatch.setattr(
             health,

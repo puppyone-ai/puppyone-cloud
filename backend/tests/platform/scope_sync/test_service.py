@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from src.platform.scope_sync.service import ScopeSyncService
+from src.platform.scope_sync.settings_store import InMemorySettingsStore
 
 
 @dataclass
@@ -14,16 +15,17 @@ class _Scope:
     id: str
     project_id: str
     path: str
-    is_root: bool
 
 
-SUB = _Scope(id="s-sub", project_id="p1", path="docs", is_root=False)
-ROOT = _Scope(id="s-root", project_id="p1", path="", is_root=True)
-_LOOKUP = {SUB.id: SUB, ROOT.id: ROOT}
+SUB = _Scope(id="s-sub", project_id="p1", path="docs")
+_LOOKUP = {SUB.id: SUB}
 
 
 def _svc():
-    return ScopeSyncService(scope_lookup=lambda sid: _LOOKUP.get(sid))
+    return ScopeSyncService(
+        scope_lookup=lambda sid: _LOOKUP.get(sid),
+        settings_store=InMemorySettingsStore(),
+    )
 
 
 def test_sub_scope_dev_gets_dev_policy():
@@ -37,13 +39,6 @@ def test_sub_scope_non_dev_gets_autopilot():
     out = _svc().resolve_policy(project_id="p1", scope_id="s-sub", persona="non_dev")
     assert out["policy"]["conflict_policy"] == "agent_auto_resolve"
     assert out["policy"]["publish_on_disconnect"] is True
-
-
-def test_root_scope_non_dev_becomes_reviewer():
-    out = _svc().resolve_policy(project_id="p1", scope_id="s-root", persona="non_dev")
-    assert out["scope_role"] == "root"
-    assert out["policy"]["auto_integrate_disjoint"] is False    # integrate on owner's cadence
-    assert out["policy"]["conflict_policy"] == "manual_review"
 
 
 def test_invalid_persona_defaults_dev():

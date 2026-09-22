@@ -4,7 +4,7 @@ import { withErrors } from "../../../helpers.js";
 import { createOutput } from "../../../output.js";
 import { createApClient, extraHeaders } from "../lib/context.js";
 import { errorPayload, finishWithPartialFailure, pathError } from "../lib/errors.js";
-import { get, post } from "../lib/http.js";
+import { get } from "../lib/http.js";
 import { parseIntegerOption, parseNonNegativeOption } from "../lib/options.js";
 import { scopedPath } from "../lib/paths.js";
 
@@ -193,94 +193,6 @@ function selectedFileModeHasOutput(results, opts) {
   return false;
 }
 
-/**
- * Try the DB-indexed grep endpoint first. Returns a result in the
- * legacy ``/ap-fs/grep`` shape (``{matches, files, ...}``) if the
- * index is authoritative for the requested path, or ``null`` to
- * signal "fall back to legacy S3 scan."
- *
- * Why this is in the CLI rather than the server: the legacy
- * endpoint is the canonical response shape (carries glob filters,
- * file counts, context tagging). The indexed endpoint exists as a
- * fast path for already-indexed scopes. Merging them server-side
- * would mean rewriting the legacy aggregator on top of trigram
- * candidates; doing the dispatch here keeps both endpoints simple
- * and the CLI in charge of "is the index ready yet" policy.
- */
-async function tryIndexedGrep({
-  client, headers, pattern, regex, opts, queryBase, path,
-}) {
-  let envelope;
-  try {
-    envelope = await post(client, "/ap-fs/grep-indexed", {
-      pattern,
-      path,
-      regex,
-      ignore_case: !!opts.ignoreCase,
-      word_match: !!opts.wordRegexp,
-      invert_match: !!opts.invertMatch,
-      only_matching: !!opts.onlyMatching,
-      before_context: queryBase.before_context || 0,
-      after_context: queryBase.after_context || 0,
-      limit: queryBase.limit || 1000,
-      per_file_limit: queryBase.max_count || 0,
-    }, headers);
-  } catch {
-    // Indexed endpoint is best-effort; any failure → fall back.
-    return null;
-  }
-  if (envelope?.index_status !== "indexed") {
-    // Index missing or stale for this scope → defer to S3 scan so
-    // the user doesn't see partial results during indexer catch-up.
-    return null;
-  }
-  return indexedEnvelopeToLegacy(envelope, path);
-}
-
-/**
- * Normalise an ``/ap-fs/grep-indexed`` envelope into the legacy
- * ``/ap-fs/grep`` response shape so the existing renderer (matches /
- * count / files-with-matches modes) keeps working unchanged.
- */
-function indexedEnvelopeToLegacy(envelope, path) {
-  const hits = envelope.hits || [];
-  const matches = hits.map(h => ({
-    path: h.path,
-    line_number: h.line,
-    line_text: h.match,
-    match_text: h.match,
-    match_byte_offset: Math.max(0, (h.col || 1) - 1),
-    byte_offset: 0,
-    before_context: (h.context_before || []).map(text => ({ line_text: text })),
-    after_context: (h.context_after || []).map(text => ({ line_text: text })),
-  }));
-  const counts = new Map();
-  for (const m of matches) {
-    counts.set(m.path, (counts.get(m.path) || 0) + 1);
-  }
-  const files = [...counts.entries()].map(([p, c]) => ({
-    path: p,
-    match_count: c,
-  }));
-  return {
-    path,
-    target_type: "folder",
-    pattern: envelope.pattern,
-    matches,
-    files,
-    returned_count: matches.length,
-    matched_files: files.length,
-    candidate_files: envelope.candidates_examined || 0,
-    truncated: !!envelope.truncated,
-    truncation_reason: envelope.truncated ? "indexed_truncated" : "",
-    complete: !envelope.truncated,
-    head_commit_id: envelope.head_commit_id || "",
-    scope_head_commit_id: envelope.head_commit_id || "",
-    index_status: envelope.index_status,
-    index_freshness: envelope.index_freshness || null,
-  };
-}
-
 function positiveOrDefault(value, optionName) {
   const parsed = parseIntegerOption(value, optionName);
   if (parsed < 1) {
@@ -412,6 +324,7 @@ Notes:
         after_context: opts.afterContext,
         include_offsets: !!opts.byteOffset,
       };
+      if (opts.count || opts.filesWithoutMatch) queryBase.require_file_list = true;
       if (opts.maxDepth != null) queryBase.max_depth = parseIntegerOption(opts.maxDepth, "--max-depth");
       if (opts.maxCount != null) queryBase.max_count = parseNonNegativeOption(opts.maxCount, "-m/--max-count");
       if (opts.limit != null) queryBase.limit = positiveOrDefault(opts.limit, "--limit");
@@ -425,26 +338,12 @@ Notes:
       const results = [];
       const errors = [];
 
-      // Cloud-only grep: try the DB-indexed endpoint first per path; if
-      // the index isn't authoritative yet for that scope (missing /
-      // stale), fall back to the legacy S3-scan endpoint. The legacy
-      // shape (matches[] + files[]) is the canonical response shape —
-      // indexed hits get normalised into it so the renderer below
-      // doesn't have to know which path produced them.
-      //
-      // No local channel: PuppyOne CLI is a cloud-disk surface. Local
-      // text search is the user's job (git grep, ripgrep, IDE).
+      // Cloud-only grep: the backend owns index readiness, fallback,
+      // scope, and resource-limit policy. The CLI only maps grep syntax
+      // into the canonical AP-FS grep request shape and renders output.
       for (const rawPath of requestedPaths) {
         const cleanPath = scopedPath(rawPath);
         try {
-          const indexedResult = await tryIndexedGrep({
-            client, headers, pattern: grepPattern.pattern, regex: grepPattern.regex,
-            opts, queryBase, path: cleanPath,
-          });
-          if (indexedResult) {
-            results.push(indexedResult);
-            continue;
-          }
           results.push(await get(client, "/ap-fs/grep", {
             ...queryBase,
             path: cleanPath,

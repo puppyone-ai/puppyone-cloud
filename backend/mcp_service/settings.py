@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # ============ 服务配置 ============
     HOST: str = "0.0.0.0"
     PORT: int = 3090
+    APP_ENV: Literal["development", "test", "staging", "production"] = "development"
 
     # ============ RPC 配置 ============
     MAIN_SERVICE_URL: str = "http://localhost:9090"
@@ -57,6 +58,20 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = 3
     RETRY_DELAY: float = 0.5
 
+    # ============ CORS 配置 (ISSUE-008) ============
+    # Development is local-only by default; hosted environments must explicitly
+    # configure their trusted browser origins and may never use a wildcard.
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = (self.CORS_ALLOWED_ORIGINS or "").strip()
+        if not raw:
+            return []
+        if raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
     # ============ 辅助方法 ============
     def validate(self) -> None:
         """验证配置是否有效"""
@@ -67,6 +82,16 @@ class Settings(BaseSettings):
         # 如果使用Redis缓存，检查Redis URL
         if self.CACHE_BACKEND == "redis" and not self.REDIS_URL:
             raise ValueError("REDIS_URL is required when CACHE_BACKEND=redis")
+        if self.APP_ENV in {"staging", "production"}:
+            if not self.REDIS_URL:
+                raise ValueError(
+                    "Hosted MCP service requires REDIS_URL for cross-replica notifications"
+                )
+            origins = self.cors_origins
+            if not origins or "*" in origins:
+                raise ValueError(
+                    "Hosted MCP CORS_ALLOWED_ORIGINS must be an explicit allowlist"
+                )
     
     def display(self) -> dict:
         """显示配置（隐藏敏感信息）"""

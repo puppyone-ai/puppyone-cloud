@@ -42,8 +42,9 @@ from src.platform.integrations.arq_client import SyncArqClient
 from src.platform.integrations.engine import IntegrationEngine
 from src.platform.integrations.paths import canonical_provider
 from src.platform.integrations.service import IntegrationService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
+from src.platform.authorization.models import ProjectAction
 from src.utils.logger import log_error
 
 
@@ -127,23 +128,25 @@ def _connectable_specs(registry: ConnectorRegistry) -> list[dict]:
 
 
 def _ensure_project_access(
-    project_service: ProjectService,
+    authorization: AuthorizationService,
     current_user: CurrentUser,
     project_id: str,
+    action=None,
 ) -> None:
-    if not project_service.verify_project_access(project_id, current_user.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No access to this project",
-        )
+    authorization.authorize(
+        project_id,
+        current_user.user_id,
+        action or ProjectAction.ACCESS_READ,
+    )
 
 
 def _get_connection_with_access(
     *,
     connection_id: str,
     service: IntegrationService,
-    project_service: ProjectService,
+    authorization: AuthorizationService,
     current_user: CurrentUser,
+    action=None,
 ):
     connection = service.repository.get_by_id(connection_id)
     if not connection:
@@ -151,7 +154,9 @@ def _get_connection_with_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Integration connection #{connection_id} not found",
         )
-    _ensure_project_access(project_service, current_user, connection.project_id)
+    _ensure_project_access(
+        authorization, current_user, connection.project_id, action
+    )
     return connection
 
 
@@ -265,10 +270,10 @@ async def _queue_sync_run(
 async def get_project_sync_status(
     project_id: str = Query(..., description=_PROJECT_ID_DESC),
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    _ensure_project_access(project_service, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id)
     connections = service.repository.list_by_project(project_id)
     items = [
         SyncStatusItem(
@@ -330,9 +335,10 @@ async def list_provider_resources(
             resource_type=resource_type,
         )
     except ValueError as exc:
+        log_error(f"[Integrations] list_source_resources failed provider={provider}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="Unable to authorize with the provider",
         ) from exc
 
     return ApiResponse.success(
@@ -361,10 +367,16 @@ async def create_connection(
     service: IntegrationService = Depends(get_integration_service),
     registry: ConnectorRegistry = Depends(get_connector_registry),
     sync_arq_client: SyncArqClient = Depends(get_sync_arq_client),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    _ensure_project_access(project_service, current_user, body.project_id)
+    from src.platform.authorization.models import ProjectAction
+    _ensure_project_access(
+        authorization,
+        current_user,
+        body.project_id,
+        ProjectAction.INTEGRATION_MANAGE,
+    )
 
     provider = canonical_provider(body.provider)
     connector = registry.get(provider)
@@ -451,7 +463,7 @@ def list_connections(
     project_id: Optional[str] = Query(None),
     provider: Optional[str] = Query(None),
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     if not project_id:
@@ -459,7 +471,7 @@ def list_connections(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="project_id is required",
         )
-    _ensure_project_access(project_service, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id)
     if provider:
         connections = service.repository.list_by_provider(project_id, provider)
     else:
@@ -471,14 +483,15 @@ def list_connections(
 async def delete_connection(
     connection_id: str,
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.INTEGRATION_MANAGE,
     )
     try:
         from src.infra.scheduler.service import get_scheduler_service
@@ -496,14 +509,15 @@ async def update_connection(
     body: UpdateIntegrationConnectionRequest,
     service: IntegrationService = Depends(get_integration_service),
     registry: ConnectorRegistry = Depends(get_connector_registry),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     connection = _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.INTEGRATION_MANAGE,
     )
     fields: dict[str, Any] = {}
     if body.direction is not None:
@@ -561,7 +575,7 @@ async def update_connection_trigger(
     connection_id: str,
     body: UpdateIntegrationTriggerRequest,
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     if body.sync_mode == "import_once":
@@ -572,8 +586,9 @@ async def update_connection_trigger(
     connection = _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.INTEGRATION_MANAGE,
     )
     trigger_data = dict(body.trigger or {})
     if not trigger_data.get("type"):
@@ -597,14 +612,15 @@ async def update_connection_trigger(
 def pause_connection(
     connection_id: str,
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.INTEGRATION_MANAGE,
     )
     service.pause_sync(connection_id)
     return ApiResponse.success(message="Integration paused")
@@ -615,14 +631,15 @@ async def refresh_connection(
     connection_id: str,
     service: IntegrationService = Depends(get_integration_service),
     sync_arq_client: SyncArqClient = Depends(get_sync_arq_client),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     connection = _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.AUTOMATION_RUN,
     )
     if (connection.trigger or {}).get("type") == "import_once":
         raise HTTPException(
@@ -642,14 +659,15 @@ async def resume_connection(
     connection_id: str,
     service: IntegrationService = Depends(get_integration_service),
     sync_arq_client: SyncArqClient = Depends(get_sync_arq_client),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     connection = _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
+        action=ProjectAction.INTEGRATION_MANAGE,
     )
     service.resume_sync(connection_id)
     connection = service.repository.get_by_id(connection_id) or connection
@@ -666,10 +684,10 @@ def list_failed_runs(
     project_id: str = Query(..., description=_PROJECT_ID_DESC),
     limit: int = Query(50, ge=1, le=200),
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    _ensure_project_access(project_service, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id)
     connections = service.repository.list_by_project(project_id)
     if not connections:
         return ApiResponse.success(data=[])
@@ -702,13 +720,13 @@ def list_connection_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     service: IntegrationService = Depends(get_integration_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     _get_connection_with_access(
         connection_id=connection_id,
         service=service,
-        project_service=project_service,
+        authorization=authorization,
         current_user=current_user,
     )
     runs = _get_run_repo().list_by_sync(connection_id, limit=limit, offset=offset)
@@ -733,11 +751,22 @@ def list_connection_runs(
 @router.get("/runs/{run_id}", response_model=ApiResponse[SyncRunResponse])
 def get_connection_run(
     run_id: str,
+    service: IntegrationService = Depends(get_integration_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     run = _get_run_repo().get_by_id(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    # Scope the read to a project the caller can reach — a run id alone must not
+    # leak another tenant's sync output. Resolve the owning connection and
+    # enforce project access (mirrors list_connection_runs).
+    _get_connection_with_access(
+        connection_id=run.access_point_id,
+        service=service,
+        authorization=authorization,
+        current_user=current_user,
+    )
     return ApiResponse.success(data=SyncRunResponse(
         id=run.id,
         access_point_id=run.access_point_id,
@@ -760,10 +789,16 @@ async def bootstrap(
     service: IntegrationService = Depends(get_integration_service),
     registry: ConnectorRegistry = Depends(get_connector_registry),
     sync_arq_client: SyncArqClient = Depends(get_sync_arq_client),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    _ensure_project_access(project_service, current_user, body.project_id)
+    from src.platform.authorization.models import ProjectAction
+    _ensure_project_access(
+        authorization,
+        current_user,
+        body.project_id,
+        ProjectAction.INTEGRATION_MANAGE,
+    )
     provider = canonical_provider(body.provider)
     connector = registry.get(provider)
     if not connector:
@@ -837,15 +872,16 @@ async def trigger_pull(
     provider: Optional[str] = Query(None),
     service: IntegrationService = Depends(get_integration_service),
     sync_arq_client: SyncArqClient = Depends(get_sync_arq_client),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     if connection_id:
         connection = _get_connection_with_access(
             connection_id=connection_id,
             service=service,
-            project_service=project_service,
+            authorization=authorization,
             current_user=current_user,
+            action=ProjectAction.AUTOMATION_RUN,
         )
         result = await _queue_sync_run(
             connection=connection,
@@ -859,7 +895,12 @@ async def trigger_pull(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="project_id is required when connection_id is omitted",
             )
-        _ensure_project_access(project_service, current_user, project_id)
+        _ensure_project_access(
+            authorization,
+            current_user,
+            project_id,
+            ProjectAction.AUTOMATION_RUN,
+        )
         connections = (
             service.repository.list_by_provider(project_id, provider)
             if provider
@@ -890,11 +931,20 @@ async def trigger_push(
     path: str,
     project_id: str = Query(..., description=_PROJECT_ID_DESC),
     engine: IntegrationEngine = Depends(get_integration_engine),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
     from src.version_engine.read.tree_reader import detect_type
     import json as _json
+
+    from src.platform.authorization.models import ProjectAction
+    _ensure_project_access(
+        authorization,
+        current_user,
+        project_id,
+        ProjectAction.AUTOMATION_RUN,
+    )
 
     ops = build_worker_version_engine_container().product_operations()
     try:

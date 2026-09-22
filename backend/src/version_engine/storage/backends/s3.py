@@ -415,6 +415,7 @@ class ObjectWriteBatch:
     def __init__(self, backend: CachedStorageBackend):
         self.backend = backend
         self._objects: dict[str, bytes] = {}
+        self._flushed_ids: list[str] = []
 
     def put(self, h: str, data: bytes) -> None:
         _verify_loose_hash(h, data)
@@ -428,6 +429,10 @@ class ObjectWriteBatch:
 
     def count(self) -> int:
         return len(self._objects)
+
+    @property
+    def flushed_ids(self) -> list[str]:
+        return list(self._flushed_ids)
 
     def flush(self) -> None:
         objects = dict(self._objects)
@@ -447,6 +452,7 @@ class ObjectWriteBatch:
                     inner.put(h, data)
         for h, data in objects.items():
             self.backend._remember_cached(h, data)
+        self._flushed_ids = list(objects)
         self._objects.clear()
 
 

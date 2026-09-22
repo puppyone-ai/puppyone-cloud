@@ -23,7 +23,6 @@ acquisitions — they're a sync primitive, not state.
 
 from __future__ import annotations
 
-import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -50,6 +49,21 @@ def file_exclusive_lock(lock_path: Path):
         finally:
             _release(fh)
     finally:
+        fh.close()
+
+
+@contextmanager
+def try_file_exclusive_lock(lock_path: Path):
+    """Attempt an exclusive lock once, yielding False instead of blocking."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = lock_path.open("a+b")
+    acquired = False
+    try:
+        acquired = _try_acquire(fh)
+        yield acquired
+    finally:
+        if acquired:
+            _release(fh)
         fh.close()
 
 
@@ -84,6 +98,14 @@ if _IS_WINDOWS:
             # close will clean up regardless.
             pass
 
+    def _try_acquire(fh) -> bool:
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
 else:
     import fcntl
 
@@ -92,3 +114,10 @@ else:
 
     def _release(fh) -> None:
         fcntl.flock(fh, fcntl.LOCK_UN)
+
+    def _try_acquire(fh) -> bool:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False

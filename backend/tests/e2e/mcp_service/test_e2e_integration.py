@@ -207,9 +207,20 @@ def internal_headers():
 @pytest.fixture(scope="module")
 def test_project(main_client: httpx.Client):
     """创建测试项目，测试完成后删除"""
+    orgs_resp = main_client.get("/api/v1/organizations/")
+    assert orgs_resp.status_code == 200, (
+        f"获取组织失败: {orgs_resp.status_code} {orgs_resp.text}"
+    )
+    orgs_data = orgs_resp.json()
+    orgs = orgs_data.get("data") or orgs_data
+    assert orgs, "测试用户没有组织"
     resp = main_client.post(
         "/api/v1/projects/",
-        json={"name": f"mcp-e2e-test-{uuid.uuid4().hex[:8]}"},
+        headers={"Idempotency-Key": str(uuid.uuid4())},
+        json={
+            "name": f"mcp-e2e-test-{uuid.uuid4().hex[:8]}",
+            "org_id": orgs[0]["id"],
+        },
     )
     assert resp.status_code in (200, 201), f"创建项目失败: {resp.status_code} {resp.text}"
     data = resp.json()
@@ -670,7 +681,7 @@ class TestInternalAPI:
         data = resp.json()
         assert data["renamed"] is True
         assert data["name"] == "renamed-file.md"
-        print(f"  rename: rename-test.md -> renamed-file.md")
+        print("  rename: rename-test.md -> renamed-file.md")
 
         # 清理
         main_client.post(
@@ -709,7 +720,7 @@ class TestInternalAPI:
         data = resp.json()
         assert data["moved"] is True
         assert data["parent_id"] == dst_id
-        print(f"  move: movable.md 从 move-src -> move-dst")
+        print("  move: movable.md 从 move-src -> move-dst")
 
         # 清理
         for nid in [file_id, src_id, dst_id]:
@@ -721,8 +732,9 @@ class TestInternalAPI:
     ):
         """测试通过 MCP API Key 获取 Agent 配置"""
         mcp_key = test_agent["mcp_api_key"]
-        resp = main_client.get(
-            f"/internal/agent-by-mcp-key/{mcp_key}",
+        resp = main_client.post(
+            "/internal/agent-by-mcp-key",
+            json={"mcp_api_key": mcp_key},
             headers=internal_headers,
         )
         assert resp.status_code == 200, f"获取 Agent 失败: {resp.status_code} {resp.text}"

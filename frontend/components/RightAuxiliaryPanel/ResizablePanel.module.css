@@ -1,0 +1,28 @@
+.panel {
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-background);
+  z-index: var(--panel-z);
+  visibility: hidden;
+  pointer-events: none;
+  transition: width 200ms ease;
+}
+.panel[data-visible='true'] { width: var(--panel-width); border-left: 1px solid var(--panel-border); visibility: visible; pointer-events: auto; }
+.panel[data-layout='inline'], .panel[data-layout='inspector-region'] { height: 100%; }
+.panel[data-layout='overlay'] { position: absolute; top: var(--panel-top); right: 0; bottom: 0; }
+.panel[data-resizing='true'] { transition: none; }
+.panel > [data-panel-content] { opacity: 0; transition: opacity 150ms ease; }
+.panel[data-visible='true'] > [data-panel-content] { opacity: 1; }
+/* Local inspectors cover only their own body. Persistent project regions
+   choose docked/overlay geometry in the workspace frame, not here. */
+@media (max-width: 1023px) {
+  .panel:not([data-layout='region']):not([data-layout='inspector-region'])[data-visible='true'] { position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; transition: none; }
+  .panel:not([data-layout='region']):not([data-layout='inspector-region']) > [data-panel-resizer] { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .panel, .panel > [data-panel-content] { transition: none; } }

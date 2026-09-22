@@ -1,25 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 
+from src.exceptions import ErrorCode, NotFoundException
 from src.infra.chunking.config import ChunkingConfig
 from src.infra.chunking.repository import ChunkRepository, ensure_chunks_for_pointer
 from src.infra.chunking.schemas import Chunk
 from src.infra.chunking.service import ChunkingService, iter_large_string_nodes_for_chunking
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.version_engine.read.tree_reader import VersionEntry
 from src.infra.llm.embedding_service import EmbeddingService
 from src.infra.s3.service import S3Service
 from src.infra.turbopuffer.schemas import TurbopufferRow
 from src.infra.turbopuffer.service import TurbopufferSearchService
-from src.platform.project.service import ProjectService
-from src.exceptions import NotFoundException, ErrorCode
-from src.utils.logger import log_info, log_error
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseFactory
+from src.utils.logger import log_error, log_info
+from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.version_engine.read.tree_reader import VersionEntry
 
 
 def _normalize_json_pointer(pointer: str) -> str:
@@ -137,22 +138,26 @@ class SearchService:
         *,
         ops: ProductOperationAdapter,
         chunk_repo: ChunkRepository,
-        project_service: ProjectService,
+        authorization: AuthorizationService,
         chunking_service: ChunkingService | None = None,
         chunking_config: ChunkingConfig | None = None,
         embedding_service: EmbeddingService | None = None,
         turbopuffer_service: TurbopufferSearchService | None = None,
+        write_lease_factory: ProjectWriteLeaseFactory = ProjectWriteLease,
     ) -> None:
         self._ops = ops
         self._chunk_repo = chunk_repo
-        self._project_service = project_service
+        self.authorization = authorization
         self._chunking_service = chunking_service or ChunkingService()
         self._chunking_config = chunking_config or ChunkingConfig()
         self._embedding = embedding_service or EmbeddingService()
         self._tp = turbopuffer_service or TurbopufferSearchService()
+        self._write_lease_factory = write_lease_factory
 
     def _ensure_project_access(self, *, project_id: str, user_id: str) -> None:
-        if not self._project_service.verify_project_access(project_id, user_id):
+        if not self.authorization.allows(
+            project_id, user_id, ProjectAction.CONTENT_READ
+        ):
             raise NotFoundException(
                 f"Project not found: {project_id}",
                 code=ErrorCode.NOT_FOUND,
@@ -186,6 +191,22 @@ class SearchService:
         return f"{file_path[:12]}_{pointer_hash}_{content_hash[:8]}_{chunk_index}"
 
     async def index_scope(
+        self,
+        *,
+        project_id: str,
+        path: str,
+        user_id: str,
+        json_path: str,
+    ) -> SearchIndexStats:
+        async with self._write_lease_factory(project_id, "search.index_scope"):
+            return await self._index_scope_admitted(
+                project_id=project_id,
+                path=path,
+                user_id=user_id,
+                json_path=json_path,
+            )
+
+    async def _index_scope_admitted(
         self,
         *,
         project_id: str,
@@ -316,11 +337,12 @@ class SearchService:
         log_info(
             f"[index_scope] step5_turbopuffer_write_start: path={path} rows_count={len(upsert_rows)}"
         )
-        await self._tp.write(
-            namespace,
-            upsert_rows=upsert_rows,
-            distance_metric="cosine_distance",
-        )
+        async with self._write_lease_factory(project_id, "search.index_scope"):
+            await self._tp.write(
+                namespace,
+                upsert_rows=upsert_rows,
+                distance_metric="cosine_distance",
+            )
         log_info(
             f"[index_scope] step5_turbopuffer_done: path={path} elapsed_ms={int((time.perf_counter() - t5) * 1000)}"
         )
@@ -458,6 +480,24 @@ class SearchService:
     # ==================== Folder Search Methods ====================
 
     async def index_folder(
+        self,
+        *,
+        project_id: str,
+        folder_path: str,
+        user_id: str,
+        s3_service: S3Service,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> FolderIndexStats:
+        async with self._write_lease_factory(project_id, "search.index_folder"):
+            return await self._index_folder_admitted(
+                project_id=project_id,
+                folder_path=folder_path,
+                user_id=user_id,
+                s3_service=s3_service,
+                progress_callback=progress_callback,
+            )
+
+    async def _index_folder_admitted(
         self,
         *,
         project_id: str,
@@ -701,11 +741,12 @@ class SearchService:
                 }
             )
 
-        await self._tp.write(
-            namespace,
-            upsert_rows=upsert_rows,
-            distance_metric="cosine_distance",
-        )
+        async with self._write_lease_factory(project_id, "search.index_folder"):
+            await self._tp.write(
+                namespace,
+                upsert_rows=upsert_rows,
+                distance_metric="cosine_distance",
+            )
         log_info(
             f"[_index_file_node] turbopuffer: file={file_node.path} rows={len(upsert_rows)} "
             f"elapsed_ms={int((time.perf_counter() - t5) * 1000)}"

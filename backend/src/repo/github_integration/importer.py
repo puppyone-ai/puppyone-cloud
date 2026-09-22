@@ -24,12 +24,14 @@ import flow themselves (out of MVP scope).
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
 
 from src.connectors.datasource.oauth.repository import OAuthRepository
+from src.infra.supabase.client import SupabaseClient
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 from src.version_engine.write_engine.engine import VersionWriteEngine
 from src.version_engine.domain.intents import OperationWriteIntent
@@ -58,6 +60,61 @@ class ImportConflict(Exception):
             f"(head={version_head[:12]}, last_imported={last_imported or '∅'}). "
             f"Pass force=True to overwrite or run an export first."
         )
+
+
+# Channels that are NOT a conflict for a GitHub re-import: this integration's own
+# imports + the system's scope-sync projection. Every other source_channel is a
+# real external/user write. Keep in sync with the source_channel taxonomy.
+_OWN_OR_SYSTEM_CHANNELS = frozenset({"github", "scope-sync"})
+
+
+def _has_external_committed_write(rows: list[dict]) -> bool:
+    """True if any committed transaction row is from a user/external channel."""
+    return any(
+        (r.get("source_channel") or "") not in _OWN_OR_SYSTEM_CHANNELS
+        for r in rows
+    )
+
+
+async def _external_writes_since(project_id: str, since_iso: str) -> bool:
+    """Did the project receive a committed write from an external/user channel
+    since ``since_iso``? GitHub import binds to the Project root, so any external
+    repository write is divergence the overwrite would clobber. Fail-OPEN on a query
+    error — the import is GitHub-authoritative; a DB hiccup must not wedge it."""
+    def _query() -> list[dict]:
+        sb = SupabaseClient().client
+        resp = (
+            sb.table("version_transactions")
+            .select("source_channel, created_at, status")
+            .eq("project_id", project_id)
+            .eq("status", "committed")
+            .gt("created_at", since_iso)
+            .order("created_at", desc=False)
+            .limit(200)
+            .execute()
+        )
+        return resp.data or []
+
+    try:
+        rows = await asyncio.to_thread(_query)
+    except Exception as exc:  # noqa: BLE001
+        log_warning(
+            f"[GithubImport] divergence check failed for project={project_id}: "
+            f"{exc}; allowing import (GitHub-authoritative)"
+        )
+        return False
+    return _has_external_committed_write(rows)
+
+
+def _current_root_head(project_id: str) -> str:
+    """Best-effort current Project head commit id, for the conflict message."""
+    try:
+        from src.version_engine.infrastructure.supabase.history_repository import (
+            SupabaseHistoryManager,
+        )
+        return SupabaseHistoryManager(SupabaseClient(), project_id).get_scope_head_commit_id("") or ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 async def import_branch(
@@ -108,7 +165,7 @@ async def import_branch(
     try:
         return await _do_import(
             api=api, integration=integration, target_branch=target_branch,
-            sync_log=sync_log, integ_repo=integ_repo,
+            sync_log=sync_log, integ_repo=integ_repo, force=force,
         )
     except GithubApiError as e:
         return await _record_failure(
@@ -152,6 +209,7 @@ async def _do_import(
     *, api: GithubApi, integration: dict, target_branch: str,
     sync_log: GithubSyncLogRepository,
     integ_repo: GithubIntegrationRepository,
+    force: bool = False,
 ) -> GithubSyncRunResult:
     integration_id = integration["id"]
     project_id = integration["project_id"]
@@ -193,16 +251,26 @@ async def _do_import(
 
     files = await _materialise_blobs(api, owner, repo_name, entries)
 
-    # Conflict gate — currently a no-op. Future work: refuse if the
-    # version scope has commits past ``last_imported_sha`` that haven't
-    # been exported. Skipping is safe (worst case: silently overwrite
-    # local edits — users opt out via force=False / explicit export
-    # before re-import).
+    # Conflict gate (git non-fast-forward analogue). GitHub import overwrites the
+    # Project root, so refuse unless ``force`` when the Project received a
+    # COMMITTED write from an external/user channel since the last successful
+    # import. ``github`` (our own imports) and ``scope-sync`` (system projection)
+    # are NOT conflicts — the check is source_channel-aware, so projection
+    # advancing the head never trips a false conflict. The ImportConflict handler
+    # records a `conflict` sync-log row instead of clobbering. ``force`` (opt-in,
+    # like a force-push) skips the gate.
+    if not force:
+        last = await sync_log.latest_successful_import(integration_id)
+        since = (last or {}).get("created_at")
+        last_commit = (last or {}).get("version_commit_id")
+        if since and last_commit and await _external_writes_since(project_id, since):
+            raise ImportConflict(
+                version_head=_current_root_head(project_id),
+                last_imported=last_commit,
+            )
 
-    # Build a splice that resets the bound scope to the imported tree.
-    scope_path = ""  # bind-at-project-level → root scope. If we later
-                    # support per-scope binding this comes from the
-                    # integration row.
+    # Build a splice that resets the Project root view to the imported tree.
+    scope_path = ""  # Version Engine projection path; not a Scope identity.
 
     splice = _make_overwrite_splice(files)
 
@@ -399,8 +467,3 @@ async def _record_failure(
         git_sha=None, version_commit_id=None,
         files_changed=None, error_message=error,
     )
-
-
-async def _to_thread(fn, *args, **kwargs):
-    import asyncio
-    return await asyncio.to_thread(fn, *args, **kwargs)

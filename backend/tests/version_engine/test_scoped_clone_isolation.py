@@ -14,11 +14,7 @@ repo. The real-git-CLI counterpart lives in
 
 from __future__ import annotations
 
-import pytest
-
-from src.version_engine.adapters.git.object_quarantine import (
-    _reachable_object_ids,
-)
+from src.version_engine.derived.object_gc import mark_reachable_objects
 from src.version_engine.adapters.git.view_projection import git_view_head_commit
 from src.version_engine.write_engine.git_commit import build_git_commit
 from src.version_engine.write_engine.tree_objects import build_tree_from_files
@@ -68,7 +64,7 @@ def test_root_view_reachability_includes_every_blob(server_repo):
     head = git_view_head_commit(server_repo, "", scope_excludes=None)
     assert head, "root view must have a head commit"
 
-    reachable = _reachable_object_ids(server_repo, [head])
+    reachable = mark_reachable_objects(server_repo, [head])
     assert blob_a in reachable
     assert blob_k in reachable
 
@@ -104,7 +100,7 @@ def test_scoped_view_does_not_reach_sibling_blobs(server_repo):
     head = git_view_head_commit(server_repo, "docs", scope_excludes=None)
     assert head, "scoped view must have a head"
 
-    reachable = _reachable_object_ids(server_repo, [head])
+    reachable = mark_reachable_objects(server_repo, [head])
     assert docs_blob in reachable, "scope view must include in-scope blob"
     # The contract under audit:
     assert secret_blob not in reachable, (
@@ -150,7 +146,7 @@ def test_scoped_view_with_excludes_strips_excluded_subtree(server_repo):
     )
     assert head
 
-    reachable = _reachable_object_ids(server_repo, [head])
+    reachable = mark_reachable_objects(server_repo, [head])
     assert public_blob in reachable
     assert private_blob not in reachable, (
         "exclude pattern was not applied to the scoped clone view"
@@ -168,7 +164,7 @@ def test_empty_scope_view_is_safe(server_repo):
     head = git_view_head_commit(server_repo, "nothing", scope_excludes=None)
     # Either no head (preferred) or a commit with the empty tree id.
     if head:
-        reachable = _reachable_object_ids(server_repo, [head])
+        reachable = mark_reachable_objects(server_repo, [head])
         # All reachable objects must be the empty tree + commit objects,
         # never a sibling blob.
         for object_id in reachable:

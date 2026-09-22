@@ -22,70 +22,12 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
     )
 
 
-def test_runtime_principal_accepts_standalone_mcp_endpoint_key(monkeypatch):
-    class _AgentRepo:
-        def get_by_mcp_api_key_with_accesses(self, _api_key):
-            return None
-
-    class _EndpointRepo:
-        def get_by_api_key(self, api_key):
-            assert api_key == "mcp_endpoint_key"
-            return {"id": "endpoint-1", "status": "active"}
-
-    monkeypatch.setattr(dependencies, "AgentRepository", lambda: _AgentRepo())
-    monkeypatch.setattr(dependencies, "McpEndpointRepository", lambda: _EndpointRepo())
-
+def test_runtime_principal_forwards_opaque_mcp_key_without_repository_lookup():
     principal = dependencies.get_mcp_runtime_principal(
         authorization="Bearer mcp_endpoint_key",
     )
 
     assert principal.api_key == "mcp_endpoint_key"
-    assert principal.kind == "mcp_endpoint"
-
-
-def test_runtime_principal_rejects_inactive_mcp_endpoint_key(monkeypatch):
-    class _AgentRepo:
-        def get_by_mcp_api_key_with_accesses(self, _api_key):
-            return None
-
-    class _EndpointRepo:
-        def get_by_api_key(self, api_key):
-            assert api_key == "mcp_endpoint_key"
-            return {"id": "endpoint-1", "status": "off"}
-
-    monkeypatch.setattr(dependencies, "AgentRepository", lambda: _AgentRepo())
-    monkeypatch.setattr(dependencies, "McpEndpointRepository", lambda: _EndpointRepo())
-
-    with pytest.raises(HTTPException) as exc:
-        dependencies.get_mcp_runtime_principal(
-            authorization="Bearer mcp_endpoint_key",
-        )
-
-    assert exc.value.status_code == 403
-
-
-def test_runtime_principal_keeps_agent_key(monkeypatch):
-    class _Agent:
-        mcp_api_key = "agent_key"
-
-    class _AgentRepo:
-        def get_by_mcp_api_key_with_accesses(self, api_key):
-            assert api_key == "agent_key"
-            return _Agent()
-
-    class _EndpointRepo:
-        def get_by_api_key(self, _api_key):
-            raise AssertionError("endpoint lookup should not run for agent keys")
-
-    monkeypatch.setattr(dependencies, "AgentRepository", lambda: _AgentRepo())
-    monkeypatch.setattr(dependencies, "McpEndpointRepository", lambda: _EndpointRepo())
-
-    principal = dependencies.get_mcp_runtime_principal(
-        authorization="Bearer agent_key",
-    )
-
-    assert principal.api_key == "agent_key"
-    assert principal.kind == "agent"
 
 
 @pytest.mark.parametrize("authorization", [None, "", "mcp_key", "Basic mcp_key", "Bearer "])
@@ -96,18 +38,7 @@ def test_runtime_principal_requires_bearer_authorization(authorization):
     assert exc.value.status_code == 401
 
 
-def test_runtime_principal_rejects_unknown_bearer_token(monkeypatch):
-    class _AgentRepo:
-        def get_by_mcp_api_key_with_accesses(self, _api_key):
-            return None
-
-    class _EndpointRepo:
-        def get_by_api_key(self, _api_key):
-            return None
-
-    monkeypatch.setattr(dependencies, "AgentRepository", lambda: _AgentRepo())
-    monkeypatch.setattr(dependencies, "McpEndpointRepository", lambda: _EndpointRepo())
-
+def test_runtime_principal_rejects_non_mcp_token_format():
     with pytest.raises(HTTPException) as exc:
         dependencies.get_mcp_runtime_principal(authorization="Bearer unknown")
 

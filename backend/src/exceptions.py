@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class ErrorCode(int, Enum):
@@ -15,6 +15,10 @@ class ErrorCode(int, Enum):
     NOT_FOUND = 1004
     METHOD_NOT_ALLOWED = 1005
     VALIDATION_ERROR = 1006
+    CLIENT_UPGRADE_REQUIRED = 1007
+    TARGET_KIND_MISMATCH = 1008
+    SCOPE_NOT_FOUND = 1009
+    REPOSITORY_STORAGE_UNAVAILABLE = 1010
 
     # User/authentication related (2000-2999)
     USER_NOT_FOUND = 2001
@@ -26,6 +30,7 @@ class ErrorCode(int, Enum):
     # Content node related (4000-4999)
     NAME_CONFLICT = 4001  # Duplicate name exists in the same directory
     VERSION_CONFLICT = 4002  # Optimistic lock version conflict (concurrent write)
+    CAS_RETRY_EXHAUSTED = 4003
 
     # MCP related (3000-3999)
     MCP_INSTANCE_NOT_FOUND = 3001
@@ -43,7 +48,7 @@ class AppException(Exception):
         code: ErrorCode,
         message: str,
         status_code: int = 400,
-        details: Optional[Any] = None,
+        details: Any | None = None,
     ):
         self.code = code
         self.message = message
@@ -54,9 +59,7 @@ class AppException(Exception):
 
 # Concrete exception class helpers
 class NotFoundException(AppException):
-    def __init__(
-        self, message: str = "Resource not found", code: ErrorCode = ErrorCode.NOT_FOUND
-    ):
+    def __init__(self, message: str = "Resource not found", code: ErrorCode = ErrorCode.NOT_FOUND):
         super().__init__(code=code, message=message, status_code=404)
 
 
@@ -80,10 +83,47 @@ class AuthException(AppException):
 
 
 class PermissionException(AppException):
-    def __init__(
-        self, message: str = "Permission denied", code: ErrorCode = ErrorCode.FORBIDDEN
-    ):
+    def __init__(self, message: str = "Permission denied", code: ErrorCode = ErrorCode.FORBIDDEN):
         super().__init__(code=code, message=message, status_code=403)
+
+
+class ServiceUnavailableException(AppException):
+    """A fail-closed dependency outage that callers may safely retry."""
+
+    def __init__(
+        self,
+        message: str = "Service temporarily unavailable",
+        *,
+        retry_after_seconds: int = 1,
+    ):
+        self.headers = {"Retry-After": str(max(1, retry_after_seconds))}
+        super().__init__(
+            code=ErrorCode.INTERNAL_SERVER_ERROR,
+            message=message,
+            status_code=503,
+            details={"retryable": True},
+        )
+
+
+class DatabaseSchemaOutdatedException(AppException):
+    """The deployed API requires a database migration not visible to PostgREST.
+
+    This is deliberately safe and machine-readable: callers can distinguish a
+    rolling-deploy mismatch from an ordinary credential failure without ever
+    receiving the missing function name, SQL signature, or schema-cache body.
+    """
+
+    def __init__(self, *, retry_after_seconds: int = 30):
+        self.headers = {"Retry-After": str(max(1, retry_after_seconds))}
+        super().__init__(
+            code=ErrorCode.REPOSITORY_STORAGE_UNAVAILABLE,
+            message="Cloud service upgrade is still being applied; try again shortly",
+            status_code=503,
+            details={
+                "code": "database_schema_outdated",
+                "retryable": True,
+            },
+        )
 
 
 # Alias for HTTP 403 Forbidden (used by organization service)
@@ -116,4 +156,17 @@ class VersionConflictException(AppException):
             code=ErrorCode.VERSION_CONFLICT,
             message=message,
             status_code=409,
+        )
+
+
+class CasRetriesExhausted(AppException):
+    """A write lost every bounded CAS attempt and is safe to retry later."""
+
+    def __init__(self, message: str = "Concurrent write contention; retry the request"):
+        self.headers = {"Retry-After": "1"}
+        super().__init__(
+            code=ErrorCode.CAS_RETRY_EXHAUSTED,
+            message=message,
+            status_code=409,
+            details={"retryable": True},
         )

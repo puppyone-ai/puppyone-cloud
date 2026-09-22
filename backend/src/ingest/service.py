@@ -19,7 +19,8 @@ from src.ingest.shared.task.normalizers import (
 from src.platform.imports.provider import detect_import_provider
 from src.platform.imports.repository import ImportJobRepository
 from src.platform.imports.schemas import ImportJobStatus
-from src.platform.project.service import ProjectService
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,9 @@ logger = logging.getLogger(__name__)
 class IngestService:
     """Unified task status service for file and one-time import tasks."""
 
-    def __init__(self, file_service, project_service: ProjectService | None = None):
+    def __init__(self, file_service, authorization: AuthorizationService):
         self.file_service = file_service
-        self.project_service = project_service
+        self.authorization = authorization
         self._import_job_repo: ImportJobRepository | None = None
 
     @property
@@ -94,7 +95,9 @@ class IngestService:
         """Cancel a task."""
         if source_type != SourceType.FILE:
             job = self.import_job_repo.get(task_id)
-            if not job or not self._can_access_project(job.project_id, user_id):
+            if not job or not self._can_access_project(
+                job.project_id, user_id, ProjectAction.INGEST_WRITE
+            ):
                 return False
             if job.status in {
                 ImportJobStatus.COMPLETED.value,
@@ -115,14 +118,16 @@ class IngestService:
             logger.error(f"Failed to cancel task {task_id}: {e}")
             return False
 
-    def _can_access_project(self, project_id: str, user_id: str) -> bool:
-        if not self.project_service:
-            return False
-        return bool(self.project_service.verify_project_access(project_id, user_id))
+    def _can_access_project(
+        self, project_id: str, user_id: str, action: ProjectAction
+    ) -> bool:
+        return self.authorization.allows(project_id, user_id, action)
 
     def _get_import_task(self, task_id: str, user_id: str) -> IngestTaskResponse | None:
         job = self.import_job_repo.get(task_id)
-        if not job or not self._can_access_project(job.project_id, user_id):
+        if not job or not self._can_access_project(
+            job.project_id, user_id, ProjectAction.CONTENT_READ
+        ):
             return None
 
         status_map = {

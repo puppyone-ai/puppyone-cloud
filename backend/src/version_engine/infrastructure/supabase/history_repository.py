@@ -40,18 +40,21 @@ the version repository adapter.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from src.infra.supabase.client import SupabaseClient
+from src.utils.logger import log_error, log_info, log_warning
 from src.version_engine.infrastructure.supabase import safe_data as _safe_data
 from src.version_engine.infrastructure.supabase.db_names import (
     COMMIT_HISTORY_TABLE,
-    PUBLISH_PROJECT_UPDATE_RPC,
     PROJECT_ROOT_HASH_COLUMN,
-    SCOPE_STATE_TABLE as DB_SCOPE_STATE_TABLE,
+    PUBLISH_PROJECT_UPDATE_RPC,
     VERSION_INDEX_TABLE,
     VERSION_OUTBOX_TABLE,
 )
-from src.utils.logger import log_error, log_info, log_warning
+from src.version_engine.infrastructure.supabase.db_names import (
+    SCOPE_STATE_TABLE as DB_SCOPE_STATE_TABLE,
+)
 
 
 class SupabaseHistoryManager:
@@ -75,6 +78,7 @@ class SupabaseHistoryManager:
     def get_head_commit_id(self) -> str:
         # 2-second cache: prevents repeated ORDER BY DESC scans within same request
         import time as _time
+
         now = _time.monotonic()
         if hasattr(self, "_head_cid_cache") and now - self._head_cid_ts < 2.0:
             return self._head_cid_val
@@ -91,6 +95,7 @@ class SupabaseHistoryManager:
         val = rows[0]["commit_id"] if rows else ""
         self._head_cid_val = val
         self._head_cid_ts = now
+        self._head_cid_cache = True
         return val
 
     def set_head_commit_id(self, _cid: str) -> None:
@@ -106,6 +111,7 @@ class SupabaseHistoryManager:
 
     def get_root_hash(self) -> str:
         import time as _time
+
         now = _time.monotonic()
         if hasattr(self, "_root_hash_cache") and now - self._root_hash_ts < 0.1:
             return self._root_hash_val
@@ -124,9 +130,9 @@ class SupabaseHistoryManager:
         return val
 
     def set_root_hash(self, h: str) -> None:
-        self._client.table("projects").update(
-            {PROJECT_ROOT_HASH_COLUMN: h}
-        ).eq("id", self._project_id).execute()
+        self._client.table("projects").update({PROJECT_ROOT_HASH_COLUMN: h}).eq(
+            "id", self._project_id
+        ).execute()
         # Invalidate cache after write
         if hasattr(self, "_root_hash_cache"):
             del self._root_hash_cache
@@ -198,15 +204,11 @@ class SupabaseHistoryManager:
             .execute()
         )
         rows = _safe_data(resp) or []
-        return {
-            row["scope_path"]: row["scope_hash"]
-            for row in rows
-            if row.get("scope_hash")
-        }
+        return {row["scope_path"]: row["scope_hash"] for row in rows if row.get("scope_hash")}
 
-    def _upsert_scope_state(self, scope_path: str, *,
-                            scope_hash: str | None = None,
-                            head_commit_id: str | None = None) -> None:
+    def _upsert_scope_state(
+        self, scope_path: str, *, scope_hash: str | None = None, head_commit_id: str | None = None
+    ) -> None:
         """Insert or update specific fields of the scope state row.
 
         ``scope_path`` is assumed to be already normalized by the caller.
@@ -224,8 +226,9 @@ class SupabaseHistoryManager:
             data, on_conflict="project_id,scope_path"
         ).execute()
 
-    def cas_update_scope_hash(self, scope_path: str, old_hash: str,
-                              new_hash: str, head_commit_id: str = "") -> bool:
+    def cas_update_scope_hash(
+        self, scope_path: str, old_hash: str, new_hash: str, head_commit_id: str = ""
+    ) -> bool:
         """Compare-and-swap on (scope_hash, head_commit_id).
 
         Calls the ``cas_update_scope_state`` PL/pgSQL function which
@@ -236,13 +239,16 @@ class SupabaseHistoryManager:
         scope_path = _normalize(scope_path)
 
         try:
-            resp = self._client.rpc("cas_update_scope_state", {
-                "p_project_id": self._project_id,
-                "p_scope_path": scope_path,
-                "p_old_hash": old_hash or "",
-                "p_new_hash": new_hash,
-                "p_head_commit_id": head_commit_id or "",
-            }).execute()
+            resp = self._client.rpc(
+                "cas_update_scope_state",
+                {
+                    "p_project_id": self._project_id,
+                    "p_scope_path": scope_path,
+                    "p_old_hash": old_hash or "",
+                    "p_new_hash": new_hash,
+                    "p_head_commit_id": head_commit_id or "",
+                },
+            ).execute()
             data = resp.data
             if isinstance(data, bool):
                 return data
@@ -263,11 +269,14 @@ class SupabaseHistoryManager:
     def cas_update_root_hash(self, old_hash: str, new_hash: str) -> bool:
         """CAS update the global root hash on the projects table."""
         try:
-            resp = self._client.rpc("cas_update_root_hash", {
-                "p_project_id": self._project_id,
-                "p_old_hash": old_hash,
-                "p_new_hash": new_hash,
-            }).execute()
+            resp = self._client.rpc(
+                "cas_update_root_hash",
+                {
+                    "p_project_id": self._project_id,
+                    "p_old_hash": old_hash,
+                    "p_new_hash": new_hash,
+                },
+            ).execute()
             data = resp.data
             success = False
             if isinstance(data, bool):
@@ -279,8 +288,7 @@ class SupabaseHistoryManager:
             return success
         except Exception as e:
             log_error(
-                f"[CAS] cas_update_root_hash RPC failed: {e}. "
-                "Deploy the SQL migration first."
+                f"[CAS] cas_update_root_hash RPC failed: {e}. Deploy the SQL migration first."
             )
             raise RuntimeError(
                 "CAS RPC not available — concurrency control requires "
@@ -312,6 +320,7 @@ class SupabaseHistoryManager:
         scope_hash: str = "",
         scope_head_commit_id: str = "",
         expected_scope_head_commit_id: str | None = None,
+        storage_measurement: dict | None = None,
     ) -> tuple[bool, int | None]:
         """Atomically publish a root-authoritative transaction.
 
@@ -321,32 +330,47 @@ class SupabaseHistoryManager:
         """
 
         rpc_args = {
-                "p_project_id": self._project_id,
-                "p_old_root_hash": old_root_hash or "",
-                "p_new_root_hash": new_root_hash,
-                "p_scope_path": _normalize(scope_path),
-                "p_scope_hash": scope_hash or new_root_hash,
-                "p_scope_head_commit_id": scope_head_commit_id or "",
-                "p_expected_scope_head_commit_id": expected_scope_head_commit_id,
-                "p_head_commit_id": commit_id,
-                "p_who": who,
-                "p_message": message or "",
-                "p_event_type": audit_event_type,
-                "p_changes": changes or [],
-                "p_conflicts": _serialize_conflicts(conflicts) if conflicts else None,
-                "p_created_at": created_at_iso or "",
-                "p_audit_agent_id": audit_agent_id,
-                "p_audit_detail": audit_detail or {},
-                "p_source_channel": source_channel or "",
-                "p_policy": policy or "",
-                "p_base_commit_id": base_commit_id or "",
-                "p_client_commit_id": client_commit_id or "",
-                "p_proposed_tree_id": proposed_tree_id or "",
-                "p_intent_type": intent_type or "operation",
+            "p_project_id": self._project_id,
+            "p_old_root_hash": old_root_hash or "",
+            "p_new_root_hash": new_root_hash,
+            "p_scope_path": _normalize(scope_path),
+            "p_scope_hash": scope_hash or new_root_hash,
+            "p_scope_head_commit_id": scope_head_commit_id or "",
+            "p_expected_scope_head_commit_id": expected_scope_head_commit_id,
+            "p_head_commit_id": commit_id,
+            "p_who": who,
+            "p_message": message or "",
+            "p_event_type": audit_event_type,
+            "p_changes": changes or [],
+            "p_conflicts": _serialize_conflicts(conflicts) if conflicts else None,
+            "p_created_at": created_at_iso or "",
+            "p_audit_agent_id": audit_agent_id,
+            "p_audit_detail": audit_detail or {},
+            "p_source_channel": source_channel or "",
+            "p_policy": policy or "",
+            "p_base_commit_id": base_commit_id or "",
+            "p_client_commit_id": client_commit_id or "",
+            "p_proposed_tree_id": proposed_tree_id or "",
+            "p_intent_type": intent_type or "operation",
         }
+        rpc_name = PUBLISH_PROJECT_UPDATE_RPC
+        if storage_measurement is not None:
+            rpc_name = "publish_version_project_update_with_usage"
+            rpc_args.update(
+                {
+                    "p_org_id": storage_measurement["org_id"],
+                    "p_storage_old_value": int(storage_measurement["old_value"]),
+                    "p_storage_delta": int(storage_measurement["delta"]),
+                    "p_storage_limit": storage_measurement.get("limit"),
+                    "p_storage_enforce": bool(storage_measurement.get("enforce")),
+                    "p_entitlement_source_revision": storage_measurement.get(
+                        "entitlement_source_revision"
+                    ),
+                }
+            )
 
         try:
-            resp = self._client.rpc(PUBLISH_PROJECT_UPDATE_RPC, rpc_args).execute()
+            resp = self._client.rpc(rpc_name, rpc_args).execute()
             data = resp.data
             ok, txn_id = _decode_publish_table_result(data)
             if ok:
@@ -355,13 +379,10 @@ class SupabaseHistoryManager:
                         delattr(self, attr)
             return ok, txn_id
         except Exception as e:
-            log_error(
-                f"[Publish] {PUBLISH_PROJECT_UPDATE_RPC} RPC failed: {e}. "
-                "Deploy the SQL migration first."
-            )
+            log_error(f"[Publish] {rpc_name} RPC failed: {e}. Deploy the SQL migration first.")
             raise RuntimeError(
                 "atomic publish RPC not available — product-root writes "
-                f"require {PUBLISH_PROJECT_UPDATE_RPC}. Original error: "
+                f"require {rpc_name}. Original error: "
                 f"{e}"
             ) from e
 
@@ -414,103 +435,149 @@ class SupabaseHistoryManager:
         """
 
         roots: list[str] = []
-        try:
-            data = (
-                self._client.table("projects")
-                .select(PROJECT_ROOT_HASH_COLUMN)
-                .eq("id", self._project_id)
-                .maybe_single()
-                .execute()
-            )
-            project = _safe_data(data) or {}
-            roots.append(project.get(PROJECT_ROOT_HASH_COLUMN, ""))
-        except Exception as exc:  # noqa: BLE001
-            log_error(f"[VersionHistory] object GC project roots failed: {exc}")
+        data = (
+            self._client.table("projects")
+            .select(PROJECT_ROOT_HASH_COLUMN)
+            .eq("id", self._project_id)
+            .maybe_single()
+            .execute()
+        )
+        project = _safe_data(data) or {}
+        roots.append(project.get(PROJECT_ROOT_HASH_COLUMN, ""))
 
-        try:
-            for row in _select_all(
-                self._client,
-                self.SCOPE_STATE_TABLE,
-                "scope_hash, head_commit_id",
-                project_id=self._project_id,
-            ):
-                roots.extend([row.get("scope_hash", ""), row.get("head_commit_id", "")])
-        except Exception as exc:  # noqa: BLE001
-            log_error(f"[VersionHistory] object GC scope roots failed: {exc}")
+        for row in _select_all(
+            self._client,
+            self.SCOPE_STATE_TABLE,
+            "scope_hash, head_commit_id",
+            project_id=self._project_id,
+        ):
+            roots.extend([row.get("scope_hash", ""), row.get("head_commit_id", "")])
 
-        try:
-            for row in _select_all(
-                self._client,
-                self.TABLE,
-                "commit_id, root_hash, scope_hash",
-                project_id=self._project_id,
-            ):
-                roots.extend([
+        for row in _select_all(
+            self._client,
+            self.TABLE,
+            "commit_id, root_hash, scope_hash",
+            project_id=self._project_id,
+        ):
+            roots.extend(
+                [
                     row.get("commit_id", ""),
                     row.get("root_hash", ""),
                     row.get("scope_hash", ""),
-                ])
-        except Exception as exc:  # noqa: BLE001
-            log_error(f"[VersionHistory] object GC history roots failed: {exc}")
+                ]
+            )
 
         return roots
 
     def list_version_index_roots(self) -> list[dict]:
         """Return persistent subtree/history graft roots for object GC."""
 
-        try:
-            return _select_all(
-                self._client,
-                VERSION_INDEX_TABLE,
-                (
-                    "source_commit_id, source_scope_hash, "
-                    "project_root_hash, project_view_commit_id"
-                ),
-                project_id=self._project_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log_warning(f"[VersionHistory] object GC version-index roots unavailable: {exc}")
-            return []
+        return _select_all(
+            self._client,
+            VERSION_INDEX_TABLE,
+            ("source_commit_id, source_scope_hash, project_root_hash, project_view_commit_id"),
+            project_id=self._project_id,
+        )
 
     def list_pending_outbox_roots(self) -> list[dict]:
         """Return unprocessed durable side-effect rows that must pin objects."""
 
-        try:
-            return _select_all_query(
-                lambda: (
-                    self._client.table(VERSION_OUTBOX_TABLE)
-                    .select("commit_id, payload")
-                    .eq("project_id", self._project_id)
-                    .is_("processed_at", "null")
-                )
+        return _select_all_query(
+            lambda: (
+                self._client.table(VERSION_OUTBOX_TABLE)
+                .select("commit_id, payload")
+                .eq("project_id", self._project_id)
+                .is_("processed_at", "null")
             )
-        except Exception as exc:  # noqa: BLE001
-            log_warning(f"[VersionHistory] object GC outbox roots unavailable: {exc}")
-            return []
+        )
 
     def list_pending_conflict_roots(self) -> list[dict]:
         """Return pending conflict metadata that may reference promoted roots."""
 
-        try:
-            return [
-                row.get("metadata") or {}
-                for row in _select_all_query(
-                    lambda: (
-                        self._client.table("audit_logs")
-                        .select("metadata")
-                        .eq("project_id", self._project_id)
-                        .like("action", "%conflict_pending%")
-                    )
+        return [
+            row.get("metadata") or {}
+            for row in _select_all_query(
+                lambda: (
+                    self._client.table("audit_logs")
+                    .select("metadata")
+                    .eq("project_id", self._project_id)
+                    .like("action", "%conflict_pending%")
                 )
-            ]
-        except Exception as exc:  # noqa: BLE001
-            log_warning(f"[VersionHistory] object GC pending-conflict roots unavailable: {exc}")
-            return []
+            )
+        ]
+
+    def list_version_ref_roots(self) -> list[str]:
+        rows = _select_all(
+            self._client,
+            "version_refs",
+            "commit_id",
+            project_id=self._project_id,
+        )
+        return [row.get("commit_id", "") for row in rows]
+
+    def list_shadow_snapshot_roots(self) -> list[str]:
+        rows = _select_all(
+            self._client,
+            "local_shadow_snapshots",
+            "tree_hash",
+            project_id=self._project_id,
+        )
+        return [row.get("tree_hash", "") for row in rows]
+
+    def sync_object_gc_candidates(
+        self,
+        object_ids: list[str],
+        *,
+        now,
+        quarantine_seconds: int,
+    ) -> list[str]:
+        """Atomically reconcile quarantine candidates and return matured ids.
+
+        Objects that became reachable disappear from the registry and are
+        therefore automatically recovered before any physical deletion.
+        """
+
+        response = self._client.rpc(
+            "sync_version_object_gc_candidates",
+            {
+                "p_project_id": self._project_id,
+                "p_object_ids": object_ids,
+                "p_now": now.isoformat(),
+                "p_quarantine_seconds": max(0, int(quarantine_seconds)),
+            },
+        ).execute()
+        rows = _safe_data(response) or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        return [row.get("object_id", "") for row in rows if row.get("object_id")]
+
+    def register_object_gc_candidates(self, object_ids: list[str]) -> None:
+        """Record freshly flushed objects before the publishing CAS.
+
+        Successful objects are removed by the next authoritative mark/sync;
+        objects abandoned by a failed CAS retain their original first-seen time.
+        """
+        if not object_ids:
+            return
+        self._client.rpc(
+            "register_version_object_gc_candidates",
+            {
+                "p_project_id": self._project_id,
+                "p_object_ids": object_ids,
+                "p_now": datetime.now(UTC).isoformat(),
+            },
+        ).execute()
+
+    def remove_object_gc_candidates(self, object_ids: list[str]) -> None:
+        if not object_ids:
+            return
+        self._client.table("version_object_gc_candidates").delete().eq(
+            "project_id", self._project_id
+        ).in_("object_id", object_ids).execute()
 
     # ── Scope History Queries ──
 
-    def get_previous_scope_hash(self, scope_path: str,
-                                before_commit_id: str = "") -> str:
+    def get_previous_scope_hash(self, scope_path: str, before_commit_id: str = "") -> str:
         """Return the ``scope_hash`` of the commit immediately preceding
         ``before_commit_id`` within this scope.
 
@@ -545,8 +612,10 @@ class SupabaseHistoryManager:
             rows = _safe_data(resp) or []
             if rows and rows[0].get("scope_hash"):
                 return rows[0]["scope_hash"]
-        except Exception as e:  # noqa: BLE001 — defensive on optional lookup
-            log_error(f"[VersionHistory] get_previous_scope_hash failed for scope='{scope_path}': {e}")
+        except Exception as e:
+            log_error(
+                f"[VersionHistory] get_previous_scope_hash failed for scope='{scope_path}': {e}"
+            )
         return ""
 
     # ── Record ──
@@ -582,25 +651,20 @@ class SupabaseHistoryManager:
             "scope_hash": scope_hash,
             "who": who,
             "message": message or "",
-            "changes": (
-                json.dumps(changes) if isinstance(changes, list) else changes
-            ),
+            "changes": (json.dumps(changes) if isinstance(changes, list) else changes),
         }
         if created_at_iso:
             data["created_at"] = created_at_iso
         if conflicts:
             from dataclasses import asdict
+
             serializable = [
-                asdict(c) if hasattr(c, "__dataclass_fields__") else c
-                for c in conflicts
+                asdict(c) if hasattr(c, "__dataclass_fields__") else c for c in conflicts
             ]
             data["conflicts"] = json.dumps(serializable)
 
         self._client.table(self.TABLE).insert(data).execute()
-        log_info(
-            f"[VersionHistory] Recorded commit {commit_id[:8]} "
-            f"for project {self._project_id}"
-        )
+        log_info(f"[VersionHistory] Recorded commit {commit_id[:8]} for project {self._project_id}")
 
     def record_scope_sync(
         self,
@@ -640,9 +704,7 @@ class SupabaseHistoryManager:
                 SupabaseVersionTransactionLedger,
             )
 
-            txn_id = SupabaseVersionTransactionLedger(
-                self._client
-            ).insert_version_transaction(
+            txn_id = SupabaseVersionTransactionLedger(self._client).insert_version_transaction(
                 project_id=self._project_id,
                 scope_path=scope_path,
                 source_channel=source_channel,
@@ -654,7 +716,7 @@ class SupabaseHistoryManager:
                 message=f"Scope-view sync for {source_commit_id}",
                 audit_detail=audit_detail,
             )
-        except Exception as exc:  # noqa: BLE001 — derived audit is best-effort
+        except Exception as exc:
             log_warning(
                 f"[PostCommit] scope-sync version_transactions insert failed "
                 f"for {scope_path!r}: {exc}"
@@ -676,10 +738,9 @@ class SupabaseHistoryManager:
             if txn_id is not None:
                 row["transaction_id"] = txn_id
             self._client.table("audit_logs").insert(row).execute()
-        except Exception as exc:  # noqa: BLE001 — derived audit is best-effort
+        except Exception as exc:
             log_warning(
-                f"[PostCommit] scope-sync audit_logs insert failed "
-                f"for {scope_path!r}: {exc}"
+                f"[PostCommit] scope-sync audit_logs insert failed for {scope_path!r}: {exc}"
             )
 
     # ── Query ──
@@ -699,13 +760,11 @@ class SupabaseHistoryManager:
         version filesystem backend, so both backends
         yield the same linear view.
 
-        When a ``limit`` is supplied, the returned slice is the
-        **newest** ``limit`` commits (matching
-        ``entries[-limit:]`` in the filesystem backend), not the
-        oldest.  We achieve this by pulling rows DESC from Postgres,
-        capping at ``limit``, and reversing in-process — so callers
-        that ask for "latest 50" get the most recent 50 commits in
-        chronological order, not the earliest 50 ever recorded.
+        With no anchor, a supplied ``limit`` returns the newest commits (the
+        history-page contract). With an anchor, it returns the *oldest next*
+        page after that anchor (the catch-up contract). The distinction is
+        essential: tail-limiting an anchored query silently loses commits
+        when a client was offline for more than one page.
         """
         since_entry = None
         if since_commit_id:
@@ -715,15 +774,13 @@ class SupabaseHistoryManager:
                 # leak the full history.
                 return []
 
-        query = (
-            self._client.table(self.TABLE)
-            .select("*")
-            .eq("project_id", self._project_id)
-            # Fetch newest-first so LIMIT keeps the tail; we reverse
-            # below to present the caller with ASC order.
-            .order("created_at", desc=True)
-            .order("commit_id", desc=True)
-        )
+        query = self._client.table(self.TABLE).select("*").eq("project_id", self._project_id)
+        if since_entry:
+            query = query.order("created_at").order("commit_id")
+        else:
+            # Fetch newest-first so LIMIT keeps the tail; we reverse below to
+            # present the caller with ASC order.
+            query = query.order("created_at", desc=True).order("commit_id", desc=True)
 
         if since_entry:
             anchor_time = since_entry.get("created_at", "")
@@ -744,7 +801,8 @@ class SupabaseHistoryManager:
 
         resp = query.execute()
         entries = _safe_data(resp) or []
-        entries.reverse()
+        if not since_entry:
+            entries.reverse()
         for entry in entries:
             _parse_json_fields(entry)
         return entries
@@ -765,6 +823,30 @@ class SupabaseHistoryManager:
         if entry:
             _parse_json_fields(entry)
         return entry
+
+    def get_entries(self, commit_ids: list[str]) -> list[dict]:
+        """Return history metadata for a bounded set of Git commit ids.
+
+        Topological history pages may contain commits that only exist behind
+        a named Git ref and therefore have no transaction-history row.  A
+        single ``IN`` query lets the read model enrich the rows that do exist
+        without issuing one PostgREST request per commit.
+        """
+
+        unique_ids = list(dict.fromkeys(commit_id for commit_id in commit_ids if commit_id))
+        if not unique_ids:
+            return []
+        resp = (
+            self._client.table(self.TABLE)
+            .select("*")
+            .eq("project_id", self._project_id)
+            .in_("commit_id", unique_ids)
+            .execute()
+        )
+        entries = _safe_data(resp) or []
+        for entry in entries:
+            _parse_json_fields(entry)
+        return entries
 
 
 def _normalize(scope_path: str) -> str:
@@ -809,10 +891,7 @@ def _select_all_query(query_factory, *, page_size: int = 1000) -> list[dict]:
 def _serialize_conflicts(conflicts: list | None) -> list:
     from dataclasses import asdict
 
-    return [
-        asdict(c) if hasattr(c, "__dataclass_fields__") else c
-        for c in (conflicts or [])
-    ]
+    return [asdict(c) if hasattr(c, "__dataclass_fields__") else c for c in (conflicts or [])]
 
 
 def _decode_publish_table_result(data) -> tuple[bool, int | None]:

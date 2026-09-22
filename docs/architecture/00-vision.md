@@ -21,7 +21,7 @@ agent-friendly filesystem entry points.
 2. PuppyOne owns collaboration semantics: scopes, access points, auth,
    excludes, conflict policy, audit, projection, outbox, and indexing.
 3. `VersionWriteEngine` is the only publish authority.
-4. Product/Web/API writes default to root scope and create one user-visible
+4. Product/Web/API writes default to the Project-root projection and create one user-visible
    history event.
 5. Access Point Git writes use scoped repo facades over a shared project object
    store, not one physical repo per scope.

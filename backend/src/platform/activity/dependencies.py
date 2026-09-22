@@ -6,11 +6,10 @@ from fastapi import Depends
 
 from src.platform.activity.repository import ActivityRepository
 from src.platform.activity.service import ActivityService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.service import AuthorizationService
 
 _activity_repo: ActivityRepository | None = None
-_activity_service: ActivityService | None = None
 
 
 def get_activity_repository() -> ActivityRepository:
@@ -21,12 +20,9 @@ def get_activity_repository() -> ActivityRepository:
 
 
 def get_activity_service(
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ) -> ActivityService:
-    global _activity_service
-    if _activity_service is None:
-        _activity_service = ActivityService(
-            repo=get_activity_repository(),
-            project_service=project_service,
-        )
-    return _activity_service
+    return ActivityService(
+        repo=get_activity_repository(),
+        authorization=authorization,
+    )

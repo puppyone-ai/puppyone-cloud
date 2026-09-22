@@ -24,36 +24,90 @@ a follow-up).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
+import asyncio
+from collections.abc import Awaitable
+from datetime import UTC, datetime
 
-from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
+from src.exceptions import AppException
+from src.platform.project.write_lease import (
+    ProjectWriteLease,
+    ProjectWriteLeaseFactory,
+)
 from src.repo.github_integration.github_api import GithubApi, GithubApiError
 from src.repo.github_integration.repository import (
-    GithubIntegrationRepository, GithubSyncLogRepository,
+    GithubIntegrationRepository,
+    GithubSyncLogRepository,
 )
 from src.repo.github_integration.schemas import GithubSyncRunResult
 from src.utils.logger import log_error, log_info
+from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 
 async def export_to_branch(
     integration: dict, *,
-    branch: Optional[str] = None,
-    message: Optional[str] = None,
+    branch: str | None = None,
+    message: str | None = None,
     triggered_by: str = "manual",
+    write_lease_factory: ProjectWriteLeaseFactory = ProjectWriteLease,
 ) -> GithubSyncRunResult:
     integration_id = integration["id"]
     project_id = integration["project_id"]
     owner = integration["github_repo_owner"]
     repo = integration["github_repo_name"]
     target_branch = (branch or integration.get("default_branch") or "main").strip()
-    oauth_id = integration.get("oauth_connection_id")
 
     log_info(
         f"[GithubExport] start integration={integration_id} "
         f"repo={owner}/{repo} branch={target_branch} trigger={triggered_by}"
     )
 
+    return await _await_true_completion(
+        _export_with_write_lease(
+            integration=integration,
+            target_branch=target_branch,
+            message=message,
+            project_id=project_id,
+            owner=owner,
+            repo_name=repo,
+            write_lease_factory=write_lease_factory,
+        )
+    )
+
+
+async def _export_with_write_lease(
+    *,
+    integration: dict,
+    target_branch: str,
+    message: str | None,
+    project_id: str,
+    owner: str,
+    repo_name: str,
+    write_lease_factory: ProjectWriteLeaseFactory,
+) -> GithubSyncRunResult:
+    # Admission is the first side-effecting step. Even an export that later
+    # fails OAuth validation must be rejected once Project deletion closes.
+    async with write_lease_factory(project_id, "github.export"):
+        return await _export_after_admission(
+            integration=integration,
+            target_branch=target_branch,
+            message=message,
+            project_id=project_id,
+            owner=owner,
+            repo_name=repo_name,
+        )
+
+
+async def _export_after_admission(
+    *,
+    integration: dict,
+    target_branch: str,
+    message: str | None,
+    project_id: str,
+    owner: str,
+    repo_name: str,
+) -> GithubSyncRunResult:
+    integration_id = integration["id"]
+    oauth_id = integration.get("oauth_connection_id")
     sync_log = GithubSyncLogRepository()
     integ_repo = GithubIntegrationRepository()
 
@@ -71,27 +125,86 @@ async def export_to_branch(
 
     api = GithubApi(oauth["access_token"])
     try:
-        return await _do_export(
-            api=api, integration=integration, target_branch=target_branch,
-            commit_message=message, sync_log=sync_log, integ_repo=integ_repo,
-            project_id=project_id, owner=owner, repo_name=repo,
-        )
-    except GithubApiError as e:
-        return await _record_failure(
-            sync_log, integration_id, f"GitHub API error: {e}",
-        )
-    except Exception as e:  # noqa: BLE001
-        log_error(f"[GithubExport] unexpected: {e}")
-        return await _record_failure(
-            sync_log, integration_id, f"unexpected: {e}",
+        return await _await_true_completion(
+            _do_export_with_failure_recording(
+                api=api,
+                integration=integration,
+                target_branch=target_branch,
+                commit_message=message,
+                sync_log=sync_log,
+                integ_repo=integ_repo,
+                project_id=project_id,
+                owner=owner,
+                repo_name=repo_name,
+            )
         )
     finally:
-        await api.aclose()
+        await _await_true_completion(api.aclose())
+
+
+async def _do_export_with_failure_recording(
+    *,
+    api: GithubApi,
+    integration: dict,
+    target_branch: str,
+    commit_message: str | None,
+    sync_log: GithubSyncLogRepository,
+    integ_repo: GithubIntegrationRepository,
+    project_id: str,
+    owner: str,
+    repo_name: str,
+) -> GithubSyncRunResult:
+    integration_id = integration["id"]
+    try:
+        return await _do_export(
+            api=api,
+            integration=integration,
+            target_branch=target_branch,
+            commit_message=commit_message,
+            sync_log=sync_log,
+            integ_repo=integ_repo,
+            project_id=project_id,
+            owner=owner,
+            repo_name=repo_name,
+        )
+    except AppException:
+        raise
+    except GithubApiError as exc:
+        return await _record_failure(
+            sync_log,
+            integration_id,
+            f"GitHub API error: {exc}",
+        )
+    except Exception as exc:
+        log_error(f"[GithubExport] unexpected: {exc}")
+        return await _record_failure(
+            sync_log,
+            integration_id,
+            f"unexpected: {exc}",
+        )
+
+
+async def _await_true_completion[T](awaitable: Awaitable[T]) -> T:
+    """Delay cancellation until an external or threaded operation is done."""
+
+    future = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError as cancelled:
+        # A second cancellation must not make the lease appear released while
+        # the shielded GitHub/to_thread work is still running.
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                continue
+        future.result()
+        raise cancelled
 
 
 async def _do_export(
     *, api: GithubApi, integration: dict, target_branch: str,
-    commit_message: Optional[str], sync_log: GithubSyncLogRepository,
+    commit_message: str | None, sync_log: GithubSyncLogRepository,
     integ_repo: GithubIntegrationRepository,
     project_id: str, owner: str, repo_name: str,
 ) -> GithubSyncRunResult:
@@ -154,7 +267,7 @@ async def _do_export(
     await integ_repo.update_watermark(
         integration_id,
         last_exported_sha=new_git_sha,
-        last_exported_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_exported_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
 
     log_info(
@@ -169,12 +282,13 @@ async def _do_export(
 
 
 async def _list_scope_files(project_id: str) -> dict[str, bytes]:
-    """Walk the version root scope and return ``{path: bytes}``.
+    """Walk the Project root view and return ``{path: bytes}``.
 
     Uses ``tree_to_flat`` directly off the project's current root_hash
     so we don't have to instantiate per-file readers.
     """
     import asyncio
+
     from src.version_engine.write_engine.tree import tree_to_flat
 
     repo_manager = build_worker_version_engine_container().repo_manager

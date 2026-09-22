@@ -50,34 +50,6 @@ class TableRepositoryBase(ABC):
     def update_context_data(self, table_id: str, data: dict) -> Table | None:
         """Update the data field"""
 
-    @abstractmethod
-    def verify_table_access(self, table_id: str, user_id: str) -> bool:
-        """
-        Verify whether the user has access to the specified table.
-
-        Args:
-            table_id: Table ID
-            user_id: User ID
-
-        Returns:
-            True if the user has access, False otherwise
-        """
-
-    @abstractmethod
-    def verify_project_access(self, project_id: str, user_id: str) -> bool:
-        """
-        Verify whether the user has access to the specified project.
-
-        Checks via org_members table whether the user belongs to the project's organization.
-
-        Args:
-            project_id: Project ID
-            user_id: User ID
-
-        Returns:
-            True if the user has access, False otherwise
-        """
-
 
 class TableRepositorySupabase(TableRepositoryBase):
     """Supabase-based Table repository implementation"""
@@ -280,52 +252,6 @@ class TableRepositorySupabase(TableRepositoryBase):
         if table_response:
             return self._table_response_to_table(table_response)
         return None
-
-    def verify_table_access(self, table_id: str, user_id: str) -> bool:
-        """
-        Verify whether the user has access to the specified table.
-
-        Args:
-            table_id: Table ID
-            user_id: User ID
-
-        Returns:
-            True if the user has access, False otherwise
-        """
-        table = self.get_by_id(table_id)
-        if not table:
-            return False
-
-        # Creator always has access
-        if table.created_by == user_id:
-            return True
-
-        if not table.project_id:
-            return False
-
-        return self.verify_project_access(table.project_id, user_id)
-
-    def verify_project_access(self, project_id: str, user_id: str) -> bool:
-        """
-        Verify whether the user has access to the specified project.
-
-        Checks via org_members table whether the user belongs to the project's organization.
-
-        Args:
-            project_id: Project ID
-            user_id: User ID
-
-        Returns:
-            True if the user has access, False otherwise
-        """
-        project = self._supabase_repo.get_project(project_id)
-        if not project:
-            return False
-
-        from src.platform.organization.repository import OrganizationRepository
-        org_repo = OrganizationRepository()
-        member = org_repo.get_member(project.org_id, user_id)
-        return member is not None
 
     def _table_response_to_table(self, table_response) -> Table:
         """

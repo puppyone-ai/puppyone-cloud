@@ -1,9 +1,9 @@
 """Generalized sandbox provider abstraction for scope-keyed Access sandboxes.
 
-This is the V2 "sandbox as access point" provider interface (see
-docs/proposals/PUP-sandbox-access-point.md). It is intentionally separate from
-the legacy JSON-edit ``infra.sandbox.SandboxBase`` (which models one-shot
-``exec`` against ``/workspace/data.json``).
+This is the long-lived workspace provider interface (see
+docs/proposals/PUP-sandbox-access-point.md). Request-scoped JSON/file execution
+is the sibling ``scope_sandbox.execution`` mode; both live behind this product
+subsystem and share the central execution policy.
 
 A provider here manages a long-lived, scope-keyed sandbox with an explicit
 three-state lifecycle so the session manager can trade warm cost against cold
@@ -50,10 +50,11 @@ class SandboxSpec:
     memory_mb: int = 2048
     region: str | None = None
     ssh_port: int = 22
-    # Server-side scope access material (e.g. git remote URL + access key) is
-    # injected into the sandbox here so the user never sees the raw key. Held
-    # provider-side, never returned to the client.
+    # Non-secret runtime environment injected at creation. Secrets needed by
+    # bootstrap belong in metadata and cross through provider.write_secret().
     env: dict[str, str] = field(default_factory=dict)
+    # Server-only bootstrap facts. Providers must not copy this dictionary into
+    # machine configuration or process environment.
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -140,6 +141,22 @@ class SandboxProvider(ABC):
         """
         raise NotImplementedError(
             f"{self.capabilities().name} provider does not support exec()"
+        )
+
+    async def write_secret(
+        self,
+        sandbox_id: str,
+        relative_path: str,
+        value: str,
+    ) -> None:
+        """Write a mode-0600 secret below the sandbox user's home directory.
+
+        Implementations must transport ``value`` outside command arguments and
+        must not include it in errors or logs. This is the renewal channel for
+        ephemeral Git credentials in warm sandboxes.
+        """
+        raise NotImplementedError(
+            f"{self.capabilities().name} provider does not support secret writes"
         )
 
     async def extend(self, sandbox_id: str) -> None:

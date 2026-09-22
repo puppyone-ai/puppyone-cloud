@@ -1,8 +1,9 @@
+import asyncio
 import io
 import json
 import os
-from types import SimpleNamespace
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +21,7 @@ from src.platform.imports.repository import ImportJob
 from src.platform.imports.runner import ImportRunResult, OneTimeImportRunner
 from src.platform.imports.schemas import ImportJobCreateRequest
 from src.platform.imports.service import ImportJobService
+from tests.authorization_fakes import authorization_for
 
 
 def _zip_bytes(files: dict[str, bytes]) -> bytes:
@@ -78,6 +80,17 @@ class SingleConnectorRegistry:
         return Credentials()
 
 
+class NoopWriteLease:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
 class FakeOps:
     def __init__(self):
         self.bulk_write_call = None
@@ -130,7 +143,7 @@ async def test_import_runner_writes_without_creating_sync_binding(monkeypatch):
         name="repo",
     )
 
-    result = await OneTimeImportRunner().run(job)
+    result = await OneTimeImportRunner(write_lease_factory=NoopWriteLease).run(job)
 
     assert result.path == "repo"
     assert result.commit_id == "commit-1"
@@ -200,7 +213,7 @@ async def test_import_runner_uses_real_github_connector_archive_flow(monkeypatch
         name="tiny",
     )
 
-    result = await OneTimeImportRunner().run(job)
+    result = await OneTimeImportRunner(write_lease_factory=NoopWriteLease).run(job)
 
     written = fake_ops.bulk_write_call["files"]
     assert result.path == "tiny"
@@ -264,7 +277,7 @@ async def test_live_github_import_smoke_octocat_hello_world(monkeypatch):
         },
     )
 
-    result = await OneTimeImportRunner().run(job)
+    result = await OneTimeImportRunner(write_lease_factory=NoopWriteLease).run(job)
 
     written = fake_ops.bulk_write_call["files"]
     assert result.path == "hello-world"
@@ -373,13 +386,6 @@ async def test_execute_import_job_does_not_overwrite_cancelled_job():
     assert repo.job.status == "cancelled"
 
 
-class FakeProjectService:
-    def get_by_id_with_access_check(self, project_id, user_id):
-        assert project_id == "project-1"
-        assert user_id == "user-1"
-        return SimpleNamespace(org_id="org-1")
-
-
 class IdempotentImportRepo:
     def __init__(self):
         self.existing = ImportJob(
@@ -416,7 +422,7 @@ async def test_import_job_create_returns_existing_job_for_idempotency_key():
     repo = IdempotentImportRepo()
     service = ImportJobService(
         repo=repo,
-        project_service=FakeProjectService(),
+        authorization=authorization_for("project-1"),
         arq_client=ExplodingImportArqClient(),
     )
 
@@ -431,3 +437,38 @@ async def test_import_job_create_returns_existing_job_for_idempotency_key():
     )
 
     assert result is repo.existing
+
+
+class _RecordingFailRepo(FakeImportRepo):
+    """FakeImportRepo that records mark_failed instead of asserting (the base
+    raises, since its happy-path tests never expect a failure)."""
+
+    def __init__(self):
+        super().__init__()
+        self.failed = None
+
+    def mark_failed(self, job_id, error_message):
+        self.failed = (job_id, error_message)
+        self.job.status = "failed"
+        return self.job
+
+
+class _TimeoutRunner:
+    async def run(self, job, *, on_phase=None):
+        await on_phase("fetching", 25, "Fetching from GitHub")
+        raise asyncio.CancelledError()
+
+
+@pytest.mark.asyncio
+async def test_execute_import_job_finalizes_on_cancellation():
+    """Worker timeout/cancellation must finalize the row (mark failed) AND
+    re-raise CancelledError so ARQ sees the cancellation — otherwise a killed
+    worker leaves the job stuck `running` forever (validation task 4.3)."""
+    repo = _RecordingFailRepo()
+    with pytest.raises(asyncio.CancelledError):
+        await execute_import_job(
+            {"import_job_repository": repo, "one_time_import_runner": _TimeoutRunner()},
+            "job-1",
+        )
+    assert repo.failed is not None and repo.failed[0] == "job-1"
+    assert repo.job.status == "failed"

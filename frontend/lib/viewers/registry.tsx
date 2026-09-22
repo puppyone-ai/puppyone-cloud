@@ -301,6 +301,11 @@ export const VIEWERS: Record<GenericViewerId, ViewerDefinition> = {
     component: PdfPreviewAdapter,
     requiresText: false,
   },
+  'office-preview': {
+    id: 'office-preview',
+    component: BinaryPlaceholderAdapter,
+    requiresText: false,
+  },
   'binary-placeholder': {
     id: 'binary-placeholder',
     component: BinaryPlaceholderAdapter,

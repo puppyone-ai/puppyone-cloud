@@ -314,9 +314,9 @@ async def test_trigger_pull_all_returns_existing_running_and_skips_unqueueable(m
                 _connection(id="conn-outbound", direction="outbound", status="active"),
             ]
 
-    class FakeProjectService:
-        def verify_project_access(self, project_id, user_id):
-            return True
+    class FakeAuthorization:
+        def authorize(self, project_id, user_id, action):
+            return SimpleNamespace(project_id=project_id, user_id=user_id)
 
     import src.platform.integrations.router as router_module
 
@@ -328,7 +328,7 @@ async def test_trigger_pull_all_returns_existing_running_and_skips_unqueueable(m
         provider=None,
         service=SimpleNamespace(repository=FakeRepository()),
         sync_arq_client=arq_client,
-        project_service=FakeProjectService(),
+        authorization=FakeAuthorization(),
         current_user=SimpleNamespace(user_id="user-1"),
     )
 

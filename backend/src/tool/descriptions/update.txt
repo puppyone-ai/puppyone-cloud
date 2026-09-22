@@ -1,0 +1,26 @@
+Edit Data - 修改数据中的现有元素。
+
+适用内容类型：
+- JSON：修改数组或对象中的指定元素
+- Markdown：替换整个文档内容
+
+表格：{table_name}
+{table_description}
+
+参数：
+- updates (List[Dict], 必填): 要更新的元素数组
+  - key (str): 已存在的元素标识符
+  - content (Any): 新的内容（完全替换原值）
+
+行为说明：
+- 目标为 Dict 时：key 为字段名，对该 key 的值做整值替换
+- 目标为 List 时：key 为下标（如 "0", "1"），对该位置做整值替换
+
+使用前提：先用 get_data_schema 或 query_data 确认元素存在
+
+示例：
+updates = [{{"key": "user_001", "content": {{"name": "Alice", "age": 26}}}}]
+
+注意：
+- content 是完全替换，不是部分更新
+- key 必须已存在，不存在会更新失败

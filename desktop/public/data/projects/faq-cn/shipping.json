@@ -1,9 +1,0 @@
-[
-  { "user_uuid": "user-a101", "order_id": "ord-5001", "carrier": "UPS", "status": "in_transit", "eta": "2025-11-03 18:20" },
-  { "user_uuid": "user-a102", "order_id": "ord-5002", "carrier": "DHL", "status": "pending", "eta": "2025-11-04 12:00" },
-  { "user_uuid": "user-a103", "order_id": "ord-5003", "carrier": "SF", "status": "delivered", "eta": "2025-11-01 09:45" },
-  { "user_uuid": "user-a104", "order_id": "ord-5004", "carrier": "FedEx", "status": "in_transit", "eta": "2025-11-05 21:15" },
-  { "user_uuid": "user-a105", "order_id": "ord-5005", "carrier": "UPS", "status": "delayed", "eta": "2025-11-06 16:10" }
-]
-
-

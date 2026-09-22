@@ -461,7 +461,7 @@ class ProductOperationAdapter:
             project_write_state=project_write_state,
         )
 
-        # ``post_commit_move`` (rename of ``repo_scopes`` rows under
+        # ``post_commit_move`` (rename of ``repository_scopes`` rows under
         # the old prefix) is now dispatched by ``run_post_push_hook``
         # itself — the L4 layer stashed ``{old_path, new_path}`` into
         # ``audit_detail`` above and the hook reads it back from the

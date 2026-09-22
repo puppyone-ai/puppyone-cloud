@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from src.connectors.datasource.schemas import SyncResult  # L2.5
+from src.platform.workspace.paths import validate_storage_segment
 
 
 @dataclass
@@ -51,7 +52,10 @@ class WorkspaceProvider(ABC):
         Create an isolated workspace for the Agent
 
         Returns:
-            WorkspaceInfo(path="/tmp/contextbase/workspaces/{agent_id}", ...)
+            WorkspaceInfo(
+                path="/tmp/contextbase/workspaces/{project_id}/{agent_id}",
+                ...,
+            )
         """
         ...
 
@@ -85,6 +89,34 @@ class WorkspaceProvider(ABC):
     def get_lower_path(self, project_id: str) -> str:
         """Get the Lower directory path for the project"""
         ...
+
+    def get_workspace_info(self, agent_id: str) -> WorkspaceInfo | None:
+        """Return live process state for one validated Agent workspace."""
+
+        validate_storage_segment(agent_id, label="agent_id")
+        registry: dict[str, WorkspaceInfo] = getattr(self, "_registry", {})
+        return registry.get(agent_id)
+
+    def snapshot_project_workspaces(self, project_id: str) -> tuple[WorkspaceInfo, ...]:
+        """Snapshot only live workspaces owned by the exact Project."""
+
+        validate_storage_segment(project_id, label="project_id")
+        registry: dict[str, WorkspaceInfo] = getattr(self, "_registry", {})
+        return tuple(info for info in registry.values() if info.project_id == project_id)
+
+    def forget_project_workspaces(self, project_id: str) -> int:
+        """Remove an exact Project's stale in-process workspace state."""
+
+        validate_storage_segment(project_id, label="project_id")
+        registry: dict[str, WorkspaceInfo] = getattr(self, "_registry", {})
+        agent_ids = [
+            agent_id
+            for agent_id, info in registry.items()
+            if info.project_id == project_id
+        ]
+        for agent_id in agent_ids:
+            registry.pop(agent_id, None)
+        return len(agent_ids)
 
 
 _workspace_provider: WorkspaceProvider | None = None
@@ -133,4 +165,10 @@ def get_workspace_provider() -> WorkspaceProvider:
         _workspace_provider = FallbackWorkspaceProvider(base_dir=base_dir)
 
     _workspace_provider_key = key
+    return _workspace_provider
+
+
+def get_active_workspace_provider() -> WorkspaceProvider | None:
+    """Return the already-created provider without creating host directories."""
+
     return _workspace_provider

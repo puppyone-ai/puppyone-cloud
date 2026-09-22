@@ -1,19 +1,33 @@
-"""MCP endpoint repository over access_surfaces + repo_scopes."""
+"""MCP endpoint repository over access_surfaces + repository_scopes."""
 
 from typing import Any, Dict, List, Optional
 
-from src.utils.id_generator import generate_uuid_v7
-from src.repo.scope_service import ScopeService
 from src.repo.access_credentials import (
     AccessCredentialRepository,
     mask_access_token,
 )
-
+from src.repo.access_surface_repository import AccessSurfaceRepository
+from src.repo.scope_service import ScopeService
+from src.version_engine.scoped_fs.policy import (
+    custom_tool_bindings_from_tools_config,
+)
 
 PROVIDER = "mcp"
 ACCESS_SURFACES_TABLE = "access_surfaces"
 ACCESS_SURFACE_POLICIES_TABLE = "access_surface_policies"
-SCOPES_TABLE = "repo_scopes"
+SCOPES_TABLE = "repository_scopes"
+
+
+def _filesystem_tools_policy(tools_config: Any) -> dict[str, Any]:
+    """Strip custom bindings; those live exclusively in ``access_tools``."""
+
+    if not isinstance(tools_config, dict):
+        return {}
+    return {
+        key: value
+        for key, value in tools_config.items()
+        if key not in {"custom_tools", "bound_tools", "external_tools"}
+    }
 
 
 def _default_policy(accesses: Optional[list] = None, tools_config: Any = None) -> dict[str, Any]:
@@ -22,7 +36,7 @@ def _default_policy(accesses: Optional[list] = None, tools_config: Any = None) -
         "fs_policy": {
             "accesses": accesses or [],
         },
-        "tools_policy": tools_config if tools_config is not None else {},
+        "tools_policy": _filesystem_tools_policy(tools_config),
         "shell_policy": {
             "enabled": False,
         },
@@ -36,13 +50,22 @@ def _row_to_endpoint(
     *,
     policy: Optional[dict] = None,
     credential: Optional[dict] = None,
+    tool_bindings: Optional[list[dict]] = None,
     plaintext_api_key: str = "",
 ) -> dict:
     """Reshape an access_surfaces row into the endpoint dict the API exposes."""
     config = row.get("config") or {}
     policy = policy or {}
     fs_policy = policy.get("fs_policy") or {}
-    tools_policy = policy.get("tools_policy")
+    tools_policy = dict(policy.get("tools_policy") or {})
+    if tool_bindings:
+        tools_policy["custom_tools"] = [
+            {
+                "tool_id": binding["tool_id"],
+                "enabled": bool(binding.get("enabled", True)),
+            }
+            for binding in tool_bindings
+        ]
     credential_hint = mask_access_token(
         (credential or {}).get("key_prefix"),
         (credential or {}).get("key_last4"),
@@ -81,6 +104,7 @@ class McpEndpointRepository:
         else:
             self._client = supabase_client
         self._credentials = AccessCredentialRepository(self._client)
+        self._surfaces = AccessSurfaceRepository(self._client)
 
     def _project_org_id(self, project_id: str) -> str | None:
         resp = (
@@ -130,12 +154,20 @@ class McpEndpointRepository:
         surface_ids = [r["id"] for r in rows]
         policy_by_surface = self._policy_lookup(surface_ids)
         credential_by_surface = self._credentials.list_active_by_surface(surface_ids)
+        bindings_by_surface = {
+            surface_id: self._surfaces.list_tool_bindings(
+                surface_id,
+                mcp_exposed_only=True,
+            )
+            for surface_id in surface_ids
+        }
         return [
             _row_to_endpoint(
                 r,
                 path_by_scope.get(r.get("scope_id")),
                 policy=policy_by_surface.get(r["id"]),
                 credential=credential_by_surface.get(r["id"]),
+                tool_bindings=bindings_by_surface.get(r["id"]),
             )
             for r in rows
         ]
@@ -157,14 +189,6 @@ class McpEndpointRepository:
 
     def get_by_id(self, endpoint_id: str) -> Optional[dict]:
         resp = self._query().eq("id", endpoint_id).execute()
-        rows = self._hydrate(resp.data or [])
-        return rows[0] if rows else None
-
-    def get_by_api_key(self, api_key: str) -> Optional[dict]:
-        credential = self._credentials.get_active_by_token(api_key)
-        if not credential:
-            return None
-        resp = self._query().eq("id", credential["access_surface_id"]).execute()
         rows = self._hydrate(resp.data or [])
         return rows[0] if rows else None
 
@@ -190,7 +214,15 @@ class McpEndpointRepository:
         scope_ids = [s["id"] for s in (scope_resp.data or [])]
         if not scope_ids:
             return None
-        resp = self._query().in_("scope_id", scope_ids).execute()
+        # mcp is intentionally exempt from the one-surface-per-scope unique index,
+        # so a scope can host several endpoints — return the most recent one
+        # deterministically rather than whatever order the DB happens to yield.
+        resp = (
+            self._query()
+            .in_("scope_id", scope_ids)
+            .order("created_at", desc=True)
+            .execute()
+        )
         rows = self._hydrate(resp.data or [])
         return rows[0] if rows else None
 
@@ -199,12 +231,24 @@ class McpEndpointRepository:
             "access_surface_id": surface_id,
             **_default_policy(accesses, tools_config),
         }
-        resp = (
-            self._client.table(ACCESS_SURFACE_POLICIES_TABLE)
-            .upsert(payload, on_conflict="access_surface_id")
-            .execute()
-        )
-        return (resp.data or [payload])[0]
+        bindings = custom_tool_bindings_from_tools_config(tools_config)
+        resp = self._client.rpc(
+            "replace_mcp_surface_policy",
+            {
+                "p_surface_id": surface_id,
+                "p_accesses": accesses or [],
+                "p_tools_policy": payload["tools_policy"],
+                "p_bindings": bindings,
+            },
+        ).execute()
+        data = resp.data
+        if isinstance(data, list):
+            data = data[0] if data else None
+        if not isinstance(data, dict):
+            raise RuntimeError("replace_mcp_surface_policy returned no policy")
+        # RPC returns the stored policy without the API-facing embedded binding
+        # compatibility view; hydration adds canonical access_tools bindings.
+        return data
 
     def create(
         self,
@@ -215,6 +259,7 @@ class McpEndpointRepository:
         accesses: Optional[list] = None,
         tools_config: Any = None,
         created_by: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> dict:
         config = {
             "name": name,
@@ -223,7 +268,9 @@ class McpEndpointRepository:
         }
         scope = self._scope_for_path(project_id, path)
         row = {
-            "id": generate_uuid_v7(),
+            # Let the DB assign the id (gen_random_uuid default) — same as every
+            # other access_surfaces writer; the id is read back from the insert
+            # response below, so there is no need to mint one client-side.
             "org_id": self._project_org_id(project_id),
             "project_id": project_id,
             "scope_id": scope["id"],
@@ -235,13 +282,22 @@ class McpEndpointRepository:
         }
         resp = self._client.table(self.TABLE).insert(row).execute()
         inserted = resp.data[0]
-        api_key = self._credentials.issue_bearer_token(
-            access_surface_id=inserted["id"],
-            org_id=inserted.get("org_id"),
-            project_id=inserted["project_id"],
-            prefix="mcp",
-            created_by=created_by,
-        )
+        if api_key is None:
+            api_key = self._credentials.issue_bearer_token(
+                access_surface_id=inserted["id"],
+                org_id=inserted.get("org_id"),
+                project_id=inserted["project_id"],
+                prefix="mcp",
+                created_by=created_by,
+            )
+        else:
+            self._credentials.store_bearer_token(
+                access_surface_id=inserted["id"],
+                org_id=inserted.get("org_id"),
+                project_id=inserted["project_id"],
+                raw_token=api_key,
+                created_by=created_by,
+            )
         policy = self._upsert_policy(
             inserted["id"],
             accesses=accesses or [],
@@ -256,6 +312,9 @@ class McpEndpointRepository:
             scope["path"],
             policy=policy,
             credential=credential,
+            tool_bindings=self._surfaces.list_tool_bindings(
+                inserted["id"], mcp_exposed_only=True
+            ),
             plaintext_api_key=api_key,
         )
 
@@ -333,14 +392,8 @@ class McpEndpointRepository:
             path_by_scope.get(row.get("scope_id")),
             policy=policy,
             credential=credential,
+            tool_bindings=self._surfaces.list_tool_bindings(
+                row["id"], mcp_exposed_only=True
+            ),
             plaintext_api_key=api_key,
         )
-
-    def verify_access(self, endpoint_id: str, user_id: str) -> bool:
-        endpoint = self.get_by_id(endpoint_id)
-        if not endpoint:
-            return False
-        from src.platform.project.repository import ProjectRepositorySupabase
-        project_repo = ProjectRepositorySupabase()
-        role = project_repo.verify_project_access(endpoint["project_id"], user_id)
-        return role is not None

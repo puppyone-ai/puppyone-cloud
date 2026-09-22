@@ -31,6 +31,7 @@ from fastapi import (
     UploadFile,
 )
 
+from src.exceptions import AppException
 from src.infra.file_formats import detect_mime, detect_node_type
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.exceptions import S3Error, S3FileSizeExceededError, S3MultipartError
@@ -44,7 +45,11 @@ from src.ingest.file.service import ETLService
 from src.ingest.file.tasks.models import ETLTaskStatus
 from src.ingest.policy.upload_policy import (
     PER_BATCH_MAX_BYTES as POLICY_PER_BATCH_MAX_BYTES,
+)
+from src.ingest.policy.upload_policy import (
     PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
+)
+from src.ingest.policy.upload_policy import (
     evaluate_batch_limits,
     path_has_blocked_segment,
 )
@@ -74,18 +79,45 @@ from src.ingest.shared.task.normalizers import detect_file_ingest_type
 from src.ingest.upload_jobs import UploadJobRepository
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.platform.billing.runtime import guard_unmetered_hosted_runtime
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.platform.imports.dependencies import get_import_job_service
 from src.platform.imports.provider import detect_import_provider, suggest_import_name
 from src.platform.imports.schemas import ImportJobCreateRequest
 from src.platform.imports.service import ImportJobService
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
+
+
+def _authorize_owned_upload_task(
+    task,
+    *,
+    current_user: CurrentUser,
+    authorization: AuthorizationService,
+):
+    """Require both task ownership and the current Project write grant.
+
+    Ownership prevents task-id substitution; it is only a child-resource
+    restriction.  Re-resolving the Project grant closes the window where a
+    member starts a multipart upload and is then revoked or downgraded before
+    a part/finalize request.
+    """
+
+    if not task or (task.created_by is not None and task.created_by != current_user.user_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    authorization.authorize(
+        task.project_id,
+        current_user.user_id,
+        ProjectAction.INGEST_WRITE,
+    )
+    return task
+
 
 # === File Type Classification ===
 
@@ -118,9 +150,8 @@ def classify_file_type(filename: str) -> str:
         return "text"
 
     mime = detect_mime(filename).lower()
-    if (
-        ingest_type in {IngestType.PDF, IngestType.IMAGE}
-        or any(mime.startswith(prefix) for prefix in _OCR_DOCUMENT_MIME_PREFIXES)
+    if ingest_type in {IngestType.PDF, IngestType.IMAGE} or any(
+        mime.startswith(prefix) for prefix in _OCR_DOCUMENT_MIME_PREFIXES
     ):
         return "ocr_needed"
 
@@ -129,12 +160,12 @@ def classify_file_type(filename: str) -> str:
 
 # === File Upload Endpoint ===
 
+
 @router.post("/submit/file", response_model=IngestSubmitResponse, status_code=202)
 async def submit_file_ingest(
     # Required fields
     project_id: str = Form(..., description="Target project ID"),
     files: list[UploadFile] = File(..., description="Files to upload"),
-
     # Optional configuration
     # Default is "raw" so callers that don't opt into the OCR
     # pipeline never accidentally trigger MineRU/LLM. Was "ocr_parse"
@@ -149,12 +180,11 @@ async def submit_file_ingest(
     # The content tree is path-based, so new callers should use
     # `parent_path`.
     parent_id: str | None = Form(None, description="Deprecated alias for parent_path"),
-
     # Dependencies
     etl_service: ETLService = Depends(get_etl_service),
     s3_service: S3Service = Depends(get_s3_service),
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
@@ -166,17 +196,13 @@ async def submit_file_ingest(
     is downgraded to "raw" so binary/OCR-needing files end up on S3
     via the same code path as a plain file upload.
     """
-    project = project_service.get_by_id(project_id)
-    if not project or not project_service.verify_project_access(project_id, current_user.user_id):
-        raise HTTPException(status_code=404, detail="Project not found")
-    entitlement_file_max = entitlement_service.limit_value(
-        project.org_id,
+    grant = authorization.authorize(project_id, current_user.user_id, ProjectAction.INGEST_WRITE)
+    entitlement_file_max = entitlement_service.enforced_limit_value(
+        grant.org_id,
         "upload.max_single_file_bytes",
     )
     per_file_max_bytes = (
-        int(entitlement_file_max)
-        if entitlement_file_max is not None
-        else POLICY_PER_FILE_MAX_BYTES
+        int(entitlement_file_max) if entitlement_file_max is not None else POLICY_PER_FILE_MAX_BYTES
     )
 
     # OCR pause: silently downgrade ocr_parse → raw when the
@@ -187,17 +213,21 @@ async def submit_file_ingest(
     # than constructing `Settings()` per request) keeps env-file
     # parsing off the hot path.
     from src.config import settings as app_settings
+
     if mode == "ocr_parse" and not app_settings.ENABLE_OCR:
         logger.warning(
             "OCR pipeline is paused (ENABLE_OCR=False); downgrading "
             "ocr_parse → raw for project=%s, %d file(s).",
-            project_id, len(files),
+            project_id,
+            len(files),
         )
         mode = "raw"
+    if mode == "ocr_parse":
+        guard_unmetered_hosted_runtime("ingest.ocr_parse")
 
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
+    from src.platform.project.write_lease import build_leased_worker_write_commands
 
-    commands = build_worker_version_engine_container().write_commands()
+    commands = build_leased_worker_write_commands()
 
     target_parent_path = (parent_path or parent_id or "").strip("/")
 
@@ -213,27 +243,27 @@ async def submit_file_ingest(
                 f"File '{original_filename}' is {len(content)} bytes; "
                 f"per-file cap is {per_file_max_bytes} bytes."
             )
-            items.append(_make_failed_item(
-                etl_service.create_failed_task(
-                    user_id=current_user.user_id,
-                    project_id=project_id,
-                    filename=original_filename,
-                    rule_id=rule_id,
-                    error=error,
-                    metadata={"error_stage": "entitlement"},
-                ),
-                original_filename,
-                None,
-                error,
-            ))
+            items.append(
+                _make_failed_item(
+                    etl_service.create_failed_task(
+                        user_id=current_user.user_id,
+                        project_id=project_id,
+                        filename=original_filename,
+                        rule_id=rule_id,
+                        error=error,
+                        metadata={"error_stage": "entitlement"},
+                    ),
+                    original_filename,
+                    None,
+                    error,
+                )
+            )
             continue
 
         file_type = classify_file_type(original_basename)
 
         file_path = (
-            f"{target_parent_path}/{original_basename}"
-            if target_parent_path
-            else original_basename
+            f"{target_parent_path}/{original_basename}" if target_parent_path else original_basename
         )
 
         try:
@@ -243,14 +273,22 @@ async def submit_file_ingest(
                     json_data = json.loads(text_content)
                 except json.JSONDecodeError as e:
                     logger.warning(f"JSON parse failed for {original_filename}: {e}")
-                    json_data = {"_raw": content.decode("utf-8", errors="ignore"), "_parse_error": str(e)}
+                    json_data = {
+                        "_raw": content.decode("utf-8", errors="ignore"),
+                        "_parse_error": str(e),
+                    }
 
                 json_bytes = json.dumps(json_data, ensure_ascii=False, indent=2).encode("utf-8")
                 modified_files[file_path] = json_bytes
 
                 task = _create_completed_task(
-                    etl_service, current_user.user_id, project_id,
-                    original_filename, rule_id, file_path, "json"
+                    etl_service,
+                    current_user.user_id,
+                    project_id,
+                    original_filename,
+                    rule_id,
+                    file_path,
+                    "json",
                 )
                 items.append(_make_completed_item(task, original_filename, file_path))
 
@@ -258,8 +296,13 @@ async def submit_file_ingest(
                 modified_files[file_path] = content
 
                 task = _create_completed_task(
-                    etl_service, current_user.user_id, project_id,
-                    original_filename, rule_id, file_path, "markdown"
+                    etl_service,
+                    current_user.user_id,
+                    project_id,
+                    original_filename,
+                    rule_id,
+                    file_path,
+                    "markdown",
                 )
                 items.append(_make_completed_item(task, original_filename, file_path))
 
@@ -277,27 +320,39 @@ async def submit_file_ingest(
                         s3_key=s3_key,
                     )
                 except RuleNotFoundError as e:
-                    items.append(_make_failed_item(
-                        etl_service.create_failed_task(
-                            user_id=current_user.user_id, project_id=project_id, filename=original_filename, rule_id=rule_id, error=str(e)
-                        ),
-                        original_filename, s3_key, str(e)
-                    ))
+                    items.append(
+                        _make_failed_item(
+                            etl_service.create_failed_task(
+                                user_id=current_user.user_id,
+                                project_id=project_id,
+                                filename=original_filename,
+                                rule_id=rule_id,
+                                error=str(e),
+                            ),
+                            original_filename,
+                            s3_key,
+                            str(e),
+                        )
+                    )
                     continue
 
                 task.metadata["mount_path"] = file_path
                 task.metadata["s3_key"] = s3_key
                 etl_service.task_repository.update_task(task)
 
-                items.append(IngestSubmitItem(
-                    task_id=str(task.task_id or 0),
-                    source_type=SourceType.FILE,
-                    ingest_type=detect_file_ingest_type(original_filename),
-                    status=IngestStatus.PENDING if task.status == ETLTaskStatus.PENDING else IngestStatus.PROCESSING,
-                    filename=original_filename,
-                    s3_key=s3_key,
-                    path=file_path,
-                ))
+                items.append(
+                    IngestSubmitItem(
+                        task_id=str(task.task_id or 0),
+                        source_type=SourceType.FILE,
+                        ingest_type=detect_file_ingest_type(original_filename),
+                        status=IngestStatus.PENDING
+                        if task.status == ETLTaskStatus.PENDING
+                        else IngestStatus.PROCESSING,
+                        filename=original_filename,
+                        s3_key=s3_key,
+                        path=file_path,
+                    )
+                )
 
             else:
                 # Generic binary path — hit by:
@@ -325,28 +380,49 @@ async def submit_file_ingest(
                 modified_files[file_path] = content
 
                 task = _create_completed_task(
-                    etl_service, current_user.user_id, project_id,
-                    original_filename, rule_id, file_path, "file"
+                    etl_service,
+                    current_user.user_id,
+                    project_id,
+                    original_filename,
+                    rule_id,
+                    file_path,
+                    "file",
                 )
                 items.append(_make_completed_item(task, original_filename, file_path, s3_key))
 
         except S3FileSizeExceededError as e:
-            items.append(_make_failed_item(
-                etl_service.create_failed_task(
-                    user_id=current_user.user_id, project_id=project_id, filename=original_filename, rule_id=rule_id, error=str(e),
-                    metadata={"error_stage": "upload"}
-                ),
-                original_filename, None, str(e)
-            ))
+            items.append(
+                _make_failed_item(
+                    etl_service.create_failed_task(
+                        user_id=current_user.user_id,
+                        project_id=project_id,
+                        filename=original_filename,
+                        rule_id=rule_id,
+                        error=str(e),
+                        metadata={"error_stage": "upload"},
+                    ),
+                    original_filename,
+                    None,
+                    str(e),
+                )
+            )
         except (S3Error, Exception) as e:
             logger.error(f"File ingest failed for {original_filename}: {e}", exc_info=True)
-            items.append(_make_failed_item(
-                etl_service.create_failed_task(
-                    user_id=current_user.user_id, project_id=project_id, filename=original_filename, rule_id=rule_id, error=f"Import failed: {e}",
-                    metadata={"error_stage": "process"}
-                ),
-                original_filename, None, str(e)
-            ))
+            items.append(
+                _make_failed_item(
+                    etl_service.create_failed_task(
+                        user_id=current_user.user_id,
+                        project_id=project_id,
+                        filename=original_filename,
+                        rule_id=rule_id,
+                        error=f"Import failed: {e}",
+                        metadata={"error_stage": "process"},
+                    ),
+                    original_filename,
+                    None,
+                    str(e),
+                )
+            )
 
     if modified_files:
         try:
@@ -365,6 +441,7 @@ async def submit_file_ingest(
 
 # === Helper Functions ===
 
+
 async def _upload_to_s3(
     s3_service: S3Service,
     project_id: str,
@@ -376,9 +453,7 @@ async def _upload_to_s3(
     safe_filename = f"{uuid.uuid4()}{ext}"
     s3_key = f"projects/{project_id}/files/{safe_filename}"
 
-    original_filename_b64 = base64.b64encode(
-        original_filename.encode("utf-8")
-    ).decode("ascii")
+    original_filename_b64 = base64.b64encode(original_filename.encode("utf-8")).decode("ascii")
 
     await s3_service.upload_file(
         key=s3_key,
@@ -411,7 +486,7 @@ def _create_completed_task(
             "direct_import": True,
             "path": path,
             "node_type": node_type,
-        }
+        },
     )
     task.status = ETLTaskStatus.COMPLETED
     task.error = None
@@ -492,14 +567,14 @@ def _make_failed_item(
 
 # AWS hard limits + sensible defaults. ``MAX_FILE_SIZE`` is a safety
 # rail; the bucket itself can hold up to 5TiB per object.
-_DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024            # 8 MiB
-_MIN_CHUNK_SIZE = 5 * 1024 * 1024                # 5 MiB (AWS minimum, except last part)
-_MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024          # 5 GiB
-_MAX_PARTS_PER_UPLOAD = 10000                    # AWS hard limit
+_DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
+_MIN_CHUNK_SIZE = 5 * 1024 * 1024  # 5 MiB (AWS minimum, except last part)
+_MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024  # 5 GiB
+_MAX_PARTS_PER_UPLOAD = 10000  # AWS hard limit
 # Per-part request body cap (8 MiB chunk + slack for the last-part
 # overshoot some clients send). Used to short-circuit oversized
 # bodies before we forward them to S3 and pay for the bandwidth.
-_MAX_PART_BODY_SIZE = 32 * 1024 * 1024           # 32 MiB
+_MAX_PART_BODY_SIZE = 32 * 1024 * 1024  # 32 MiB
 
 
 def _metadata_int(metadata: dict, key: str) -> int | None:
@@ -578,7 +653,7 @@ async def init_multipart_upload(
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """
@@ -599,12 +674,9 @@ async def init_multipart_upload(
     ``upload_part`` server-side. See the protocol comment above for
     why we abandoned direct-to-S3.
     """
-    project = project_service.get_by_id(request.project_id)
-    if not project or not project_service.verify_project_access(
-        request.project_id,
-        current_user.user_id,
-    ):
-        raise HTTPException(status_code=404, detail="Project not found")
+    grant = authorization.authorize(
+        request.project_id, current_user.user_id, ProjectAction.INGEST_WRITE
+    )
 
     chunk_size = request.chunk_size or _DEFAULT_CHUNK_SIZE
     if chunk_size < _MIN_CHUNK_SIZE:
@@ -618,17 +690,15 @@ async def init_multipart_upload(
             detail=f"chunk_size must be <= {_MAX_PART_BODY_SIZE} bytes",
         )
 
-    entitlement_file_max = entitlement_service.limit_value(
-        project.org_id,
+    entitlement_file_max = entitlement_service.enforced_limit_value(
+        grant.org_id,
         "upload.max_single_file_bytes",
     )
     per_file_max_bytes = (
-        int(entitlement_file_max)
-        if entitlement_file_max is not None
-        else POLICY_PER_FILE_MAX_BYTES
+        int(entitlement_file_max) if entitlement_file_max is not None else POLICY_PER_FILE_MAX_BYTES
     )
-    entitlement_batch_max = entitlement_service.limit_value(
-        project.org_id,
+    entitlement_batch_max = entitlement_service.enforced_limit_value(
+        grant.org_id,
         "upload.max_batch_bytes",
     )
     batch_max_bytes = (
@@ -690,8 +760,7 @@ async def init_multipart_upload(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"File '{f.filename}' is {f.size} bytes; max allowed "
-                    f"is {_MAX_FILE_SIZE} bytes"
+                    f"File '{f.filename}' is {f.size} bytes; max allowed is {_MAX_FILE_SIZE} bytes"
                 ),
             )
 
@@ -712,17 +781,10 @@ async def init_multipart_upload(
         # Project + user prefix lets us scope auth on subsequent
         # ``/upload/part`` calls (the task echoes the s3_key back to
         # the client; we cross-check the echo).
-        s3_key = (
-            f"projects/{request.project_id}/uploads/"
-            f"{current_user.user_id}/{uuid.uuid4()}{ext}"
-        )
+        s3_key = f"projects/{request.project_id}/uploads/{current_user.user_id}/{uuid.uuid4()}{ext}"
 
         parent_path = (f.parent_path or "").strip("/")
-        mount_path = (
-            f"{parent_path}/{original_basename}"
-            if parent_path
-            else original_basename
-        )
+        mount_path = f"{parent_path}/{original_basename}" if parent_path else original_basename
 
         # PUP-3 hardcoded blocklist (Q1, Q8): reject any segment of
         # the resulting mount_path that matches a blocked name (``.git``,
@@ -750,17 +812,17 @@ async def init_multipart_upload(
         # Tag S3 metadata so back-fill / debug tooling can recover the
         # original filename (which may contain non-ASCII chars S3
         # rejects in raw user-metadata values).
-        original_filename_b64 = base64.b64encode(
-            f.filename.encode("utf-8")
-        ).decode("ascii")
+        original_filename_b64 = base64.b64encode(f.filename.encode("utf-8")).decode("ascii")
 
-        prepared_files.append({
-            "f": f,
-            "num_parts": num_parts,
-            "s3_key": s3_key,
-            "mount_path": mount_path,
-            "original_filename_b64": original_filename_b64,
-        })
+        prepared_files.append(
+            {
+                "f": f,
+                "num_parts": num_parts,
+                "s3_key": s3_key,
+                "mount_path": mount_path,
+                "original_filename_b64": original_filename_b64,
+            }
+        )
 
     # Resolve default rule_id ONCE. The legacy ``uploads`` schema
     # requires a non-null rule_id on every row but the finalize
@@ -770,7 +832,8 @@ async def init_multipart_upload(
     # queries alone for an N-file batch. The lookup itself is sync
     # Supabase work so we offload to a thread.
     default_rule_id = await asyncio.to_thread(
-        etl_service.get_default_rule_id_for_user, current_user.user_id,
+        etl_service.get_default_rule_id_for_user,
+        current_user.user_id,
     )
 
     upload_job_repo = UploadJobRepository()
@@ -866,8 +929,7 @@ async def init_multipart_upload(
                 # lifecycle rule). Zero-byte files use a direct
                 # PutObject and have no multipart session to abort.
                 logger.error(
-                    f"Failed to create pending upload task for "
-                    f"{f.filename}: {e}",
+                    f"Failed to create pending upload task for {f.filename}: {e}",
                     exc_info=True,
                 )
                 try:
@@ -875,8 +937,7 @@ async def init_multipart_upload(
                         await s3_service.abort_multipart_upload(s3_key, upload_id)
                 except Exception as abort_err:
                     logger.warning(
-                        f"Failed to abort orphaned multipart "
-                        f"upload {s3_key}: {abort_err}"
+                        f"Failed to abort orphaned multipart upload {s3_key}: {abort_err}"
                     )
                 raise HTTPException(
                     status_code=500,
@@ -940,7 +1001,8 @@ async def init_multipart_upload(
                 )
             try:
                 await asyncio.to_thread(
-                    etl_service.task_repository.delete_task, r.task_id,
+                    etl_service.task_repository.delete_task,
+                    r.task_id,
                 )
             except Exception as delete_err:
                 logger.warning(
@@ -970,13 +1032,15 @@ async def upload_part(
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """
     Forward one multipart part to S3 on behalf of the browser.
 
     Auth boundary:
-      - The task is looked up by ``task_id`` and must belong to the
-        current user. The ``s3_key`` and ``upload_id`` are pulled
+      - The task is looked up by ``task_id``, must belong to the current user,
+        and its current ProjectGrant must still allow ingest writes. The
+        ``s3_key`` and ``upload_id`` are pulled
         from the task's metadata, never from the client — so a
         compromised browser can't redirect a part to a different
         upload session by tampering with query parameters.
@@ -1007,11 +1071,11 @@ async def upload_part(
       - 502: S3 ``upload_part`` failed (typically transient — the
              client's retry loop should clear it).
     """
-    task = etl_service.task_repository.get_task(task_id)
-    if not task or (
-        task.created_by is not None and task.created_by != current_user.user_id
-    ):
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _authorize_owned_upload_task(
+        etl_service.task_repository.get_task(task_id),
+        current_user=current_user,
+        authorization=authorization,
+    )
 
     if task.status != ETLTaskStatus.PENDING:
         raise HTTPException(
@@ -1041,10 +1105,7 @@ async def upload_part(
         if cl > _MAX_PART_BODY_SIZE:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Part body is {cl} bytes; max per part is "
-                    f"{_MAX_PART_BODY_SIZE} bytes"
-                ),
+                detail=(f"Part body is {cl} bytes; max per part is {_MAX_PART_BODY_SIZE} bytes"),
             )
         if cl >= 0 and cl != expected_part_size:
             raise HTTPException(
@@ -1061,10 +1122,7 @@ async def upload_part(
     if len(body) > _MAX_PART_BODY_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Part body is {len(body)} bytes; max per part is "
-                f"{_MAX_PART_BODY_SIZE} bytes"
-            ),
+            detail=(f"Part body is {len(body)} bytes; max per part is {_MAX_PART_BODY_SIZE} bytes"),
         )
     _validate_part_body_shape(task.metadata, part_number, len(body))
 
@@ -1080,12 +1138,8 @@ async def upload_part(
         # connection reset, ETag mismatch on a partial replay). We
         # surface a 502 — same wire signature the client's retry
         # loop already handles, no special-casing needed.
-        logger.warning(
-            f"upload_part failed for task {task_id} part {part_number}: {e}"
-        )
-        raise HTTPException(
-            status_code=502, detail=f"S3 upload_part failed: {e}"
-        )
+        logger.warning(f"upload_part failed for task {task_id} part {part_number}: {e}")
+        raise HTTPException(status_code=502, detail=f"S3 upload_part failed: {e}")
 
     return UploadPartResponse(part_number=part_number, etag=etag)
 
@@ -1096,6 +1150,7 @@ async def complete_upload(
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """
     Finalize a direct-to-S3 multipart upload and write the assembled
@@ -1103,8 +1158,9 @@ async def complete_upload(
 
     By the time the client calls this, every part is already in S3.
     We:
-      1. Verify task ownership (the auth boundary on the back end of
-         the protocol — the ``s3_key`` & ``upload_id`` are echoed back
+      1. Verify task ownership and re-resolve the current Project write grant
+         (the auth boundary on the back end of the protocol — the ``s3_key``
+         & ``upload_id`` are echoed back
          from the client and we cross-check them against the task we
          created in /upload/init).
       2. Run S3 ``CompleteMultipartUpload`` to assemble the parts.
@@ -1123,11 +1179,11 @@ async def complete_upload(
          (a request-flag that swaps to the ``etl_finalize_upload_job``
          worker path, which is still wired up).
     """
-    task = etl_service.task_repository.get_task(request.task_id)
-    if not task or (
-        task.created_by is not None and task.created_by != current_user.user_id
-    ):
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _authorize_owned_upload_task(
+        etl_service.task_repository.get_task(request.task_id),
+        current_user=current_user,
+        authorization=authorization,
+    )
 
     # State guard: complete is a one-way trip from PENDING. Re-calling
     # would race with the finalize worker; the client should consult
@@ -1149,9 +1205,7 @@ async def complete_upload(
             detail="s3_key/upload_id mismatch with the task",
         )
 
-    parts = sorted(
-        [(p.part_number, p.etag) for p in request.parts], key=lambda x: x[0]
-    )
+    parts = sorted([(p.part_number, p.etag) for p in request.parts], key=lambda x: x[0])
     _validate_complete_manifest(task.metadata, request.parts)
     expected_size = _metadata_int(task.metadata, "size")
 
@@ -1162,9 +1216,7 @@ async def complete_upload(
         )
     else:
         try:
-            await s3_service.complete_multipart_upload(
-                request.s3_key, request.upload_id, parts
-            )
+            await s3_service.complete_multipart_upload(request.s3_key, request.upload_id, parts)
         except Exception as e:
             logger.error(
                 f"complete_multipart_upload failed for task {request.task_id}: {e}",
@@ -1174,9 +1226,7 @@ async def complete_upload(
             # multipart upload on the bucket.
             try:
                 if request.upload_id:
-                    await s3_service.abort_multipart_upload(
-                        request.s3_key, request.upload_id
-                    )
+                    await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
             except Exception:
                 pass
             task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1194,9 +1244,7 @@ async def complete_upload(
                     upload_repo.refresh_job_from_items,
                     upload_job_id,
                 )
-            raise HTTPException(
-                status_code=502, detail=f"S3 complete_multipart_upload failed: {e}"
-            )
+            raise HTTPException(status_code=502, detail=f"S3 complete_multipart_upload failed: {e}")
 
     # Sanity-check that S3 sees the object at the expected size.
     # Mismatch is non-fatal but worth logging — could indicate a
@@ -1204,9 +1252,7 @@ async def complete_upload(
     try:
         meta = await s3_service.get_file_metadata(request.s3_key)
         if expected_size is not None and meta.size != expected_size:
-            message = (
-                f"Declared size {expected_size} differs from S3 size {meta.size}"
-            )
+            message = f"Declared size {expected_size} differs from S3 size {meta.size}"
             logger.warning(f"Task {request.task_id}: {message}")
             task.mark_failed(message)
             task.metadata["error_stage"] = "size_mismatch"
@@ -1227,9 +1273,7 @@ async def complete_upload(
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
-        logger.warning(
-            f"Task {request.task_id}: head_object after complete failed: {e}"
-        )
+        logger.warning(f"Task {request.task_id}: head_object after complete failed: {e}")
 
     # Run finalize INLINE: download from S3, write into ObjectStore, mark
     # task COMPLETED. The helper is also the body of the ARQ worker
@@ -1255,9 +1299,7 @@ async def complete_upload(
                 "Finalize timed out writing to ObjectStore",
             )
             await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
-        raise HTTPException(
-            status_code=504, detail="Finalize timed out writing to ObjectStore"
-        )
+        raise HTTPException(status_code=504, detail="Finalize timed out writing to ObjectStore")
 
     if not result.get("ok"):
         # Helper has already marked the task FAILED + persisted state.
@@ -1301,6 +1343,7 @@ async def complete_upload_batch(
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
     current_user: CurrentUser = Depends(get_current_user),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """
     Finalize multiple multipart uploads as one project-root product commit.
@@ -1347,15 +1390,17 @@ async def complete_upload_batch(
     eligible: list = []  # items that survive validation
 
     for item in request.items:
-        task = etl_service.task_repository.get_task(item.task_id)
-        if not task or (
-            task.created_by is not None
-            and task.created_by != current_user.user_id
-        ):
+        try:
+            task = _authorize_owned_upload_task(
+                etl_service.task_repository.get_task(item.task_id),
+                current_user=current_user,
+                authorization=authorization,
+            )
+        except (HTTPException, AppException):
             item_results[item.task_id] = UploadCompleteItemResult(
                 task_id=item.task_id,
                 status=IngestStatus.FAILED,
-                error="Task not found",
+                error="Task not found or Project write access is no longer available",
             )
             continue
 
@@ -1416,9 +1461,7 @@ async def complete_upload_batch(
         touches its own task record (the task repo is
         Supabase-backed; per-task PATCHes are independent).
         """
-        parts = sorted(
-            [(p.part_number, p.etag) for p in item.parts], key=lambda x: x[0]
-        )
+        parts = sorted([(p.part_number, p.etag) for p in item.parts], key=lambda x: x[0])
         expected_size = _metadata_int(task.metadata, "size")
         if expected_size == 0 and not parts:
             logger.info(
@@ -1427,9 +1470,7 @@ async def complete_upload_batch(
             )
         else:
             try:
-                await s3_service.complete_multipart_upload(
-                    item.s3_key, item.upload_id, parts
-                )
+                await s3_service.complete_multipart_upload(item.s3_key, item.upload_id, parts)
             except Exception as e:
                 logger.error(
                     f"complete_multipart_upload failed for task {item.task_id}: {e}",
@@ -1437,9 +1478,7 @@ async def complete_upload_batch(
                 )
                 try:
                     if item.upload_id:
-                        await s3_service.abort_multipart_upload(
-                            item.s3_key, item.upload_id
-                        )
+                        await s3_service.abort_multipart_upload(item.s3_key, item.upload_id)
                 except Exception:
                     pass
                 task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1458,9 +1497,7 @@ async def complete_upload_batch(
         try:
             meta = await s3_service.get_file_metadata(item.s3_key)
             if expected_size is not None and meta.size != expected_size:
-                message = (
-                    f"Declared size {expected_size} differs from S3 size {meta.size}"
-                )
+                message = f"Declared size {expected_size} differs from S3 size {meta.size}"
                 logger.warning(f"Task {item.task_id}: {message}")
                 task.mark_failed(message)
                 task.metadata["error_stage"] = "size_mismatch"
@@ -1472,9 +1509,7 @@ async def complete_upload_batch(
                 )
                 return
         except Exception as e:
-            logger.warning(
-                f"Task {item.task_id}: head_object after complete failed: {e}"
-            )
+            logger.warning(f"Task {item.task_id}: head_object after complete failed: {e}")
 
         async with completed_lock:
             completed_task_ids_set.add(task.task_id)
@@ -1495,8 +1530,7 @@ async def complete_upload_batch(
     # downstream doesn't strictly require it, but it makes the
     # response easier to reason about for paginated UIs.
     completed_task_ids = [
-        task.task_id for _, task in eligible
-        if task.task_id in completed_task_ids_set
+        task.task_id for _, task in eligible if task.task_id in completed_task_ids_set
     ]
 
     # ────────────────────────────────────────────────────────────────
@@ -1605,16 +1639,12 @@ async def abort_upload(
     stable terminal state.
     """
     task = etl_service.task_repository.get_task(request.task_id)
-    if not task or (
-        task.created_by is not None and task.created_by != current_user.user_id
-    ):
+    if not task or (task.created_by is not None and task.created_by != current_user.user_id):
         raise HTTPException(status_code=404, detail="Task not found")
 
     if request.upload_id:
         try:
-            await s3_service.abort_multipart_upload(
-                request.s3_key, request.upload_id
-            )
+            await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
         except Exception as e:
             # The most common reason this fails is "already aborted/
             # completed", which is fine — we still want to flag the task
@@ -1642,15 +1672,14 @@ async def abort_upload(
 
 # === SaaS/URL Submit Endpoint ===
 
+
 @router.post("/submit/saas", response_model=IngestSubmitResponse, status_code=202)
 async def submit_saas_ingest(
     project_id: str = Form(..., description="Target project ID"),
     url: str = Form(..., description="SaaS or Web URL"),
     name: str | None = Form(None, description="Custom name"),
     crawl_options: str | None = Form(None, description="JSON crawl options for generic web URLs"),
-
     # Dependencies
-    project_service: ProjectService = Depends(get_project_service),
     import_service: ImportJobService = Depends(get_import_job_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -1661,9 +1690,6 @@ async def submit_saas_ingest(
     HTTP request. It creates a backend-owned job and lets the ARQ worker
     perform the import.
     """
-
-    if not project_service.verify_project_access(project_id, current_user.user_id):
-        raise HTTPException(status_code=404, detail="Project not found")
 
     try:
         provider = detect_import_provider(url)
@@ -1730,6 +1756,7 @@ def _provider_to_ingest_type(provider: str) -> IngestType:
 
 # === Task Query Endpoints ===
 
+
 @router.get("/tasks/{task_id}", response_model=IngestTaskResponse)
 async def get_ingest_task(
     task_id: str,
@@ -1774,6 +1801,7 @@ async def cancel_ingest_task(
 
 
 # === Health Check ===
+
 
 @router.get("/health")
 async def get_ingest_health(
@@ -1828,6 +1856,7 @@ async def list_rules(
 ):
     try:
         from src.ingest.file.rules.default_rules import get_or_create_default_rule
+
         get_or_create_default_rule(rule_repository)
     except Exception as e:
         logger.warning(f"Failed to ensure global default rule: {e}")

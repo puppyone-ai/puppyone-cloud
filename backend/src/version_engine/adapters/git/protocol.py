@@ -63,14 +63,27 @@ def run_git(
     args: list[str],
     *,
     input_data: bytes | None = None,
+    timeout: float | None = None,
 ) -> bytes:
-    proc = subprocess.run(
-        ["git", *args],
-        input=input_data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    # Bound wall-clock time so a hostile or pathological pack cannot hang a
+    # git subprocess indefinitely (ISSUE-014). Falls back to the configured
+    # default; 0/None disables.
+    if timeout is None:
+        from src.config import settings
+        timeout = settings.GIT_SUBPROCESS_TIMEOUT_SECONDS or None
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            input=input_data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"git {' '.join(args)} timed out after {timeout}s"
+        ) from exc
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(stderr or f"git {' '.join(args)} failed")

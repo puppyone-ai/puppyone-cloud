@@ -16,6 +16,7 @@ export interface UseEditorSaveSessionOptions {
   readonly nodeType: EditorSaveNodeType;
   readonly saveContent?: (content: string) => Promise<void>;
   readonly skipDraftRestore?: boolean;
+  readonly isContentReady?: boolean;
 }
 
 export interface EditorSaveSession {
@@ -52,6 +53,7 @@ export function useEditorSaveSession({
   nodeType,
   saveContent,
   skipDraftRestore = false,
+  isContentReady = true,
 }: UseEditorSaveSessionOptions): EditorSaveSession {
   const fileKey = useMemo(
     () => `${nodeType}:${projectId}:${filePath || '(none)'}`,
@@ -63,6 +65,7 @@ export function useEditorSaveSession({
 
   const save = useCallback(
     async (snapshot: string) => {
+      if (!isContentReady) throw new Error('Cannot save before file content has loaded.');
       if (!filePath) {
         throw new Error('Cannot save: no active editor target');
       }
@@ -73,7 +76,7 @@ export function useEditorSaveSession({
       }
       await writeFile(projectId, filePath, snapshot, nodeType);
     },
-    [filePath, nodeType, projectId, saveContent],
+    [filePath, nodeType, projectId, saveContent, isContentReady],
   );
 
   const inner = useManualSave<string>({

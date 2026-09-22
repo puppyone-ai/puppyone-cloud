@@ -18,11 +18,16 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.ingest.file.ocr.base import (
+    OCRExternalJob,
+    OCRExternalJobCompletion,
     OCRProvider,
     OCRProviderAPIError,
+    OCRProviderCleanupResult,
+    OCRProviderCleanupState,
     OCRProviderConfigError,
     OCRProviderTimeoutError,
     ParsedDocument,
+    parse_document_with_external_lifecycle,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,80 +126,196 @@ class ReductoProvider(OCRProvider):
         Returns:
             ParsedDocument with extracted content
         """
+        return await parse_document_with_external_lifecycle(
+            self,
+            file_url=file_url,
+            data_id=data_id,
+        )
+
+    async def create_external_job(
+        self,
+        file_url: str,
+        data_id: str | None = None,
+    ) -> OCRExternalJob:
+        """Submit a Reducto parse and expose an async job ID immediately."""
+
         headers = self._get_headers()
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Step 1: Create parsing job
-            try:
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 logger.info(f"[Reducto] Creating parse job for: {file_url[:50]}...")
-
-                # Reducto API endpoint for parsing
-                # See: https://docs.reducto.ai/api-reference/parse
-                create_response = await client.post(
+                response = await client.post(
                     f"{self._base_url}/parse",
                     headers=headers,
                     json={
                         "document_url": file_url,
                         "options": {
-                            "output_mode": "markdown",  # Request markdown output
-                            "table_output_mode": "markdown",  # Tables as markdown
+                            "output_mode": "markdown",
+                            "table_output_mode": "markdown",
                         },
                     },
                 )
+        except httpx.HTTPError as exc:
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message=f"HTTP error creating job: {exc}",
+            ) from exc
 
-                if create_response.status_code == 401:
-                    raise OCRProviderAPIError(
-                        provider=self.name,
-                        message="Authentication failed. Check your REDUCTO_API_KEY.",
-                        status_code=401,
-                        raw_response=create_response.text,
-                    )
+        if response.status_code == 401:
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message="Authentication failed. Check your REDUCTO_API_KEY.",
+                status_code=401,
+                raw_response=response.text,
+            )
+        if response.status_code != 200:
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message=f"Failed to create parse job: {response.text}",
+                status_code=response.status_code,
+                raw_response=response.text,
+            )
 
-                if create_response.status_code != 200:
-                    raise OCRProviderAPIError(
-                        provider=self.name,
-                        message=f"Failed to create parse job: {create_response.text}",
-                        status_code=create_response.status_code,
-                        raw_response=create_response.text,
-                    )
+        payload = response.json()
+        if "result" in payload and payload.get("status") == "completed":
+            # A synchronous response has no live remote job to cancel.
+            return OCRExternalJob(
+                provider=self.name,
+                task_id=str(payload.get("job_id") or data_id or "sync"),
+                external=False,
+                metadata={"mode": "sync", "result": payload["result"]},
+            )
 
-                result = create_response.json()
+        job_id = payload.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message="No job_id in response",
+                raw_response=str(payload),
+            )
+        logger.info(f"[Reducto] Job created: {job_id}")
+        return OCRExternalJob(
+            provider=self.name,
+            task_id=job_id,
+            metadata={"mode": "async"},
+        )
 
-                # Reducto may return result directly (sync) or job_id (async)
-                if "result" in result and result.get("status") == "completed":
-                    # Sync response - result is already available
-                    markdown_content = self._extract_markdown(result["result"])
-                    return ParsedDocument(
-                        task_id=result.get("job_id", data_id or "sync"),
-                        markdown_content=markdown_content,
-                        metadata={"provider": "reducto", "mode": "sync"},
-                    )
-
-                # Async response - need to poll for result
-                job_id = result.get("job_id")
-                if not job_id:
-                    raise OCRProviderAPIError(
-                        provider=self.name,
-                        message="No job_id in response",
-                        raw_response=str(result),
-                    )
-
-                logger.info(f"[Reducto] Job created: {job_id}")
-
-            except httpx.HTTPError as e:
+    async def wait_external_job(
+        self,
+        job: OCRExternalJob,
+    ) -> OCRExternalJobCompletion:
+        self._validate_job(job)
+        if not job.external:
+            result = job.metadata.get("result")
+            if not isinstance(result, dict):
                 raise OCRProviderAPIError(
                     provider=self.name,
-                    message=f"HTTP error creating job: {e}",
-                ) from e
-
-            # Step 2: Poll for completion
-            markdown_content = await self._poll_job(client, job_id, headers)
-
-            return ParsedDocument(
-                task_id=job_id,
-                markdown_content=markdown_content,
-                metadata={"provider": "reducto", "mode": "async"},
+                    message="Synchronous Reducto result is missing",
+                )
+            return OCRExternalJobCompletion(
+                job=job,
+                metadata={"mode": "sync", "result": result},
             )
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            result = await self._wait_job_result(
+                client,
+                job.task_id,
+                self._get_headers(),
+            )
+        return OCRExternalJobCompletion(
+            job=job,
+            metadata={"mode": "async", "result": result},
+        )
+
+    async def materialize_external_job(
+        self,
+        completion: OCRExternalJobCompletion,
+    ) -> ParsedDocument:
+        self._validate_job(completion.job)
+        result = completion.metadata.get("result")
+        if not isinstance(result, dict):
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message="Reducto completion result is missing",
+            )
+        mode = "async" if completion.job.external else "sync"
+        return ParsedDocument(
+            task_id=completion.job.task_id,
+            markdown_content=self._extract_markdown(result),
+            metadata={"provider": self.name, "mode": mode},
+        )
+
+    def _validate_job(self, job: OCRExternalJob) -> None:
+        if job.provider != self.name or not job.task_id:
+            raise OCRProviderAPIError(
+                provider=self.name,
+                message="Reducto external job handle is invalid",
+            )
+
+    async def cancel_external_job(self, task_id: str) -> OCRProviderCleanupResult:
+        """Verify terminal state; this adapter has no Reducto cancel endpoint."""
+
+        try:
+            headers = self._get_headers()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{self._base_url}/parse/{task_id}",
+                    headers=headers,
+                )
+        except (httpx.HTTPError, OCRProviderConfigError) as exc:
+            return OCRProviderCleanupResult(
+                provider=self.name,
+                task_id=task_id,
+                state=OCRProviderCleanupState.FAILED,
+                detail=str(exc),
+                retryable=isinstance(exc, httpx.HTTPError),
+            )
+
+        if response.status_code == 404:
+            return OCRProviderCleanupResult(
+                provider=self.name,
+                task_id=task_id,
+                state=OCRProviderCleanupState.COMPLETE,
+                detail="Reducto job is absent",
+            )
+        if response.status_code != 200:
+            return OCRProviderCleanupResult(
+                provider=self.name,
+                task_id=task_id,
+                state=OCRProviderCleanupState.FAILED,
+                detail=f"Reducto status query failed ({response.status_code})",
+                retryable=response.status_code >= 500,
+            )
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("response is not an object")
+            status = str(payload.get("status") or "").lower()
+        except (TypeError, ValueError) as exc:
+            return OCRProviderCleanupResult(
+                provider=self.name,
+                task_id=task_id,
+                state=OCRProviderCleanupState.FAILED,
+                detail=f"Invalid Reducto status response: {exc}",
+                retryable=True,
+            )
+        if status in {"completed", "failed", "error", "cancelled", "canceled"}:
+            return OCRProviderCleanupResult(
+                provider=self.name,
+                task_id=task_id,
+                state=OCRProviderCleanupState.COMPLETE,
+                detail=f"Reducto job is terminal ({status})",
+            )
+        return OCRProviderCleanupResult(
+            provider=self.name,
+            task_id=task_id,
+            state=OCRProviderCleanupState.UNSUPPORTED,
+            detail=(
+                f"Reducto job is {status or 'non-terminal'}; adapter has no "
+                "verified cancellation API"
+            ),
+            retryable=True,
+        )
 
     async def _poll_job(
         self,
@@ -213,6 +334,17 @@ class ReductoProvider(OCRProvider):
         Returns:
             Extracted markdown content
         """
+        result = await self._wait_job_result(client, job_id, headers)
+        return self._extract_markdown(result)
+
+    async def _wait_job_result(
+        self,
+        client: httpx.AsyncClient,
+        job_id: str,
+        headers: dict,
+    ) -> dict:
+        """Poll until Reducto returns a materializable result payload."""
+
         elapsed = 0
 
         while elapsed < self._max_wait_time:
@@ -234,7 +366,14 @@ class ReductoProvider(OCRProvider):
 
                 if status == "completed":
                     logger.info(f"[Reducto] Job {job_id} completed")
-                    return self._extract_markdown(result.get("result", {}))
+                    completed = result.get("result", {})
+                    if not isinstance(completed, dict):
+                        raise OCRProviderAPIError(
+                            provider=self.name,
+                            message="Completed Reducto job has an invalid result",
+                            raw_response=str(result),
+                        )
+                    return completed
 
                 if status in ("failed", "error"):
                     error_msg = result.get("error", "Unknown error")
@@ -284,22 +423,18 @@ class ReductoProvider(OCRProvider):
         # Chunks/pages structure
         if "chunks" in result and isinstance(result["chunks"], list):
             return "\n\n".join(
-                chunk.get("text", "") or chunk.get("markdown", "")
-                for chunk in result["chunks"]
+                chunk.get("text", "") or chunk.get("markdown", "") for chunk in result["chunks"]
             )
 
         # Pages structure
         if "pages" in result and isinstance(result["pages"], list):
             return "\n\n---\n\n".join(
-                page.get("markdown", "") or page.get("text", "")
-                for page in result["pages"]
+                page.get("markdown", "") or page.get("text", "") for page in result["pages"]
             )
 
         # Elements structure
         if "elements" in result and isinstance(result["elements"], list):
-            return "\n\n".join(
-                self._format_element(elem) for elem in result["elements"]
-            )
+            return "\n\n".join(self._format_element(elem) for elem in result["elements"])
 
         # Text field as fallback
         if "text" in result:
@@ -321,8 +456,10 @@ class ReductoProvider(OCRProvider):
                     f"{self._base_url}/health",
                     headers=self._get_headers(),
                 )
-                return response.status_code in (200, 404)  # 404 means API is up but endpoint doesn't exist
+                return response.status_code in (
+                    200,
+                    404,
+                )  # 404 means API is up but endpoint doesn't exist
         except Exception as e:
             logger.warning(f"[Reducto] Health check failed: {e}")
             return False
-

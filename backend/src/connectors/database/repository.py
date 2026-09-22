@@ -1,4 +1,4 @@
-"""DB Connector Repository over connections + repo_scopes."""
+"""DB Connector Repository over Project-owned connections."""
 
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -10,7 +10,6 @@ from src.infra.security.crypto import (
     encrypt_db_connection_config,
 )
 from src.utils.id_generator import generate_uuid_v7
-from src.repo.scope_service import ScopeService
 
 DB_PROVIDER = "database"
 
@@ -63,12 +62,11 @@ class DBConnectionRepository:
         config: dict,
     ) -> DBConnection:
         encrypted_config = encrypt_db_connection_config(config)
-        scope = ScopeService().ensure_root_scope(project_id)
         data = {
             "id": generate_uuid_v7(),
             "org_id": self._project_org_id(project_id),
             "project_id": project_id,
-            "scope_id": scope.id,
+            "scope_id": None,
             "provider": DB_PROVIDER,
             "name": name,
             "direction": "inbound",

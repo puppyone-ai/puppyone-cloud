@@ -35,7 +35,7 @@ def fanout_targets(
     for every scope whose subtree intersects the change.
 
     A scope at path P is affected by an absolute path A iff A is within P's
-    subtree (A == P or A under P). The returned paths are P-relative (root scope,
+    subtree (A == P or A under P). The returned paths are P-relative (Project root,
     P == "", sees absolute paths as-is).
     """
     targets: dict[str, list[str]] = {}

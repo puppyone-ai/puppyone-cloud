@@ -4,6 +4,8 @@ Agent Config Dependencies
 FastAPI dependency injection.
 """
 
+from typing import Callable
+
 from fastapi import Depends, HTTPException, Query, status
 
 from src.connectors.agent.config.service import AgentConfigService
@@ -11,8 +13,9 @@ from src.connectors.agent.config.repository import AgentRepository
 from src.connectors.agent.config.models import Agent
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project.dependencies import get_project_service
-from src.platform.project.service import ProjectService
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
 
 
 _AGENT_NOT_FOUND = "Agent not found"
@@ -30,70 +33,64 @@ def get_agent_config_service(
     return AgentConfigService(repository=repo)
 
 
-def require_project_membership_query(
+def require_agent_read_query(
     project_id: str = Query(..., description="Project ID (required)"),
     current_user: CurrentUser = Depends(get_current_user),
-    project_service: ProjectService = Depends(get_project_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ) -> str:
-    """
-    SECURITY (C-2): Verify the current user is a member of the project
-    given via query parameter. Returns the project_id on success.
-
-    Without this check, any authenticated user could call
-    /agent-config/?project_id=<other-project> and read agents (including
-    sensitive system_prompt config) from a project they don't belong to.
-    """
-    role = project_service.verify_project_access(project_id, current_user.user_id)
-    if role is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this project",
-        )
+    """Authorize the named Agent read action from a query Project id."""
+    authorization.authorize(
+        project_id, current_user.user_id, ProjectAction.AGENT_READ
+    )
     return project_id
 
 
-def require_project_membership_body(
+def require_agent_manage_body(
     project_id: str,
     current_user: CurrentUser,
-    project_service: ProjectService,
+    authorization: AuthorizationService,
 ) -> str:
-    """Helper for routers that need to verify project_id taken from a request body.
+    """Authorize the named Agent manage action from a request-body Project id.
 
     Not a Depends — call directly inside the handler after extracting project_id
     from the validated payload.
     """
-    role = project_service.verify_project_access(project_id, current_user.user_id)
-    if role is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this project",
-        )
+    authorization.authorize(
+        project_id, current_user.user_id, ProjectAction.AGENT_MANAGE
+    )
     return project_id
 
 
-def get_verified_agent(
-    agent_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
-    service: AgentConfigService = Depends(get_agent_config_service),
-) -> Agent:
-    """
-    Verify and get an Agent.
+def require_agent_action(action: ProjectAction) -> Callable[..., Agent]:
+    def dependency(
+        agent_id: str,
+        current_user: CurrentUser = Depends(get_current_user),
+        service: AgentConfigService = Depends(get_agent_config_service),
+        authorization: AuthorizationService = Depends(get_authorization_service),
+    ) -> Agent:
+        project_id = service.get_agent_project_id(agent_id)
+        if project_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_AGENT_NOT_FOUND,
+            )
+        authorization.authorize(project_id, current_user.user_id, action)
+        if not service.is_visible_to(agent_id, current_user.user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_AGENT_NOT_FOUND,
+            )
+        agent = service.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_AGENT_NOT_FOUND,
+            )
+        return agent
 
-    Raises 404 or 403 if the Agent does not exist or the user lacks permission.
-    Access is verified via project_id (Agents are bound to Projects, not Users).
-    """
-    agent = service.get_agent(agent_id)
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=_AGENT_NOT_FOUND,
-        )
-    # Verify user access via the project table
-    if not service.verify_access(agent_id, current_user.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this agent",
-        )
-    return agent
+    return dependency
 
 
+get_verified_agent = require_agent_action(ProjectAction.AGENT_READ)
+get_writable_agent = require_agent_action(ProjectAction.AGENT_MANAGE)
+get_credential_agent = require_agent_action(ProjectAction.CREDENTIAL_MANAGE)

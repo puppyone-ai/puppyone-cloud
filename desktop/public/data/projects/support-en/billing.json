@@ -1,9 +1,0 @@
-[
-  { "user_uuid": "user-s001", "invoice_id": "inv-2001", "status": "completed", "amount": 140, "updated_at": "2025-11-02 08:40" },
-  { "user_uuid": "user-s002", "invoice_id": "inv-2002", "status": "pending", "amount": 65, "updated_at": "2025-11-03 13:11" },
-  { "user_uuid": "user-s003", "invoice_id": "inv-2003", "status": "in_progress", "amount": 88, "updated_at": "2025-11-05 15:50" },
-  { "user_uuid": "user-s004", "invoice_id": "inv-2004", "status": "failed", "amount": 33, "updated_at": "2025-11-06 19:05" },
-  { "user_uuid": "user-s005", "invoice_id": "inv-2005", "status": "completed", "amount": 210, "updated_at": "2025-11-07 10:22" }
-]
-
-

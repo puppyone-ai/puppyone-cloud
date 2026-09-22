@@ -3,11 +3,13 @@ from fastapi.testclient import TestClient
 
 from src.connectors.agent.router import router as agent_router
 from src.connectors.agent.dependencies import get_agent_service
-from src.infra.sandbox.dependencies import get_sandbox_service
+from src.platform.scope_sandbox.execution.dependencies import get_sandbox_service
 from src.connectors.agent.chat.dependencies import get_chat_service
 from src.tool.dependencies import get_tool_service
 from src.infra.s3.dependencies import get_s3_service
 from src.connectors.agent.config.dependencies import get_agent_config_service
+from src.platform.auth.dependencies import get_current_user
+from src.platform.auth.models import CurrentUser
 
 
 class _DummyAgentService:
@@ -25,6 +27,13 @@ def create_test_app() -> FastAPI:
     app.dependency_overrides[get_tool_service] = lambda: object()
     app.dependency_overrides[get_s3_service] = lambda: object()
     app.dependency_overrides[get_agent_config_service] = lambda: object()
+    # Keep this validation test authenticated: production intentionally rejects
+    # anonymous agent requests before exposing request-shape validation details.
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        user_id="test-user",
+        email="test@example.com",
+        role="authenticated",
+    )
     return app
 
 
