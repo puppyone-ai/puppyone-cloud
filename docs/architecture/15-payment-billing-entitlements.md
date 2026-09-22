@@ -1,5 +1,7 @@
 # Payment, Billing, Entitlements, and Usage Architecture
 
+> Scope update — 2026-09-21: this is the organization/Runtime billing contract. The current Desktop Agent sandbox uses [personal credits and a model inference gateway](../../backend/src/platform/managed_ai/README.md); it does not enable hosted Agent execution, RU billing or the project-upload conversion loop.
+
 > Status: active architecture contract for the PuppyOne product plane
 > Implementation baseline: `puppyone@cf6dc22e+dirty`, `PuppyPay@b73a722`,
 > `puppyone-desktop@7e0a9e8+dirty`

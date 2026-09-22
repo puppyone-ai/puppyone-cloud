@@ -22,11 +22,11 @@ class Settings(BaseSettings):
         dotenv_settings,
         file_secret_settings,
     ):
-        # Let project-level .env take priority, overriding global environment variables
+        # Explicit constructor/launch settings win; .env supplies local defaults.
         return (
             init_settings,
-            dotenv_settings,
             env_settings,
+            dotenv_settings,
             file_secret_settings,
         )
 
@@ -91,10 +91,8 @@ class Settings(BaseSettings):
         if self.DEBUG is None:
             self.DEBUG = self.APP_ENV in {"development", "test"}
 
-        # Managed local runtimes need one narrow escape hatch from this
-        # repository's deliberate dotenv-before-environment precedence. The
-        # Desktop dev orchestrator uses it so a production PUBLIC_URL in the
-        # sibling backend .env cannot leak into loopback Git remote responses.
+        # Retain the Desktop orchestrator's explicit public locator override.
+        # Existing launchers use it to keep loopback Git remote responses local.
         if self.PUPPYONE_PUBLIC_URL_OVERRIDE.strip():
             self.PUBLIC_URL = self.PUPPYONE_PUBLIC_URL_OVERRIDE.strip()
 
@@ -142,6 +140,20 @@ class Settings(BaseSettings):
                 f"{self.APP_ENV} — this would expose every endpoint as "
                 f"anonymous. Unset SKIP_AUTH or set APP_ENV=development."
             )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_managed_ai_safety(self):
+        if self.MANAGED_AI_ENABLED:
+            if self.SKIP_AUTH:
+                raise ValueError("Managed AI requires authenticated users; SKIP_AUTH must be false")
+            if not self.PUPPYPAY_BASE_URL or len(self.PUPPYPAY_INTERNAL_API_SECRET) < 32:
+                raise ValueError("Managed AI requires the private PuppyPay gateway")
+            if self.APP_ENV in {"staging", "production"}:
+                if not self.PUPPYPAY_BASE_URL.startswith("https://"):
+                    raise ValueError("Managed AI requires HTTPS for PuppyPay")
+                if len(self.INTERNAL_API_SECRET) < 32 or self.INTERNAL_API_SECRET == self.PUPPYPAY_INTERNAL_API_SECRET:
+                    raise ValueError("Managed AI requires distinct service credentials")
         return self
 
     @model_validator(mode="after")
@@ -530,6 +542,8 @@ class Settings(BaseSettings):
     ENTITLEMENTS_MODE: Literal["disabled", "local", "db"] = "disabled"
     BILLING_ENFORCEMENT: Literal["disabled", "shadow", "required"] = "disabled"
     LOCAL_ENTITLEMENTS_FILE: str | None = None
+    MANAGED_AI_ENABLED: bool = False
+    MANAGED_AI_OPENROUTER_KEY: str = ""
     BILLING_UI_ENABLED: bool = False
     BILLING_WRITES_ENABLED: bool = False
     SEAT_BILLING_MODE: Literal["disabled", "shadow", "required"] = "disabled"

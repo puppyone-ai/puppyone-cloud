@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # Find .env relative to this file (backend/.env)
 # worker.py -> jobs/ -> file/ -> upload/ -> src/ -> backend/
 _env_path = Path(__file__).resolve().parent.parent.parent.parent.parent / ".env"
-load_dotenv(_env_path, override=True)
+load_dotenv(_env_path, override=False)
 
 
 import logging

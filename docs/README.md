@@ -22,6 +22,8 @@ Read in this order:
 15. [Payment, Billing, Entitlements, and Usage](architecture/15-payment-billing-entitlements.md)
 16. [Project Publish Control Plane](architecture/16-project-publish-control-plane.md)
 
+- [Desktop Agent inference and personal credits](../backend/src/platform/managed_ai/README.md) maps the implemented module and links the canonical architecture/data/sandbox runbook in `puppy-issues`.
+
 Product and frontend design:
 
 - [Design Guidelines](design.md)

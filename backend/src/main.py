@@ -23,7 +23,9 @@ APP_START_TIME = time.time()
 from dotenv import load_dotenv
 
 dotenv_start = time.time()
-load_dotenv(override=True)
+# Explicit launch/deployment configuration takes precedence over local defaults.
+# Overriding it can silently redirect Desktop auth or billing to another origin.
+load_dotenv(override=False)
 dotenv_duration = time.time() - dotenv_start
 
 # Initialize Loguru + intercept standard logging (including uvicorn.*)
@@ -762,6 +764,10 @@ def create_app() -> FastAPI:
     from src.platform.billing.router import router as billing_router
 
     app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
+    from src.platform.managed_ai.router import router as managed_ai_router, internal_router as managed_ai_internal_router
+
+    app.include_router(managed_ai_router, prefix="/api/v1")
+    app.include_router(managed_ai_internal_router)
     from src.connectors.mcp_endpoint.router import router as mcp_endpoint_router
 
     app.include_router(mcp_endpoint_router, prefix="/api/v1", tags=["mcp-endpoints"])

@@ -278,7 +278,7 @@ def test_railway_smoke_uses_human_git_control_plane_and_current_snapshot_cap():
 
 def test_web_one_time_git_credential_is_bound_to_displayed_target_and_mode():
     panel = (
-        ROOT / "frontend/app/(main)/projects/[projectId]/data/components/access-points/"
+        ROOT / "frontend/features/files/components/access-points/"
         "connect-methods/GitCredentialIssuePanel.tsx"
     ).read_text(encoding="utf-8")
 
