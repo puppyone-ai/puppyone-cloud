@@ -15,12 +15,15 @@ from fastapi.testclient import TestClient
 
 from src.config import settings
 from src.platform.auth import router as auth_router
+from src.platform.auth.desktop_router import get_session_verifier
 from src.platform.auth.shared_security_store import get_auth_security_store
 
 DESKTOP_VERIFIER = "desktop-verifier-abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFG"
-DESKTOP_CHALLENGE = base64.urlsafe_b64encode(
-    hashlib.sha256(DESKTOP_VERIFIER.encode("ascii")).digest()
-).rstrip(b"=").decode("ascii")
+DESKTOP_CHALLENGE = (
+    base64.urlsafe_b64encode(hashlib.sha256(DESKTOP_VERIFIER.encode("ascii")).digest())
+    .rstrip(b"=")
+    .decode("ascii")
+)
 
 
 class _SharedStore:
@@ -40,6 +43,27 @@ class _SharedStore:
             return None
         return deepcopy(record[0])
 
+    def read(self, namespace, key):
+        with self.lock:
+            record = self.values.get((namespace, key))
+            if not record or record[1] <= time.monotonic():
+                return None
+            return deepcopy(record[0])
+
+    def transition(self, namespace, key, expected, *, replacement=None, destination=None):
+        with self.lock:
+            record = self.values.get((namespace, key))
+            if not record or record[1] <= time.monotonic() or record[0] != expected:
+                return False
+            if replacement is None:
+                del self.values[namespace, key]
+            else:
+                self.values[namespace, key] = (deepcopy(replacement), record[1])
+            if destination:
+                ns, target, value, ttl = destination
+                self.values[ns, target] = (deepcopy(value), time.monotonic() + ttl)
+            return True
+
     def hit(self, bucket, subject, limit, window_seconds):
         key = (bucket, subject)
         with self.lock:
@@ -54,103 +78,68 @@ def _app(store):
     return app
 
 
-class _FakeAsyncResponse:
-    status_code = 200
-
-    @staticmethod
-    def json():
-        return {
-            "access_token": "access",
-            "refresh_token": "refresh",
-            "expires_in": 3600,
-            "user": {"email": "user@example.com"},
-        }
-
-
-class _FakeAsyncClient:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return None
-
-    async def post(self, *_args, **_kwargs):
-        return _FakeAsyncResponse()
-
-
 def test_desktop_oauth_crosses_instances_and_rejects_replay(monkeypatch):
     store = _SharedStore()
-    first = TestClient(_app(store))
-    second = TestClient(_app(store))
-    monkeypatch.setattr(settings, "DESKTOP_AUTH_PUBLIC_BASE_URL", "https://api.example.com")
+
+    class Verifier:
+        async def verify_pair(self, access, refresh):
+            assert (access, refresh) == ("access", "refresh")
+            return {"access_token": "access", "refresh_token": "refresh"}
+
+    apps = [_app(store), _app(store)]
+    for app in apps:
+        app.dependency_overrides[get_session_verifier] = Verifier
+    first, second = [TestClient(app) for app in apps]
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.example.test")
     monkeypatch.setattr(settings, "DESKTOP_AUTH_ALLOWED_CALLBACKS", "puppyone://auth/callback")
-    monkeypatch.setattr(settings, "SUPABASE_PUBLIC_URL", "https://login.example.com")
-    monkeypatch.setenv("SUPABASE_URL", "http://supabase-internal:8000")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
-    monkeypatch.setattr(auth_router.httpx, "AsyncClient", _FakeAsyncClient)
-
-    started = first.post(
-        "/auth/desktop/start",
-        json={
-            "provider": "google",
-            "callback_url": "puppyone://auth/callback",
-            "code_challenge": DESKTOP_CHALLENGE,
-            "code_challenge_method": "S256",
-        },
-    ).json()["data"]
+    start_body = {
+        "provider": "google",
+        "callback_url": "puppyone://auth/callback",
+        "code_challenge": DESKTOP_CHALLENGE,
+        "code_challenge_method": "S256",
+    }
+    started = first.post("/auth/desktop/start", json=start_body).json()["data"]
+    assert started["login_url"].startswith("https://web.example.test/login?")
     state = started["state"]
-    assert started["login_url"].startswith("https://login.example.com/auth/v1/authorize?")
-    assert "code_challenge=" in started["login_url"]
-
-    callback = second.get(
-        "/auth/desktop/callback",
-        params={"code": "provider-code", "state": state},
-        follow_redirects=False,
+    proof = "a" * 64
+    assert (
+        second.post("/auth/desktop/bind", json={"state": state, "browser_proof": proof}).status_code
+        == 200
     )
-    assert callback.status_code == 302
-    query = parse_qs(urlparse(callback.headers["location"]).query)
-    exchange_code = query["code"][0]
-
-    exchanged = first.post(
-        "/auth/desktop/exchange",
-        json={
-            "code": exchange_code,
-            "state": state,
-            "code_verifier": DESKTOP_VERIFIER,
-            "redirect_uri": "puppyone://auth/callback",
-        },
+    complete_body = {
+        "state": state,
+        "browser_proof": proof,
+        "access_token": "access",
+        "refresh_token": "refresh",
+    }
+    completed = first.post(
+        "/auth/desktop/complete", json=complete_body, headers={"Authorization": "Bearer access"}
     )
-    assert exchanged.status_code == 200
-    assert exchanged.json()["data"]["access_token"] == "access"
-    assert second.post(
-        "/auth/desktop/exchange",
-        json={
-            "code": exchange_code,
-            "state": state,
-            "code_verifier": DESKTOP_VERIFIER,
-            "redirect_uri": "puppyone://auth/callback",
-        },
-    ).status_code == 400
-    assert first.get(
-        "/auth/desktop/callback",
-        params={"code": "provider-code", "state": state},
-    ).status_code == 400
-
-    expired = first.post(
-        "/auth/desktop/start",
-        json={
-            "provider": "google",
-            "callback_url": "puppyone://auth/callback",
-            "code_challenge": DESKTOP_CHALLENGE,
-            "code_challenge_method": "S256",
-        },
-    ).json()["data"]["state"]
-    value, _deadline = store.values[("desktop-state", expired)]
-    store.values[("desktop-state", expired)] = (value, 0)
-    assert second.get(
-        "/auth/desktop/callback",
-        params={"code": "provider-code", "state": expired},
-    ).status_code == 400
+    assert completed.status_code == 200
+    query = parse_qs(urlparse(completed.json()["data"]["redirect_url"]).query)
+    exchange = {
+        "code": query["code"][0],
+        "state": state,
+        "code_verifier": DESKTOP_VERIFIER,
+        "redirect_uri": "puppyone://auth/callback",
+    }
+    assert second.post("/auth/desktop/exchange", json=exchange).status_code == 200
+    assert first.post("/auth/desktop/exchange", json=exchange).status_code == 400
+    assert (
+        second.post(
+            "/auth/desktop/complete", json=complete_body, headers={"Authorization": "Bearer access"}
+        ).status_code
+        == 400
+    )
+    expired = first.post("/auth/desktop/start", json=start_body).json()["data"]["state"]
+    value, _ = store.values["desktop-state", expired]
+    store.values["desktop-state", expired] = (value, 0)
+    assert (
+        second.post(
+            "/auth/desktop/bind", json={"state": expired, "browser_proof": proof}
+        ).status_code
+        == 400
+    )
 
 
 def test_login_global_limit_blocks_before_supabase(monkeypatch):
