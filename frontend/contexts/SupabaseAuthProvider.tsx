@@ -1,29 +1,29 @@
 'use client';
 
-import React, {
-  createContext,
-  useContext,
-  useMemo,
-  useState,
-  useEffect,
-} from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import React, { createContext, useContext, useMemo, useState, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
+import { createBrowserLogin } from '@/features/auth/supabase/browser-login';
+import type { LoginIntent, SignInProvider } from '@/features/auth/login-intent';
+import { loginReturnPath } from '@/features/auth/login-intent';
 import { Session, SupabaseClient } from '@supabase/supabase-js';
-import {
-  getEmailConfirmUrl,
-  getPasswordResetRedirectUrl,
-  getOAuthCallbackUrl,
-} from '@/lib/auth-urls';
+import { getEmailConfirmUrl, getPasswordResetRedirectUrl } from '@/lib/auth-urls';
 
 type AuthContextValue = {
   supabase: SupabaseClient | null;
   session: Session | null;
   userId: string | null;
   isAuthReady: boolean;
+  authError: string | null;
+  availableProviders: SignInProvider[];
+  loginIntent: LoginIntent | null;
+  finishSignIn: () => Promise<string>;
   signInWithProvider: (provider: 'google' | 'github') => Promise<void>;
   signInWithOtp: (email: string) => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (email: string, password: string) => Promise<{ needsEmailConfirmation: boolean }>;
+  signUpWithEmail: (
+    email: string,
+    password: string
+  ) => Promise<{ needsEmailConfirmation: boolean }>;
   verifyEmailOtp: (email: string, token: string) => Promise<{ accessToken: string }>;
   resendConfirmation: (email: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -34,81 +34,87 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-export function SupabaseAuthProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
+  const pathname = usePathname();
+  const runtimeRef = useRef<{ path: string; login: ReturnType<typeof createBrowserLogin> } | null>(
+    null
+  );
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [availableProviders, setAvailableProviders] = useState<SignInProvider[]>([]);
+  const [loginIntent, setLoginIntent] = useState<LoginIntent | null>(null);
+
   useEffect(() => {
-    // Connector OAuth callbacks also return to this origin with ?code=...
-    // Keep the Supabase login client out of those pages so it never mistakes
-    // a third-party connector code for a Puppyone sign-in callback.
-    if (
-      typeof window !== 'undefined' &&
-      window.location.pathname.startsWith('/oauth/')
-    ) {
+    // Connector authorization codes belong to the connector, not Supabase Auth.
+    if (window.location.pathname.startsWith('/oauth/')) {
       setIsAuthReady(true);
       return;
     }
-
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    if (!url || !anon) {
-      console.warn(
-        'Supabase env not set: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY'
-      );
-      setIsAuthReady(true);
-      return;
-    }
-
-    const client = createBrowserClient(url, anon);
-    setSupabase(client);
-
-    // 获取当前 session
-    client.auth
-      .getSession()
-      .then(({ data }) => setSession(data.session ?? null))
-      .finally(() => setIsAuthReady(true));
-
-    // 监听 auth 状态变化
-    const { data: sub } = client.auth.onAuthStateChange(
-      (_event, newSession) => {
-        setSession(newSession);
+    let active = true;
+    setIsAuthReady(false);
+    setAuthError(null);
+    let unsubscribe = () => {};
+    try {
+      // Keep the same coordinator through Strict Mode's effect replay. In
+      // particular, an OAuth authorization code must only be exchanged once.
+      const path = window.location.pathname;
+      if (!runtimeRef.current || runtimeRef.current.path !== path) {
+        runtimeRef.current = {
+          path,
+          login: createBrowserLogin(new URL(window.location.href), window.sessionStorage),
+        };
       }
-    );
-
-    return () => sub.subscription.unsubscribe();
-  }, []);
+      const login = runtimeRef.current.login;
+      // The browser adapter already captured the code; remove transient
+      // credentials from history at this UI boundary before further requests.
+      if (new URL(window.location.href).searchParams.has('auth_code')) {
+        window.history.replaceState(window.history.state, '', loginReturnPath(login.intent));
+      }
+      setSupabase(login.client);
+      setLoginIntent(login.intent);
+      const subscription = login.client.auth.onAuthStateChange((_event, nextSession) => {
+        if (active) setSession(nextSession);
+      });
+      unsubscribe = () => subscription.data.subscription.unsubscribe();
+      void login
+        .initialize()
+        .then(async providers => {
+          const { data, error } = await login.client.auth.getSession();
+          if (error) throw error;
+          if (!active) return;
+          setAvailableProviders(providers);
+          setSession(data.session);
+          setIsAuthReady(true);
+        })
+        .catch(error => {
+          if (!active) return;
+          setAuthError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to prepare sign-in. Please reload this page or start sign-in again.'
+          );
+          setIsAuthReady(false);
+        });
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Unable to prepare sign-in.');
+    }
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [pathname]);
 
   const signInWithProvider = async (provider: 'google' | 'github') => {
-    if (!supabase) {
-      console.warn('Supabase client not initialized');
-      throw new Error('Supabase is not configured');
-    }
-    try {
-      console.log('Starting OAuth sign-in with:', provider);
+    if (!isAuthReady || !runtimeRef.current) throw new Error('Auth client is not ready.');
+    await runtimeRef.current.login.signInWithProvider(provider);
+  };
 
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: getOAuthCallbackUrl(),
-          skipBrowserRedirect: false,
-        },
-      });
-      if (error) {
-        console.error('Supabase OAuth error:', error);
-        throw error;
-      }
-      console.log('OAuth initiated:', data);
-    } catch (err) {
-      console.error('OAuth sign-in failed:', err);
-      throw err;
-    }
+  const finishSignIn = async () => {
+    if (!isAuthReady || !runtimeRef.current) throw new Error('Auth client is not ready.');
+    return runtimeRef.current.login.finish();
   };
 
   const signInWithOtp = async (email: string) => {
@@ -226,10 +232,9 @@ export function SupabaseAuthProvider({
     // server-side, so the outcome is safe either way.
     try {
       if (supabase) {
-        // Supabase v2 sometimes wedges on a server round-trip when the
-        // refresh token is already revoked (e.g. user signed out from
-        // another tab). ``scope: 'local'`` keeps the call client-side:
-        // clears the session cookie + storage and returns immediately.
+        // Revoke this Supabase session, including its refresh token, without
+        // revoking independent sessions such as Desktop. This makes a network
+        // request; it is not merely a local cookie deletion.
         await supabase.auth.signOut({ scope: 'local' });
       }
     } catch (err) {
@@ -253,6 +258,10 @@ export function SupabaseAuthProvider({
       session,
       userId: session?.user?.id ?? null,
       isAuthReady,
+      authError,
+      availableProviders,
+      loginIntent,
+      finishSignIn,
       signInWithProvider,
       signInWithOtp,
       signInWithEmail,
@@ -264,7 +273,7 @@ export function SupabaseAuthProvider({
       signOut,
       getAccessToken,
     }),
-    [supabase, session, isAuthReady]
+    [supabase, session, isAuthReady, authError, availableProviders, loginIntent]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -10,32 +10,30 @@ GET    /auth/config           Public Supabase config (URL + anon key) for Realti
 """
 
 import asyncio
-import base64
 import hashlib
 import os
-import re
-import secrets
 import time
-from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
 from supabase import create_client
 
 from src.common_schemas import ApiResponse
 from src.config import settings
 from src.platform.auth.dependencies import CurrentUser, get_current_user, get_initialization_service
+from src.platform.auth.desktop_router import router as desktop_router
 from src.platform.auth.initialization import UserInitializationService
+from src.platform.auth.methods import router as methods_router
 from src.platform.auth.shared_security_store import (
-    AtomicTTLStore,
     RateLimiter,
     SecurityStoreUnavailable,
     get_auth_security_store,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+router.include_router(desktop_router)
+router.include_router(methods_router)
 
 
 _CHECK_EMAIL_WINDOW = 60  # seconds
@@ -106,37 +104,6 @@ class CheckEmailResponse(BaseModel):
     exists: bool
 
 
-class DesktopStartRequest(BaseModel):
-    provider: str | None = None
-    callback_url: str
-    code_challenge: str | None = None
-    code_challenge_method: str | None = None
-
-
-class DesktopStartResponse(BaseModel):
-    state: str
-    login_url: str
-
-
-class DesktopExchangeRequest(BaseModel):
-    code: str
-    state: str
-    code_verifier: str | None = None
-    redirect_uri: str | None = None
-
-
-class DesktopCompleteRequest(BaseModel):
-    state: str
-    access_token: str
-    refresh_token: str
-    expires_in: int | None = None
-    user_email: str | None = None
-
-
-class DesktopCompleteResponse(BaseModel):
-    redirect_url: str
-
-
 def _make_auth_client():
     """Create a throwaway Supabase client for auth operations only.
 
@@ -154,313 +121,8 @@ class RealtimeConfig(BaseModel):
     supabase_anon_key: str
 
 
-def _allowed_desktop_callbacks() -> set[str]:
-    return {
-        item.strip() for item in settings.DESKTOP_AUTH_ALLOWED_CALLBACKS.split(",") if item.strip()
-    }
-
-
 def _public_supabase_url() -> str:
-    """Return the browser-reachable auth origin, not an internal service DNS name."""
     return (settings.SUPABASE_PUBLIC_URL or os.environ.get("SUPABASE_URL", "")).rstrip("/")
-
-
-_DESKTOP_PKCE_VALUE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
-_DESKTOP_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
-_DESKTOP_LOOPBACK_PATH = "/auth/callback"
-
-
-def _validate_desktop_code_challenge(
-    code_challenge: str | None,
-    code_challenge_method: str | None,
-) -> str:
-    challenge = (code_challenge or "").strip()
-    method = (code_challenge_method or "").strip().upper()
-    if method != "S256" or not _DESKTOP_PKCE_VALUE.fullmatch(challenge):
-        raise HTTPException(status_code=400, detail="Invalid Desktop PKCE challenge")
-    return challenge
-
-
-def _is_desktop_loopback_callback(callback_url: str) -> bool:
-    parsed = urlparse(callback_url)
-    try:
-        port = parsed.port
-    except ValueError:
-        return False
-    return (
-        parsed.scheme == "http"
-        and parsed.hostname in _DESKTOP_LOOPBACK_HOSTS
-        and port is not None
-        and parsed.path == _DESKTOP_LOOPBACK_PATH
-        and not parsed.params
-        and not parsed.query
-        and not parsed.fragment
-        and parsed.username is None
-        and parsed.password is None
-    )
-
-
-def _validate_desktop_callback(callback_url: str, *, allow_loopback: bool = False) -> str:
-    parsed = urlparse(callback_url)
-    if parsed.query or parsed.fragment or not parsed.scheme:
-        raise HTTPException(status_code=400, detail="Invalid desktop callback URL")
-    if callback_url in _allowed_desktop_callbacks():
-        return callback_url
-    if allow_loopback and _is_desktop_loopback_callback(callback_url):
-        return callback_url
-    raise HTTPException(status_code=400, detail="Desktop callback URL is not allowed")
-
-
-def _store_error(exc: SecurityStoreUnavailable) -> HTTPException:
-    return HTTPException(status_code=503, detail="Authentication security store unavailable")
-
-
-def _desktop_browser_login_url(state: str) -> str:
-    frontend_origin = settings.FRONTEND_URL.rstrip("/")
-    parsed = urlparse(frontend_origin)
-    loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-    if (
-        not frontend_origin
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in {"", "/"}
-        or (
-            parsed.scheme != "https"
-            and not (
-                settings.APP_ENV in {"development", "test"} and parsed.scheme == "http" and loopback
-            )
-        )
-    ):
-        raise HTTPException(status_code=503, detail="Desktop browser login is not configured")
-    query = urlencode({"client": "desktop", "desktop_state": state})
-    return f"{frontend_origin}/login?{query}"
-
-
-def _desktop_exchange_redirect(
-    *,
-    state: str,
-    pending: dict,
-    session: dict,
-    store: AtomicTTLStore,
-) -> str:
-    exchange_code = secrets.token_urlsafe(32)
-    try:
-        store.put(
-            "desktop-exchange",
-            exchange_code,
-            {
-                "state": state,
-                "session": session,
-                "callback_url": pending["callback_url"],
-                "desktop_code_challenge": pending.get("desktop_code_challenge"),
-            },
-            settings.DESKTOP_AUTH_EXCHANGE_TTL_SECONDS,
-        )
-    except SecurityStoreUnavailable as exc:
-        raise _store_error(exc) from exc
-    callback_url = str(pending["callback_url"])
-    separator = "&" if "?" in callback_url else "?"
-    return f"{callback_url}{separator}{urlencode({'code': exchange_code, 'state': state})}"
-
-
-def _request_bearer_token(request: Request) -> str:
-    scheme, separator, token = request.headers.get("authorization", "").partition(" ")
-    if separator and scheme.lower() == "bearer" and token.strip():
-        return token.strip()
-    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-
-
-@router.post("/desktop/start", response_model=ApiResponse[DesktopStartResponse])
-def desktop_auth_start(
-    body: DesktopStartRequest,
-    store: AtomicTTLStore = Depends(get_auth_security_store),
-):
-    """Start a browser-mediated Desktop flow whose state is replica-safe."""
-    provider = (body.provider or "").strip().lower() or None
-    if provider is not None and provider not in {"google", "github"}:
-        raise HTTPException(status_code=400, detail="Unsupported OAuth provider")
-    desktop_code_challenge = _validate_desktop_code_challenge(
-        body.code_challenge,
-        body.code_challenge_method,
-    )
-    callback_url = _validate_desktop_callback(
-        body.callback_url,
-        allow_loopback=True,
-    )
-    state = secrets.token_urlsafe(32)
-    pending = {
-        "callback_url": callback_url,
-        "desktop_code_challenge": desktop_code_challenge,
-    }
-
-    if provider is None:
-        login_url = _desktop_browser_login_url(state)
-    else:
-        public_base = settings.DESKTOP_AUTH_PUBLIC_BASE_URL.rstrip("/")
-        supabase_url = _public_supabase_url()
-        if not public_base or not supabase_url:
-            raise HTTPException(status_code=503, detail="Desktop OAuth is not configured")
-        verifier = secrets.token_urlsafe(64)
-        provider_challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
-            .rstrip(b"=")
-            .decode("ascii")
-        )
-        pending["code_verifier"] = verifier
-        redirect_to = f"{public_base}/auth/desktop/callback?{urlencode({'state': state})}"
-        authorize_params = urlencode(
-            {
-                "provider": provider,
-                "redirect_to": redirect_to,
-                "code_challenge": provider_challenge,
-                "code_challenge_method": "s256",
-            }
-        )
-        login_url = f"{supabase_url}/auth/v1/authorize?{authorize_params}"
-
-    try:
-        store.put(
-            "desktop-state",
-            state,
-            pending,
-            settings.DESKTOP_AUTH_STATE_TTL_SECONDS,
-        )
-    except SecurityStoreUnavailable as exc:
-        raise _store_error(exc) from exc
-    return ApiResponse.success(data=DesktopStartResponse(state=state, login_url=login_url))
-
-
-@router.get("/desktop/callback")
-async def desktop_auth_callback(
-    code: str,
-    state: str,
-    store: AtomicTTLStore = Depends(get_auth_security_store),
-):
-    """Consume OAuth state, exchange PKCE code, then issue a one-time desktop code."""
-    try:
-        pending = store.consume("desktop-state", state)
-    except SecurityStoreUnavailable as exc:
-        raise _store_error(exc) from exc
-    if not pending:
-        raise HTTPException(status_code=400, detail="Desktop OAuth state is invalid or expired")
-    provider_verifier = pending.get("code_verifier")
-    if not provider_verifier:
-        raise HTTPException(status_code=400, detail="Desktop OAuth state is invalid or expired")
-
-    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    anon_key = os.environ.get("SUPABASE_ANON_KEY", "") or os.environ.get("SUPABASE_KEY", "")
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{supabase_url}/auth/v1/token?grant_type=pkce",
-            headers={"apikey": anon_key, "Content-Type": "application/json"},
-            json={"auth_code": code, "code_verifier": provider_verifier},
-        )
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="OAuth code exchange failed")
-    session = response.json()
-    if not session.get("access_token") or not session.get("refresh_token"):
-        raise HTTPException(status_code=502, detail="OAuth provider returned an invalid session")
-
-    return RedirectResponse(
-        _desktop_exchange_redirect(
-            state=state,
-            pending=pending,
-            session=session,
-            store=store,
-        ),
-        status_code=302,
-    )
-
-
-@router.post("/desktop/complete", response_model=ApiResponse[DesktopCompleteResponse])
-def desktop_auth_complete(
-    body: DesktopCompleteRequest,
-    request: Request,
-    current_user: CurrentUser = Depends(get_current_user),
-    store: AtomicTTLStore = Depends(get_auth_security_store),
-):
-    """Bind a verified browser session to the pending native PKCE flow."""
-    bearer_token = _request_bearer_token(request)
-    access_token = body.access_token.strip()
-    refresh_token = body.refresh_token.strip()
-    if (
-        current_user.is_anonymous
-        or not access_token
-        or not refresh_token
-        or not secrets.compare_digest(bearer_token, access_token)
-    ):
-        raise HTTPException(status_code=401, detail="Desktop browser session is invalid")
-    if (
-        body.user_email
-        and current_user.email
-        and body.user_email.strip().lower() != current_user.email.strip().lower()
-    ):
-        raise HTTPException(status_code=401, detail="Desktop browser session is invalid")
-
-    try:
-        pending = store.consume("desktop-state", body.state)
-    except SecurityStoreUnavailable as exc:
-        raise _store_error(exc) from exc
-    if not pending or not pending.get("desktop_code_challenge"):
-        raise HTTPException(status_code=400, detail="Desktop OAuth state is invalid or expired")
-
-    session = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_in": max(0, int(body.expires_in or 0)),
-        "user_id": current_user.user_id,
-        "user_email": current_user.email or body.user_email or "",
-        "user": {
-            "id": current_user.user_id,
-            "email": current_user.email or body.user_email,
-        },
-    }
-    redirect_url = _desktop_exchange_redirect(
-        state=body.state,
-        pending=pending,
-        session=session,
-        store=store,
-    )
-    return ApiResponse.success(data=DesktopCompleteResponse(redirect_url=redirect_url))
-
-
-@router.post("/desktop/exchange")
-def desktop_auth_exchange(
-    body: DesktopExchangeRequest,
-    store: AtomicTTLStore = Depends(get_auth_security_store),
-):
-    try:
-        record = store.consume("desktop-exchange", body.code)
-    except SecurityStoreUnavailable as exc:
-        raise _store_error(exc) from exc
-    if not record or not secrets.compare_digest(str(record.get("state", "")), body.state):
-        raise HTTPException(status_code=400, detail="Desktop exchange code is invalid or expired")
-    desktop_code_challenge = record.get("desktop_code_challenge")
-    if desktop_code_challenge:
-        verifier = (body.code_verifier or "").strip()
-        callback_url = str(record.get("callback_url", ""))
-        if not _DESKTOP_PKCE_VALUE.fullmatch(verifier):
-            raise HTTPException(
-                status_code=400, detail="Desktop exchange code is invalid or expired"
-            )
-        candidate_challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
-            .rstrip(b"=")
-            .decode("ascii")
-        )
-        if (
-            not secrets.compare_digest(candidate_challenge, str(desktop_code_challenge))
-            or not body.redirect_uri
-            or not secrets.compare_digest(body.redirect_uri, callback_url)
-        ):
-            raise HTTPException(
-                status_code=400, detail="Desktop exchange code is invalid or expired"
-            )
-    return ApiResponse.success(data=record["session"])
 
 
 @router.get("/config", response_model=ApiResponse[RealtimeConfig])

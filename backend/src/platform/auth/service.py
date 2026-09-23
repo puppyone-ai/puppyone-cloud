@@ -7,7 +7,9 @@ Supports two verification methods:
 2. Local JWT_SECRET verification (fallback, auto-switches when JWKS is empty)
 """
 
+import os
 import time
+from contextlib import suppress
 
 import jwt as pyjwt
 from supabase import Client
@@ -96,10 +98,8 @@ class AuthService:
 
         # Method 1: Local JWT_SECRET verification (fast, no network call).
         # Supabase JWTs are standard HS256 tokens — verify locally first.
-        try:
+        with suppress(AuthException):
             claims_dict = self._verify_token_local(token)
-        except AuthException:
-            pass  # Fall through to JWKS if local fails (key rotation etc.)
 
         # Method 2: Supabase JWKS verification — only if local failed.
         if not claims_dict:
@@ -152,6 +152,12 @@ class AuthService:
                 code=ErrorCode.INVALID_TOKEN,
             )
 
+        expected_issuer = (
+            settings.SUPABASE_PUBLIC_URL or os.environ.get("SUPABASE_URL", "")
+        ).rstrip("/") + "/auth/v1"
+        if claims.iss != expected_issuer:
+            raise AuthException(message="Invalid token issuer", code=ErrorCode.INVALID_TOKEN)
+
         log_debug(f"Token verified successfully for user {claims.user_id}")
         return claims
 
@@ -187,9 +193,7 @@ class AuthService:
         # Add 5-second buffer to avoid issues caused by network latency
         return time.time() > (claims.exp - 5)
 
-    def verify_user_permission(
-        self, user: CurrentUser, required_role: str | None = None
-    ) -> bool:
+    def verify_user_permission(self, user: CurrentUser, required_role: str | None = None) -> bool:
         """
         Verify user permissions
 

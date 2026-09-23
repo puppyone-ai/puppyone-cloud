@@ -17,6 +17,17 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      auth-redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      AUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     defaults:
       run:
         working-directory: backend

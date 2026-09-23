@@ -1,476 +1,250 @@
-from __future__ import annotations
+"""Exercise the registered HTTP routes, not private router functions."""
 
-import base64
-import hashlib
-import json
+from copy import deepcopy
+from threading import Lock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi import HTTPException
-from starlette.requests import Request
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from src.config import settings
 from src.exception_handler import security_store_unavailable_handler
-from src.platform.auth import router as auth_router
-from src.platform.auth.models import CurrentUser
+from src.platform.auth.desktop_router import get_desktop_service, get_session_verifier
+from src.platform.auth.desktop_service import DesktopAuthService, challenge_for
+from src.platform.auth.router import router
 from src.platform.auth.shared_security_store import SecurityStoreUnavailable
 
-CALLBACK_URL = "puppyone://auth/callback"
-LOOPBACK_CALLBACK_URL = "http://127.0.0.1:43123/auth/callback"
-DESKTOP_VERIFIER = "desktop-verifier-abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFG"
-DESKTOP_CHALLENGE = base64.urlsafe_b64encode(
-    hashlib.sha256(DESKTOP_VERIFIER.encode("ascii")).digest()
-).rstrip(b"=").decode("ascii")
+CALLBACK = "http://127.0.0.1:43123/auth/callback"
+VERIFIER = "native-verifier-abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFG"
+PROOF = "a" * 64
 
 
-class _MemorySecurityStore:
-    """Minimal atomic TTL-store fake for exercising the replica-safe flow."""
+class MemoryStore:
+    def __init__(self):
+        self.values = {}
+        self.lock = Lock()
+        self.limited = False
 
-    def __init__(self) -> None:
-        self.values: dict[tuple[str, str], dict] = {}
-        self.puts: list[tuple[str, str, dict, int]] = []
+    def put(self, namespace, key, value, ttl_seconds):
+        self.values[namespace, key] = deepcopy(value)
 
-    def put(self, namespace: str, key: str, value: dict, ttl_seconds: int) -> None:
-        self.values[(namespace, key)] = dict(value)
-        self.puts.append((namespace, key, dict(value), ttl_seconds))
+    def read(self, namespace, key):
+        return deepcopy(self.values.get((namespace, key)))
 
-    def consume(self, namespace: str, key: str) -> dict | None:
-        return self.values.pop((namespace, key), None)
+    def transition(self, namespace, key, expected, *, replacement=None, destination=None):
+        with self.lock:
+            if self.values.get((namespace, key)) != expected:
+                return False
+            if replacement is None:
+                del self.values[namespace, key]
+            else:
+                self.values[namespace, key] = deepcopy(replacement)
+            if destination:
+                ns, target, value, ttl = destination
+                self.put(ns, target, value, ttl)
+            return True
 
-    def hit(self, bucket: str, subject: str, limit: int, window_seconds: int) -> bool:
-        return False
+    def hit(self, *_args):
+        return self.limited
 
 
-class _FakeTokenResponse:
-    status_code = 200
+class VerifiedSession:
+    calls = 0
 
-    @staticmethod
-    def json() -> dict:
+    async def verify_pair(self, access, refresh):
+        self.calls += 1
+        assert (access, refresh) == ("browser-access", "browser-refresh")
         return {
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
+            "access_token": "native-access",
+            "refresh_token": "native-refresh",
             "expires_in": 3600,
-            "user": {"email": "user@example.com"},
+            "user_id": "user-1",
+            "user_email": "user@example.test",
         }
 
-
-class _FakeAsyncClient:
-    def __init__(self) -> None:
-        self.posted_url = ""
-        self.posted_headers: dict = {}
-        self.posted_json: dict = {}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args) -> None:
-        return None
-
-    async def post(self, url: str, *, headers: dict, json: dict):
-        self.posted_url = url
-        self.posted_headers = headers
-        self.posted_json = json
-        return _FakeTokenResponse()
+    async def token_request(self, grant, payload):
+        assert grant == "pkce"
+        return {"access_token": "browser-access", "refresh_token": "browser-refresh"}
 
 
-@pytest.fixture(autouse=True)
-def configured_desktop_auth(monkeypatch):
-    monkeypatch.setattr(auth_router.settings, "DESKTOP_AUTH_ALLOWED_CALLBACKS", CALLBACK_URL)
-    monkeypatch.setattr(
-        auth_router.settings,
-        "DESKTOP_AUTH_PUBLIC_BASE_URL",
-        "https://api.example.com",
-    )
-    monkeypatch.setattr(auth_router.settings, "SUPABASE_PUBLIC_URL", "https://auth.example.com")
-    monkeypatch.setattr(auth_router.settings, "FRONTEND_URL", "http://localhost:3000")
-    monkeypatch.setattr(auth_router.settings, "APP_ENV", "test")
-    monkeypatch.setenv("SUPABASE_URL", "https://auth.internal")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon-key")
+@pytest.fixture
+def api(monkeypatch):
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.example.test")
+    monkeypatch.setattr(settings, "DESKTOP_AUTH_ALLOWED_CALLBACKS", "puppyone://auth/callback")
+    store = MemoryStore()
+    verifier = VerifiedSession()
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.add_exception_handler(SecurityStoreUnavailable, security_store_unavailable_handler)
+    app.dependency_overrides[get_desktop_service] = lambda: DesktopAuthService(store)
+    app.dependency_overrides[get_session_verifier] = lambda: verifier
+    with TestClient(app) as client:
+        yield client, store, verifier
 
 
-async def test_desktop_oauth_pkce_state_and_exchange_are_single_use(monkeypatch):
-    store = _MemorySecurityStore()
-    client = _FakeAsyncClient()
-    monkeypatch.setattr(auth_router.httpx, "AsyncClient", lambda: client)
+def post(api, path, body, **kwargs):
+    return api[0].post("/api/v1/auth/desktop/" + path, json=body, **kwargs)
 
-    started = auth_router.desktop_auth_start(
-        auth_router.DesktopStartRequest(
-            provider="github",
-            callback_url=CALLBACK_URL,
-            code_challenge=DESKTOP_CHALLENGE,
-            code_challenge_method="S256",
-        ),
-        store=store,
-    )
-    state = started.data.state
-    pending = store.values[("desktop-state", state)]
-    authorize_query = parse_qs(urlsplit(started.data.login_url).query)
 
-    assert authorize_query["provider"] == ["github"]
-    assert authorize_query["code_challenge_method"] == ["s256"]
-    assert authorize_query["code_challenge"][0]
-    assert pending["callback_url"] == CALLBACK_URL
-    assert pending["code_verifier"]
-
-    redirected = await auth_router.desktop_auth_callback(
-        code="provider-code",
-        state=state,
-        store=store,
-    )
-    callback_query = parse_qs(urlsplit(redirected.headers["location"]).query)
-    exchange_code = callback_query["code"][0]
-
-    assert callback_query["state"] == [state]
-    assert client.posted_url == "https://auth.internal/auth/v1/token?grant_type=pkce"
-    assert client.posted_json == {
-        "auth_code": "provider-code",
-        "code_verifier": pending["code_verifier"],
+def start(api, **overrides):
+    body = {
+        "callback_url": CALLBACK,
+        "code_challenge": challenge_for(VERIFIER),
+        "code_challenge_method": "S256",
+        **overrides,
     }
-    assert ("desktop-state", state) not in store.values
-
-    exchanged = auth_router.desktop_auth_exchange(
-        auth_router.DesktopExchangeRequest(
-            code=exchange_code,
-            state=state,
-            code_verifier=DESKTOP_VERIFIER,
-            redirect_uri=CALLBACK_URL,
-        ),
-        store=store,
-    )
-    assert exchanged.data["access_token"] == "access-token"
-
-    with pytest.raises(HTTPException) as replay:
-        auth_router.desktop_auth_exchange(
-            auth_router.DesktopExchangeRequest(
-                code=exchange_code,
-                state=state,
-                code_verifier=DESKTOP_VERIFIER,
-                redirect_uri=CALLBACK_URL,
-            ),
-            store=store,
-        )
-    assert replay.value.status_code == 400
+    return post(api, "start", body)
 
 
-async def test_desktop_loopback_callback_is_bound_to_native_pkce(monkeypatch):
-    store = _MemorySecurityStore()
-    client = _FakeAsyncClient()
-    monkeypatch.setattr(auth_router.httpx, "AsyncClient", lambda: client)
-
-    started = auth_router.desktop_auth_start(
-        auth_router.DesktopStartRequest(
-            provider="google",
-            callback_url=LOOPBACK_CALLBACK_URL,
-            code_challenge=DESKTOP_CHALLENGE,
-            code_challenge_method="S256",
-        ),
-        store=store,
-    )
-    state = started.data.state
-    pending = store.values[("desktop-state", state)]
-    assert pending["callback_url"] == LOOPBACK_CALLBACK_URL
-    assert pending["desktop_code_challenge"] == DESKTOP_CHALLENGE
-
-    redirected = await auth_router.desktop_auth_callback(
-        code="provider-code",
-        state=state,
-        store=store,
-    )
-    callback_query = parse_qs(urlsplit(redirected.headers["location"]).query)
-    exchange_code = callback_query["code"][0]
-
-    exchanged = auth_router.desktop_auth_exchange(
-        auth_router.DesktopExchangeRequest(
-            code=exchange_code,
-            state=state,
-            code_verifier=DESKTOP_VERIFIER,
-            redirect_uri=LOOPBACK_CALLBACK_URL,
-        ),
-        store=store,
-    )
-    assert exchanged.data["access_token"] == "access-token"
+def bind(api, state, proof=PROOF):
+    return post(api, "bind", {"state": state, "browser_proof": proof})
 
 
-def test_desktop_generic_sign_in_uses_browser_login_page():
-    store = _MemorySecurityStore()
-    started = auth_router.desktop_auth_start(
-        auth_router.DesktopStartRequest(
-            callback_url=LOOPBACK_CALLBACK_URL,
-            code_challenge=DESKTOP_CHALLENGE,
-            code_challenge_method="S256",
-        ),
-        store=store,
-    )
-
-    login_url = urlsplit(started.data.login_url)
-    login_query = parse_qs(login_url.query)
-    assert login_url.scheme == "http"
-    assert login_url.netloc == "localhost:3000"
-    assert login_url.path == "/login"
-    assert login_query == {
-        "client": ["desktop"],
-        "desktop_state": [started.data.state],
-    }
-
-
-def test_desktop_browser_completion_binds_verified_session_to_native_pkce():
-    store = _MemorySecurityStore()
-    started = auth_router.desktop_auth_start(
-        auth_router.DesktopStartRequest(
-            callback_url=LOOPBACK_CALLBACK_URL,
-            code_challenge=DESKTOP_CHALLENGE,
-            code_challenge_method="S256",
-        ),
-        store=store,
-    )
-    request = Request(
+def complete(api, state, **overrides):
+    return post(
+        api,
+        "complete",
         {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/v1/auth/desktop/complete",
-            "headers": [(b"authorization", b"Bearer browser-access-token")],
-        }
-    )
-    current_user = CurrentUser(
-        user_id="user-1",
-        email="user@example.com",
-        role="authenticated",
-    )
-    completed = auth_router.desktop_auth_complete(
-        auth_router.DesktopCompleteRequest(
-            state=started.data.state,
-            access_token="browser-access-token",
-            refresh_token="browser-refresh-token",
-            expires_in=3600,
-            user_email="user@example.com",
-        ),
-        request=request,
-        current_user=current_user,
-        store=store,
-    )
-    callback_query = parse_qs(urlsplit(completed.data.redirect_url).query)
-
-    exchanged = auth_router.desktop_auth_exchange(
-        auth_router.DesktopExchangeRequest(
-            code=callback_query["code"][0],
-            state=started.data.state,
-            code_verifier=DESKTOP_VERIFIER,
-            redirect_uri=LOOPBACK_CALLBACK_URL,
-        ),
-        store=store,
-    )
-    assert callback_query["state"] == [started.data.state]
-    assert exchanged.data["access_token"] == "browser-access-token"
-    assert exchanged.data["refresh_token"] == "browser-refresh-token"
-    assert exchanged.data["user_id"] == "user-1"
-    assert exchanged.data["user_email"] == "user@example.com"
-
-
-def test_desktop_browser_completion_rejects_mismatched_bearer_without_consuming_state():
-    store = _MemorySecurityStore()
-    started = auth_router.desktop_auth_start(
-        auth_router.DesktopStartRequest(
-            callback_url=LOOPBACK_CALLBACK_URL,
-            code_challenge=DESKTOP_CHALLENGE,
-            code_challenge_method="S256",
-        ),
-        store=store,
-    )
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/v1/auth/desktop/complete",
-            "headers": [(b"authorization", b"Bearer verified-access-token")],
-        }
-    )
-
-    with pytest.raises(HTTPException) as invalid:
-        auth_router.desktop_auth_complete(
-            auth_router.DesktopCompleteRequest(
-                state=started.data.state,
-                access_token="different-access-token",
-                refresh_token="refresh-token",
-            ),
-            request=request,
-            current_user=CurrentUser(
-                user_id="user-1",
-                email="user@example.com",
-                role="authenticated",
-            ),
-            store=store,
-        )
-    assert invalid.value.status_code == 401
-    assert ("desktop-state", started.data.state) in store.values
-
-
-def test_desktop_loopback_exchange_rejects_wrong_pkce_and_burns_code():
-    store = _MemorySecurityStore()
-    store.put(
-        "desktop-exchange",
-        "one-time-code",
-        {
-            "state": "expected",
-            "session": {"access_token": "token"},
-            "callback_url": LOOPBACK_CALLBACK_URL,
-            "desktop_code_challenge": DESKTOP_CHALLENGE,
+            "state": state,
+            "browser_proof": PROOF,
+            "access_token": "browser-access",
+            "refresh_token": "browser-refresh",
+            **overrides,
         },
-        60,
+        headers={"Authorization": "Bearer browser-access"},
     )
 
-    with pytest.raises(HTTPException) as mismatch:
-        auth_router.desktop_auth_exchange(
-            auth_router.DesktopExchangeRequest(
-                code="one-time-code",
-                state="expected",
-                code_verifier="wrong-verifier-abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFG",
-                redirect_uri=LOOPBACK_CALLBACK_URL,
-            ),
-            store=store,
-        )
-    assert mismatch.value.status_code == 400
 
-    with pytest.raises(HTTPException) as consumed:
-        auth_router.desktop_auth_exchange(
-            auth_router.DesktopExchangeRequest(
-                code="one-time-code",
-                state="expected",
-                code_verifier=DESKTOP_VERIFIER,
-                redirect_uri=LOOPBACK_CALLBACK_URL,
-            ),
-            store=store,
-        )
-    assert consumed.value.status_code == 400
+def exchange_body(redirect):
+    params = parse_qs(urlsplit(redirect).query)
+    return {
+        "code": params["code"][0],
+        "state": params["state"][0],
+        "code_verifier": VERIFIER,
+        "redirect_uri": CALLBACK,
+    }
 
 
-def test_desktop_exchange_state_mismatch_fails_closed_and_burns_code():
-    store = _MemorySecurityStore()
-    store.put(
-        "desktop-exchange",
-        "one-time-code",
-        {"state": "expected", "session": {"access_token": "token"}},
-        60,
-    )
+@pytest.mark.parametrize("provider", [None, "google", "github"])
+def test_all_methods_enter_same_login_and_complete_once(api, provider):
+    response = start(api, provider=provider)
+    assert response.status_code == 200
+    assert "no-store" in response.headers["cache-control"]
+    result = response.json()["data"]
+    assert urlsplit(result["login_url"]).path == "/login"
+    assert parse_qs(urlsplit(result["login_url"]).query)["client"] == ["desktop"]
+    state = result["state"]
+    assert bind(api, state).status_code == 200
+    assert bind(api, state).status_code == 200
+    assert bind(api, state, "b" * 64).status_code == 400
+    assert complete(api, state, browser_proof="b" * 64).status_code == 400
+    assert api[2].calls == 0
+    completed = complete(api, state)
+    assert completed.status_code == 200
+    callback = completed.json()["data"]["redirect_url"]
+    assert "access" not in callback and "refresh" not in callback
+    assert complete(api, state).status_code == 400
+    body = exchange_body(callback)
+    # A bad proof, state, or URI must not burn the legitimate one-time code.
+    for changes in [
+        {"code_verifier": "b" * 64},
+        {"state": "wrong"},
+        {"redirect_uri": CALLBACK.replace("43123", "43124")},
+        {"code_verifier": None},
+        {"redirect_uri": None},
+    ]:
+        assert post(api, "exchange", {**body, **changes}).status_code == 400
+    response = post(api, "exchange", body)
+    assert response.status_code == 200
+    assert response.json()["data"]["refresh_token"] == "native-refresh"
+    assert "no-store" in response.headers["cache-control"]
+    assert post(api, "exchange", body).status_code == 400
 
-    with pytest.raises(HTTPException) as mismatch:
-        auth_router.desktop_auth_exchange(
-            auth_router.DesktopExchangeRequest(code="one-time-code", state="wrong"),
-            store=store,
-        )
-    assert mismatch.value.status_code == 400
 
-    with pytest.raises(HTTPException) as consumed:
-        auth_router.desktop_auth_exchange(
-            auth_router.DesktopExchangeRequest(code="one-time-code", state="expected"),
-            store=store,
-        )
-    assert consumed.value.status_code == 400
+def test_binding_and_bearer_required_without_consuming_attempt(api):
+    state = start(api).json()["data"]["state"]
+    assert complete(api, state).status_code == 400
+    bind(api, state)
+    assert complete(api, state, browser_proof=None).status_code == 400
+    assert complete(api, state, access_token="different").status_code == 401
+    assert api[2].calls == 0
+    assert complete(api, state).status_code == 200
 
 
 @pytest.mark.parametrize(
-    "callback_url",
+    "callback",
     [
         "http://localhost:43123/auth/callback",
         "http://127.0.0.1/auth/callback",
+        "http://127.0.0.1:0/auth/callback",
         "http://127.0.0.1:43123/wrong",
-        "http://127.0.0.1:43123/auth/callback?unexpected=1",
-        "https://127.0.0.1:43123/auth/callback",
-        "puppyone://auth/callback?unexpected=1",
+        CALLBACK + "?x=1",
+        CALLBACK + "#x",
+        "https://evil.example/auth/callback",
+        "puppyone://auth/callback?x=1",
+        "http://user@127.0.0.1:43123/auth/callback",
     ],
 )
-def test_desktop_callback_requires_an_exact_allowlisted_redirect(callback_url):
-    with pytest.raises(HTTPException) as invalid:
-        auth_router._validate_desktop_callback(callback_url, allow_loopback=True)
-    assert invalid.value.status_code == 400
-
-
-def test_desktop_loopback_callback_requires_pkce():
-    with pytest.raises(HTTPException) as missing_pkce:
-        auth_router.desktop_auth_start(
-            auth_router.DesktopStartRequest(
-                provider="google",
-                callback_url=LOOPBACK_CALLBACK_URL,
-            ),
-            store=_MemorySecurityStore(),
-        )
-    assert missing_pkce.value.status_code == 400
-
-
-def test_desktop_allowlisted_callback_still_requires_pkce():
-    with pytest.raises(HTTPException) as missing_pkce:
-        auth_router.desktop_auth_start(
-            auth_router.DesktopStartRequest(
-                provider="github",
-                callback_url=CALLBACK_URL,
-            ),
-            store=_MemorySecurityStore(),
-        )
-    assert missing_pkce.value.status_code == 400
+def test_callback_requires_exact_loopback_or_allowlist(api, callback):
+    assert start(api, callback_url=callback).status_code == 400
 
 
 @pytest.mark.parametrize(
-    ("challenge", "method"),
+    "changes",
     [
-        ("short", "S256"),
-        (DESKTOP_CHALLENGE, "plain"),
-        (DESKTOP_CHALLENGE, None),
+        {"code_challenge": None},
+        {"code_challenge": "short"},
+        {"code_challenge_method": "plain"},
+        {"code_challenge_method": None},
+        {"provider": "unsupported"},
     ],
 )
-def test_desktop_loopback_callback_rejects_invalid_pkce(challenge, method):
-    with pytest.raises(HTTPException) as invalid:
-        auth_router.desktop_auth_start(
-            auth_router.DesktopStartRequest(
-                provider="google",
-                callback_url=LOOPBACK_CALLBACK_URL,
-                code_challenge=challenge,
-                code_challenge_method=method,
-            ),
-            store=_MemorySecurityStore(),
+def test_start_rejects_invalid_pkce_and_providers(api, changes):
+    assert start(api, **changes).status_code == 400
+
+
+def test_legacy_inflight_email_and_oauth_can_drain(api):
+    pending = {"callback_url": CALLBACK, "desktop_code_challenge": challenge_for(VERIFIER)}
+    for oauth in [False, True]:
+        state = ("o" if oauth else "e") * 43
+        api[1].put(
+            "desktop-state",
+            state,
+            {**pending, **({"code_verifier": "legacy-verifier"} if oauth else {})},
+            600,
         )
-    assert invalid.value.status_code == 400
-
-
-def test_desktop_start_rejects_unsupported_provider():
-    with pytest.raises(HTTPException) as invalid:
-        auth_router.desktop_auth_start(
-            auth_router.DesktopStartRequest(provider="password", callback_url=CALLBACK_URL),
-            store=_MemorySecurityStore(),
+        response = (
+            api[0].get(
+                f"/api/v1/auth/desktop/callback?state={state}&code=provider-code",
+                follow_redirects=False,
+            )
+            if oauth
+            else complete(api, state, browser_proof=None)
         )
-    assert invalid.value.status_code == 400
-
-
-def test_desktop_start_fails_closed_when_shared_store_is_unavailable():
-    class _UnavailableStore(_MemorySecurityStore):
-        def put(self, namespace: str, key: str, value: dict, ttl_seconds: int) -> None:
-            raise SecurityStoreUnavailable("offline")
-
-    with pytest.raises(HTTPException) as unavailable:
-        auth_router.desktop_auth_start(
-            auth_router.DesktopStartRequest(
-                provider="google",
-                callback_url=CALLBACK_URL,
-                code_challenge=DESKTOP_CHALLENGE,
-                code_challenge_method="S256",
-            ),
-            store=_UnavailableStore(),
+        assert response.status_code == (302 if oauth else 200)
+        callback = (
+            response.headers["location"] if oauth else response.json()["data"]["redirect_url"]
         )
-    assert unavailable.value.status_code == 503
+        assert post(api, "exchange", exchange_body(callback)).status_code == 200
 
 
-def test_security_store_dependency_failure_is_reported_as_service_unavailable():
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/v1/auth/desktop/start",
-            "headers": [],
-        }
-    )
-    response = security_store_unavailable_handler(
-        request,
-        SecurityStoreUnavailable("AUTH_SECURITY_REDIS_URL is not configured"),
-    )
+def test_legacy_callback_cannot_bypass_new_browser_binding(api):
+    state = start(api).json()["data"]["state"]
+    response = api[0].get(f"/api/v1/auth/desktop/callback?state={state}&code=provider-code")
+    assert response.status_code == 400
+    assert api[1].read("desktop-state", state)
 
+
+def test_rate_limit_and_store_failure_are_closed(api, monkeypatch):
+    api[1].limited = True
+    assert start(api).status_code == 429
+    api[1].limited = False
+
+    def unavailable(*_args):
+        raise SecurityStoreUnavailable("offline")
+
+    monkeypatch.setattr(api[1], "put", unavailable)
+    response = start(api)
     assert response.status_code == 503
-    assert json.loads(response.body)["message"] == (
-        "Authentication security store unavailable"
-    )
+    assert "offline" not in response.text
