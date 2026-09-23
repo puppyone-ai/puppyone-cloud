@@ -50,6 +50,11 @@ jobs:
         with:
           version: "2.107.0"
 
+      - name: Use Supabase's Docker Hub mirror
+        # setup-cli defaults to GHCR, whose shared anonymous pull limit can
+        # block the shadow database. Keep the CLI's pinned image versions.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
+
       - name: Ensure PostgreSQL client is available
         shell: bash
         run: |
