@@ -122,6 +122,10 @@ jobs:
         with:
           version: "2.107.0"
 
+      - name: Use Supabase's Docker Hub mirror
+        # Match the protected schema deploy without GHCR's shared pull limit.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
+
       - name: Ensure PostgreSQL client is available
         shell: bash
         run: |

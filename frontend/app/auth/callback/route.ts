@@ -6,81 +6,64 @@ import {
   getServerSupabaseUrl,
   getSupabaseAnonKey,
   getRequestOrigin,
-  isSafeRelativePath,
 } from '@/lib/server-env';
+import {
+  DESKTOP_STATE,
+  loginReturnPath,
+  safeNext,
+  type LoginIntent,
+} from '@/features/auth/login-intent';
+import { completeWebLogin } from '@/features/auth/login-coordinator';
 
-/**
- * Supabase Auth Callback - Route Handler (服务端)
- *
- * 仅处理 OAuth 登录回调（Google / GitHub）。
- * 邮件类流程（注册确认、密码重置）走 /auth/confirm。
- */
 export async function GET(request: Request) {
-  const requestUrl = new URL(request.url);
+  const url = new URL(request.url);
   const origin = getRequestOrigin(request);
-  const code = requestUrl.searchParams.get('code');
-  const apiUrl = getServerApiBaseUrl();
-
-  if (!code) {
-    return NextResponse.redirect(`${origin}/login`);
+  const state = url.searchParams.get('desktop_state');
+  const redirect = (path: string) => {
+    const response = NextResponse.redirect(new URL(path, origin));
+    response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  };
+  if (state !== null && !DESKTOP_STATE.test(state))
+    return redirect('/login?error=auth_request_expired');
+  const intent: LoginIntent = state
+    ? { kind: 'desktop', state }
+    : { kind: 'web', next: safeNext(url.searchParams.get('next')) };
+  const login = new URL(loginReturnPath(intent), origin);
+  const code = url.searchParams.get('code');
+  if (!code || url.searchParams.has('error')) {
+    login.searchParams.set(
+      'error',
+      url.searchParams.get('error') === 'access_denied' ? 'auth_cancelled' : 'auth_callback_failed'
+    );
+    return redirect(login.pathname + login.search);
   }
-
+  if (intent.kind === 'desktop') {
+    // Only this tab's temporary browser client owns the PKCE verifier.
+    // Never exchange against, or overwrite, the existing Web cookie session.
+    login.searchParams.set('auth_code', code);
+    return redirect(login.pathname + login.search);
+  }
   const cookieStore = await cookies();
-
-  const supabase = createServerClient(
-    getServerSupabaseUrl(),
-    getSupabaseAnonKey(),
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
-        },
-        set(name: string, value: string, options: any) {
-          cookieStore.set({ name, value, ...options });
-        },
-        remove(name: string, options: any) {
-          cookieStore.delete({ name, ...options });
-        },
-      },
-    }
-  );
-
-  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-
-  if (error || !data.session) {
-    console.error('Auth callback exchange failed:', error?.message, error?.status);
-    return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
-  }
-
-  // First-time sign-in seeds a "Get Started" demo project; if the backend
-  // returns its id we land the user inside it instead of an empty dashboard.
-  let demoProjectId: string | null = null;
+  const supabase = createServerClient(getServerSupabaseUrl(), getSupabaseAnonKey(), {
+    cookies: {
+      getAll: () => cookieStore.getAll(),
+      setAll: values =>
+        values.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+    },
+  });
   try {
-    const token = data.session.access_token;
-    const initRes = await fetch(`${apiUrl}/api/v1/auth/initialize`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (initRes.ok) {
-      const initJson = await initRes.json();
-      demoProjectId = initJson?.data?.demo_project_id ?? null;
-    }
-  } catch (e) {
-    console.error('Auth initialization failed:', e);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error || !data.session) throw new Error('exchange failed');
+    const target = await completeWebLogin(
+      data.session,
+      intent.next,
+      `${getServerApiBaseUrl()}/api/v1`
+    );
+    return redirect(target);
+  } catch {
+    login.searchParams.set('error', 'auth_callback_failed');
+    return redirect(login.pathname + login.search);
   }
-
-  // If the caller explicitly passed ?next=, honour it. Otherwise prefer
-  // the demo project so first-time users see populated content; fall back
-  // to /home for returning users (or if seeding failed).
-  // Only honour ?next= when it's a safe same-origin relative path;
-  // otherwise a value like `//evil.com` would escape the origin in the
-  // `${origin}${target}` concatenation below (open redirect).
-  const explicitNext = requestUrl.searchParams.get('next');
-  const target = isSafeRelativePath(explicitNext)
-    ? explicitNext
-    : demoProjectId
-      ? `/projects/${demoProjectId}/data`
-      : '/home';
-
-  return NextResponse.redirect(`${origin}${target}`);
 }

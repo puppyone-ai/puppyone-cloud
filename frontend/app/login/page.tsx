@@ -3,6 +3,8 @@
 import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { AUTH_ERROR_MESSAGES } from '@/features/auth/auth-errors';
+import { loginReturnPath } from '@/features/auth/login-intent';
 import { PulseGrid, Dots } from '@/components/loading';
 
 const URL_ERROR_MESSAGES: Record<string, string> = {
@@ -12,8 +14,7 @@ const URL_ERROR_MESSAGES: Record<string, string> = {
     'That confirmation link is invalid or has expired. Please request a new one.',
   invalid_confirmation_link:
     'That confirmation link is invalid. Please try again.',
-  auth_callback_failed:
-    'Sign-in failed. Please try again.',
+  ...AUTH_ERROR_MESSAGES,
 };
 
 const URL_SUCCESS_MESSAGES: Record<string, string> = {
@@ -103,7 +104,6 @@ function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const {
-    supabase,
     session,
     signInWithProvider,
     signInWithEmail,
@@ -111,26 +111,14 @@ function LoginPageInner() {
     verifyEmailOtp,
     resendConfirmation,
     resetPassword,
-    getAccessToken,
+    isAuthReady,
+    authError,
+    availableProviders,
+    loginIntent,
+    finishSignIn,
   } = useAuth();
 
-  // Honor ``?redirect=...`` so callers that bounce through login
-  // (e.g. /invite/[token]) land back at the originally requested URL
-  // after auth. Only accept same-origin relative paths to prevent
-  // open-redirect abuse.
-  const redirectAfterAuth = React.useMemo(() => {
-    const raw = searchParams?.get('redirect') ?? null;
-    if (!raw) return null;
-    if (!raw.startsWith('/')) return null;
-    if (raw.startsWith('//')) return null; // protocol-relative
-    if (raw.startsWith('/\\')) return null; // backslash → protocol-relative
-    return raw;
-  }, [searchParams]);
-  const desktopAuthState = React.useMemo(() => {
-    if (searchParams?.get('client') !== 'desktop') return null;
-    const state = searchParams.get('desktop_state') ?? searchParams.get('state');
-    return state?.trim() || null;
-  }, [searchParams]);
+  const desktopAuthState = loginIntent?.kind === 'desktop' ? loginIntent.state : null;
 
   const [view, setView] = useState<AuthView>('main');
   const [email, setEmail] = useState('');
@@ -151,6 +139,7 @@ function LoginPageInner() {
   const autoSubmittedRef = useRef(false);
   const autoOAuthProviderRef = useRef<'google' | 'github' | null>(null);
   const autoDesktopCompleteRef = useRef(false);
+  const navigationCommittedRef = useRef(false);
 
   const clearFeedback = useCallback(() => {
     setError(null);
@@ -216,13 +205,9 @@ function LoginPageInner() {
     // bounce destination survives this cleanup — without this, an
     // unrelated ?error= or ?reset= arriving alongside the invite
     // bounce would wipe the redirect target and dump the user at /home.
-    const preservedRedirect = searchParams?.get('redirect');
-    if (preservedRedirect) {
-      router.replace(`/login?redirect=${encodeURIComponent(preservedRedirect)}`);
-    } else {
-      router.replace('/login');
-    }
-  }, [searchParams, router]);
+    // Remove transient feedback without discarding the Desktop attempt.
+    if (loginIntent) window.history.replaceState(window.history.state, '', loginReturnPath(loginIntent));
+  }, [searchParams, loginIntent]);
 
   const goBack = useCallback(() => {
     setView('main');
@@ -232,69 +217,20 @@ function LoginPageInner() {
     clearFeedback();
   }, [clearFeedback]);
 
-  const completeDesktopAuth = useCallback(async () => {
-    if (!desktopAuthState) return false;
-    if (!supabase) throw new Error('Auth client is not ready.');
-
-    const { data } = await supabase.auth.getSession();
-    let currentSession = data.session;
-    if (!currentSession?.access_token || !currentSession.refresh_token) {
-      throw new Error('Sign-in succeeded but no session was returned.');
-    }
-
-    const submit = (accessToken: string, refreshToken: string) => fetch(
-      backendApiUrl('/auth/desktop/complete'),
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          state: desktopAuthState,
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          expires_in: currentSession?.expires_in,
-          user_email: currentSession?.user?.email ?? null,
-        }),
-      },
-    );
-
-    let resp = await submit(currentSession.access_token, currentSession.refresh_token);
-    if (resp.status === 401) {
-      // A browser can briefly expose an old session while Supabase finishes
-      // rotating it after sign-in. Refresh once and retry once; never spin a
-      // render-driven request loop against the desktop completion endpoint.
-      const refreshed = await supabase.auth.refreshSession();
-      currentSession = refreshed.data.session;
-      if (!refreshed.error && currentSession?.access_token && currentSession.refresh_token) {
-        resp = await submit(currentSession.access_token, currentSession.refresh_token);
-      }
-    }
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok) {
-      throw new Error(getBackendErrorMessage(json, 'Desktop sign-in failed.'));
-    }
-    const redirectUrl = json?.data?.redirect_url;
-    if (typeof redirectUrl !== 'string' || !redirectUrl) {
-      throw new Error('Desktop sign-in did not return a callback URL.');
-    }
-    window.location.href = redirectUrl;
-    return true;
-  }, [desktopAuthState, supabase]);
+  const completeLogin = useCallback(async () => {
+    setRedirecting(true);
+    const destination = await finishSignIn();
+    if (navigationCommittedRef.current) return;
+    navigationCommittedRef.current = true;
+    if (loginIntent?.kind === 'desktop') window.location.assign(destination);
+    else router.push(destination);
+  }, [finishSignIn, loginIntent, router]);
 
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
     if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
     clearFeedback();
     setLoading(provider);
     try {
-      if (desktopAuthState) {
-        const url = backendApiUrl(
-          `/auth/desktop/login?state=${encodeURIComponent(desktopAuthState)}&provider=${encodeURIComponent(provider)}`,
-        );
-        window.location.href = url;
-        return;
-      }
       await signInWithProvider(provider);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Sign-in failed');
@@ -313,21 +249,22 @@ function LoginPageInner() {
     const provider = searchParams?.get('provider');
     if (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true') return;
     if (provider !== 'google' && provider !== 'github') return;
+    if (!isAuthReady || !availableProviders.includes(provider) || session || searchParams?.has('error')) return;
     if (autoOAuthProviderRef.current === provider) return;
 
     autoOAuthProviderRef.current = provider;
     void handleOAuthSignIn(provider);
-  }, [searchParams]);
+  }, [searchParams, isAuthReady, availableProviders, session]);
 
   useEffect(() => {
-    if (!desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
+    if (!isAuthReady || !desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
     autoDesktopCompleteRef.current = true;
     setRedirecting(true);
-    completeDesktopAuth().catch((e: unknown) => {
+    completeLogin().catch((e: unknown) => {
       setRedirecting(false);
       setError(e instanceof Error ? e.message : 'Desktop sign-in failed.');
     });
-  }, [desktopAuthState, session, redirecting, completeDesktopAuth]);
+  }, [isAuthReady, desktopAuthState, session, redirecting, completeLogin]);
 
   const handleContinue = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -367,19 +304,7 @@ function LoginPageInner() {
     setLoading('password');
     try {
       await signInWithEmail(email, password);
-      if (desktopAuthState) {
-        setRedirecting(true);
-        await completeDesktopAuth();
-        return;
-      }
-      // Show full-screen overlay BEFORE router.push — the navigation is
-      // async (chunk load + (main) layout init + projects fetch) and we
-      // need a continuous loading UI for the entire gap. Don't reset
-      // `loading` either; we want to stay in a non-interactive state
-      // until this component unmounts.
-      setRedirecting(true);
-      router.push(redirectAfterAuth ?? '/home');
-      return;
+      await completeLogin();
     } catch (e: unknown) {
       setRedirecting(false);
       const msg = e instanceof Error ? e.message : 'Sign-in failed';
@@ -434,40 +359,7 @@ function LoginPageInner() {
         goToVerifyOtp(`We sent a 6-digit code to ${email}.`);
         setPassword('');
       } else {
-        if (desktopAuthState) {
-          setRedirecting(true);
-          await completeDesktopAuth();
-          return;
-        }
-        // Auto-confirmed signup (rare in our default config) — initialize
-        // and go straight to the seeded demo project so first-time UX
-        // mirrors the OTP / OAuth paths.
-        let demoProjectId: string | null = null;
-        try {
-          const token = await getAccessToken();
-          if (token) {
-            const res = await fetch(backendApiUrl('/auth/initialize'), {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (res.ok) {
-              const json = await res.json();
-              demoProjectId = json?.data?.demo_project_id ?? null;
-            }
-          }
-        } catch (initErr) {
-          console.error('Auth initialization failed:', initErr);
-        }
-        setRedirecting(true);
-        // If the user was bounced here from /invite/[token] (or any
-        // other gated route), honor that destination rather than the
-        // first-run demo path — they came here to accept an invite,
-        // not to play with the demo.
-        router.push(
-          redirectAfterAuth
-            ?? (demoProjectId ? `/projects/${demoProjectId}/data` : '/home'),
-        );
-        return;
+        await completeLogin();
       }
     } catch (e: unknown) {
       setRedirecting(false);
@@ -487,39 +379,7 @@ function LoginPageInner() {
     setLoading('verify');
     try {
       await verifyEmailOtp(email, code);
-      if (desktopAuthState) {
-        setRedirecting(true);
-        await completeDesktopAuth();
-        return;
-      }
-      // Initialize profile + org (idempotent — same as OAuth callback).
-      // On first sign-in this also seeds a "Get Started" demo project so
-      // we can land the user inside it instead of an empty dashboard.
-      let demoProjectId: string | null = null;
-      try {
-        const token = await getAccessToken();
-        if (token) {
-          const res = await fetch(backendApiUrl('/auth/initialize'), {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (res.ok) {
-            const json = await res.json();
-            demoProjectId = json?.data?.demo_project_id ?? null;
-          }
-        }
-      } catch (initErr) {
-        console.error('Auth initialization failed:', initErr);
-      }
-      setRedirecting(true);
-      // Honor redirect= for the OTP path too — covers the case where
-      // someone clicked an invite link, hit "sign up", and verified
-      // their email here. They wanted the invite, not the demo.
-      router.push(
-        redirectAfterAuth
-          ?? (demoProjectId ? `/projects/${demoProjectId}/data` : '/home'),
-      );
-      return;
+      await completeLogin();
     } catch (e: unknown) {
       setRedirecting(false);
       const msg = e instanceof Error ? e.message : 'Invalid or expired code';
@@ -529,7 +389,7 @@ function LoginPageInner() {
     } finally {
       setLoading(null);
     }
-  }, [loading, clearFeedback, verifyEmailOtp, email, desktopAuthState, completeDesktopAuth, getAccessToken, router, redirectAfterAuth]);
+  }, [loading, clearFeedback, verifyEmailOtp, email, completeLogin]);
 
   // Auto-submit when 6 digits are entered (industry-standard UX).
   useEffect(() => {
@@ -558,7 +418,7 @@ function LoginPageInner() {
     }
   };
 
-  const disabled = loading !== null || redirecting;
+  const disabled = !isAuthReady || loading !== null || redirecting;
 
   if (redirecting) {
     return <PostAuthRedirectingScreen message="Signing you in..." />;
@@ -596,23 +456,23 @@ function LoginPageInner() {
                 <h1 className="text-2xl font-semibold text-[var(--po-text)]">Sign in or sign up</h1>
               </div>
 
-              {process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY !== 'true' && <><div className="flex flex-col gap-3">
-                <ProviderButton
+              {availableProviders.some(provider => provider !== 'email') && <><div className="flex flex-col gap-3">
+                {availableProviders.includes('google') && <ProviderButton
                   icon={<GoogleIcon />}
                   label="Continue with Google"
                   loadingLabel="Redirecting..."
                   isLoading={loading === 'google'}
                   disabled={disabled}
                   onClick={() => handleOAuthSignIn('google')}
-                />
-                <ProviderButton
+                />}
+                {availableProviders.includes('github') && <ProviderButton
                   icon={<GithubIcon />}
                   label="Continue with GitHub"
                   loadingLabel="Redirecting..."
                   isLoading={loading === 'github'}
                   disabled={disabled}
                   onClick={() => handleOAuthSignIn('github')}
-                />
+                />}
               </div>
 
               <AuthDivider /></>}
@@ -633,7 +493,7 @@ function LoginPageInner() {
                 </form>
               </div>
 
-              <Feedback error={error} message={message} />
+              <Feedback error={error ?? authError} message={message} />
             </div>
           )}
 
@@ -661,7 +521,7 @@ function LoginPageInner() {
                 </SubmitButton>
               </form>
 
-              <Feedback error={error} message={message} />
+              <Feedback error={error ?? authError} message={message} />
 
               {needsVerification && (
                 <div className="mt-3">
@@ -716,7 +576,7 @@ function LoginPageInner() {
                 </SubmitButton>
               </form>
 
-              <Feedback error={error} message={message} />
+              <Feedback error={error ?? authError} message={message} />
 
               <div className="mt-4 text-center">
                 <button
@@ -759,7 +619,7 @@ function LoginPageInner() {
                 </SubmitButton>
               </form>
 
-              <Feedback error={error} message={message} />
+              <Feedback error={error ?? authError} message={message} />
             </div>
           )}
 
@@ -777,7 +637,7 @@ function LoginPageInner() {
                 </SubmitButton>
               </form>
 
-              <Feedback error={error} message={message} />
+              <Feedback error={error ?? authError} message={message} />
             </div>
           )}
 
