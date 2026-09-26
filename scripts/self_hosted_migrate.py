@@ -54,7 +54,9 @@ def migrate() -> None:
             # process-scoped environment; do not use --debug as a TLS workaround.
             env={
                 **os.environ,
-                "SUPABASE_DB_PASSWORD": password,
+                # --db-url uses pgconn directly; SUPABASE_DB_PASSWORD is only
+                # consumed by the CLI's linked-project connection path.
+                "PGPASSWORD": password,
                 "PGSSLMODE": "disable",
             },
             check=True,
