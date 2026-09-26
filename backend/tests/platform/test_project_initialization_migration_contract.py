@@ -4,7 +4,7 @@ from pathlib import Path
 
 MIGRATION = (
     Path(__file__).parents[3]
-    / "supabase/migrations/20260716010000_project_initialization_control_plane.sql"
+    / "supabase/archive/before_b1/20260716010000_project_initialization_control_plane.sql"
 )
 
 

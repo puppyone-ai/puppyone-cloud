@@ -74,6 +74,9 @@ jobs:
       - name: Bind protected PostgreSQL connection
         run: python3 supabase/releases/connection.py
 
+      - name: Verify and adopt archived baseline history
+        run: python3 scripts/database_history.py adopt
+
       - name: Show pending schema plan
         run: supabase db push --db-url "$SUPABASE_DATABASE_URL" --dry-run
 

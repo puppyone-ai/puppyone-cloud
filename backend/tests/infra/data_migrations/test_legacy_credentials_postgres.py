@@ -22,7 +22,7 @@ from src.infra.data_migrations.errors import ExecutionError
 
 ROOT = Path(__file__).resolve().parents[4]
 PREFLIGHT = ROOT / "supabase/releases/legacy_credential_preflight.sql"
-MIGRATIONS = ROOT / "supabase/migrations"
+MIGRATIONS = ROOT / "supabase/archive/before_b1"
 HASH_EXPAND = MIGRATIONS / "20260704000000_repo_scopes_access_key_hash.sql"
 RETIRE = MIGRATIONS / "20260711070000_move_scope_credentials_to_access_credentials.sql"
 EMPTY_FIELDS = ROOT / "supabase/data_migrations/20260923_remove_empty_runtime_credential_fields"

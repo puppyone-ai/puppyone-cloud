@@ -14,10 +14,15 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
+from src.infra.data_migrations.baseline_adoption import adoption_sql  # noqa: E402
+from src.infra.data_migrations.schema_history import load_baseline  # noqa: E402
+
 MIGRATIONS = ROOT / "supabase/migrations"
 REFERENCE_DATA = ROOT / "supabase/baselines/required_data.sql"
 NAME = re.compile(r"(?P<version>\d{14})_[a-z0-9_]+\.sql")
@@ -46,8 +51,8 @@ def run(*args: str, input_text: str | None = None, capture: bool = True) -> str:
     return result.stdout or ""
 
 
-def source_files(cutoff: str | None = None) -> list[Path]:
-    files = sorted(MIGRATIONS.glob("*.sql"))
+def source_files(cutoff: str | None = None, *, directory: Path | None = None) -> list[Path]:
+    files = sorted((directory or MIGRATIONS).glob("*.sql"))
     versions: set[str] = set()
     for path in files:
         match = NAME.fullmatch(path.name)
@@ -102,14 +107,21 @@ def validate_fresh_rows(counts: dict[str, int]) -> None:
 
 def validate_candidate(candidate: Path) -> tuple[dict, list[Path]]:
     manifest = json.loads((candidate / "manifest.json").read_text())
-    if manifest.get("api_version") != 1 or manifest.get("status") != "candidate":
+    if manifest.get("api_version") != 1 or manifest.get("status") not in {"candidate", "active"}:
         raise ValueError("Unsupported baseline manifest")
-    files = source_files(manifest["cutoff_version"])
+    active = manifest["status"] == "active"
+    if active:
+        load_baseline(ROOT)
+    files = source_files(
+        manifest["cutoff_version"], directory=ROOT / manifest["archive"] if active else None
+    )
     actual = {path.name: digest(path.read_bytes()) for path in files}
     if actual != manifest["source_migrations"]:
         raise ValueError("Baseline source migration inventory changed")
     for name in ("baseline.sql", "required_data.sql"):
-        path = candidate / name
+        path = (
+            ROOT / manifest["migration"] if active and name == "baseline.sql" else candidate / name
+        )
         if path.is_symlink() or digest(path.read_bytes()) != manifest["files"][name]:
             raise ValueError(f"Baseline artifact changed: {name}")
     return manifest, files
@@ -285,10 +297,93 @@ def verify_equivalence(expected: dict, actual: dict) -> None:
             raise ValueError(f"Baseline differs from historical replay: {component}")
 
 
-def execute(mode: str, destination: Path) -> None:
+def verify_adoption(stack: LocalStack, fingerprint: str, generated: Path, tail: list[Path]) -> None:
+    history_query = "SELECT jsonb_agg(to_jsonb(h) ORDER BY version) FROM supabase_migrations.schema_migrations h"
+    rows_query = """
+SELECT jsonb_build_object(
+ 'users', (SELECT jsonb_agg(to_jsonb(u) ORDER BY id) FROM auth.users u),
+ 'profiles', (SELECT jsonb_agg(to_jsonb(p) ORDER BY user_id) FROM public.profiles p),
+ 'organizations', (SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM public.organizations o),
+ 'members', (SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM public.org_members m),
+ 'receipts', (SELECT jsonb_agg(to_jsonb(m) ORDER BY name) FROM public.migration_log m WHERE name <> 'schema_baseline_b1'),
+ 'pay', (SELECT jsonb_agg(to_jsonb(p)) FROM puppypay.baseline_boundary_probe p));
+"""
+    stack.sql(
+        "CREATE SCHEMA puppypay; CREATE TABLE puppypay.baseline_boundary_probe(balance bigint); INSERT INTO puppypay.baseline_boundary_probe VALUES (1234567);"
+    )
+    before_rows = stack.sql(rows_query)
+    before_history = stack.sql(history_query)
+    adopt = adoption_sql(ROOT, apply=True, fingerprint=fingerprint)
+
+    def rejected(code: str) -> None:
+        history = stack.sql(history_query)
+        try:
+            stack.sql(adopt)
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError(f"Unsafe adoption accepted {code}")
+        if stack.sql(history_query) != history or stack.sql(rows_query) != before_rows:
+            raise ValueError(f"Rejected adoption changed history/data: {code}")
+
+    # Incomplete histories cannot be stamped, even with the right final schema.
+    missing = json.loads(before_history)[0]
+    stack.sql(
+        f"DELETE FROM supabase_migrations.schema_migrations WHERE version='{missing['version']}'"
+    )
+    rejected("missing migration")
+    literal = json.dumps(missing).replace("'", "''")
+    stack.sql(
+        "INSERT INTO supabase_migrations.schema_migrations SELECT * FROM jsonb_populate_record(NULL::supabase_migrations.schema_migrations, '"
+        + literal
+        + "'::jsonb)"
+    )
+    stack.sql("ALTER TABLE public.profiles ADD COLUMN baseline_drift_probe text")
+    rejected("column drift")
+    stack.sql("ALTER TABLE public.profiles DROP COLUMN baseline_drift_probe")
+    stack.sql("REVOKE SELECT ON public.profiles FROM authenticated")
+    rejected("permission drift")
+    stack.sql("GRANT SELECT ON public.profiles TO authenticated")
+    stack.sql("ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY")
+    rejected("RLS drift")
+    stack.sql("ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY")
+    stack.sql(adoption_sql(ROOT, apply=False, fingerprint=fingerprint))
+    if stack.sql(history_query) != before_history:
+        raise ValueError("Check-only adoption modified history")
+    stack.sql(adopt)
+    stack.sql(adopt)
+    if stack.sql(rows_query) != before_rows:
+        raise ValueError("Adoption modified customer rows, Pay data or data-job receipts")
+    saved = stack.sql(
+        "SELECT summary->'original_history' FROM public.migration_log WHERE name='schema_baseline_b1'"
+    )
+    if saved != before_history:
+        raise ValueError("Original history was not preserved exactly")
+    stack.replace_migrations([generated, *tail])
+    stack.cli("migration", "up", "--local")
+    stack.cli("migration", "list", "--local")
+    stack.sql((ROOT / "supabase/test_fixtures/standalone_upgrade_assert.sql").read_text())
+    stack.sql("DROP TABLE puppypay.baseline_boundary_probe; DROP SCHEMA puppypay;")
+    stack.cli("test", "db")
+    # Prove the native CLI executes future SQL once after adoption, too.
+    next_version = max([generated.name[:14], *(p.name[:14] for p in tail)])
+    probe = stack.directory / f"{int(next_version) + 1}_adoption_probe.sql"
+    probe.write_text(
+        "CREATE TABLE public.baseline_upgrade_probe(id int); INSERT INTO public.baseline_upgrade_probe VALUES (1);\n"
+    )
+    stack.replace_migrations([generated, *tail, probe])
+    stack.cli("migration", "up", "--local")
+    stack.cli("migration", "up", "--local")
+    if stack.sql("SELECT count(*) FROM public.baseline_upgrade_probe") != "1":
+        raise ValueError("Post-baseline migration did not apply exactly once")
+
+
+def execute(mode: str, destination: Path, evidence: Path | None = None) -> None:
     manifest, files = validate_candidate(destination) if mode == "verify" else ({}, source_files())
-    all_files = source_files()
-    tail = [path for path in all_files if path.name[:14] > files[-1].name[:14]]
+    active = manifest.get("status") == "active"
+    active_version = Path(manifest["migration"]).name[:14] if active else files[-1].name[:14]
+    tail = [path for path in source_files() if path.name[:14] > active_version]
+    all_files = [*files, *tail]
     if mode == "prepare" and destination.exists():
         raise ValueError("Output must be a new directory; candidates are never overwritten")
     with tempfile.TemporaryDirectory(prefix="puppy-baseline-") as temporary:
@@ -306,20 +401,30 @@ def execute(mode: str, destination: Path) -> None:
                 else REFERENCE_DATA.read_text()
             )
             baseline = render_baseline(stack, files, expected, data, platform_acls)
-            if mode == "verify" and baseline != (destination / "baseline.sql").read_text():
+            baseline_path = ROOT / manifest["migration"] if active else destination / "baseline.sql"
+            if mode == "verify" and baseline != baseline_path.read_text():
                 raise ValueError("Candidate is not reproducible from its pinned migration history")
+            fingerprint_query = (
+                "SET search_path=pg_catalog;\n"
+                + (ROOT / "supabase/baselines/schema_fingerprint.sql").read_text()
+            )
+            fingerprint = stack.sql(fingerprint_query)
+            if manifest.get("schema_fingerprint") not in (None, fingerprint):
+                raise ValueError("Reviewed catalog fingerprint changed")
             latest = expected
             if tail:
                 stack.replace_migrations(all_files)
                 stack.cli("migration", "up", "--local")
                 latest = stack.capture()
-            generated = Path(temporary) / f"{files[-1].name[:14]}_baseline_b1.sql"
+            generated = Path(temporary) / f"{active_version}_baseline_b1.sql"
             generated.write_text(baseline)
             stack.replace_migrations([generated])
             print("Verifying fresh baseline against complete historical replay", flush=True)
             stack.cli("db", "reset", "--local", "--no-seed")
             actual = stack.capture()
             verify_equivalence(expected, actual)
+            if stack.sql(fingerprint_query) != fingerprint:
+                raise ValueError("Fresh baseline catalog fingerprint differs")
             if tail:
                 stack.replace_migrations([generated, *tail])
                 stack.cli("migration", "up", "--local")
@@ -336,6 +441,12 @@ def execute(mode: str, destination: Path) -> None:
             if stack.dump() != latest["schema"] or stack.auth_triggers() != latest["auth_triggers"]:
                 raise ValueError("Existing-data upgrade did not reach the same schema")
             stack.cli("test", "db")
+            if active:
+                # Freeze at B1 for adoption; later migrations run only afterward.
+                stack.replace_migrations(files)
+                stack.cli("db", "reset", "--local", "--no-seed")
+                stack.sql((ROOT / "supabase/test_fixtures/standalone_upgrade.sql").read_text())
+                verify_adoption(stack, fingerprint, generated, tail)
             if mode == "prepare":
                 destination.mkdir(parents=True)
                 (destination / "baseline.sql").write_text(baseline)
@@ -370,7 +481,8 @@ def execute(mode: str, destination: Path) -> None:
                     "fresh_install_pgtap",
                     "populated_upgrade_pgtap",
                 ],
-                "adoption_verified": False,
+                "schema_fingerprint": fingerprint,
+                "adoption_verified": active,
                 "hosted_databases_accessed": False,
             }
             report_path = (
@@ -380,6 +492,8 @@ def execute(mode: str, destination: Path) -> None:
             )
             report_path.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2), flush=True)
+            if evidence:
+                evidence.write_text(json.dumps(report, indent=2) + "\n")
         finally:
             stack.cli("stop", "--no-backup")
 
@@ -389,8 +503,15 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prepare").add_argument("--output", type=Path, required=True)
     commands.add_parser("verify").add_argument("--candidate", type=Path, required=True)
+    parser.add_argument(
+        "--evidence", type=Path, help="write verified evidence to a new artifact path"
+    )
     args = parser.parse_args()
-    execute(args.command, (args.output if args.command == "prepare" else args.candidate).resolve())
+    execute(
+        args.command,
+        (args.output if args.command == "prepare" else args.candidate).resolve(),
+        args.evidence,
+    )
 
 
 if __name__ == "__main__":

@@ -43,6 +43,10 @@ jobs:
           set +e
           git diff --quiet "origin/$BASE_REF...HEAD" -- \
             'supabase/migrations/**' \
+            'supabase/archive/**' \
+            'supabase/baselines/**' \
+            'scripts/database_history.py' \
+            'scripts/database_baseline.py' \
             'supabase/data_migrations/**' \
             'supabase/releases/**' \
             'supabase/tests/**' \
@@ -163,9 +167,11 @@ jobs:
         run: |
           # This is the local ephemeral Supabase started above, never --linked.
           # Keep this baseline fixed so future migrations exercise a real upgrade.
-          supabase db reset --local --no-seed --version 20260720000000
+          python3 scripts/database_history.py stage --output "$RUNNER_TEMP/pre-b1"
+          supabase db reset --local --no-seed --version 20260720000000 --workdir "$RUNNER_TEMP/pre-b1"
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade.sql
-          supabase migration up --local
+          supabase migration up --local --workdir "$RUNNER_TEMP/pre-b1"
+          python3 scripts/database_history.py adopt
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/_support/standalone_database.inc
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade_assert.sql
           supabase test db

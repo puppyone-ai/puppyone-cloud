@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'supabase/baselines/**'
+      - 'supabase/archive/**'
+      - 'backend/src/infra/data_migrations/**'
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
       - 'supabase/test_fixtures/**'
@@ -37,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f supabase/baselines/b1/manifest.json ]; then
-            python3 scripts/database_baseline.py verify --candidate supabase/baselines/b1
+            python3 scripts/database_baseline.py --evidence "$RUNNER_TEMP/baseline-verification.json" verify --candidate supabase/baselines/b1
           else
             python3 scripts/database_baseline.py prepare --output "$RUNNER_TEMP/baseline-b1"
           fi
@@ -46,6 +48,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: database-baseline-b1
-          path: ${{ runner.temp }}/baseline-b1/
+          path: |
+            ${{ runner.temp }}/baseline-b1/
+            ${{ runner.temp }}/baseline-verification.json
           if-no-files-found: ignore
           retention-days: 14

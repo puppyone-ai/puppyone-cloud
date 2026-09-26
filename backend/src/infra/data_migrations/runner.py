@@ -10,6 +10,7 @@ from .catalog import DataMigrationArtifact, DataMigrationCatalog
 from .database import PsqlClient
 from .errors import ExecutionError, ImmutableArtifactError, PrerequisiteError
 from .models import MigrationKind, MigrationPlan, MigrationState
+from .schema_history import data_job_coverage
 
 SAFE_PYTHON_ENVIRONMENT = frozenset(
     {
@@ -52,6 +53,7 @@ class DataMigrationRunner:
     def plan(self, migration_id: str) -> MigrationPlan:
         artifact = self.catalog.get(migration_id)
         applied = self.database.applied_schema_versions()
+        applied, retired = data_job_coverage(self.catalog.repository_root, applied, migration_id)
         missing_schema = sorted(set(artifact.manifest.requires_schema) - applied)
         if missing_schema:
             return MigrationPlan(
@@ -78,6 +80,17 @@ class DataMigrationRunner:
                 checksum=artifact.checksum,
                 legacy=artifact.manifest.legacy,
                 completed_source_sha=receipt.get("source_sha"),
+                retired=retired,
+            )
+
+        if retired:
+            return MigrationPlan(
+                id=migration_id,
+                kind=artifact.manifest.kind,
+                state=MigrationState.BLOCKED,
+                checksum=artifact.checksum,
+                legacy=artifact.manifest.legacy,
+                retired=True,
             )
 
         missing_environment = sorted(
@@ -99,6 +112,8 @@ class DataMigrationRunner:
             return plan
         if plan.state is MigrationState.BLOCKED:
             reasons: list[str] = []
+            if plan.retired:
+                reasons.append("data migration retired after B1; use the archived upgrade path")
             if plan.missing_schema:
                 reasons.append(f"missing schema: {', '.join(plan.missing_schema)}")
             if plan.missing_environment:
@@ -122,6 +137,10 @@ class DataMigrationRunner:
 
     def verify(self, migration_id: str) -> None:
         plan = self.plan(migration_id)
+        if plan.retired:
+            raise PrerequisiteError(
+                "data migration retired after B1; its old tables no longer exist"
+            )
         if plan.missing_schema:
             raise PrerequisiteError(f"missing schema: {', '.join(plan.missing_schema)}")
         if plan.state is not MigrationState.COMPLETED:

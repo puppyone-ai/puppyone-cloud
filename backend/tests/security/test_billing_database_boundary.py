@@ -13,7 +13,16 @@ from src.config import Settings
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_default_self_host_has_no_commercial_service_requirement():
+def test_default_self_host_has_no_commercial_service_requirement(monkeypatch):
+    # Other imported legacy modules may load the operator's local .env into
+    # os.environ. This test checks defaults, not that machine's configured mode.
+    for name in (
+        "PUPPYPAY_BASE_URL", "PUPPYPAY_INTERNAL_API_SECRET", "MANAGED_AI_ENABLED",
+        "BILLING_UI_ENABLED", "BILLING_WRITES_ENABLED", "ENTITLEMENTS_MODE",
+        "BILLING_ENFORCEMENT", "SEAT_BILLING_MODE", "RUNTIME_METERING_MODE",
+        "STORAGE_ENFORCEMENT_MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     value = Settings(_env_file=None)
     assert value.PUPPYPAY_BASE_URL == ""
     assert value.PUPPYPAY_INTERNAL_API_SECRET == ""
@@ -44,6 +53,7 @@ def test_public_runtime_cannot_import_private_payment_package():
 
 def test_public_migrations_do_not_require_private_schema_or_gateway():
     paths = list((ROOT / "supabase/migrations").glob("*.sql"))
+    paths += list((ROOT / "supabase/archive").rglob("*.sql"))
     paths += list((ROOT / "supabase/data_migrations").rglob("*.sql"))
     paths += list((ROOT / "supabase/data_migrations").rglob("*.py"))
     for path in paths:

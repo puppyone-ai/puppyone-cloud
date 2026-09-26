@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[3]
 MIGRATION = ROOT / (
-    "supabase/migrations/"
+    "supabase/archive/before_b1/"
     "20260716020000_project_deletion_storage_and_org_guard.sql"
 )
 VERSION_STORAGE = ROOT / "backend/src/version_engine/storage/backends/s3.py"

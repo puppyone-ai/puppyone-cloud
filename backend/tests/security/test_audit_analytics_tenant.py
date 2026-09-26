@@ -128,7 +128,7 @@ def test_summary_also_scoped_and_authenticated(monkeypatch):
 def test_analytics_migration_has_composite_index_rls_and_private_rpcs():
     migration = (
         Path(__file__).resolve().parents[3]
-        / "supabase/migrations/20260711030000_harden_analytics_aggregation.sql"
+        / "supabase/archive/before_b1/20260711030000_harden_analytics_aggregation.sql"
     )
     sql = migration.read_text(encoding="utf-8")
     assert "ON public.access_logs (project_id, created_at DESC)" in sql
