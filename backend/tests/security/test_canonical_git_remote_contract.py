@@ -12,9 +12,11 @@ from src.platform.repository_target.schemas import (
 from src.repo.scope_repository import _row_to_scope
 
 ROOT = Path(__file__).resolve().parents[3]
-MIGRATION = ROOT / "supabase/migrations/20260716000000_remove_workspace_binding.sql"
+MIGRATION = (
+    ROOT / "supabase/archive/before_b1/migrations/20260716000000_remove_workspace_binding.sql"
+)
 TARGET_CUTOVER = ROOT / (
-    "supabase/migrations/20260715000000_project_owned_repository_targets_contract_cutover.sql"
+    "supabase/archive/before_b1/migrations/20260715000000_project_owned_repository_targets_contract_cutover.sql"
 )
 
 
@@ -310,9 +312,7 @@ def test_legacy_access_router_cannot_issue_server_generated_human_git_secrets():
     assert "legacy_direct_access_removed" in unified_create
     assert "/projects/{project_id}/git-credentials" in unified_create
     assert "issue_git_http_token" not in unified_create
-    assert '"provider": "direct"' not in router.split(
-        "# ── Unified Create", 1
-    )[0]
+    assert '"provider": "direct"' not in router.split("# ── Unified Create", 1)[0]
 
 
 @pytest.mark.parametrize(

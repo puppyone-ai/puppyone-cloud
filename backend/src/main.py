@@ -839,7 +839,9 @@ async def _build_readiness_report(mcp_service) -> dict:
     }
 
     config_errors: list[str] = []
-    dependency_errors: list[str] = []
+    from src.infra.readiness import core_dependency_errors
+
+    dependency_errors = await core_dependency_errors()
 
     if not settings.DEBUG and not env_status["internal_api_secret_configured"]:
         config_errors.append("INTERNAL_API_SECRET is empty while DEBUG is False")
@@ -848,7 +850,9 @@ async def _build_readiness_report(mcp_service) -> dict:
     import time as _time
 
     _now = _time.time()
-    if (
+    if not settings.MCP_SERVER_URL:
+        mcp_status = {"status": "disabled"}
+    elif (
         not hasattr(_build_readiness_report, "_mcp_cache")
         or _now - _build_readiness_report._mcp_cache_time > 60
     ):
