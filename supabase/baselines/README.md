@@ -44,6 +44,9 @@ These are activation blockers, not reasons to rewrite old migrations in place.
 The preparation CI deliberately has read-only repository permissions and no
 deployment secrets. It never activates a baseline automatically or monthly.
 
+The first verified candidate and concrete adoption findings are documented in
+[`b1/README.md`](b1/README.md). Its original 102 source migrations remain active.
+
 After activation, the executable baseline belongs only in `migrations/`;
 retain this directory's manifest and evidence, and archive the old source in an
 immutable public release. Do not maintain two editable copies of the SQL.
