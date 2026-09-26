@@ -8,7 +8,9 @@ RUN case "$TARGETARCH" in \
       *) exit 1 ;; esac \
     && curl -fsSL "https://github.com/supabase/cli/releases/download/v2.107.0/supabase_2.107.0_linux_${TARGETARCH}.tar.gz" -o /tmp/cli.tar.gz \
     && echo "$checksum  /tmp/cli.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/cli.tar.gz -C /usr/local/bin supabase && rm /tmp/cli.tar.gz
+    && tar -xzf /tmp/cli.tar.gz -C /usr/local/bin supabase supabase-go \
+    && rm /tmp/cli.tar.gz \
+    && supabase --version
 WORKDIR /app
 COPY backend/src/infra/data_migrations /app/backend/src/infra/data_migrations
 COPY backend/pyproject.toml /app/backend/pyproject.toml
