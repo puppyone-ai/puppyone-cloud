@@ -86,14 +86,17 @@ test('fresh installation and restart preserve real authenticated file operations
   expect([401, 403]).toContain(anonymous.status());
 
   // An empty browser context must log in through the shipped frontend.
-  await page.goto(`${web}/login`);
+  const destination = `/projects/${state.projectId}/data`;
+  await page.goto(`${web}/login?next=${encodeURIComponent(destination)}`);
   await page.getByPlaceholder('Your email address').fill(state.email);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByPlaceholder('Enter your password').fill(state.password);
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 60_000 });
+  await expect(page).toHaveURL(`${web}${destination}`, { timeout: 60_000 });
+  await expect(page.getByText('install-check.md', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   await page.reload();
-  await expect(page).not.toHaveURL(/\/login/);
+  await expect(page).toHaveURL(`${web}${destination}`);
+  await expect(page.getByText('install-check.md', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   if (process.env.INSTALL_PHASE === 'verify') {
     await success(await request.post(`${api}/api/v1/content/${state.projectId}/rm`, {
       headers, data: { path: 'install-check.md' },

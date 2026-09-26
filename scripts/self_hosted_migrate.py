@@ -49,7 +49,14 @@ def migrate() -> None:
                 "--workdir",
                 str(ROOT),
             ],
-            env={**os.environ, "SUPABASE_DB_PASSWORD": password},
+            # CLI 2.107 reconstructs --db-url and drops its sslmode parameter
+            # (internal/utils/connect.go: ToPostgresURL). pgx still honors the
+            # process-scoped environment; do not use --debug as a TLS workaround.
+            env={
+                **os.environ,
+                "SUPABASE_DB_PASSWORD": password,
+                "PGSSLMODE": "disable",
+            },
             check=True,
             timeout=600,
         )
