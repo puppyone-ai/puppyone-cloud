@@ -65,7 +65,12 @@ def test_psql_receives_discrete_connection_environment() -> None:
     assert "PGDATABASE:" not in validation
     assert 'psql "$DATABASE_URL"' not in schema
     assert "python3 supabase/releases/connection.py" in schema
-    assert validation.count('psql "$DATABASE_URL"') == 2
+    for job in yaml.safe_load(validation)["jobs"].values():
+        for step in job.get("steps", []):
+            if 'psql "$DATABASE_URL"' in step.get("run", ""):
+                assert step["env"]["DATABASE_URL"] == (
+                    "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+                )
     upgrade_harness = (REPOSITORY / "scripts" / "test-repository-target-migration.sh").read_text()
     explicit_calls = upgrade_harness.count('psql "$database_url"')
     assert explicit_calls == upgrade_harness.count("psql ")

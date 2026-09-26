@@ -4,6 +4,63 @@ PuppyOne uses Supabase's official schema history and a portable extension for
 online production-data transformations. GitHub Actions is an adapter, not the
 migration engine.
 
+## Public core and private billing boundary
+
+PuppyOne Cloud is independently installable open-source software. PuppyPay is
+an optional, separately released private service. Each owns its tables and its
+migrations, even when hosted installations share one Supabase database:
+
+```text
+Public Cloud repo                         Private PuppyPay repo
+  Cloud SQL migrations                     Pay Alembic migrations
+  Product tables / entitlement projection  Financial ledger / balances / prices
+              |                                         |
+              +----------- versioned HTTP API ----------+
+
+Public CI: no Pay checkout, schema, service, or credentials
+Private CI: independent Pay DB tests + pinned public-consumer contract check
+```
+
+Cloud schema/data migrations MUST NOT require a Pay table, foreign key, RPC,
+HTTP call, migration revision, or completion receipt. Pay migrations MUST NOT
+require Cloud tables. User/org IDs cross the API boundary as identifiers;
+financial facts stay owned by Pay. Product-side entitlement projections remain
+Cloud-owned tables installed by the public migration history. Disabling hosted
+billing never means pretending that a missing required financial service worked.
+
+The public database validation workflow checks a fresh installation without any
+`puppypay` schema, then upgrades synthetic user/organization data from
+`20260720000000` to the current migration head and checks preservation. Existing
+older migration fixtures continue covering their specific historical cutovers.
+Source-boundary checks reject private Python imports and direct private-schema
+references; they supplement, rather than replace, executable database tests.
+
+The official staging/production deployment workflows and owner-specific main
+release policy run only in `puppyone-ai/puppyone-cloud`. Forks still run public
+validation. A self-hosted operator supplies their own deployment adapter and
+database credentials; they never need our protected environments or Pay repo.
+
+PuppyPay's private CI tests fresh/previous-revision upgrades against PostgreSQL
+without Cloud/Auth tables. It also checks the real public consumer selected by
+an immutable commit in `contracts/puppyone-consumer.json`. The private check
+round-trips entitlement publications/acknowledgements and billing facts, and
+validates requests emitted by Cloud's actual managed-inference service against
+Pay's request models. It uses synthetic data and an in-process HTTP transport;
+it is not a live checkout/provider or whole-application E2E test.
+
+A Cloud API change requires verifying its candidate SHA in the private workflow
+before enabling the hosted feature and updating the reviewed consumer pin. This
+private release check MUST NOT become a prerequisite of public schema upgrades
+or fork CI. Pay's own deployment waits for its local tests, container check, and
+consumer contract check. Compatible changes allow the two services to deploy
+independently; breaking API removals need a versioned transition. Installing a
+new schema and enabling a new hosted feature are separate release decisions.
+
+Outstanding coverage: the documented Docker self-host bootstrap still loads
+only the initial schema snapshot; this CI boundary work does not claim to fix or
+validate the full Docker installation/upgrade path. No hosted environment or
+GitHub branch-protection setting is changed by editing these workflow files.
+
 ## One rule, two lanes
 
 ```text

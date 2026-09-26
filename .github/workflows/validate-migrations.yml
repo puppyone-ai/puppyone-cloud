@@ -51,6 +51,10 @@ jobs:
             'backend/tests/infra/data_migrations/**' \
             'backend/tests/security/test_credential_backfill_ci_contract.py' \
             'backend/tests/security/test_unified_authorization_architecture.py' \
+            'backend/tests/security/test_billing_database_boundary.py' \
+            'backend/src/platform/billing/**' \
+            'backend/src/platform/entitlements/**' \
+            'backend/src/platform/managed_ai/**' \
             'backend/pyproject.toml' \
             'backend/uv.lock' \
             '.github/workflows/*migration*.yml' \
@@ -103,6 +107,7 @@ jobs:
             tests/infra/data_migrations \
             tests/security/test_credential_backfill_ci_contract.py \
             tests/security/test_unified_authorization_architecture.py \
+            tests/security/test_billing_database_boundary.py \
             -q
 
   validate_local_database:
@@ -149,6 +154,20 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: |
           supabase db reset --no-seed
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/_support/standalone_database.inc
+          supabase test db
+
+      - name: Upgrade populated standalone database without PuppyPay
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: |
+          # This is the local ephemeral Supabase started above, never --linked.
+          # Keep this baseline fixed so future migrations exercise a real upgrade.
+          supabase db reset --local --no-seed --version 20260720000000
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade.sql
+          supabase migration up --local
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/_support/standalone_database.inc
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade_assert.sql
           supabase test db
 
       - name: Verify historical Project creator repair, retry, and receipt

@@ -12,6 +12,7 @@ permissions:
 jobs:
   validate_ref:
     name: Validate protected production source
+    if: github.repository == 'puppyone-ai/puppyone-cloud'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -24,7 +24,7 @@ jobs:
   main-release-gate:
     name: Main Release Gate
     runs-on: ubuntu-latest
-    if: github.event.pull_request.base.ref == 'main'
+    if: github.repository == 'puppyone-ai/puppyone-cloud' && github.event.pull_request.base.ref == 'main'
     steps:
       - name: Validate main release policy
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
