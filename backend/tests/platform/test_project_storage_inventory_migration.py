@@ -6,17 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from src.infra.data_migrations.schema_history import data_migration_directory
+
 REPOSITORY = Path(__file__).resolve().parents[3]
 
 
 def _migration_module():
-    path = (
-        REPOSITORY
-        / "supabase"
-        / "data_migrations"
-        / "20260720_project_storage_inventory"
-        / "run.py"
-    )
+    path = data_migration_directory(REPOSITORY, "20260720_project_storage_inventory") / "run.py"
     spec = importlib.util.spec_from_file_location("storage_inventory_migration", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
