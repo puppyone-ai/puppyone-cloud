@@ -17,9 +17,15 @@ def test_default_self_host_has_no_commercial_service_requirement(monkeypatch):
     # Other imported legacy modules may load the operator's local .env into
     # os.environ. This test checks defaults, not that machine's configured mode.
     for name in (
-        "PUPPYPAY_BASE_URL", "PUPPYPAY_INTERNAL_API_SECRET", "MANAGED_AI_ENABLED",
-        "BILLING_UI_ENABLED", "BILLING_WRITES_ENABLED", "ENTITLEMENTS_MODE",
-        "BILLING_ENFORCEMENT", "SEAT_BILLING_MODE", "RUNTIME_METERING_MODE",
+        "PUPPYPAY_BASE_URL",
+        "PUPPYPAY_INTERNAL_API_SECRET",
+        "MANAGED_AI_ENABLED",
+        "BILLING_UI_ENABLED",
+        "BILLING_WRITES_ENABLED",
+        "ENTITLEMENTS_MODE",
+        "BILLING_ENFORCEMENT",
+        "SEAT_BILLING_MODE",
+        "RUNTIME_METERING_MODE",
         "STORAGE_ENFORCEMENT_MODE",
     ):
         monkeypatch.delenv(name, raising=False)

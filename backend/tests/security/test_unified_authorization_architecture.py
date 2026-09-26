@@ -153,13 +153,15 @@ def test_migrations_define_authorization_foundation_and_remove_checkout_identity
     foundation = (
         BACKEND.parent
         / "supabase"
-        / "archive" / "before_b1"
+        / "archive"
+        / "before_b1"
         / "20260712010000_expand_unified_project_authorization.sql"
     ).read_text()
     creator_guard = (
         BACKEND.parent
         / "supabase"
-        / "archive" / "before_b1"
+        / "archive"
+        / "before_b1"
         / "20260713010000_enforce_project_creator_admin.sql"
     ).read_text()
     retirement = (
@@ -177,7 +179,11 @@ def test_migrations_define_authorization_foundation_and_remove_checkout_identity
         / "run.sql"
     ).read_text()
     binding_removal = (
-        BACKEND.parent / "supabase" / "archive" / "before_b1" / "20260716000000_remove_workspace_binding.sql"
+        BACKEND.parent
+        / "supabase"
+        / "archive"
+        / "before_b1"
+        / "20260716000000_remove_workspace_binding.sql"
     ).read_text()
     assert "create_project_with_admin" in foundation
     assert "resolve_project_role" in foundation

@@ -347,6 +347,23 @@ SELECT jsonb_build_object(
     stack.sql("ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY")
     rejected("RLS drift")
     stack.sql("ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY")
+    # A failure after the receipt INSERT and history DELETE must roll everything
+    # back. This trigger belongs only to the disposable migration-history schema.
+    stack.sql("""
+CREATE FUNCTION supabase_migrations.reject_baseline_probe() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'synthetic final-write failure'; END; $$;
+CREATE TRIGGER reject_baseline_probe BEFORE INSERT ON supabase_migrations.schema_migrations
+FOR EACH ROW EXECUTE FUNCTION supabase_migrations.reject_baseline_probe();
+""")
+    rejected("final history insert failure")
+    if (
+        stack.sql("SELECT count(*) FROM public.migration_log WHERE name='schema_baseline_b1'")
+        != "0"
+    ):
+        raise ValueError("Failed adoption left a completion receipt")
+    stack.sql(
+        "DROP TRIGGER reject_baseline_probe ON supabase_migrations.schema_migrations; DROP FUNCTION supabase_migrations.reject_baseline_probe();"
+    )
     stack.sql(adoption_sql(ROOT, apply=False, fingerprint=fingerprint))
     if stack.sql(history_query) != before_history:
         raise ValueError("Check-only adoption modified history")

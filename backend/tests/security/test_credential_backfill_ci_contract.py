@@ -35,9 +35,11 @@ def test_applied_credential_sql_history_remains_language_neutral() -> None:
         "20260711010000_harden_agent_sandbox_credentials.sql",
         "20260711070000_move_scope_credentials_to_access_credentials.sql",
     ):
-        migration = (REPO_ROOT / "supabase/archive/before_b1" / migration_name).read_text(
-            encoding="utf-8"
-        ).lower()
+        migration = (
+            (REPO_ROOT / "supabase/archive/before_b1" / migration_name)
+            .read_text(encoding="utf-8")
+            .lower()
+        )
         assert "python" not in migration
         assert ".py" not in migration
         assert "scripts/" not in migration
@@ -68,7 +70,7 @@ def test_credential_backfills_use_bounded_stable_keyset_pagination() -> None:
     ):
         source = (DATA_ROOT / migration_id / "run.py").read_text()
         assert '.order("id")' in source
-        assert '.limit(page_size)' in source
+        assert ".limit(page_size)" in source
         assert '.gt("id", after_id)' in source
         assert ".range(" not in source
 

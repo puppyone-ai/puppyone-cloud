@@ -81,7 +81,7 @@ WITH relations AS (
     FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
     WHERE n.nspname = 'public' AND t.typtype = 'e'
     UNION ALL
-    SELECT 'default_acl', pg_get_userbyid(d.defaclrole) || '.' || d.defaclobjtype,
+    SELECT 'default_acl', pg_get_userbyid(d.defaclrole) || '.' || d.defaclobjtype::text,
         jsonb_build_object('acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(d.defaclacl) a))
     FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
     WHERE n.nspname = 'public' AND pg_get_userbyid(d.defaclrole) = 'postgres'

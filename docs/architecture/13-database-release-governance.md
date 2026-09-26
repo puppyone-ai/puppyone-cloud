@@ -63,34 +63,44 @@ GitHub branch-protection setting is changed by editing these workflow files.
 
 ## One rule, two lanes
 
-### Baseline preparation
+### Active baseline and immutable archive
 
-`supabase/baselines` stages checksum-pinned baseline candidates. It is not a
-second Supabase migration directory. `scripts/database_baseline.py` generates
-one by replaying the public history in its own temporary Supabase stack, then
-compares a baseline installation with the replay, including owners, ACLs/RLS,
-application triggers on Auth tables and required bootstrap data. It also checks
-a populated older-version upgrade. Candidate verification checks any later
-migrations against both installation paths. No hosted connection is accepted.
+`supabase/migrations/20260926000000_baseline_b1.sql` is the sole executable B1.
+Its 102 historical sources are preserved byte-for-byte in
+`supabase/archive/before_b1/`. Later schema changes append timestamped SQL to
+`migrations/`; the ordinary Supabase CLI never scans the archive. `baselines/b1`
+holds the source inventory, hashes and verification evidence, not another copy
+of the executable SQL. No independent current-schema snapshot is maintained.
 
-The `Verify Database Baseline` workflow performs this verification without cloud
-credentials or a private Pay checkout. The candidate SQL remains outside the
-active migration directory until an explicitly reviewed adoption release.
-There is no independently maintained current-schema snapshot.
+`scripts/database_baseline.py` compares archived replay with B1 installation in
+an isolated Supabase PostgreSQL 17 stack, including ACL/RLS, ownership, functions,
+Auth triggers, reference data and later migrations. It also verifies populated
+upgrades and atomic migration-history adoption, with no hosted credentials.
 
-Baseline adoption must update the current exact-version data-job prerequisites,
-immutable-history inventories, historical catch-up plan, hosted preflights and
-Docker bootstrap together. A new baseline is not sufficient evidence that an
-existing database completed its historical data transformations. Required-data
-initialization must never fabricate external-storage completion receipts.
+`scripts/database_history.py check` verifies an existing database without
+committing changes. `adopt` requires the complete archived history and reviewed
+catalog fingerprint before atomically preserving all original history rows in
+`migration_log` and replacing the covered tracking rows with B1. No customer
+rows or data-job completion receipts are rewritten. Missing history or schema
+/ permission drift stops before history writes. Surviving data jobs understand
+B1 schema coverage; retired jobs do not run against removed tables.
+
+The protected schema workflow performs adoption before native `db push`.
+Supabase's direct GitHub integration does not execute this custom admission:
+an existing branch needs the protected transition before that integration can
+resume. Fresh preview databases can apply B1 normally. This repository change
+does not itself assert that any hosted database has adopted B1.
+
+Older installations can materialize the full public archive with
+`database_history.py stage --output <new-directory>` and use the existing
+phased data/schema upgrade rules before adoption. No private Pay repository is
+needed. Historical data transformations are not replaced by schema stamping.
+
 See [`supabase/baselines/README.md`](../../supabase/baselines/README.md) for the
-reproduction commands and activation checklist.
-
-Review compaction at stable release milestones, not an automatic monthly delete
-job. Preserve a public, immutable intermediate release for older installations.
-On adoption the executable baseline moves into `supabase/migrations` and covered
-files can leave the active directory only after verified history reconciliation;
-the candidate SQL copy is then removed from `baselines`.
+commands and rollout boundary. The legacy Compose PG15 bootstrap retains its
+original archived initial SQL; its PG17 modernization is not covered by the B1
+Supabase verification. Never automatically swap the image on an existing data
+volume. Assess future compaction at stable release milestones, not monthly.
 
 ```text
 Schema lane
