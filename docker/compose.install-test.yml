@@ -1,7 +1,7 @@
 # Isolated test-only SMTP sink. No messages leave the Compose network.
 services:
   mail:
-    image: supabase/mailpit:v1.22.3
+    image: axllent/mailpit:v1.22.3
     ports:
       - "127.0.0.1:${MAIL_PORT:-18025}:8025"
   auth:
@@ -21,6 +21,7 @@ services:
   api:
     environment:
       SUPABASE_PUBLIC_URL: http://127.0.0.1:${SUPABASE_API_PORT}
+      FRONTEND_URL: http://127.0.0.1:${FRONTEND_PORT}
   web:
     build:
       args:

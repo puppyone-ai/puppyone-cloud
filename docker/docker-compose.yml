@@ -45,7 +45,7 @@ services:
 
   # ── Supabase: REST API (PostgREST) ─────────────────────────
   rest:
-    image: supabase/postgrest:v14.1
+    image: postgrest/postgrest:v14.1
     depends_on:
       db:
         condition: service_healthy
@@ -59,7 +59,7 @@ services:
 
   # ── Supabase: API Gateway (Kong) ───────────────────────────
   kong:
-    image: supabase/kong:2.8.1
+    image: kong:2.8.1
     ports:
       - "${SUPABASE_API_PORT:-8000}:8000"
     environment:
@@ -193,6 +193,7 @@ services:
       AUTH_SECURITY_REDIS_URL: redis://redis:6379/0
       SUPABASE_PUBLIC_URL: http://localhost:${SUPABASE_API_PORT:-8000}
       FRONTEND_URL: http://localhost:${FRONTEND_PORT:-3000}
+      ALLOWED_HOSTS: '["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]'
       DESKTOP_AUTH_PUBLIC_BASE_URL: http://localhost:${BACKEND_PORT:-9090}/api/v1
       DESKTOP_AUTH_ALLOWED_CALLBACKS: puppyone://auth/callback
       SKIP_AUTH: ${SKIP_AUTH:-false}
