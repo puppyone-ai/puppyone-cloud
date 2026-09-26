@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import subprocess
@@ -12,6 +13,21 @@ from src.infra.data_migrations.schema_history import data_migration_directory
 
 REPOSITORY = Path(__file__).resolve().parents[4]
 WORKFLOWS = REPOSITORY / ".github" / "workflows"
+
+
+def test_reusable_database_jobs_cannot_bypass_database_change_detection():
+    workflow = yaml.safe_load((WORKFLOWS / "validate-migrations.yml").read_text())
+    scope = next(
+        step["run"]
+        for step in workflow["jobs"]["database_change_scope"]["steps"]
+        if step.get("id") == "detect"
+    )
+    patterns = re.findall(r"'([^']+)'", scope)
+    for path in WORKFLOWS.glob("_*.yml"):
+        source = path.read_text()
+        if "group: database-${{ inputs.environment }}" in source:
+            relative = path.relative_to(REPOSITORY).as_posix()
+            assert any(fnmatch.fnmatchcase(relative, pattern) for pattern in patterns), relative
 
 
 @pytest.mark.parametrize(

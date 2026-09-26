@@ -64,6 +64,8 @@ jobs:
             '.github/workflows/*migration*.yml' \
             '.github/workflows/migrate-*.yml' \
             '.github/workflows/_schema-deploy.yml' \
+            '.github/workflows/_operator-data-verify.yml' \
+            '.github/workflows/prepare-baseline.yml' \
             '.github/workflows/validate-migrations.yml' \
             '.github/workflows/main-release-gate.yml'
           status=$?
