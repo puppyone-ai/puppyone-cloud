@@ -40,6 +40,10 @@ async function signup(request, email, password) {
     headers: { apikey: key }, data: { email, password },
   }));
   expect(session.access_token).toBeTruthy();
+  const claims = JSON.parse(Buffer.from(session.access_token.split('.')[1], 'base64url').toString());
+  expect(claims).toMatchObject({
+    iss: `${auth}/auth/v1`, aud: 'authenticated', role: 'authenticated',
+  });
   return session;
 }
 
