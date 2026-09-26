@@ -23,7 +23,9 @@ def test_empty_storage_requires_two_matching_observations(monkeypatch):
     client, repo = fixture()
     proof = SimpleNamespace(object_count=0, multipart_count=0, digest="empty")
     observe = MagicMock(return_value=proof)
-    monkeypatch.setattr("src.infra.self_hosted_bootstrap.observe_project_storage_inventory", observe)
+    monkeypatch.setattr(
+        "src.infra.self_hosted_bootstrap.observe_project_storage_inventory", observe
+    )
     initialize_storage(client, "fresh", repo)
     assert observe.call_count == 2
     repo.verify_scan.assert_called_once_with(proof)
@@ -57,7 +59,9 @@ def test_repeat_install_preserves_existing_completed_inventory():
 
 def test_access_denied_is_not_treated_as_missing_bucket():
     client, repo = fixture()
-    client.head_bucket.side_effect = ClientError({"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadBucket")
+    client.head_bucket.side_effect = ClientError(
+        {"ResponseMetadata": {"HTTPStatusCode": 403}}, "HeadBucket"
+    )
     with pytest.raises(ClientError):
         initialize_storage(client, "existing", repo)
     client.create_bucket.assert_not_called()
@@ -65,10 +69,15 @@ def test_access_denied_is_not_treated_as_missing_bucket():
 
 def test_changed_inventory_cannot_be_marked_complete(monkeypatch):
     client, repo = fixture()
-    monkeypatch.setattr("src.infra.self_hosted_bootstrap.observe_project_storage_inventory", MagicMock(side_effect=[
-        SimpleNamespace(object_count=0, multipart_count=0, digest="a"),
-        SimpleNamespace(object_count=1, multipart_count=0, digest="b"),
-    ]))
+    monkeypatch.setattr(
+        "src.infra.self_hosted_bootstrap.observe_project_storage_inventory",
+        MagicMock(
+            side_effect=[
+                SimpleNamespace(object_count=0, multipart_count=0, digest="a"),
+                SimpleNamespace(object_count=1, multipart_count=0, digest="b"),
+            ]
+        ),
+    )
     with pytest.raises(RuntimeError, match="changed"):
         initialize_storage(client, "fresh", repo)
     repo.complete.assert_not_called()

@@ -56,10 +56,10 @@ consumer contract check. Compatible changes allow the two services to deploy
 independently; breaking API removals need a versioned transition. Installing a
 new schema and enabling a new hosted feature are separate release decisions.
 
-Outstanding coverage: the documented Docker self-host bootstrap still loads
-only the initial schema snapshot; this CI boundary work does not claim to fix or
-validate the full Docker installation/upgrade path. No hosted environment or
-GitHub branch-protection setting is changed by editing these workflow files.
+The Docker self-host bootstrap uses the same active migrations through a
+separate migration task. See [installation validation](14-self-hosted-installation.md)
+for the empty-stack test and supported upgrade boundaries. No hosted environment
+or GitHub branch-protection setting is changed by editing these workflow files.
 
 ## One rule, two lanes
 
@@ -104,10 +104,10 @@ phased data/schema upgrade rules before adoption. No private Pay repository is
 needed. Historical data transformations are not replaced by schema stamping.
 
 See [`supabase/baselines/README.md`](../../supabase/baselines/README.md) for the
-commands and rollout boundary. The legacy Compose PG15 bootstrap retains its
-original archived initial SQL; its PG17 modernization is not covered by the B1
-Supabase verification. Never automatically swap the image on an existing data
-volume. Assess future compaction at stable release milestones, not monthly.
+commands and rollout boundary. Compose now targets PG17; an existing PG15 volume
+still requires a separate explicit major-version upgrade. Never automatically
+swap the image on an existing data volume. Assess future compaction at stable
+release milestones, not monthly.
 
 ```text
 Schema lane

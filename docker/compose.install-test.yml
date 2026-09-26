@@ -1,7 +1,7 @@
 # Isolated test-only SMTP sink. No messages leave the Compose network.
 services:
   mail:
-    image: public.ecr.aws/supabase/mailpit:v1.22.3
+    image: supabase/mailpit:v1.22.3
     ports:
       - "127.0.0.1:${MAIL_PORT:-18025}:8025"
   auth:

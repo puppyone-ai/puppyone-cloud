@@ -4,6 +4,7 @@
 Existing pre-B1 databases must complete the documented phased archive upgrade
 first. Admission refuses to stamp an incomplete or divergent database.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,26 +26,54 @@ def migrate() -> None:
     port = int(os.environ.get("PGPORT", "5432"))
     # The database password is passed through the environment, not argv/logs.
     target = f"postgresql://postgres@{host}:{port}/postgres"
-    db = PsqlClient(f"postgresql://postgres:{quote(password, safe='')}@{host}:{port}/postgres")
+    db = PsqlClient(
+        f"postgresql://postgres:{quote(password, safe='')}@{host}:{port}/postgres"
+    )
     with db.advisory_lock("puppyone-self-hosted-release"):
-        db.command(["-q", "-v", "ON_ERROR_STOP=1"], input_text=adoption_sql(ROOT, apply=True), timeout=180)
-        subprocess.run(
-            ["supabase", "db", "push", "--db-url", target, "--yes", "--workdir", str(ROOT)],
-            env={**os.environ, "SUPABASE_DB_PASSWORD": password}, check=True, timeout=600,
+        db.command(
+            ["-q", "-v", "ON_ERROR_STOP=1"],
+            input_text=adoption_sql(ROOT, apply=True),
+            timeout=180,
         )
-        expected = {p.name.split("_", 1)[0] for p in (ROOT / "supabase/migrations").glob("*.sql")}
+        subprocess.run(
+            [
+                "supabase",
+                "db",
+                "push",
+                "--db-url",
+                target,
+                "--yes",
+                "--workdir",
+                str(ROOT),
+            ],
+            env={**os.environ, "SUPABASE_DB_PASSWORD": password},
+            check=True,
+            timeout=600,
+        )
+        expected = {
+            p.name.split("_", 1)[0]
+            for p in (ROOT / "supabase/migrations").glob("*.sql")
+        }
         if db.applied_schema_versions() != expected:
             raise RuntimeError("Migration history does not match this release")
         # Recheck B1 admission (including its fingerprint when still at B1).
-        db.command(["-q", "-v", "ON_ERROR_STOP=1"], input_text=adoption_sql(ROOT, apply=False), timeout=180)
+        db.command(
+            ["-q", "-v", "ON_ERROR_STOP=1"],
+            input_text=adoption_sql(ROOT, apply=False),
+            timeout=180,
+        )
         db.scalar("NOTIFY pgrst, 'reload schema';")
-    print("Public schema is at the checked-out release; no demo data or private billing schema installed.")
+    print(
+        "Public schema is at the checked-out release; no demo data or private billing schema installed."
+    )
 
 
 if __name__ == "__main__":
     try:
         migrate()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- sanitized CLI boundary
         # Database diagnostics may contain row data. The operator can inspect
         # local database logs; do not print connection strings or exception text.
-        raise SystemExit(f"Self-hosted migration failed ({type(error).__name__}); application startup blocked.") from None
+        raise SystemExit(
+            f"Self-hosted migration failed ({type(error).__name__}); application startup blocked."
+        ) from None

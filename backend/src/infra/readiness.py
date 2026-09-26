@@ -1,4 +1,5 @@
 """Bounded, read-only probes for the dependencies required by core file operations."""
+
 import asyncio
 import os
 
@@ -10,12 +11,17 @@ from redis.asyncio import Redis
 
 def _probe_bucket():
     client = boto3.client(
-        "s3", endpoint_url=os.getenv("S3_ENDPOINT_URL") or None,
+        "s3",
+        endpoint_url=os.getenv("S3_ENDPOINT_URL") or None,
         aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID") or None,
         aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY") or None,
         region_name=os.getenv("S3_REGION", "us-east-1"),
-        config=Config(connect_timeout=2, read_timeout=2, retries={"max_attempts": 0},
-                      s3={"addressing_style": "path"}),
+        config=Config(
+            connect_timeout=2,
+            read_timeout=2,
+            retries={"max_attempts": 0},
+            s3={"addressing_style": "path"},
+        ),
     )
     try:
         client.head_bucket(Bucket=os.environ["S3_BUCKET_NAME"])
@@ -41,9 +47,18 @@ async def core_dependency_errors() -> list[str]:
                 await client.ping()
 
     results = await asyncio.gather(
-        database(), asyncio.to_thread(_probe_bucket), redis(), return_exceptions=True,
+        database(),
+        asyncio.to_thread(_probe_bucket),
+        redis(),
+        return_exceptions=True,
     )
     # Never send connection strings or provider exception bodies to /ready.
-    return [f"{name} is unavailable" for name, result in zip(
-        ("Database", "Object storage", "Redis"), results, strict=True,
-    ) if isinstance(result, BaseException)]
+    return [
+        f"{name} is unavailable"
+        for name, result in zip(
+            ("Database", "Object storage", "Redis"),
+            results,
+            strict=True,
+        )
+        if isinstance(result, BaseException)
+    ]

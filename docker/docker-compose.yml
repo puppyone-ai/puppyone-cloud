@@ -2,7 +2,7 @@ services:
 
   # ── Supabase: Database ──────────────────────────────────────
   db:
-    image: public.ecr.aws/supabase/postgres:17.6.1.064
+    image: supabase/postgres:17.6.1.064
     ports:
       - "127.0.0.1:${DATABASE_PORT:-54322}:5432"
     environment:
@@ -22,7 +22,7 @@ services:
 
   # ── Supabase: Auth (GoTrue) ────────────────────────────────
   auth:
-    image: public.ecr.aws/supabase/gotrue:v2.184.0
+    image: supabase/gotrue:v2.184.0
     depends_on:
       db:
         condition: service_healthy
@@ -45,7 +45,7 @@ services:
 
   # ── Supabase: REST API (PostgREST) ─────────────────────────
   rest:
-    image: public.ecr.aws/supabase/postgrest:v14.1
+    image: supabase/postgrest:v14.1
     depends_on:
       db:
         condition: service_healthy
@@ -59,7 +59,7 @@ services:
 
   # ── Supabase: API Gateway (Kong) ───────────────────────────
   kong:
-    image: public.ecr.aws/supabase/kong:2.8.1
+    image: supabase/kong:2.8.1
     ports:
       - "${SUPABASE_API_PORT:-8000}:8000"
     environment:
@@ -100,7 +100,7 @@ services:
 
   # ── MinIO (S3-compatible storage) ──────────────────────────
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     ports:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:

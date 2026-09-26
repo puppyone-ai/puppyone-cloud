@@ -3,6 +3,7 @@
 This command only admits empty projects + empty storage. Existing installations
 use the explicit, reviewed inventory operator, which may perform cleanup.
 """
+
 from botocore.exceptions import ClientError
 
 from src.infra.s3.service import S3Service
@@ -21,6 +22,7 @@ def initialize_storage(client, bucket, repository):
         client.create_bucket(Bucket=bucket)
     if repository.checkpoint().get("inventory_complete"):
         return
+
     # No cleanup operation is reachable from this fresh-install path.
     def require_empty():
         if (
@@ -28,7 +30,9 @@ def initialize_storage(client, bucket, repository):
             or client.list_objects_v2(Bucket=bucket, MaxKeys=1).get("Contents")
             or client.list_multipart_uploads(Bucket=bucket, MaxUploads=1).get("Uploads")
         ):
-            raise RuntimeError("Existing storage requires explicit operator inventory; nothing was deleted")
+            raise RuntimeError(
+                "Existing storage requires explicit operator inventory; nothing was deleted"
+            )
 
     require_empty()
     first = observe_project_storage_inventory(client, bucket)

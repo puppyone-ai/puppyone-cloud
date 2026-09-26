@@ -79,6 +79,11 @@ python3 scripts/database_baseline.py verify --candidate supabase/baselines/b1
 升级、历史切换、拒绝结构/权限漂移及之后的增量迁移。CI 不使用生产凭据。
 
 旧 SQL 和已启用基线保持不可修改；新变更只追加。到稳定版本节点再评估 B2，
-不按月自动删文件。`docker/docker-compose.yml` 的旧 PG15 启动入口仍固定在原始
-归档 SQL，它不是 B1 的安装入口；其完整 PG17 升级需另行验证，不能直接换镜像
-并复用旧数据卷。B1 的新库安装和 CI 使用 Supabase PostgreSQL 17。
+不按月自动删文件。Docker 的独立迁移任务与 CI 使用同一套 B1 + 后续迁移，
+目标为 Supabase PostgreSQL 17。已有 PG15 数据卷仍需单独做大版本升级，
+不能直接换镜像并复用旧数据卷。
+
+每次合并 main，CI 都从空环境执行已提交的 B1 和后续迁移，并运行整套安装测试。
+这是“用 baseline 重建并验证数据库”，不是“重新生成或修改 baseline”。
+用户应执行所下载版本的完整 `migrations/`，不能永远只执行 B1 而漏掉之后的变更。
+详见[安装与升级验证](../../docs/architecture/14-self-hosted-installation.md)。
