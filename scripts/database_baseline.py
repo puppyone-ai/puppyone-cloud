@@ -179,10 +179,11 @@ class LocalStack:
         return (
             self.sql("""
 SET search_path = pg_catalog;
-SELECT pg_get_triggerdef(t.oid, false) || ';' || chr(10) ||
+SELECT pg_get_triggerdef(t.oid, false) || ';' ||
+       CASE WHEN t.tgenabled='O' THEN '' ELSE chr(10) ||
        format('ALTER TABLE %I.%I %s TRIGGER %I;', n.nspname, c.relname,
          CASE t.tgenabled WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA'
-              WHEN 'A' THEN 'ENABLE ALWAYS' ELSE 'ENABLE' END, t.tgname)
+              WHEN 'A' THEN 'ENABLE ALWAYS' END, t.tgname) END
 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
 JOIN pg_namespace n ON n.oid=c.relnamespace
 JOIN pg_proc p ON p.oid=t.tgfoid
