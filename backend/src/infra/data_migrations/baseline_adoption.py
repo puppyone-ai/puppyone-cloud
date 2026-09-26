@@ -37,12 +37,21 @@ DECLARE
     actual text;
     relation record;
     receipt jsonb;
+    has_business_objects boolean;
 BEGIN
+    SELECT EXISTS (
+        SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S','f')
+        AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid='pg_class'::regclass
+            AND d.objid=c.oid AND d.deptype='e')
+        UNION ALL
+        SELECT FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='public'
+        AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid='pg_proc'::regclass
+            AND d.objid=p.oid AND d.deptype='e')
+    ) INTO has_business_objects;
     IF to_regclass('supabase_migrations.schema_migrations') IS NULL THEN
-        IF EXISTS (SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-                   WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m')
-                   AND NOT EXISTS (SELECT FROM pg_depend d WHERE d.classid='pg_class'::regclass
-                     AND d.objid=c.oid AND d.deptype='e')) THEN
+        IF has_business_objects THEN
             RAISE EXCEPTION 'BASELINE_HISTORY_MISSING';
         END IF;
         RETURN;
@@ -68,7 +77,7 @@ BEGIN
         RETURN;
     END IF;
     IF cardinality(versions) = 0 THEN
-        IF to_regclass('public.projects') IS NOT NULL THEN
+        IF has_business_objects THEN
             RAISE EXCEPTION 'BASELINE_HISTORY_MISSING';
         END IF;
         RETURN;

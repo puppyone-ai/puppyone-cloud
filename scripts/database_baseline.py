@@ -426,6 +426,11 @@ def execute(mode: str, destination: Path, evidence: Path | None = None) -> None:
                 + (ROOT / "supabase/baselines/schema_fingerprint.sql").read_text()
             )
             fingerprint = stack.sql(fingerprint_query)
+            catalog_query = (
+                fingerprint_query.split("SELECT encode(sha256", 1)[0]
+                + "SELECT jsonb_agg(jsonb_build_object('kind',kind,'name',name,'definition',definition) ORDER BY kind COLLATE \"C\", name COLLATE \"C\") FROM objects;"
+            )
+            catalog_before = json.loads(stack.sql(catalog_query))
             if manifest.get("schema_fingerprint") not in (None, fingerprint):
                 raise ValueError("Reviewed catalog fingerprint changed")
             latest = expected
@@ -441,6 +446,22 @@ def execute(mode: str, destination: Path, evidence: Path | None = None) -> None:
             actual = stack.capture()
             verify_equivalence(expected, actual)
             if stack.sql(fingerprint_query) != fingerprint:
+                catalog_after = json.loads(stack.sql(catalog_query))
+                before_map = {(x["kind"], x["name"]): x for x in catalog_before}
+                after_map = {(x["kind"], x["name"]): x for x in catalog_after}
+                for key in sorted(before_map.keys() | after_map.keys()):
+                    if before_map.get(key) != after_map.get(key):
+                        print(
+                            json.dumps(
+                                {
+                                    "object": key,
+                                    "before": before_map.get(key),
+                                    "after": after_map.get(key),
+                                },
+                                sort_keys=True,
+                            ),
+                            flush=True,
+                        )
                 raise ValueError("Fresh baseline catalog fingerprint differs")
             if tail:
                 stack.replace_migrations([generated, *tail])
