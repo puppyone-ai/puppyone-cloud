@@ -513,6 +513,8 @@ def execute(mode: str, destination: Path, evidence: Path | None = None) -> None:
                 }
                 (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             report = {
+                "verified_commit": run("git", "-C", str(ROOT), "rev-parse", "HEAD").strip(),
+                "active_migrations": {p.name: digest(p.read_bytes()) for p in source_files()},
                 "baseline_id": manifest["id"],
                 "source_migration_count": len(files),
                 "post_baseline_migrations_checked": [p.name for p in tail],

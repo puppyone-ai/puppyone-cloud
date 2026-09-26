@@ -14,13 +14,18 @@ from src.platform.project.storage_inventory import (
 
 
 def initialize_storage(client, bucket, repository):
+    completed = repository.checkpoint().get("inventory_complete")
     try:
         client.head_bucket(Bucket=bucket)
     except ClientError as error:
         if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 404:
             raise
+        if completed or repository.live_project_ids():
+            raise RuntimeError(
+                "Existing installation's bucket is missing; refusing to create an empty replacement"
+            ) from error
         client.create_bucket(Bucket=bucket)
-    if repository.checkpoint().get("inventory_complete"):
+    if completed:
         return
 
     # No cleanup operation is reachable from this fresh-install path.

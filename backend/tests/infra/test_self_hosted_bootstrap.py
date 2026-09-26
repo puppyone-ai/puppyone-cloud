@@ -67,6 +67,19 @@ def test_access_denied_is_not_treated_as_missing_bucket():
     client.create_bucket.assert_not_called()
 
 
+@pytest.mark.parametrize("completed", [True, False])
+def test_existing_installation_never_gets_an_empty_replacement_bucket(completed):
+    client, repo = fixture()
+    repo.checkpoint.return_value = {"inventory_complete": completed}
+    repo.live_project_ids.return_value = {"existing-project"}
+    client.head_bucket.side_effect = ClientError(
+        {"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadBucket"
+    )
+    with pytest.raises(RuntimeError, match="empty replacement"):
+        initialize_storage(client, "wrong-bucket", repo)
+    client.create_bucket.assert_not_called()
+
+
 def test_changed_inventory_cannot_be_marked_complete(monkeypatch):
     client, repo = fixture()
     monkeypatch.setattr(

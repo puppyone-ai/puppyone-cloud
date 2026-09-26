@@ -100,7 +100,9 @@ services:
 
   # ── MinIO (S3-compatible storage) ──────────────────────────
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
     ports:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
