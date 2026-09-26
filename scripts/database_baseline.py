@@ -23,6 +23,11 @@ REFERENCE_DATA = ROOT / "supabase/baselines/required_data.sql"
 NAME = re.compile(r"(?P<version>\d{14})_[a-z0-9_]+\.sql")
 EXTENSION = re.compile(r'CREATE EXTENSION IF NOT EXISTS "?([a-z_0-9-]+)"?', re.I)
 INVENTORY_TABLE = "project_storage_inventory_state"
+CREATION_ACL_RESET = "\n".join(
+    f'ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" '
+    f'REVOKE ALL ON {kind} FROM "anon", "authenticated", "service_role";'
+    for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
+)
 
 
 def digest(data: bytes) -> str:
@@ -252,6 +257,9 @@ WHERE e.extname IN ("""
         f"-- Covers {len(files)} migrations through {files[-1].name[:14]}.\n"
         "-- Do not add alongside the covered migration files.\n\n"
         + extension_sql
+        + "\n\n-- Avoid reintroducing platform defaults on restored application objects.\n"
+        + "-- The dump restores each object's ACL and the final creation defaults.\n"
+        + CREATION_ACL_RESET
         + "\n\n"
         + schema
         + "\n"
