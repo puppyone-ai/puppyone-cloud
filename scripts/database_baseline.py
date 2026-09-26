@@ -8,6 +8,7 @@ Historical SQL remains authoritative until a separate baseline adoption release.
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import re
@@ -76,6 +77,15 @@ def normalize_dump(sql: str) -> str:
             )
         ).strip()
         + "\n"
+    )
+
+
+def managed_default_acls(sql: str) -> set[str]:
+    """Supabase owns these role defaults; ordinary postgres cannot reapply them."""
+    return set(
+        re.findall(
+            r'^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_[^"]+"[^\n]*;$', sql, re.MULTILINE
+        )
     )
 
 
@@ -215,7 +225,9 @@ SELECT to_jsonb(s) - 'updated_at' FROM public.project_storage_inventory_state s;
         }
 
 
-def render_baseline(stack: LocalStack, files: list[Path], state: dict, data: str) -> str:
+def render_baseline(
+    stack: LocalStack, files: list[Path], state: dict, data: str, platform_acls: set[str]
+) -> str:
     extensions = sorted(set().union(*(EXTENSION.findall(path.read_text()) for path in files)))
     # These names are parsed from immutable repository SQL, never a remote DSN.
     extension_sql = stack.sql(
@@ -229,6 +241,11 @@ WHERE e.extname IN ("""
     schema = state["schema"].replace(
         'CREATE SCHEMA "public";', 'CREATE SCHEMA IF NOT EXISTS "public";'
     )
+    if managed_default_acls(schema) != platform_acls:
+        raise ValueError("Historical migrations changed platform-owned default privileges")
+    # They are already installed by Supabase. Preserve/compare them in the full
+    # schema fingerprint, but do not ask the migration role to recreate them.
+    schema = "\n".join(line for line in schema.splitlines() if line not in platform_acls) + "\n"
     return (
         "-- GENERATED BASELINE CANDIDATE: fresh Supabase databases only.\n"
         f"-- Covers {len(files)} migrations through {files[-1].name[:14]}.\n"
@@ -247,27 +264,46 @@ WHERE e.extname IN ("""
 def verify_equivalence(expected: dict, actual: dict) -> None:
     for component in ("schema", "auth_triggers", "reference_data"):
         if expected[component] != actual[component]:
+            if isinstance(expected[component], str) and isinstance(actual[component], str):
+                difference = difflib.unified_diff(
+                    expected[component].splitlines(),
+                    actual[component].splitlines(),
+                    fromfile="historical-replay",
+                    tofile="baseline-install",
+                    lineterm="",
+                )
+                print("\n".join(list(difference)[:100]), flush=True)
             raise ValueError(f"Baseline differs from historical replay: {component}")
 
 
 def execute(mode: str, destination: Path) -> None:
     manifest, files = validate_candidate(destination) if mode == "verify" else ({}, source_files())
+    all_files = source_files()
+    tail = [path for path in all_files if path.name[:14] > files[-1].name[:14]]
     if mode == "prepare" and destination.exists():
         raise ValueError("Output must be a new directory; candidates are never overwritten")
     with tempfile.TemporaryDirectory(prefix="puppy-baseline-") as temporary:
-        stack = LocalStack(Path(temporary), files)
+        stack = LocalStack(Path(temporary), [])
         try:
             print(f"Replaying {len(files)} migrations in an isolated Supabase stack", flush=True)
             stack.cli("start")
+            platform_acls = managed_default_acls(stack.dump())
+            stack.replace_migrations(files)
+            stack.cli("migration", "up", "--local")
             expected = stack.capture()
             data = (
                 (destination / "required_data.sql").read_text()
                 if mode == "verify"
                 else REFERENCE_DATA.read_text()
             )
-            baseline = render_baseline(stack, files, expected, data)
+            baseline = render_baseline(stack, files, expected, data, platform_acls)
             if mode == "verify" and baseline != (destination / "baseline.sql").read_text():
                 raise ValueError("Candidate is not reproducible from its pinned migration history")
+            latest = expected
+            if tail:
+                stack.replace_migrations(all_files)
+                stack.cli("migration", "up", "--local")
+                latest = stack.capture()
             generated = Path(temporary) / f"{files[-1].name[:14]}_baseline_b1.sql"
             generated.write_text(baseline)
             stack.replace_migrations([generated])
@@ -275,19 +311,20 @@ def execute(mode: str, destination: Path) -> None:
             stack.cli("db", "reset", "--local", "--no-seed")
             actual = stack.capture()
             verify_equivalence(expected, actual)
+            if tail:
+                stack.replace_migrations([generated, *tail])
+                stack.cli("migration", "up", "--local")
+                verify_equivalence(latest, stack.capture())
             stack.cli("test", "db")
             # Real upgrade from a fixed existing release, with synthetic user
             # data. This is still the original upgrade chain, not adoption.
-            stack.replace_migrations([p for p in files if p.name[:14] <= "20260720000000"])
+            stack.replace_migrations([p for p in all_files if p.name[:14] <= "20260720000000"])
             stack.cli("db", "reset", "--local", "--no-seed")
             stack.sql((ROOT / "supabase/test_fixtures/standalone_upgrade.sql").read_text())
-            stack.replace_migrations(files)
+            stack.replace_migrations(all_files)
             stack.cli("migration", "up", "--local")
             stack.sql((ROOT / "supabase/test_fixtures/standalone_upgrade_assert.sql").read_text())
-            if (
-                stack.dump() != expected["schema"]
-                or stack.auth_triggers() != expected["auth_triggers"]
-            ):
+            if stack.dump() != latest["schema"] or stack.auth_triggers() != latest["auth_triggers"]:
                 raise ValueError("Existing-data upgrade did not reach the same schema")
             stack.cli("test", "db")
             if mode == "prepare":
@@ -313,6 +350,7 @@ def execute(mode: str, destination: Path) -> None:
             report = {
                 "baseline_id": manifest["id"],
                 "source_migration_count": len(files),
+                "post_baseline_migrations_checked": [p.name for p in tail],
                 "baseline_sha256": digest(baseline.encode()),
                 "supabase_cli": run("supabase", "--version").strip(),
                 "postgres": stack.sql("SHOW server_version"),

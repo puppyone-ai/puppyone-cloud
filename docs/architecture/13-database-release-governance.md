@@ -63,6 +63,35 @@ GitHub branch-protection setting is changed by editing these workflow files.
 
 ## One rule, two lanes
 
+### Baseline preparation
+
+`supabase/baselines` stages checksum-pinned baseline candidates. It is not a
+second Supabase migration directory. `scripts/database_baseline.py` generates
+one by replaying the public history in its own temporary Supabase stack, then
+compares a baseline installation with the replay, including owners, ACLs/RLS,
+application triggers on Auth tables and required bootstrap data. It also checks
+a populated older-version upgrade. Candidate verification checks any later
+migrations against both installation paths. No hosted connection is accepted.
+
+The `Verify Database Baseline` workflow performs this verification without cloud
+credentials or a private Pay checkout. The candidate SQL remains outside the
+active migration directory until an explicitly reviewed adoption release.
+There is no independently maintained current-schema snapshot.
+
+Baseline adoption must update the current exact-version data-job prerequisites,
+immutable-history inventories, historical catch-up plan, hosted preflights and
+Docker bootstrap together. A new baseline is not sufficient evidence that an
+existing database completed its historical data transformations. Required-data
+initialization must never fabricate external-storage completion receipts.
+See [`supabase/baselines/README.md`](../../supabase/baselines/README.md) for the
+reproduction commands and activation checklist.
+
+Review compaction at stable release milestones, not an automatic monthly delete
+job. Preserve a public, immutable intermediate release for older installations.
+On adoption the executable baseline moves into `supabase/migrations` and covered
+files can leave the active directory only after verified history reconciliation;
+the candidate SQL copy is then removed from `baselines`.
+
 ```text
 Schema lane
 supabase/migrations -> supabase db push -> supabase_migrations.schema_migrations

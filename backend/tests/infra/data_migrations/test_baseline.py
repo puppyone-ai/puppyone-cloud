@@ -40,6 +40,12 @@ def test_dump_normalization_preserves_function_comments():
     assert "-- function comment" in baseline.normalize_dump(first)
 
 
+def test_platform_acl_detection_never_filters_application_role_grants():
+    platform = 'ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";'
+    application = 'ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" REVOKE ALL ON TABLES FROM "anon";'
+    assert baseline.managed_default_acls(platform + "\n" + application) == {platform}
+
+
 @pytest.mark.parametrize(
     "counts",
     [
