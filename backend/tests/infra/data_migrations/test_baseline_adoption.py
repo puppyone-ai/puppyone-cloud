@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,9 @@ ROOT = Path(__file__).resolve().parents[4]
 def archived_repository(tmp_path):
     for name in ("migrations", "archive", "baselines", "data_migrations", "releases"):
         shutil.copytree(ROOT / "supabase" / name, tmp_path / "supabase" / name)
+    shutil.copyfile(ROOT / "supabase/config.toml", tmp_path / "supabase/config.toml")
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend/pyproject.toml").write_text("")
     return tmp_path
 
 
@@ -114,3 +119,20 @@ def test_adoption_requires_reviewed_fingerprint_and_atomic_history_archive(archi
 def test_deploy_admits_history_before_native_supabase_push():
     workflow = (ROOT / ".github/workflows/_schema-deploy.yml").read_text()
     assert workflow.index("scripts/database_history.py adopt") < workflow.index("supabase db push")
+
+
+def test_schema_tooling_needs_no_application_site_packages():
+    for script in ("database_history.py", "database_baseline.py"):
+        result = subprocess.run(
+            [sys.executable, "-S", str(ROOT / "scripts" / script), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+def test_new_migration_cannot_sort_before_b1(archived_repository):
+    path = archived_repository / "supabase/migrations/20260925000000_out_of_order.sql"
+    path.write_text("SELECT 1;\n")
+    with pytest.raises(ManifestError, match="must follow the active baseline"):
+        validate_repository_policy(DataMigrationCatalog(archived_repository), [])

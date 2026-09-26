@@ -317,13 +317,14 @@ SELECT jsonb_build_object(
 
     def rejected(code: str) -> None:
         history = stack.sql(history_query)
+        rows = stack.sql(rows_query)
         try:
             stack.sql(adopt)
         except subprocess.CalledProcessError:
             pass
         else:
             raise ValueError(f"Unsafe adoption accepted {code}")
-        if stack.sql(history_query) != history or stack.sql(rows_query) != before_rows:
+        if stack.sql(history_query) != history or stack.sql(rows_query) != rows:
             raise ValueError(f"Rejected adoption changed history/data: {code}")
 
     # Incomplete histories cannot be stamped, even with the right final schema.
@@ -347,6 +348,12 @@ SELECT jsonb_build_object(
     stack.sql("ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY")
     rejected("RLS drift")
     stack.sql("ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY")
+    restored_fingerprint = stack.sql(
+        "SET search_path=pg_catalog;\n"
+        + (ROOT / "supabase/baselines/schema_fingerprint.sql").read_text()
+    )
+    if restored_fingerprint != fingerprint:
+        raise ValueError("Drift probes did not restore the original schema")
     # A failure after the receipt INSERT and history DELETE must roll everything
     # back. This trigger belongs only to the disposable migration-history schema.
     stack.sql("""
