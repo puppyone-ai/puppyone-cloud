@@ -13,4 +13,14 @@ Approved extension, 2026-09-27:
 - [x] Use one ID resolver in runner, release selection, operator checks and tests.
 - [x] Preserve artifact checksums, receipts, retired-task admission and old upgrades.
 - [x] Fix audited release serialization, promotion scope and workflow input handling.
-- [ ] Run regression and isolated Supabase CI, document findings and remaining limits.
+- [x] Run regression and isolated Supabase CI, document findings and remaining limits.
+
+Archive extension verification: all 102 SQL files and all eight data artifact
+directories moved byte-for-byte; artifact checksums remain unchanged. Local full
+backend regression on `4b751ede`: 2464 passed, 27 skipped, 50 deselected. The
+isolated B1 workflow (36255314481) and populated database upgrade job (36255314441)
+passed on `c2126e61`; the latter workflow exposed legacy fixture paths, corrected
+in `4b751ede`. Final combined CI reruns after those test-path corrections.
+Repository policy, strict OpenSpec and increment-only secret scanning pass.
+Historical secret findings and the legacy PG15 Compose installer are recorded
+as outstanding audit items; no Qubits/production mutation was performed.

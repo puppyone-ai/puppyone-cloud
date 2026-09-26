@@ -58,8 +58,8 @@ DATA_MIGRATION_DATABASE_URL='postgresql://...' \
 ```
 
 `DATA_MIGRATION_DATABASE_URL` should use a session-mode pooler or direct
-PostgreSQL endpoint that supports advisory locks. The URI is passed to libpq via
-`PGDATABASE`, not on the process command line.
+PostgreSQL endpoint that supports advisory locks. Connection credentials are passed to libpq through
+environment variables, not on the process command line.
 
 Hosted runs bind the API URL and PostgreSQL URL to the same protected Supabase
 project ref. Direct and session-pooler URLs are supported; an unprovable target
