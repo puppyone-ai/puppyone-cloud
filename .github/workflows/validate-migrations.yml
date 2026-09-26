@@ -2,6 +2,9 @@ name: Validate Database Changes
 
 on:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,6 +42,10 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          if [ -z "$BASE_REF" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git fetch origin "$BASE_REF" --depth=1
           set +e
           git diff --quiet "origin/$BASE_REF...HEAD" -- \
@@ -102,9 +109,11 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin "$BASE_REF" --depth=1
           uv run puppyone-db lint
-          uv run puppyone-db policy --base-ref "origin/$BASE_REF"
+          if [ -n "$BASE_REF" ]; then
+            git fetch origin "$BASE_REF" --depth=1
+            uv run puppyone-db policy --base-ref "origin/$BASE_REF"
+          fi
 
       - name: Run data migration and workflow regression tests
         working-directory: backend
@@ -114,6 +123,8 @@ jobs:
             tests/security/test_credential_backfill_ci_contract.py \
             tests/security/test_unified_authorization_architecture.py \
             tests/security/test_billing_database_boundary.py \
+            tests/infra/test_self_hosted_bootstrap.py \
+            tests/infra/test_readiness.py \
             -q
 
   validate_local_database:
@@ -174,6 +185,7 @@ jobs:
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade.sql
           supabase migration up --local --workdir "$RUNNER_TEMP/pre-b1"
           python3 scripts/database_history.py adopt
+          supabase migration up --local
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/tests/_support/standalone_database.inc
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/test_fixtures/standalone_upgrade_assert.sql
           supabase test db
@@ -226,6 +238,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+          if [ -z "$BASE_REF" ]; then
+            BASE_REF=main
+          fi
           git fetch origin "$BASE_REF" --depth=1
           new_migrations=$(git diff --diff-filter=A --name-only \
             "origin/$BASE_REF...HEAD" -- 'supabase/migrations/*.sql' || true)

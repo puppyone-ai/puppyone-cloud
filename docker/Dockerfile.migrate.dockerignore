@@ -1,0 +1,16 @@
+**
+!docker/
+!docker/Dockerfile.migrate
+!backend/
+!backend/pyproject.toml
+!backend/src/
+!backend/src/infra/
+!backend/src/infra/data_migrations/
+!backend/src/infra/data_migrations/**
+!supabase/
+!supabase/**
+supabase/.temp/
+supabase/.branches/
+!scripts/
+!scripts/database_history.py
+!scripts/self_hosted_migrate.py

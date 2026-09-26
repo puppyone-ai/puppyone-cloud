@@ -1,6 +1,8 @@
 name: Verify Database Baseline
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'supabase/baselines/**'
@@ -34,15 +36,13 @@ jobs:
           version: '2.107.0'
       - name: Use the pinned Supabase images from Docker Hub
         run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
-      - name: Verify reviewed candidate or generate the first candidate
+      - name: Rebuild the committed baseline and verify upgrades
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f supabase/baselines/b1/manifest.json ]; then
-            python3 scripts/database_baseline.py --evidence "$RUNNER_TEMP/baseline-verification.json" verify --candidate supabase/baselines/b1
-          else
-            python3 scripts/database_baseline.py prepare --output "$RUNNER_TEMP/baseline-b1"
-          fi
+          # Main validates the reviewed source. It must never regenerate B1.
+          test -f supabase/baselines/b1/manifest.json
+          python3 scripts/database_baseline.py --evidence "$RUNNER_TEMP/baseline-verification.json" verify --candidate supabase/baselines/b1
       - name: Upload successfully verified candidate
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
