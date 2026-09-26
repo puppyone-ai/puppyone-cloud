@@ -191,6 +191,14 @@ def validate_repository_policy(
             )
             continue
         versions.setdefault(match.group("version"), []).append(migration_path.name)
+        if (
+            active_baseline
+            and migration_path.name != Path(active_baseline["migration"]).name
+            and match.group("version") <= Path(active_baseline["migration"]).name[:14]
+        ):
+            violations.append(
+                f"new schema migrations must follow the active baseline: {migration_path.name}"
+            )
     for version, names in versions.items():
         if len(names) > 1:
             violations.append(f"duplicate schema migration version {version}: {', '.join(names)}")

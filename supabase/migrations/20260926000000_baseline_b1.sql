@@ -1,4 +1,4 @@
--- GENERATED BASELINE CANDIDATE: fresh Supabase databases only.
+-- GENERATED BASELINE: fresh Supabase databases only.
 -- Covers 102 migrations through 20260923000000.
 -- Do not add alongside the covered migration files.
 

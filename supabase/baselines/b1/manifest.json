@@ -109,7 +109,7 @@
     "20260923000000_protect_scope_sandbox_sessions.sql": "93adfba688889205aef47166a65f7b9f974c0a58d433742d47481d0209bc7f8b"
   },
   "files": {
-    "baseline.sql": "681417576af1395d4f9a9770a1ca2254b53fc5870caa89a5a8b8fc3d8b14ffcc",
+    "baseline.sql": "023a3b7cfa03dee8498dcff81e371c52a22aa99919863c92d3ecf8196ba6330c",
     "required_data.sql": "af2f0531d561279c5830d066c02520f7501347e8133a214bdd0ebe8f386593e5"
   },
   "required_platform": "Supabase PostgreSQL 17 with Auth and standard roles",

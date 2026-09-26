@@ -265,7 +265,7 @@ WHERE e.extname IN ("""
     # schema fingerprint, but do not ask the migration role to recreate them.
     schema = "\n".join(line for line in schema.splitlines() if line not in platform_acls) + "\n"
     return (
-        "-- GENERATED BASELINE CANDIDATE: fresh Supabase databases only.\n"
+        "-- GENERATED BASELINE: fresh Supabase databases only.\n"
         f"-- Covers {len(files)} migrations through {files[-1].name[:14]}.\n"
         "-- Do not add alongside the covered migration files.\n\n"
         + extension_sql

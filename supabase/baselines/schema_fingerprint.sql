@@ -14,7 +14,7 @@ WITH relations AS (
 ), objects AS (
     SELECT 'schema' AS kind, n.nspname::text AS name,
         jsonb_build_object('owner', pg_get_userbyid(n.nspowner),
-            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(n.nspacl) a)) AS definition
+            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(coalesce(n.nspacl, acldefault('n', n.nspowner))) a)) AS definition
     FROM pg_namespace n WHERE n.nspname = 'public'
     UNION ALL
     SELECT 'relation', c.relname,
@@ -23,7 +23,7 @@ WITH relations AS (
             'replica_identity', c.relreplident, 'persistence', c.relpersistence,
             'options', c.reloptions, 'partition', pg_get_partkeydef(c.oid),
             'view', CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, false) END,
-            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(c.relacl) a))
+            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(coalesce(c.relacl, acldefault(CASE WHEN c.relkind='S' THEN 's'::"char" ELSE 'r'::"char" END, c.relowner))) a))
     FROM relations c
     UNION ALL
     SELECT 'column', c.relname || '.' || a.attname,
@@ -47,7 +47,7 @@ WITH relations AS (
     UNION ALL
     SELECT 'routine', p.oid::regprocedure::text,
         jsonb_build_object('definition', pg_get_functiondef(p.oid), 'owner', pg_get_userbyid(p.proowner),
-            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(p.proacl) a))
+            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(coalesce(p.proacl, acldefault('f', p.proowner))) a))
     FROM routines p
     UNION ALL
     SELECT 'policy', c.relname || '.' || p.polname,
@@ -77,7 +77,7 @@ WITH relations AS (
     SELECT 'enum', t.typname,
         jsonb_build_object('owner', pg_get_userbyid(t.typowner),
             'labels', (SELECT jsonb_agg(e.enumlabel ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = t.oid),
-            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(t.typacl) a))
+            'acl', (SELECT jsonb_agg(a::text ORDER BY a::text COLLATE "C") FROM unnest(coalesce(t.typacl, acldefault('T', t.typowner))) a))
     FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
     WHERE n.nspname = 'public' AND t.typtype = 'e'
     UNION ALL
