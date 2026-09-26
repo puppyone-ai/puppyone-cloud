@@ -7,6 +7,7 @@ services:
   auth:
     environment:
       API_EXTERNAL_URL: http://127.0.0.1:${SUPABASE_API_PORT}/auth/v1
+      GOTRUE_JWT_ISSUER: http://127.0.0.1:${SUPABASE_API_PORT}/auth/v1
       GOTRUE_SITE_URL: http://127.0.0.1:${FRONTEND_PORT}
       GOTRUE_MAILER_AUTOCONFIRM: "false"
       GOTRUE_SMTP_HOST: mail
