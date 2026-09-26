@@ -1,5 +1,5 @@
-- [ ] Archive immutable sources and activate one timestamped baseline SQL.
-- [ ] Update policy, historical path resolution and data-job prerequisites.
-- [ ] Add transactional, schema-verified history adoption and deployment admission.
-- [ ] Update fresh-install, historical-upgrade and adoption CI coverage.
+- [x] Archive immutable sources and activate one timestamped baseline SQL.
+- [x] Update policy, historical path resolution and data-job prerequisites.
+- [x] Add transactional, schema-verified history adoption and deployment admission.
+- [x] Update fresh-install, historical-upgrade and adoption CI coverage.
 - [ ] Document paths, commands and hosted rollout limits; verify all checks.

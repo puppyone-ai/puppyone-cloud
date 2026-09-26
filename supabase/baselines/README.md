@@ -38,7 +38,8 @@ python3 scripts/database_history.py adopt
 正式部署 workflow 在 `db push` 之前调用此步骤。重复运行不会重复改写历史或
 新建业务表。Supabase 原生 GitHub 集成不会调用我们的前置步骤；已有分支必须
 先通过受保护的发布流程完成 adoption，再重试原生集成，不能强行 include-all。
-本 PR 的验证只使用临时数据库，仓库切换不表示生产库已切换。
+本 PR 已在隔离 CI 和独立的临时 Supabase Preview 验证；Qubits、生产库未切换。
+仓库切换不表示生产库已切换，具体证据见 [B1 验证记录](b1/README.md)。
 
 ## 更早版本的库
 
