@@ -1,7 +1,8 @@
 # B1 基线
 
 - 可执行文件：[`../../migrations/20260926000000_baseline_b1.sql`](../../migrations/20260926000000_baseline_b1.sql)。
-- 原始 SQL：[`../../archive/before_b1/`](../../archive/before_b1/)，102 个文件原样归档。
+- 原始 SQL：[`../../archive/before_b1/migrations/`](../../archive/before_b1/migrations/)，102 个文件原样归档。
+- 原始数据任务：`../../archive/before_b1/data_migrations/`，8 个任务整目录原样归档。
 - 覆盖版本：`20260306085814` 至 `20260923000000`；75 张 public 表及其函数、索引、触发器、权限和 RLS。
 - `manifest.json`：原始文件校验值、基线校验值、归档路径及数据任务兼容情况。
 - `verification.json`：临时 Supabase 验证证据，不代表生产部署。

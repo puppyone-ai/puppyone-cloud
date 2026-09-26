@@ -5,13 +5,28 @@ supabase/
 ├── migrations/
 │   ├── 20260926000000_baseline_b1.sql  # 唯一可执行 B1
 │   └── <timestamp>_<change>.sql       # B1 之后只追加新迁移
-├── archive/before_b1/                # 102 个旧 SQL，内容不变
+├── data_migrations/                 # B1 之后新增的数据任务
+├── archive/before_b1/
+│   ├── migrations/                  # 102 个旧 SQL，内容不变
+│   └── data_migrations/             # 8 个旧数据任务，整目录原样归档
 └── baselines/b1/                     # 来源清单、校验值、验证记录
 ```
 
 Supabase 只自动执行 `migrations/*.sql`。B1 是普通的时间戳迁移，
-`baseline_b1` 只是名称。归档供追溯、旧版本升级和回归测试，不参与日常部署。
+`baseline_b1` 只是名称。归档供追溯、旧版本升级和回归测试；Supabase 不会自动扫描归档。
 不维护第二份 baseline SQL，也不另外维护 current-schema snapshot。
+
+## 数据任务也一起归档
+
+B1 之前的 8 个数据任务全部放进 `archive/before_b1/data_migrations/`，
+包括 SQL、Python、manifest、verify、测试文件和原说明。新的任务才放在
+`data_migrations/`；该目录里的 README、格式定义和历史校验元数据不是待执行任务。
+
+执行器按任务编号同时查找当前目录和归档目录。搬家不改任务编号、内容和校验值，
+因此数据库里已有的执行记录继续有效，已完成的任务不会重跑。
+归档不等于完成：旧库尚未做过的转换仍要做；B1 已删除相关旧表的 4 个任务会被
+明确拒绝，仍兼容的 4 个任务可以按原编号校验或执行。当前的存储盘点发布指针
+继续引用归档任务；外部存储工作仍由人工执行，CI 只读取数据库验证结果。
 
 ## 新库
 

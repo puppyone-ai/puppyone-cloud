@@ -67,10 +67,17 @@ GitHub branch-protection setting is changed by editing these workflow files.
 
 `supabase/migrations/20260926000000_baseline_b1.sql` is the sole executable B1.
 Its 102 historical sources are preserved byte-for-byte in
-`supabase/archive/before_b1/`. Later schema changes append timestamped SQL to
+`supabase/archive/before_b1/migrations/`. Later schema changes append timestamped SQL to
 `migrations/`; the ordinary Supabase CLI never scans the archive. `baselines/b1`
 holds the source inventory, hashes and verification evidence, not another copy
 of the executable SQL. No independent current-schema snapshot is maintained.
+
+All eight pre-B1 data artifact directories are also archived unchanged under
+`supabase/archive/before_b1/data_migrations/`, including manifests, runners,
+verification and fixtures. The shared catalog resolves current and archived
+artifacts by immutable ID, pins their original checksums, and rejects duplicates.
+Moving files never rewrites database receipts or implies work is complete.
+Release selection and operator verification use this same catalog.
 
 `scripts/database_baseline.py` compares archived replay with B1 installation in
 an isolated Supabase PostgreSQL 17 stack, including ACL/RLS, ownership, functions,
@@ -107,7 +114,8 @@ Schema lane
 supabase/migrations -> supabase db push -> supabase_migrations.schema_migrations
 
 Data lane
-supabase/data_migrations -> puppyone-db -> public.migration_log
+supabase/data_migrations + archive/before_b1/data_migrations
+    -> shared ID catalog -> puppyone-db -> public.migration_log
 ```
 
 Use `supabase/migrations` for DDL and small pure-SQL changes that are bounded,
@@ -129,12 +137,31 @@ every push.
 `supabase/seed.sql` is only bootstrap/demo/test data. It is not a production
 upgrade mechanism.
 
+## Release orchestration
+
+The entire staging/production release and manual data dispatch share an outer
+`database-release-<environment>` concurrency group. Runs and pending releases
+are not cancelled (`queue: max`); reusable steps retain their separate
+`database-<environment>` lock. The outer lock prevents two releases from
+interleaving their schema/data phases. A failed release must be investigated
+before promoting another version; queue order is not a replacement for receipts.
+
+Main Release Gate checks exact-head Qubits deployment evidence for schema,
+data-only, release-pointer, archive, runner and database-workflow changes,
+including renames out of those paths. Operator attestations use catalog checksum
+validation and read-only verification with timeouts; failed checks emit no
+success attestation and never manufacture runner receipts.
+
 ## Repository structure
 
 ```text
 supabase/
-├── migrations/                 # official Supabase schema history
-├── data_migrations/            # immutable PuppyOne data artifacts
+├── migrations/                 # B1 and subsequent schema migrations
+├── archive/before_b1/
+│   ├── migrations/             # 102 immutable historical SQL files
+│   └── data_migrations/        # all 8 immutable historical task directories
+├── baselines/b1/               # hashes, coverage and verification evidence
+├── data_migrations/            # new post-B1 data artifacts
 │   ├── manifest.schema.json
 │   ├── schema_history_baseline.json # immutable pre-governance hashes
 │   └── <migration_id>/

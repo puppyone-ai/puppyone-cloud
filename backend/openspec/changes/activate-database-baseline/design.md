@@ -1,7 +1,7 @@
 # B1 archive and adoption
 
 `supabase/migrations/20260926000000_baseline_b1.sql` is the sole baseline SQL.
-Its 102 sources remain unchanged in `supabase/archive/before_b1/`.
+Its 102 sources remain unchanged in `supabase/archive/before_b1/migrations/`.
 The manifest maps exact checksums to the archived sources and executable SQL.
 The archive is never scanned by normal Supabase deployment.
 
@@ -22,3 +22,10 @@ Hosted deployment performs admission before ordinary db push. Direct Supabase
 integration encountering old history fails safely until the transition has run;
 do not bypass this with include-all or unconditional repair. Production adoption
 remains a staged release through the existing environment gates.
+
+All eight data-task directories are archived beside the schema chain, with
+byte-level inventories and unchanged catalog checksums pinned in the manifest.
+One catalog serves CLI, releases and operator verification. Whole-release FIFO
+queues prevent interleaved phases; data-only changes also require staging evidence.
+Manual test inputs use environment variables, dependencies and actions are pinned,
+and secret scanning blocks new findings while scheduled scans cover all history.

@@ -26,3 +26,14 @@ unreviewed production reset or removal of customer data.
 - Capability: database-release-governance.
 - Migration consumers, baseline verification, deployment admission, documentation.
 - No PuppyPay schema or billing behavior changes.
+
+## Approved extension, 2026-09-27
+
+The user explicitly requested that all pre-B1 data migrations be archived with
+the SQL sources, and asked for the surrounding CI/CD gaps to be addressed.
+Archive all eight artifacts unchanged under `archive/before_b1/data_migrations`
+and the SQL under its sibling `migrations`. Resolve immutable IDs through one
+catalog, preserve existing receipts and explicit release selections, and retain
+the B1 compatibility rules. Archiving never means completed or unexecutable.
+Harden whole-release serialization, data-only promotion checks, operator read-only
+verification, and the concrete workflow input/security issues found in review.

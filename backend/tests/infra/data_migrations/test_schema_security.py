@@ -11,6 +11,7 @@ def test_version_object_locations_is_confined_behind_rls() -> None:
         / "supabase"
         / "archive"
         / "before_b1"
+        / "migrations"
         / "20260713000000_enable_version_object_locations_rls.sql"
     ).read_text(encoding="utf-8")
 

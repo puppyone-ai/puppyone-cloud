@@ -207,7 +207,7 @@
   },
   "activation": "repository_only",
   "migration": "supabase/migrations/20260926000000_baseline_b1.sql",
-  "archive": "supabase/archive/before_b1",
+  "archive": "supabase/archive/before_b1/migrations",
   "data_jobs": {
     "20260704_scope_access_key_hash": "retired",
     "20260711_surface_credentials": "retired",
@@ -217,5 +217,79 @@
     "20260717_repair_missing_root_scopes": "retired",
     "20260720_project_storage_inventory": "compatible",
     "20260923_remove_empty_runtime_credential_fields": "compatible"
+  },
+  "data_archive": "supabase/archive/before_b1/data_migrations",
+  "source_data_migrations": {
+    "20260704_scope_access_key_hash": {
+      "artifact_checksum": "4af02fc27368ec45347839b4d7a4e783b308294c4c896acfa2d4511c44ec2cb7",
+      "files": {
+        "manifest.yml": "819c65f6a0de0e6c3298f32c898e6d046f1001d351367a2ec9a95b04742044a6",
+        "run.py": "dd29df382e0567718468fd3d9128407cb1731799ad0d1483e133463b874e6286",
+        "verify.sql": "c2b8a503835de4e1999e1fbd124f8819e14c12526874970f94157cea436b95eb"
+      }
+    },
+    "20260711_surface_credentials": {
+      "artifact_checksum": "a83572b7ea7fd8fa3f5f67e31d3dc6609a44c3d0bbe1fd0bc580a59cb4ad0159",
+      "files": {
+        "manifest.yml": "53f8a796eecc1d349eff60356b2ea6219bf24d4f6cf059d3a571813104638d50",
+        "run.py": "88cd682d88d5ca4b71c46c62549fb31561516e6d6b03afe71501212ed0969b1a",
+        "verify.sql": "f350a478a992991ccd358350a92bb41797285a626f6f9023399951182f4007c4"
+      }
+    },
+    "20260712_repo_user_permissions_to_project_members": {
+      "artifact_checksum": "649b84361ea1c8b72dfcef8f6c9e5beeafa520a1322b4d9f1ecbb79202fd6bce",
+      "files": {
+        "contract.pending.sql": "1ab43f6b1b1749c9577d76ecf81067149c6efec23571563e793b5a3680e17d93",
+        "manifest.yml": "c624b78d3f65c565591559826e6c44d20b28e5d02a6b16683efe86aaa8054645",
+        "run.sql": "8ce1f081d2c59268badef5c8f075e9dc84145ac1b8d0872a4a79c4d54c937d79",
+        "test_assert.sql": "649134a217614beef7c6df02a3a7a90b65eb948120cf4332a3278ec27f6f0367",
+        "test_fixture.sql": "099beaa99d8b3ab355e2b0cee4c2c2cc3de3906bdac42330372c87eb69f7229b",
+        "verify.sql": "e142ba69f83fb1e35bbab9af83e13211b4fd4dc927ce7aabf9b24cbb4c5e4591"
+      }
+    },
+    "20260713_reconcile_project_creator_admin": {
+      "artifact_checksum": "8fb97557f0550f2390991d4c561973d51199947e3f5b04229f702d0bb977e9a4",
+      "files": {
+        "manifest.yml": "4f6a96a5a2cea72453780f93d1a471d4f003f4be4e893fb385a63d031a687c90",
+        "run.sql": "eda33f62978b07a6db693c0e0ebf157c6fb497eb5c7a73eaa33a7b29a56184cd",
+        "test_assert.sql": "bafc111fa0dff212dc88bd4ae55d67a0c1db89065015d64557e824364d24d59e",
+        "test_fixture.sql": "a2743b7186af5fa9be8a5b622e3b214a0faa0df46873be14455f9053603a84ec",
+        "verify.sql": "d8acfb021e2cd398ff9021dd569568178a616e43dcf22fe92fd928e83a8f1bae"
+      }
+    },
+    "20260715_project_owned_repository_targets_preflight": {
+      "artifact_checksum": "c9c417a19b0ad2a9086588e31775e604e0eefe18d2fcb5c8c1f5ce570661ae55",
+      "files": {
+        "manifest.yml": "92ae6bdcc1e1f0d0719c9f79fb049825919702a40926200b8774db216afb87a4",
+        "run.sql": "67e89a6ea86e401b15af258c3924c06a0b096d0db1a15bdd0f2f599908304173",
+        "verify.sql": "67e89a6ea86e401b15af258c3924c06a0b096d0db1a15bdd0f2f599908304173"
+      }
+    },
+    "20260717_repair_missing_root_scopes": {
+      "artifact_checksum": "419584d0d3dfc003ff83224b32f04570404d86cc8b9c60ca4176fd4360ac3c72",
+      "files": {
+        "README.md": "fdb19205b16c2e89325d4e7d54fd52c1eea20f7e32bb5adb90901bfcc4920d38",
+        "manifest.yml": "db5b143dfdb187700739aa3e881e5e730da04008aa84180d88eedb4d16b7e0c7",
+        "run.sql": "f4a77cb5ee74180ac70e56b883c104d1ecf5e82c1bcdfdd35a59f5b3fe5cb66d",
+        "verify.sql": "4afb2293ec406e7e34431e99f9bd2afd203b091e27bbfff8e9331f6888e7918c"
+      }
+    },
+    "20260720_project_storage_inventory": {
+      "artifact_checksum": "a945631e4b1047f1826967c4b15eb4dc688a25f9b0e5a2933cf8d2eb4c9572d4",
+      "files": {
+        "README.md": "7e7ea25d2943fe4f231a0697aa6ef4a04bbef28f38ace5c62c1a1160bf12d556",
+        "manifest.yml": "e0aca5400ec57094f89184a0b5c1d26a0fed0f51a7b4335a223d0c29d3f3b88d",
+        "run.py": "3167735bc046b9db83233a1dfc4e5439ac425ec39c73408cf93a21111d202700",
+        "verify.sql": "e7bfd36c03887e5c5949496d5362030c883081435c7693f3e760171e00a3476a"
+      }
+    },
+    "20260923_remove_empty_runtime_credential_fields": {
+      "artifact_checksum": "ba64b80a6c3cfd8c1518d190f73a7363fc9956c8385f49684ff2de4e9ec6da89",
+      "files": {
+        "manifest.yml": "5e45cfa0b3e324b1b41db1d578bac0a360fd74a8f3794695b00689d0a547b9b0",
+        "run.sql": "65055d21b1ceea1a8bb696efe5d6badbed2443659b39366bd37ada3ec709985b",
+        "verify.sql": "b5670bb12bb33d3b057b1a3d1a8f44e7aea53e295ffff66fc28db9ef2b376051"
+      }
+    }
   }
 }

@@ -189,7 +189,7 @@ jobs:
           uv run puppyone-db run 20260713_reconcile_project_creator_admin
           cd ..
           psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
-            -f supabase/data_migrations/20260713_reconcile_project_creator_admin/test_assert.sql
+            -f supabase/archive/before_b1/data_migrations/20260713_reconcile_project_creator_admin/test_assert.sql
 
       - name: Verify legacy credential upgrade and pre-write admission
         working-directory: backend

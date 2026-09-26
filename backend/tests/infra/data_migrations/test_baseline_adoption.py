@@ -15,6 +15,7 @@ from src.infra.data_migrations.policy import ChangedPath, validate_repository_po
 from src.infra.data_migrations.schema_history import (
     baseline_version,
     data_job_coverage,
+    data_migration_directory,
     historical_source,
     load_baseline,
 )
@@ -136,3 +137,69 @@ def test_new_migration_cannot_sort_before_b1(archived_repository):
     path.write_text("SELECT 1;\n")
     with pytest.raises(ManifestError, match="must follow the active baseline"):
         validate_repository_policy(DataMigrationCatalog(archived_repository), [])
+
+
+def test_all_pre_b1_data_artifacts_resolve_without_changing_receipt_identity():
+    baseline = load_baseline(ROOT)
+    artifacts = DataMigrationCatalog(ROOT).load_all()
+    assert len(artifacts) == len(baseline["source_data_migrations"]) == 8
+    assert not list((ROOT / "supabase/data_migrations").glob("*/manifest.yml"))
+    for artifact in artifacts:
+        migration_id = artifact.manifest.id
+        assert artifact.directory == data_migration_directory(ROOT, migration_id)
+        assert artifact.directory.parent == ROOT / baseline["data_archive"]
+        assert (
+            artifact.checksum
+            == baseline["source_data_migrations"][migration_id]["artifact_checksum"]
+        )
+
+
+@pytest.mark.parametrize("operation", ["edit", "delete", "add", "duplicate"])
+def test_archived_data_artifacts_cannot_be_rewritten(archived_repository, operation):
+    root = archived_repository
+    migration_id = "20260720_project_storage_inventory"
+    directory = data_migration_directory(root, migration_id)
+    if operation == "edit":
+        path = directory / "verify.sql"
+        path.write_text(path.read_text() + "\n-- changed")
+    elif operation == "delete":
+        (directory / "README.md").unlink()
+    elif operation == "add":
+        (directory / "unexpected.sql").write_text("SELECT 1;")
+    else:
+        shutil.copytree(directory, root / "supabase/data_migrations" / migration_id)
+    with pytest.raises(ManifestError):
+        DataMigrationCatalog(root).load_all()
+
+
+def test_archived_completed_job_is_not_reexecuted():
+    from src.infra.data_migrations.models import MigrationState
+    from src.infra.data_migrations.runner import DataMigrationRunner
+
+    from .test_runner import FakeDatabase
+
+    catalog = DataMigrationCatalog(ROOT)
+    artifact = catalog.get("20260713_reconcile_project_creator_admin")
+    database = FakeDatabase()
+    database.versions = {baseline_version(load_baseline(ROOT))}
+    database.receipts[artifact.manifest.id] = {"artifact_checksum": artifact.checksum}
+    runner = DataMigrationRunner(catalog, database, environment={}, source_sha="test")
+    assert runner.run(artifact.manifest.id).state is MigrationState.COMPLETED
+    assert database.sql_runs == []
+
+
+def test_archived_release_resolves_without_database_or_site_packages():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(ROOT / "scripts/database_history.py"),
+            "release",
+            "--environment",
+            "staging",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "migration_id=20260720_project_storage_inventory\n" in result.stdout

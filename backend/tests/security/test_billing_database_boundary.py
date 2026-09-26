@@ -60,6 +60,7 @@ def test_public_runtime_cannot_import_private_payment_package():
 def test_public_migrations_do_not_require_private_schema_or_gateway():
     paths = list((ROOT / "supabase/migrations").glob("*.sql"))
     paths += list((ROOT / "supabase/archive").rglob("*.sql"))
+    paths += list((ROOT / "supabase/archive").rglob("*.py"))
     paths += list((ROOT / "supabase/data_migrations").rglob("*.sql"))
     paths += list((ROOT / "supabase/data_migrations").rglob("*.py"))
     for path in paths:

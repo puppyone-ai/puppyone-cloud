@@ -36,7 +36,7 @@ def test_applied_credential_sql_history_remains_language_neutral() -> None:
         "20260711070000_move_scope_credentials_to_access_credentials.sql",
     ):
         migration = (
-            (REPO_ROOT / "supabase/archive/before_b1" / migration_name)
+            (REPO_ROOT / "supabase/archive/before_b1/migrations" / migration_name)
             .read_text(encoding="utf-8")
             .lower()
         )

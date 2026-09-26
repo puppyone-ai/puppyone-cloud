@@ -153,6 +153,23 @@ class DataMigrationRunner:
             timeout=artifact.manifest.timeout_seconds,
         )
 
+    def verify_external_state(self, migration_id: str) -> dict[str, object]:
+        """Verify operator-run work without inventing a runner completion receipt."""
+        artifact = self.catalog.get(migration_id)
+        applied, retired = data_job_coverage(
+            self.catalog.repository_root, self.database.applied_schema_versions(), migration_id
+        )
+        if retired or set(artifact.manifest.requires_schema) - applied:
+            raise PrerequisiteError("data migration is retired or its schema is missing")
+        self.database.verify(artifact.verify_path, timeout=artifact.manifest.timeout_seconds)
+        return {
+            "id": migration_id,
+            "verified": True,
+            "verification": "external_state",
+            "artifact_checksum": artifact.checksum,
+            "source_sha": self.source_sha,
+        }
+
     def _run_python(self, artifact: DataMigrationArtifact) -> None:
         manifest = artifact.manifest
         environment = self._python_environment(artifact)
