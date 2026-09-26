@@ -50,7 +50,7 @@ async function signup(request, email, password) {
 test('fresh installation and restart preserve real authenticated file operations', async ({ request, page }) => {
   let state;
   if (process.env.INSTALL_PHASE === 'seed') {
-    const email = `install-${crypto.randomUUID()}@example.test`;
+    const email = `install-${crypto.randomUUID()}@example.com`;
     const password = `Install-${crypto.randomUUID()}!`;
     const session = await signup(request, email, password);
     const headers = { Authorization: `Bearer ${session.access_token}` };
@@ -65,7 +65,7 @@ test('fresh installation and restart preserve real authenticated file operations
       headers, data: { path: 'install-check.md', content, node_type: 'markdown' },
     }));
     expect(written.data.commit_id).toBeTruthy();
-    const outsider = await signup(request, `outsider-${crypto.randomUUID()}@example.test`, password);
+    const outsider = await signup(request, `outsider-${crypto.randomUUID()}@example.com`, password);
     const forbidden = await request.get(`${api}/api/v1/content/${projectId}/cat?path=install-check.md`, {
       headers: { Authorization: `Bearer ${outsider.access_token}` },
     });
@@ -93,7 +93,10 @@ test('fresh installation and restart preserve real authenticated file operations
   const destination = `/projects/${state.projectId}/data`;
   await page.goto(`${web}/login?next=${encodeURIComponent(destination)}`);
   await page.getByPlaceholder('Your email address').fill(state.email);
+  const checkedEmail = page.waitForResponse(response =>
+    new URL(response.url()).pathname.endsWith('/auth/check-email') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await success(await checkedEmail);
   await page.getByPlaceholder('Enter your password').fill(state.password);
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
   await expect(page).toHaveURL(`${web}${destination}`, { timeout: 60_000 });

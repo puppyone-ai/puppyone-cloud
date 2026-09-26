@@ -57,6 +57,17 @@ the executable upgrade fixture before its Contract can ship.
 
 ## Supported paths and boundaries
 
+Web Auth uses the public Supabase URL for cookie and PKCE identity on both the
+browser and server. `features/auth/supabase/server-client.ts` routes server I/O
+through `SUPABASE_INTERNAL_URL` without changing that identity; middleware and
+both callback handlers share this adapter. Compose also sets the explicit public
+frontend origin and Auth issuer/audience, matching backend token verification.
+
+User initialization and Profile assemble Project services through
+`build_project_service()`. HTTP routes use request-scoped FastAPI dependencies.
+Imperative callers must not invoke a dependency factory with unresolved
+`Depends` defaults or cache those placeholders in a shared service.
+
 - Fresh local install: from `docker/`, copy `.env.example` to `.env`, then run
   `docker compose up --build -d --wait`.
 - Existing B1 installation: back up database and object storage; stop application

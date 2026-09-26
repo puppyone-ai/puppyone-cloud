@@ -26,8 +26,10 @@ services:
   web:
     build:
       args:
+        NEXT_PUBLIC_APP_URL: http://127.0.0.1:${FRONTEND_PORT}
         NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:${SUPABASE_API_PORT}
         NEXT_PUBLIC_API_URL: http://127.0.0.1:${BACKEND_PORT}
     environment:
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:${FRONTEND_PORT}
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:${SUPABASE_API_PORT}
       NEXT_PUBLIC_API_URL: http://127.0.0.1:${BACKEND_PORT}
