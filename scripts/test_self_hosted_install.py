@@ -152,6 +152,19 @@ def main():
                         raise RuntimeError(
                             "Broken migration incorrectly allowed startup"
                         )
+                    failure_log = subprocess.check_output(
+                        [*compose, "logs", "--no-color", "migrate"],
+                        text=True,
+                        timeout=30,
+                    )
+                    (args.artifacts / "rejected-migration.log").write_text(failure_log)
+                    if (
+                        broken.name not in failure_log
+                        or "division by zero" not in failure_log
+                    ):
+                        raise RuntimeError(
+                            "Startup failed before executing the intended migration probe"
+                        )
                     running = subprocess.check_output(
                         [*compose, "ps", "--status", "running", "--services"],
                         text=True,

@@ -25,7 +25,10 @@ def migrate() -> None:
     host = os.environ.get("PGHOST", "db")
     port = int(os.environ.get("PGPORT", "5432"))
     # The database password is passed through the environment, not argv/logs.
-    target = f"postgresql://postgres@{host}:{port}/postgres"
+    # This task connects only inside the private Compose network. Its local
+    # PostgreSQL service does not terminate TLS; hosted release URLs are owned
+    # by the separate deployment workflow and retain their TLS requirements.
+    target = f"postgresql://postgres@{host}:{port}/postgres?sslmode=disable"
     db = PsqlClient(
         f"postgresql://postgres:{quote(password, safe='')}@{host}:{port}/postgres"
     )
