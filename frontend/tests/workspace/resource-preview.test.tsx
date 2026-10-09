@@ -78,6 +78,20 @@ it('copies the resource URL without issuing a share credential', async () => {
   expect(mocks.read).toHaveBeenCalledTimes(1);
 });
 
+it('does not show cached confidential content after switching to an unauthorized account', async () => {
+  const cache = new Map();
+  const element = () => <SWRConfig value={{ provider: () => cache }}><ResourcePreview projectId={id} path="note.md" /></SWRConfig>;
+  const view = render(element());
+  await screen.findByRole('heading', { name: 'Hello workspace' });
+  mocks.auth.session = { user: { id: 'outsider' } };
+  mocks.read.mockRejectedValue(Object.assign(new Error('denied'), { status: 404 }));
+  view.rerender(element());
+  expect(screen.queryByRole('heading', { name: 'Hello workspace' })).toBeNull();
+  await screen.findByRole('alert');
+  expect(screen.queryByRole('heading', { name: 'Hello workspace' })).toBeNull();
+  expect(mocks.read).toHaveBeenCalledTimes(2);
+});
+
 it('renders Markdown as read-only content without executing HTML or loading remote images', async () => {
   mocks.read.mockResolvedValue({ ...resource, content_text: '# Safe\n<script>alert(1)</script>\n![tracking](https://evil.test/pixel)\n[bad](javascript:alert(1))', truncated: true });
   const view = preview();

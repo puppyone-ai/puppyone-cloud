@@ -2,7 +2,13 @@ import logging
 import re
 from datetime import UTC, datetime
 
-from src.exceptions import AppException, ErrorCode, ForbiddenException, NotFoundException
+from src.exceptions import (
+    AppException,
+    ErrorCode,
+    ForbiddenException,
+    NotFoundException,
+    ValidationException,
+)
 from src.platform.organization.models import Organization, OrgInvitation, OrgMember
 from src.platform.organization.repository import OrganizationRepository
 
@@ -125,9 +131,7 @@ class OrganizationService:
         if outcome == "forbidden":
             raise ForbiddenException("Only owner can perform this action")
         if outcome == "not_found":
-            raise NotFoundException(
-                f"Organization not found: {org_id}", code=ErrorCode.NOT_FOUND
-            )
+            raise NotFoundException(f"Organization not found: {org_id}", code=ErrorCode.NOT_FOUND)
         if outcome == "invalid_request":
             raise AppException(
                 code=ErrorCode.VALIDATION_ERROR,
@@ -162,16 +166,13 @@ class OrganizationService:
         self._require_owner(org_id, current_user_id)
 
         if target_user_id == current_user_id:
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Cannot change your own role",
-            )
+            raise ForbiddenException("Cannot change your own role")
 
         if new_role == "owner":
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Cannot assign owner role. Use transfer ownership instead.",
-            )
+            raise ForbiddenException("Cannot assign owner role. Use transfer ownership instead.")
+
+        if new_role not in ("member", "viewer"):
+            raise ValidationException("Organization role must be member or viewer")
 
         existing = self._repo.get_member(org_id, target_user_id)
         if not existing:
@@ -209,10 +210,7 @@ class OrganizationService:
         self._require_owner(org_id, current_user_id)
 
         if target_user_id == current_user_id:
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Cannot remove yourself. Transfer ownership first.",
-            )
+            raise ForbiddenException("Cannot remove yourself. Transfer ownership first.")
 
         existing = self._repo.get_member(org_id, target_user_id)
         self._repo.remove_member(org_id, target_user_id)
@@ -232,10 +230,7 @@ class OrganizationService:
     ) -> None:
         self._require_owner(org_id, current_user_id)
         if target_user_id == current_user_id:
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Ownership is already assigned to this user",
-            )
+            raise ForbiddenException("Ownership is already assigned to this user")
         target = self._repo.get_member(org_id, target_user_id)
         if not target:
             raise NotFoundException("Member not found", code=ErrorCode.NOT_FOUND)
@@ -267,10 +262,7 @@ class OrganizationService:
         if not member:
             raise NotFoundException("You are not a member", code=ErrorCode.NOT_FOUND)
         if member.role == "owner":
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Owner cannot leave. Transfer ownership first.",
-            )
+            raise ForbiddenException("Owner cannot leave. Transfer ownership first.")
         self._repo.remove_member(org_id, user_id)
         self._seat_billing.record_member_deactivation(
             org_id=org_id,
@@ -293,10 +285,11 @@ class OrganizationService:
         self._require_owner(org_id, inviter_id)
 
         if role not in ("member", "viewer"):
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Can only invite as member or viewer",
-            )
+            raise ForbiddenException("Can only invite as member or viewer")
+
+        email = email.strip().lower()
+        if not email or "@" not in email or any(char.isspace() for char in email):
+            raise ValidationException("A valid invitation email is required")
 
         return self._repo.create_invitation(org_id, email, role, inviter_id)
 
@@ -373,39 +366,25 @@ class OrganizationService:
             raise NotFoundException("Invitation not found or expired", code=ErrorCode.NOT_FOUND)
 
         if datetime.now(UTC) > invitation.expires_at.replace(tzinfo=UTC):
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="Invitation expired",
-            )
+            raise ForbiddenException("Invitation expired")
 
         # The invitation is bound to a specific email. Only the invited person
         # may redeem it — otherwise anyone holding the token (e.g. a forwarded
         # link) could join the org. Compare case-insensitively.
         invited_email = (invitation.email or "").strip().lower()
         caller_email = (user_email or "").strip().lower()
-        if invited_email and caller_email != invited_email:
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message="This invitation was issued to a different email address",
-            )
+        if not invited_email or caller_email != invited_email:
+            raise ForbiddenException("This invitation was issued to a different email address")
 
-        # If the user is ALREADY a member, mark the invitation accepted
-        # (so the inviter's list stops showing it) and return the
-        # existing membership. This is more forgiving than the previous
-        # 403 — the user clicked the invite link and arrived in the org,
-        # which is the outcome they wanted.
+        # Existing members retain their role; invitations never upgrade them.
+        # The final RPC rechecks all admission facts after commercial admission.
         existing = self._repo.get_member(invitation.org_id, user_id)
-        if existing:
-            self._repo.accept_invitation(invitation.id)
-            org = self.get_by_id(invitation.org_id)
-            return existing, org
-
         org = self.get_by_id(invitation.org_id)
         from src.config import settings
         from src.platform.billing.seats import is_billable_human_role
 
         activation_operation = None
-        if is_billable_human_role(invitation.role):
+        if not existing and is_billable_human_role(invitation.role):
             if settings.SEAT_BILLING_MODE == "disabled":
                 self._enforce_seat_capacity(org)
             else:
@@ -419,8 +398,31 @@ class OrganizationService:
                     actor_user_id=invitation.invited_by,
                     invitation_id=invitation.id,
                 )
-        member = self._repo.add_member(invitation.org_id, user_id, invitation.role)
-        self._repo.accept_invitation(invitation.id)
+        result = self._repo.redeem_invitation(
+            token,
+            user_id,
+            user_email,
+            enforce_local_seat_limit=settings.SEAT_BILLING_MODE == "disabled",
+        )
+        outcome = result.get("outcome")
+        if outcome == "unavailable":
+            raise NotFoundException("Invitation not found or expired")
+        if outcome == "expired":
+            raise ForbiddenException("Invitation expired")
+        if outcome == "wrong_email":
+            raise ForbiddenException("This invitation was issued to a different email address")
+        if outcome == "seat_limit":
+            raise ForbiddenException(
+                f"Seat limit reached ({result['seat_limit']}). Upgrade your plan."
+            )
+        if outcome != "accepted":
+            raise AppException(
+                code=ErrorCode.INTERNAL_SERVER_ERROR,
+                message="Invalid invitation admission response",
+                status_code=500,
+            )
+        member = OrgMember(**result["member"])
+        org = Organization(**result["organization"])
         if activation_operation is not None:
             self._seat_billing.complete_member_activation(activation_operation)
         return member, org
@@ -468,7 +470,4 @@ class OrganizationService:
             return
         current_count = self._repo.count_billable_members(org.id)
         if current_count >= seat_limit:
-            raise AppException(
-                code=ErrorCode.FORBIDDEN,
-                message=f"Seat limit reached ({seat_limit}). Upgrade your plan.",
-            )
+            raise ForbiddenException(f"Seat limit reached ({seat_limit}). Upgrade your plan.")

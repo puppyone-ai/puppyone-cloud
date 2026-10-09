@@ -3,9 +3,7 @@
 import importlib.util
 import json
 import shutil
-import socket
 import subprocess
-import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,133 +107,35 @@ def submitted(postgres):
 @pytest.fixture(scope="session")
 def control_api(postgres):
     """Actual PostgREST against the owned PostgreSQL, never a remote service."""
-    import time
-    from urllib.parse import urlparse
-
     import httpx
     from postgrest import SyncPostgrestClient
 
-    name = "agent-test-rest-" + str(uuid4())
-    port = urlparse(postgres.url).port
-    linux = sys.platform == "linux"
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        rest_port = listener.getsockname()[1]
-    database_host = "127.0.0.1" if linux else "host.docker.internal"
-    network = (
-        ["--network", "host", "-e", f"PGRST_SERVER_PORT={rest_port}"]
-        if linux
-        else ["-p", "127.0.0.1::3000"]
-    )
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            *network,
-            "-e",
-            f"PGRST_DB_URI=postgresql://postgres@{database_host}:{port}/postgres",
-            "-e",
-            "PGRST_DB_SCHEMAS=public",
-            "-e",
-            "PGRST_DB_ANON_ROLE=service_role",
-            "postgrest/postgrest:v14.13",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        address = (
-            f"127.0.0.1:{rest_port}"
-            if linux
-            else subprocess.check_output(["docker", "port", name, "3000/tcp"], text=True).strip()
-        )
-        url = "http://" + address
-        with httpx.Client(trust_env=False) as probe:
-            for _ in range(100):
-                try:
-                    if probe.get(url + "/agent_runs?select=id&limit=1").status_code == 200:
-                        break
-                except httpx.HTTPError:
-                    pass
-                time.sleep(0.1)
-            else:
-                raise RuntimeError(
-                    subprocess.check_output(
-                        ["docker", "logs", name], stderr=subprocess.STDOUT, text=True
-                    )[-2000:]
-                )
-        from src.infra.supabase.instrumentation import DatabaseTransport
+    from src.infra.supabase.instrumentation import DatabaseTransport
+    from tests.agent.runtime.owned_http import owned_http_service
 
+    with owned_http_service("postgrest", database_url=postgres.url) as url:
         transport = DatabaseTransport(path_prefix="/")
-        client = SyncPostgrestClient(
-            url, http_client=httpx.Client(trust_env=False, transport=transport)
-        )
+        with httpx.Client(trust_env=False, transport=transport) as http:
+            client = SyncPostgrestClient(url, http_client=http)
 
-        class Adapter:
-            def table(self, name):
-                return client.from_(name)
+            class Adapter:
+                def table(self, name):
+                    return client.from_(name)
 
-            def rpc(self, *args, **kwargs):
-                return client.rpc(*args, **kwargs)
+                def rpc(self, *args, **kwargs):
+                    return client.rpc(*args, **kwargs)
 
-        adapter = Adapter()
-        adapter.transport = transport
-        yield adapter
-        client.aclose() if hasattr(client, "aclose") else None
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+            adapter = Adapter()
+            adapter.transport = transport
+            yield adapter
 
 
 @pytest.fixture(scope="session")
 def object_endpoint():
-    import time
+    from tests.agent.runtime.owned_http import owned_http_service
 
-    import httpx
-
-    name = "agent-test-s3-" + str(uuid4())
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            name,
-            "--entrypoint",
-            "/go/bin/minio",
-            "-p",
-            "127.0.0.1::9000",
-            "-e",
-            "MINIO_ROOT_USER=agent-fixture",
-            "-e",
-            "MINIO_ROOT_PASSWORD=agent-fixture-password",
-            "puppyone-entrypoint-minio-build:local",
-            "server",
-            "/data",
-            "--address",
-            ":9000",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    try:
-        address = subprocess.check_output(["docker", "port", name, "9000/tcp"], text=True).strip()
-        url = "http://" + address
-        with httpx.Client(trust_env=False) as probe:
-            for _ in range(100):
-                try:
-                    if probe.get(url + "/minio/health/ready").status_code == 200:
-                        break
-                except httpx.HTTPError:
-                    pass
-                time.sleep(0.1)
-            else:
-                raise RuntimeError("Owned MinIO did not become ready")
+    with owned_http_service("minio") as url:
         yield url
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
 @pytest.fixture

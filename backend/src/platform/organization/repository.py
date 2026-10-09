@@ -1,6 +1,9 @@
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from postgrest.exceptions import APIError
+
+from src.exceptions import AppException, ErrorCode, ForbiddenException, ValidationException
 from src.platform.organization.models import Organization, OrgInvitation, OrgMember
 from src.utils.id_generator import generate_uuid_v7
 
@@ -146,12 +149,11 @@ class OrganizationRepository:
         return OrgMember(**resp.data[0])
 
     def update_member_role(self, org_id: str, user_id: str, role: str) -> OrgMember | None:
-        resp = (
+        resp = self._membership_mutation(
             self._client.table("org_members")
             .update({"role": role})
             .eq("org_id", org_id)
             .eq("user_id", user_id)
-            .execute()
         )
         if resp.data:
             return OrgMember(**resp.data[0])
@@ -163,25 +165,40 @@ class OrganizationRepository:
         current_owner_user_id: str,
         new_owner_user_id: str,
     ) -> bool:
-        response = self._client.rpc(
-            "transfer_organization_ownership",
-            {
-                "p_org_id": org_id,
-                "p_current_owner": current_owner_user_id,
-                "p_new_owner": new_owner_user_id,
-            },
-        ).execute()
+        response = self._membership_mutation(
+            self._client.rpc(
+                "transfer_organization_ownership",
+                {
+                    "p_org_id": org_id,
+                    "p_current_owner": current_owner_user_id,
+                    "p_new_owner": new_owner_user_id,
+                },
+            )
+        )
         return response.data is True
 
     def remove_member(self, org_id: str, user_id: str) -> bool:
-        resp = (
-            self._client.table("org_members")
-            .delete()
-            .eq("org_id", org_id)
-            .eq("user_id", user_id)
-            .execute()
+        resp = self._membership_mutation(
+            self._client.table("org_members").delete().eq("org_id", org_id).eq("user_id", user_id)
         )
         return len(resp.data) > 0
+
+    @staticmethod
+    def _membership_mutation(query):
+        try:
+            return query.execute()
+        except APIError as exc:
+            if exc.code == "42501":
+                raise ForbiddenException("Organization membership action denied") from exc
+            if exc.code in {"22023", "22P02"}:
+                raise ValidationException("Invalid organization membership request") from exc
+            if exc.code == "23514":
+                raise AppException(
+                    code=ErrorCode.VERSION_CONFLICT,
+                    status_code=409,
+                    message="A workspace creator must remain an organization member while the workspace exists",
+                ) from exc
+            raise
 
     def count_members(self, org_id: str) -> int:
         resp = (
@@ -251,10 +268,22 @@ class OrganizationRepository:
             return OrgInvitation(**resp.data[0])
         return None
 
-    def accept_invitation(self, invitation_id: str) -> None:
-        self._client.table("org_invitations").update({"status": "accepted"}).eq(
-            "id", invitation_id
-        ).execute()
+    def redeem_invitation(
+        self, token: str, user_id: str, user_email: str | None, *, enforce_local_seat_limit: bool
+    ) -> dict:
+        return (
+            self._client.rpc(
+                "accept_organization_invitation",
+                {
+                    "p_token": token,
+                    "p_user_id": user_id,
+                    "p_user_email": user_email,
+                    "p_enforce_local_seat_limit": enforce_local_seat_limit,
+                },
+            )
+            .execute()
+            .data
+        )
 
     def revoke_invitation(self, org_id: str, invitation_id: str) -> None:
         """Mark a pending invitation as revoked. Idempotent: scoped by

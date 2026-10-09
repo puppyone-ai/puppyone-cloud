@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from postgrest.exceptions import APIError
+
+from src.exceptions import AppException, ErrorCode, PermissionException, ValidationException
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectAuthorizationFacts:
@@ -130,6 +134,22 @@ class ProjectMembershipRepository:
             return rows[0] if rows else None
         return rows if isinstance(rows, dict) else None
 
+    def _mutation(self, function: str, arguments: dict[str, Any]) -> Any:
+        try:
+            return self._client.rpc(function, arguments).execute().data
+        except APIError as exc:
+            if exc.code == "42501":
+                raise PermissionException("Project membership action denied") from exc
+            if exc.code in {"22023", "22P02"}:
+                raise ValidationException("Invalid project membership request") from exc
+            if exc.code in {"23505", "23514"}:
+                raise AppException(
+                    code=ErrorCode.VERSION_CONFLICT,
+                    status_code=409,
+                    message="Membership conflicts with an existing member or the project creator requirement",
+                ) from exc
+            raise
+
     def add(
         self,
         project_id: str,
@@ -138,7 +158,7 @@ class ProjectMembershipRepository:
         actor_user_id: str,
     ) -> dict[str, Any] | None:
         return self._row(
-            self._client.rpc(
+            self._mutation(
                 "add_project_member_authorized",
                 {
                     "p_project_id": project_id,
@@ -147,8 +167,6 @@ class ProjectMembershipRepository:
                     "p_actor_user_id": actor_user_id,
                 },
             )
-            .execute()
-            .data
         )
 
     def update_role(
@@ -159,7 +177,7 @@ class ProjectMembershipRepository:
         actor_user_id: str,
     ) -> dict[str, Any] | None:
         return self._row(
-            self._client.rpc(
+            self._mutation(
                 "update_project_member_role_authorized",
                 {
                     "p_project_id": project_id,
@@ -168,22 +186,16 @@ class ProjectMembershipRepository:
                     "p_actor_user_id": actor_user_id,
                 },
             )
-            .execute()
-            .data
         )
 
     def remove(self, project_id: str, target_user_id: str, actor_user_id: str) -> bool:
-        data = (
-            self._client.rpc(
-                "remove_project_member_authorized",
-                {
-                    "p_project_id": project_id,
-                    "p_target_user_id": target_user_id,
-                    "p_actor_user_id": actor_user_id,
-                },
-            )
-            .execute()
-            .data
+        data = self._mutation(
+            "remove_project_member_authorized",
+            {
+                "p_project_id": project_id,
+                "p_target_user_id": target_user_id,
+                "p_actor_user_id": actor_user_id,
+            },
         )
         if isinstance(data, list):
             return bool(data and data[0])
@@ -191,10 +203,8 @@ class ProjectMembershipRepository:
 
     def join_with_share_token(self, share_token: str, user_id: str) -> dict[str, Any] | None:
         return self._row(
-            self._client.rpc(
+            self._mutation(
                 "join_project_via_share_token",
                 {"p_share_token": share_token, "p_user_id": user_id},
             )
-            .execute()
-            .data
         )

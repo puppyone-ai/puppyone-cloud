@@ -45,6 +45,7 @@ mypy.ini
 **/.next/
 **/.next-check/
 **/.next-desktop-login/
+**/.next-org-acceptance/
 **/.next.broken-*/
 /out/
 
@@ -156,6 +157,7 @@ todo/
 
 # Isolated repository-hosting acceptance artifacts
 backend/.hosting-test-results/
+backend/.organization-test-results/
 backend/.native-migration-test-results/
 
 /backend/.native-retirement-hosting-results/

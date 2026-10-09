@@ -75,27 +75,35 @@ function InviteAcceptInner() {
     }
   }, [isAuthReady, session, inviteUrl, router]);
 
-  // Once signed in, fire the accept call. Gate on session + token so
-  // we don't double-fire during the bounce-back render.
-  const acceptedRef = React.useRef(false);
+  // One request per account + invitation, including Strict Mode's effect replay.
+  // A different account/token starts a new attempt; stale responses cannot redirect it.
+  const acceptanceRef = React.useRef<{ key: string; promise: Promise<AcceptInvitationResult> } | null>(null);
+  const userId = session?.user.id;
   useEffect(() => {
-    if (!isAuthReady || !session || !token) return;
-    if (acceptedRef.current) return;
-    acceptedRef.current = true;
+    if (!isAuthReady || !userId || !token) return;
+    const key = `${userId}:${token}`;
+    if (acceptanceRef.current?.key !== key) {
+      acceptanceRef.current = { key, promise: acceptInvitation(token) };
+    }
+    let active = true;
+    let redirectTimer: ReturnType<typeof setTimeout> | undefined;
     setStatus({ kind: 'accepting' });
-    acceptInvitation(token)
+    acceptanceRef.current.promise
       .then((result) => {
+        if (!active) return;
         setStatus({ kind: 'success', result });
         // Brief confirmation, then bounce.
-        setTimeout(() => {
+        redirectTimer = setTimeout(() => {
           router.replace('/home');
         }, 1200);
       })
       .catch((err: unknown) => {
+        if (!active) return;
         const message = err instanceof Error ? err.message : 'Invitation could not be accepted';
         setStatus({ kind: 'error', message });
       });
-  }, [isAuthReady, session, token, router]);
+    return () => { active = false; clearTimeout(redirectTimer); };
+  }, [isAuthReady, userId, token, router]);
 
   const handleUseDifferentAccount = useCallback(async () => {
     // Sign out and bring the user back to this invite URL so they can
