@@ -1,5 +1,7 @@
 'use client';
 
+import { CopyResourceLink } from '@/features/files/components/CopyResourceLink';
+
 import { useWorkspaceRouter } from '@/features/workspace/navigation';
 
 /**
@@ -587,7 +589,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
     />
   ) : undefined;
 
-  const headerActionSlot = activeFormat ? (
+  const editorHeaderActionSlot = activeFormat ? (
     <FileViewerHeaderActions
       projectId={activeProject?.id ?? projectId}
       filePath={activeNodeId}
@@ -610,6 +612,11 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   );
 
   // View logic flags
+  const headerActionSlot = <>
+    <CopyResourceLink projectId={projectId} path={activeNodeId || currentFolderId || ''} directory={!activeNodeId} />
+    {editorHeaderActionSlot}
+  </>;
+
   const isEditorView = !!activeNodeId;
   const isFolderView = !activeNodeId;
   const isLoading = isResolvingPath || contentNodesLoading;

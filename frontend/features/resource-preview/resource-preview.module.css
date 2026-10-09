@@ -1,0 +1,40 @@
+.page { min-height: 100vh; max-width: 1080px; margin: 0 auto; padding: 0 28px; color: var(--po-text); }
+.header { display: flex; justify-content: space-between; align-items: center; gap: 20px; min-height: 88px; border-bottom: 1px solid var(--po-border); }
+.brand { font-size: 22px; font-weight: 650; letter-spacing: -.6px; }
+.page a { color: inherit; text-decoration: none; }
+.download, .page button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 14px; border: 1px solid var(--po-border); border-radius: 8px; background: var(--po-control); color: var(--po-text); font-size: 13px; cursor: pointer; }
+.page button:disabled { opacity: .4; cursor: default; }
+.page a:focus-visible, .page button:focus-visible { outline: 2px solid var(--po-text); outline-offset: 4px; }
+.page button:hover:not(:disabled), .download:hover { background: var(--po-hover); }
+.breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 70px; padding: 18px 0; color: var(--po-text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.breadcrumbs > span { display: inline-flex; align-items: center; gap: 8px; }
+.breadcrumbs a:hover { color: var(--po-text); text-decoration: underline; }
+.resource { border: 1px solid var(--po-border); border-radius: 12px; overflow: hidden; background: var(--po-panel); }
+.title { display: flex; align-items: center; gap: 12px; padding: 22px 24px; border-bottom: 1px solid var(--po-border); }
+.title h1 { flex: 1; margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 20px; font-weight: 600; }
+.title svg, .entries svg { flex-shrink: 0; }
+.title button { flex-shrink: 0; }
+.entries { padding: 0; margin: 0; list-style: none; }
+.entries li + li { border-top: 1px solid var(--po-border); }
+.entries a { display: flex; align-items: center; gap: 12px; padding: 16px 24px; font-size: 14px; }
+.entries a:hover { background: var(--po-hover); }
+.entries span { flex: 1; overflow-wrap: anywhere; }
+.content { padding: 28px; }
+.content pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-geist-mono), monospace; font-size: 13px; line-height: 1.7; }
+.markdown { line-height: 1.8; overflow-wrap: anywhere; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 1em 0 .5em; font-weight: 650; }
+.markdown h1 { font-size: 28px; }.markdown h2 { font-size: 23px; }.markdown h3 { font-size: 19px; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre { margin: 12px 0; }
+.markdown ul, .markdown ol { padding-left: 24px; list-style: revert; }
+.markdown a { text-decoration: underline; }
+.markdown pre { padding: 16px; background: var(--po-inset); border-radius: 8px; }
+.markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
+.markdown td, .markdown th { border: 1px solid var(--po-border); padding: 8px 12px; }
+.image { max-width: 100%; max-height: 75vh; margin: auto; object-fit: contain; }
+.empty { padding: 48px 24px; text-align: center; color: var(--po-text-muted); }
+.empty h1 { font-size: 20px; margin-bottom: 12px; color: var(--po-text); }
+.empty p { margin: 12px 0; }.empty a { text-decoration: underline; }
+.notice { padding: 12px 24px; font-size: 13px; color: var(--po-text-muted); }
+.pagination { display: flex; justify-content: center; align-items: center; gap: 20px; padding: 16px; border-top: 1px solid var(--po-border); font-size: 13px; }
+.footer { text-align: center; color: var(--po-text-muted); font-size: 13px; padding: 32px 0; }
+@media (max-width: 600px) { .page { padding: 0 14px; }.header { min-height: 72px; }.title { padding: 16px; flex-wrap: wrap; }.title h1 { font-size: 17px; }.content { padding: 18px; }.entries a { padding: 15px 18px; } }

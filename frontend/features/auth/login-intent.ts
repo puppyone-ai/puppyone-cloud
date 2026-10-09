@@ -9,7 +9,7 @@ export function safeNext(value: string | null | undefined): string | null {
     !value.startsWith('/') ||
     value.startsWith('//') ||
     /[\\\u0000-\u0020]/.test(value) ||
-    /%(?:5c|0[0-9a-f]|1[0-9a-f]|20)/i.test(value)
+    /%(?:5c|0[0-9a-f]|1[0-9a-f])/i.test(value)
   )
     return null;
   const parsed = new URL(value, 'https://return.invalid');

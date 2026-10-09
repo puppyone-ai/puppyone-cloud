@@ -6,12 +6,13 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import Response
 
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.repository import AuthorizationRepository
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.write_lease import ProjectWriteLease
-from src.version_engine.entrypoints.http import content_read
+from src.version_engine.entrypoints.http import content_read, content_resource
 from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.write_engine.git_object_format import encode_object
 from tests.agent.runtime import conftest as owned
@@ -161,6 +162,8 @@ async def test_content_reads_and_same_snapshot_reuse_have_real_budgets(prepared,
     for method, path, budget, reads in [
         (content_read.read_file, "note.md", 6, 3),
         (content_read.list_dir, "", 5, 2),
+        (content_resource.read_resource, "note.md", 6, 3),
+        (content_resource.read_resource, "", 5, 2),
     ]:
         s3_requests.clear()
         response, report = await asyncio.to_thread(
@@ -172,6 +175,8 @@ async def test_content_reads_and_same_snapshot_reuse_have_real_budgets(prepared,
                 ops=c.ops,
                 authorization=authorization,
                 current_user=SimpleNamespace(user_id=c.user),
+                **({"response": Response(), "path_bytes_b64": None, "cursor": None, "limit": 100}
+                   if method is content_resource.read_resource else {}),
             ),
         )
         assert response.code == 0

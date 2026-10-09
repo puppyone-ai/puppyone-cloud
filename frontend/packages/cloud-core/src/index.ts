@@ -62,3 +62,4 @@ export * from "./endpoints/accessSurfaces";
 export * from "./endpoints/repositoryIdentity";
 export * from "./endpoints/activity";
 export * from "./endpoints/resourceDashboard";
+export * from "./resources/workspaceUrls";

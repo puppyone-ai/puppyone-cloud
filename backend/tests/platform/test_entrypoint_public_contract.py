@@ -262,6 +262,12 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     assert history["schemas"] == {}
     assert not expected["contract"]["paths"].keys() & history["paths"].keys()
     expected["contract"]["paths"].update(history["paths"])
+    resource = json.loads(Path(__file__).with_name("workspace_resource_contract_delta.json").read_text())
+    assert set(resource["paths"]) == {"/api/v1/content/{project_id}/resource"}
+    assert set(resource["schemas"]) == {"ResourceResponse", "ApiResponse_ResourceResponse_"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & resource[category].keys()
+        expected["contract"][category].update(resource[category])
     assert contract(app.openapi()) == expected["contract"]
 
 

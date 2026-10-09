@@ -66,11 +66,11 @@ class NativeTreeReader:
             raise ValueError("expected a repository blob")
         return body
 
-    def _project(self, entry, parent_path, *, include_size=False):
+    def _project(self, entry, parent_path, *, include_size=False, include_children_count=True):
         path = f"{parent_path}/{entry.name}" if parent_path else entry.name
         if entry.is_dir:
             return VersionEntry(name=entry.name, path=path, type="folder",
-                                children_count=len(self._tree(entry.sha1_hex)),
+                                children_count=len(self._tree(entry.sha1_hex)) if include_children_count else None,
                                 size_bytes=0 if include_size else None,
                                 git_mode=entry.mode.decode("ascii"))
         if entry.is_gitlink:
@@ -116,7 +116,18 @@ class NativeTreeReader:
         return [self._project(entry, path, include_size=include_size)
                 for entry in self._tree(self._directory(path))]
 
-    def stat(self, project_id, path, *, include_size=False):
+    def list_dir_page(self, project_id, path="", *, offset=0, limit=100):
+        """One immediate tree page; never read child trees or blobs for metadata."""
+        self._check_project(project_id)
+        if offset < 0 or not 1 <= limit <= 200:
+            raise ValueError("invalid directory page bounds")
+        entries = self._tree(self._directory(path))
+        page = [self._project(entry, path, include_children_count=False)
+                for entry in entries[offset:offset + limit]]
+        next_offset = offset + limit if offset + limit < len(entries) else None
+        return page, next_offset
+
+    def stat(self, project_id, path, *, include_size=False, include_children_count=True):
         self._check_project(project_id)
         if not path:
             return VersionEntry(name="", path="", type="folder", git_mode="40000")
@@ -124,7 +135,8 @@ class NativeTreeReader:
         if entry is None:
             return None
         parent = path.rpartition("/")[0]
-        return self._project(entry, parent, include_size=include_size)
+        return self._project(entry, parent, include_size=include_size,
+                             include_children_count=include_children_count)
 
     def read_file(self, project_id, path):
         self._check_project(project_id)
