@@ -1480,6 +1480,52 @@ async def test_denial_is_durable_before_reply_and_replays_with_bounded_queries(
 
 
 @pytest.mark.asyncio
+async def test_declined_continuation_is_idempotent_and_uses_bounded_database_commands(prepared):
+    from unittest.mock import AsyncMock
+
+    from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
+
+    case = prepared
+    frame = {
+        "id": "request",
+        "call_id": "declined",
+        "name": "write",
+        "input": {"path": "no.txt"},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    case.repo.begin_tool(case.run, frame, checkpoint={}, mutation=True)
+    decision = str(uuid4())
+    await asyncio.to_thread(
+        case.service.command,
+        case.user,
+        case.run["id"],
+        "approve",
+        call="declined",
+        decision=decision,
+        allow=False,
+    )
+    supervisor = case.supervisor()
+    supervisor.run, supervisor.value, supervisor.worker = case.run, {}, AsyncMock()
+    sequence = None
+    for _ in range(2):
+        trace = DatabaseTrace("declined-continuation")
+        with database_trace(trace):
+            await supervisor.tool_start(frame)
+        assert trace.report()["operations"] == {
+            "POST rpc/agent_run_begin_tool": 1,
+            "POST rpc/agent_run_append_batch": 1,
+        }
+        assert supervisor.run["state"] == "running"
+        if sequence is not None:
+            assert supervisor.run["sequence"] == sequence
+        sequence = supervisor.run["sequence"]
+        result = supervisor.worker.send.await_args.args[0]["result"]
+        assert result["details"]["code"] == "tool_approval_denied"
+    receipt = case.repo.tools(case.run["id"])[0]
+    assert receipt["state"] == "rejected" and receipt["decision_id"] == decision
+
+
+@pytest.mark.asyncio
 async def test_unbound_tool_returns_durable_denial_instead_of_run_failure(prepared):
     from unittest.mock import AsyncMock
 

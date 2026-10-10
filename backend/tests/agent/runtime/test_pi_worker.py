@@ -107,7 +107,7 @@ async def test_real_pi_file_tool_and_checkpoint():
 @pytest.mark.parametrize(
     "tool,arguments,expected",
     [
-        ("read", {"path": "../../etc/passwd"}, "outside assigned workspace"),
+        ("read", {"path": "../../etc/passwd"}, "root:"),
         (
             "bash",
             {

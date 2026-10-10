@@ -69,7 +69,8 @@ jobs:
             --ignore=tests/agent/runtime/test_desktop_integration.py \
             --hosting-live --hosting-s3 \
             -q --junitxml=.agent-test-results/junit.xml --basetemp=.agent-test-results/cases
-          node --test agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs
+          node --test agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs \
+            agent-worker/controller.test.mjs agent-worker/providers/*.test.mjs
           # Execute the actual harness with its pinned Node and Pi artifact.
           docker run --rm --network=none --entrypoint node \
             --mount "type=bind,src=$PWD/agent-worker/worker.integration.test.mjs,dst=/opt/puppyone-agent/worker.integration.test.mjs,readonly" \

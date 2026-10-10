@@ -603,7 +603,7 @@ class RunSupervisor:
         if receipt["state"] == "rejected":
             # The rejected receipt and original input are already durable.
             # Preserve its decision identity rather than pretending it executed.
-            await self.write("state", {"state": "running"}, state="running")
+            await self.command(self.repo.continue_after_rejection, frame)
             await self.worker.send(
                 {"type": "reply", "id": frame["id"], "result": approval_denied()}
             )

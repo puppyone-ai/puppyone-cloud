@@ -6,6 +6,7 @@ COPY package-lock.json ./
 COPY patch-dependencies.mjs ./
 RUN npm ci --omit=dev --ignore-scripts && node patch-dependencies.mjs && npm cache clean --force
 COPY controller.mjs protocol.mjs git.mjs git-relay.mjs worker.mjs tool-execution.mjs ./
+COPY providers/docker-recovery.mjs ./providers/
 RUN mkdir -p /workspace /home/node/.pi && chown node:node /workspace /home/node/.pi
 USER root
 WORKDIR /workspace

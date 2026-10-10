@@ -56,7 +56,8 @@ class PiWorker:
         self.restore_point = None
         self.reconnecting = False
         self.output_sequence = 0
-        self.resource["recovery_volume"] = "puppyone-agent-recovery-" + execution_id
+        if self.provider == "docker":
+            self.resource["recovery_volume"] = "puppyone-agent-recovery-" + execution_id
 
     async def _docker(self, *args):
         proc = await asyncio.create_subprocess_exec(
@@ -354,6 +355,7 @@ class PiWorker:
                     self.resource["resource_id"],
                     "node",
                     "/opt/puppyone-agent/controller.mjs",
+                    "--docker-recovery",
                 ]
                 if getattr(self, "attached", False)
                 else ["docker", "start", "-ai", self.resource["resource_id"]]
@@ -406,6 +408,12 @@ class PiWorker:
         capabilities = await self.control("capabilities")
         if capabilities.get("workspace_lifecycle") != 1:
             raise RuntimeError("Sandbox artifact does not support Session workspace lifecycle")
+        expected_recovery = "docker-volume" if self.provider == "docker" else "provider-snapshot"
+        if (
+            capabilities.get("recovery_version") != 1
+            or capabilities.get("recovery_backend") != expected_recovery
+        ):
+            raise RuntimeError("Sandbox recovery backend mismatch; rebuild worker artifact")
         workspace = config["workspace"]
         await self.control(
             "prepare",
