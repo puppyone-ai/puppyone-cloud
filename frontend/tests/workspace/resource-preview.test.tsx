@@ -46,14 +46,14 @@ it('does not read content before sign in and preserves the selected path', async
 
 it('renders folder links without fetching each child and pages only on demand', async () => {
   const first = { ...resource, kind: 'directory', path: '', entry: { ...entry, name: '', path: '', type: 'folder' },
-    entries: [{ ...entry, name: 'file #?.md', path: 'file #?.md' }, { ...entry, name: 'docs', path: 'docs', type: 'folder' }], next_cursor: 'next' };
-  mocks.read.mockResolvedValueOnce(first).mockResolvedValueOnce({ ...first, entries: [{ ...entry, name: 'last.md', path: 'last.md' }], next_cursor: null });
+    entries: [{ ...entry, name: 'file #?.bin', path: 'file #?.bin' }, { ...entry, name: 'docs', path: 'docs', type: 'folder' }], next_cursor: 'next' };
+  mocks.read.mockResolvedValueOnce(first).mockResolvedValueOnce({ ...first, entries: [{ ...entry, name: 'last.bin', path: 'last.bin' }], next_cursor: null });
   preview('');
-  expect((await screen.findByRole('link', { name: 'file #?.md' })).getAttribute('href')).toBe(`/${id}/file%20%23%3F.md`);
+  expect((await screen.findByRole('link', { name: 'file #?.bin' })).getAttribute('href')).toBe(`/${id}/file%20%23%3F.bin`);
   expect(screen.getByRole('link', { name: 'docs' }).getAttribute('href')).toBe(`/${id}/docs/`);
   expect(mocks.read).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('link', { name: 'last.md' });
+  await screen.findByRole('link', { name: 'last.bin' });
   expect(mocks.read).toHaveBeenCalledTimes(2);
   expect(mocks.read).toHaveBeenLastCalledWith(id, '', 'next', undefined);
 });
@@ -100,4 +100,29 @@ it('renders Markdown as read-only content without executing HTML or loading remo
   expect(view.container.querySelector('img')).toBeNull();
   expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
   expect(screen.getByText(/This preview is limited/)).toBeTruthy();
+});
+
+
+it('previews only one readable document and reuses it when its canonical URL is opened', async () => {
+  const directory = { ...resource, kind: 'directory' as const, path: '',
+    entry: { ...entry, name: '', path: '', type: 'folder' },
+    entries: [{ ...entry, name: '.DS_Store', path: '.DS_Store' }, entry,
+      ...Array.from({ length: 30 }, (_, index) => ({ ...entry, name: `other-${index}.md`, path: `other-${index}.md` }))] };
+  mocks.read.mockImplementation((_id, path) => Promise.resolve(path === '' ? directory : resource));
+  const cache = new Map();
+  const element = (path: string) => <StrictMode><SWRConfig value={{ provider: () => cache, dedupingInterval: 5000 }}><ResourcePreview projectId={id} path={path} /></SWRConfig></StrictMode>;
+  const view = render(element(''));
+  await screen.findByRole('heading', { name: 'Hello workspace' });
+  expect(screen.queryByRole('link', { name: '.DS_Store' })).toBeNull();
+  expect(mocks.read).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('link', { name: 'note.md' }).getAttribute('aria-current')).toBe('page');
+  view.rerender(element('note.md'));
+  await screen.findByRole('heading', { name: 'Hello workspace' });
+  expect(screen.getByRole('link', { name: 'other-29.md' })).toBeTruthy();
+  expect(mocks.read).toHaveBeenCalledTimes(2);
+  view.unmount();
+  render(element('note.md'));
+  await screen.findByRole('heading', { name: 'Hello workspace' });
+  expect(screen.getByRole('link', { name: 'other-29.md' })).toBeTruthy();
+  expect(mocks.read).toHaveBeenCalledTimes(2);
 });
