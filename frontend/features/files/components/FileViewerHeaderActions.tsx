@@ -16,21 +16,24 @@ import { createPortal } from 'react-dom';
 
 type HeaderViewerId = GenericViewerId | SpecialViewerId;
 
-interface FileViewerHeaderActionsProps {
-  projectId: string;
-  filePath: string;
+export interface FileViewerModeProps {
   viewerId: HeaderViewerId | null;
   editable: boolean;
   markdownViewMode: MarkdownViewMode;
   onMarkdownViewModeChange: (mode: MarkdownViewMode) => void;
-  saveStatus: SaveStatus;
-  onSave: () => void;
   editorType: EditorType;
   onEditorTypeChange: (mode: EditorType) => void;
   htmlMode: HtmlArtifactMode;
   onHtmlModeChange: (mode: HtmlArtifactMode) => void;
   csvViewMode: CsvViewMode;
   onCsvViewModeChange: (mode: CsvViewMode) => void;
+}
+
+interface FileViewerHeaderActionsProps extends FileViewerModeProps {
+  projectId: string;
+  filePath: string;
+  saveStatus: SaveStatus;
+  onSave: () => void;
   actionsSlot?: ReactNode;
 }
 
@@ -82,72 +85,32 @@ export function FileViewerHeaderActions({
 
   const actions =
     actionsSlot !== undefined ? actionsSlot : <FileActionsMenu projectId={projectId} filePath={filePath} />;
-  const resolvedMarkdownViewMode: MarkdownViewMode =
-    markdownViewMode === 'source' ? 'source' : 'wysiwyg';
-  const saveButton = editable ? <EditorSaveButton status={saveStatus} onSave={onSave} /> : null;
+  const saveButton = editable && viewerId !== 'json-table' && viewerId !== 'html-artifact'
+    ? <EditorSaveButton status={saveStatus} onSave={onSave} /> : null;
+  return <HeaderActionGroup>
+    {saveButton}
+    {['markdown-editor', 'csv-table', 'json-table', 'html-artifact'].includes(viewerId) && <FileViewerModePicker viewerId={viewerId} editable={editable}
+      markdownViewMode={markdownViewMode} onMarkdownViewModeChange={onMarkdownViewModeChange}
+      editorType={editorType} onEditorTypeChange={onEditorTypeChange}
+      htmlMode={htmlMode} onHtmlModeChange={onHtmlModeChange}
+      csvViewMode={csvViewMode} onCsvViewModeChange={onCsvViewModeChange} />}
+    {actions}
+  </HeaderActionGroup>;
+}
 
-  if (viewerId === 'markdown-editor') {
-    return (
-      <HeaderActionGroup>
-        {saveButton}
-        <MarkdownModePicker mode={resolvedMarkdownViewMode} onChange={onMarkdownViewModeChange} />
-        {actions}
-      </HeaderActionGroup>
-    );
+/** Same view menu in Workspace and shares, with only the allowed modes. */
+export function FileViewerModePicker(props: FileViewerModeProps) {
+  switch (props.viewerId) {
+    case 'markdown-editor': return <MarkdownModePicker mode={props.markdownViewMode} onChange={props.onMarkdownViewModeChange} />;
+    case 'csv-table': return <ModePicker mode={props.csvViewMode} onChange={props.onCsvViewModeChange}
+      options={props.editable ? CSV_OPTIONS : CSV_OPTIONS.filter(option => option.value !== 'edit')} />;
+    case 'json-table': return <ModePicker mode={props.editorType} onChange={props.onEditorTypeChange} options={JSON_OPTIONS} />;
+    case 'html-artifact': return <>
+      <span style={{ color: 'var(--po-text-subtle)', fontSize: 12, whiteSpace: 'nowrap' }}>Scripts disabled</span>
+      <ModePicker mode={props.htmlMode} onChange={props.onHtmlModeChange} options={HTML_OPTIONS} />
+    </>;
+    default: return null;
   }
-
-  if (viewerId === 'plain-text') {
-    return (
-      <HeaderActionGroup>
-        {saveButton}
-        {actions}
-      </HeaderActionGroup>
-    );
-  }
-
-  if (viewerId === 'csv-table') {
-    return (
-      <HeaderActionGroup>
-        {saveButton}
-        <ModePicker mode={csvViewMode} onChange={onCsvViewModeChange} options={CSV_OPTIONS} />
-        {actions}
-      </HeaderActionGroup>
-    );
-  }
-
-  if (viewerId === 'json-table') {
-    return (
-      <HeaderActionGroup>
-        <ModePicker mode={editorType} onChange={onEditorTypeChange} options={JSON_OPTIONS} />
-        {actions}
-      </HeaderActionGroup>
-    );
-  }
-
-  if (viewerId === 'html-artifact') {
-    return (
-      <HeaderActionGroup>
-        <span
-          style={{
-            color: 'var(--po-text-subtle)',
-            fontSize: 12,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          Scripts disabled
-        </span>
-        <ModePicker mode={htmlMode} onChange={onHtmlModeChange} options={HTML_OPTIONS} />
-        {actions}
-      </HeaderActionGroup>
-    );
-  }
-
-  return (
-    <HeaderActionGroup>
-      {saveButton}
-      {actions}
-    </HeaderActionGroup>
-  );
 }
 
 /** Shared view control; callers supply permitted actions separately. */

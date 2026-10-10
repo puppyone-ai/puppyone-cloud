@@ -21,10 +21,9 @@ import { useWorkspaceRegions } from '@/features/workspace/regions';
 import { DataNoFileSelectedState } from '@/features/files/components/DataNoFileSelectedState';
 import { EditorLoadingSurface } from '@/components/loading';
 import { ReadErrorState } from '@/components/loading/ReadErrorState';
-import { MarkdownModePicker } from '@/features/files/components/FileViewerHeaderActions';
-import type { MarkdownViewMode } from '@/components/editors/markdown';
+import { FileViewerModePicker } from '@/features/files/components/FileViewerHeaderActions';
 import { getProject } from '@/lib/projectsApi';
-import { ResourceContent, isMarkdownResource } from './ResourceContent';
+import { ResourceContent, resourceViewerId, type ResourceViewModes } from './ResourceContent';
 import type { WorkspaceResource } from './resourceApi';
 import { ResourceExplorer } from './ResourceExplorer';
 import { useResource, defaultPreview } from './resourceQueries';
@@ -63,7 +62,7 @@ function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation &
   const { data: project } = useSWR(['resource-project', userId, projectId], () => getProject(projectId),
     { revalidateOnFocus: false, shouldRetryOnError: false });
   const [copyResult, setCopyResult] = useState({ path, message: '' });
-  const [viewMode, setViewMode] = useState<MarkdownViewMode>('wysiwyg');
+  const [modes, setModes] = useState<Required<ResourceViewModes>>({ markdownViewMode: 'wysiwyg', csvViewMode: 'preview', htmlArtifactMode: 'preview' });
   const segments = useMemo(() => [
     { label: project?.name || 'Workspace', href: path || pathBytes ? workspaceResourcePath(projectId) : undefined },
     ...path.split('/').filter(Boolean).map((name, index, parts) => ({ label: name,
@@ -84,7 +83,11 @@ function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation &
   };
   return <>
     <ProjectHeaderFrame headerRef={regions.header} actions={<div className={styles.actions}>
-      {displayed && isMarkdownResource(displayed) && <MarkdownModePicker mode={viewMode} onChange={setViewMode} />}
+      {displayed && <FileViewerModePicker viewerId={resourceViewerId(displayed)} editable={false}
+        markdownViewMode={modes.markdownViewMode} onMarkdownViewModeChange={mode => setModes(value => ({ ...value, markdownViewMode: mode }))}
+        csvViewMode={modes.csvViewMode} onCsvViewModeChange={mode => setModes(value => ({ ...value, csvViewMode: mode }))}
+        editorType="monaco" onEditorTypeChange={() => {}}
+        htmlMode={modes.htmlArtifactMode} onHtmlModeChange={mode => setModes(value => ({ ...value, htmlArtifactMode: mode }))} />}
       <DesktopChromeAction icon={<Link2 size={15} />} label="Copy link" onClick={() => void copy()} />
       <DownloadLink />
       <span className="sr-only" role="status">{copyResult.path === path ? copyResult.message : ''}</span>
@@ -100,19 +103,19 @@ function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation &
       </WorkspaceFileColumn></FileNavigationRegion>
       <section ref={regions.editor} className={`workspace-data-content ${styles.preview}`} aria-label="File preview">
         <PreviewPane loading={isLoading || firstFile.isLoading} error={previewError} displayed={displayed} directory={data}
-          viewMode={viewMode} retry={() => { void (error ? mutate() : firstFile.mutate()); }} />
+          modes={modes} retry={() => { void (error ? mutate() : firstFile.mutate()); }} />
       </section>
     </div>
   </>;
 }
 
-function PreviewPane({ loading, error, displayed, directory, viewMode, retry }: {
+function PreviewPane({ loading, error, displayed, directory, modes, retry }: {
   loading: boolean; error?: { status?: number }; displayed?: WorkspaceResource; directory?: WorkspaceResource;
-  viewMode: MarkdownViewMode; retry: () => void;
+  modes: ResourceViewModes; retry: () => void;
 }) {
   if (loading) return <EditorLoadingSurface />;
   if (error) return <ReadErrorState label={error.status === 403 || error.status === 404 ? 'This resource is not available.' : 'Could not load this preview.'} onRetry={retry} />;
-  if (displayed) return <ResourceContent key={displayed.entry.path_bytes_b64 ?? displayed.path} resource={displayed} markdownViewMode={viewMode} />;
+  if (displayed) return <ResourceContent key={displayed.entry.path_bytes_b64 ?? displayed.path} resource={displayed} {...modes} />;
   return <DataNoFileSelectedState mode={directory?.entries.length ? 'has-content' : 'empty-folder'} folderName={directory?.entry.name} />;
 }
 

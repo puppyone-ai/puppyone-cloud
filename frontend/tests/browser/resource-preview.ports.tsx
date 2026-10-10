@@ -18,14 +18,16 @@ export default function Link({ href, children, prefetch: _prefetch, onClick, ...
     navigate(decodeURIComponent(href.slice(projectId.length + 2)).replace(/\/$/, ''));
   }}>{children}</a>;
 }
-const file = (name: string, type = 'markdown') => ({ name: name.split('/').pop()!, path: name, type, mime_type: 'text/markdown', size_bytes: 120, git_mode: '100644', path_bytes_b64: null });
+const file = (name: string, type = /\.md$/i.test(name) ? 'markdown' : 'file') => ({ name: name.split('/').pop()!, path: name, type, mime_type: /\.md$/i.test(name) ? 'text/markdown' : 'text/plain', size_bytes: 120, git_mode: '100644', path_bytes_b64: null });
 const base: WorkspaceResource = { kind: 'file', path: '', entry: file(''), entries: [], next_cursor: null,
   repository_revision: { tree_oid: 'fixture-tree', expected_oid: 'fixture-commit', generation: 1 },
   preview: 'text', content_text: '', content_base64: null, truncated: false };
 export async function readWorkspaceResource(_project: string, path: string): Promise<WorkspaceResource> {
   requests.push(path);
   if (path === 'Research') return { ...base, kind: 'directory', path, entry: file(path, 'folder'), entries: [{ ...file('Plan.md'), path: 'Research/Plan.md' }] };
-  if (!path) return { ...base, kind: 'directory', entry: file('', 'folder'), entries: [file('.DS_Store'), file('Research', 'folder'), file('Welcome.md'), file('Meeting notes.md'), ...Array.from({ length: 25 }, (_, index) => file(`Document ${index + 1}.md`))] };
+  if (!path) return { ...base, kind: 'directory', entry: file('', 'folder'), entries: [file('.DS_Store'), file('Research', 'folder'), file('Welcome.md'), file('Meeting notes.md'), file('Metrics.csv'), file('Settings.json'), ...Array.from({ length: 25 }, (_, index) => file(`Document ${index + 1}.md`))] };
+  if (path === 'Metrics.csv') return { ...base, path, entry: file(path, 'file'), content_text: 'Name,Count,Status\nResearch,42,Active\nDesign,18,Review\nWriting,7,Done' };
+  if (path === 'Settings.json') return { ...base, path, entry: file(path, 'file'), content_text: '{\n  "name": "Research workspace",\n  "shared": true,\n  "items": [42, 18, 7]\n}' };
   return { ...base, path, entry: file(path), content_text: path === 'Welcome.md' ? '# Research workspace\n\nA shared place for ideas, notes, and the work ahead.\n\n## Start with the questions\n\nKeep source material together and make room for discussion. Everyone with workspace access can preview these documents.\n\n- Gather research and references\n- Connect ideas across documents\n- Work with your team in Puppyone\n\n> Good work starts with a shared understanding.\n\n## Next steps\n\nOpen another file from the sidebar, or download Puppyone to work with the complete workspace.' : '# Meeting notes\n\nDecisions and next steps from our latest discussion.' };
 }
 
@@ -35,7 +37,7 @@ export function usePendingNavigation() { return null; }
 export function useNavigationGuard() {}
 export function returnToFiles(id: string) { return `/projects/${id}/data`; }
 export function parseWorkspaceLocation() { return null; }
-const referenceEntries = [file('Research', 'folder'), file('Welcome.md'), file('Meeting notes.md'), ...Array.from({ length: 25 }, (_, i) => file(`Document ${i + 1}.md`))];
+const referenceEntries = [file('Research', 'folder'), file('Welcome.md'), file('Meeting notes.md'), file('Metrics.csv'), file('Settings.json'), ...Array.from({ length: 25 }, (_, i) => file(`Document ${i + 1}.md`))];
 const referenceNodes = referenceEntries.map(entry => ({ ...entry, id: entry.path }));
 export function useExplorerRootNodes() { return { rootNodes: referenceNodes, isLoading: false, error: null, refresh: async () => {} }; }
 export function useExplorerTreeDir() { return { nodes: [], isLoading: false, isValidating: false, error: null, refresh: async () => {} }; }

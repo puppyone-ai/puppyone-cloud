@@ -6,6 +6,9 @@ const ports = fileURLToPath(new URL('./resource-preview.ports.tsx', import.meta.
 export default defineConfig({
   root,
   define: { 'process.env.NEXT_PUBLIC_API_URL': JSON.stringify('https://cloud-fixture.puppyone.ai') },
+  // Next/Webpack resolves UMD modules at build time. Give this Vite harness the
+  // same behavior when Monaco's CDN loader installs a global AMD `define`.
+  optimizeDeps: { rolldownOptions: { transform: { define: { 'define.amd': 'false' } } } },
   resolve: { alias: [
     { find: 'next/link', replacement: ports },
     { find: 'next/navigation', replacement: ports },

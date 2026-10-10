@@ -4,9 +4,8 @@ import type { HtmlArtifactMode } from '@/components/editors/html/HtmlArtifactPre
 import { type MarkdownViewMode } from '@/components/editors/markdown';
 import type { CsvViewMode } from '@/components/editors/spreadsheet/CsvTableViewer';
 import { PageLoading } from '@/components/loading';
-import { hasConflictMarkers } from '@/lib/conflictMarkers';
 import { isTextLikeCategory, resolveFormat } from '@/lib/fileFormats';
-import { VIEWERS } from '@/lib/viewers/registry';
+import { FileViewer } from '@/lib/viewers/FileViewer';
 import dynamic from 'next/dynamic';
 
 // Loaded on demand — only when user opens a GitHub-connected node.
@@ -131,24 +130,10 @@ export function EditorArea({
   // final segment for display — UI chrome only, never logic.
   const nodeName = activeNodeId.split('/').pop() || '';
 
-  // When the loaded text content carries Git-style conflict markers
-  // (LWW landed both sides into the file), structured viewers like
-  // MonacoJsonEditor and CsvTableViewer would fail to parse and
-  // present a cryptic error or eat the markers silently. Force a
-  // PlainTextEditor instead — it ships ConflictMarkerBanner, so the
-  // user can see + resolve the conflict in-place. Only kicks in for
-  // text-like formats; binary/HTML/PDF viewers don't carry text.
-  let viewerId = format.defaultViewer;
-  if (needsText && hasConflictMarkers(textContent)) {
-    viewerId = 'plain-text';
-  }
-  const ViewerDef = VIEWERS[viewerId];
-  const Viewer = ViewerDef.component;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>
-        <Viewer
+        <FileViewer
           projectId={activeProject.id}
           filePath={activeNodeId}
           nodeName={nodeName}

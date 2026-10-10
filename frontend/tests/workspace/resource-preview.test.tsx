@@ -207,3 +207,19 @@ it('deduplicates the server byte locator and the same Unicode file URL', async (
   await screen.findByText(/Hello workspace/);
   expect(mocks.read).toHaveBeenCalledTimes(2);
 });
+
+
+it('switches a shared CSV between native table and source without another resource read', async () => {
+  const csv = { ...resource, path: 'data.csv', entry: { ...entry, name: 'data.csv', path: 'data.csv', type: 'file', mime_type: 'text/csv' }, content_text: 'Name,Count\nAlice,42' };
+  mocks.read.mockImplementation((_id, path) => Promise.resolve(path ? csv : { ...rootDirectory, entries: [csv.entry] }));
+  preview('data.csv');
+  await screen.findByRole('grid');
+  fireEvent.click(screen.getByTitle('View mode: Preview table'));
+  expect(screen.queryByRole('menuitem', { name: 'Edit table' })).toBeNull();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Source' }));
+  fireEvent.click(screen.getByTitle('View mode: Source'));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Preview table' }));
+  await screen.findByRole('grid');
+  expect(mocks.read).toHaveBeenCalledTimes(2);
+  expect(mocks.read.mock.calls.filter(call => call[1] === 'data.csv')).toHaveLength(1);
+});

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ProjectsHeader } from '@/components/ProjectsHeader';
-import { MarkdownEditor } from '@/components/editors/markdown';
+import { EditorArea } from '@/features/files/components/EditorArea';
 import { DataExplorerPane } from '@/features/files/components/explorer/DataExplorerPane';
 import { ExplorerSessionProvider } from '@/features/files/explorerSession';
 import { ProjectSessionProvider } from '@/features/workspace/session';
@@ -11,18 +11,23 @@ import { DEFAULT_WORKSPACE_INPUT } from '@/features/workspace/paneLayout';
 import { projectId, readWorkspaceResource } from './resource-preview.ports';
 
 /** Real Workspace header/explorer/editor with fake transport, used as the visual reference. */
-export function WorkspaceReference() {
+export function WorkspaceReference({ file = 'Welcome.md' }: { file?: string }) {
   const [store] = useState(() => createWorkspaceLayoutStore({ projects: { ...DEFAULT_WORKSPACE_INPUT.projects, present: false } }));
   const [text, setText] = useState('');
-  useEffect(() => { void readWorkspaceResource(projectId, 'Welcome.md').then(value => setText(value.content_text!)); }, []);
+  useEffect(() => { void readWorkspaceResource(projectId, file).then(value => setText(value.content_text!)); }, [file]);
   return <ResponsiveWorkspaceProvider layoutStore={store}><WorkspaceLayoutFrame>
     <ProjectSessionProvider projectId={projectId}><ExplorerSessionProvider projectId={projectId}>
       <main className="workspace-project-layout">
         <ProjectsHeader projectId={projectId} pathSegments={[{ label: 'Research workspace' }]} />
         <div className="workspace-primary-body" style={{ display: 'flex', minHeight: 0, minWidth: 0 }}>
-          <DataExplorerPane projectId={projectId} folderBreadcrumbs={[]} activeNodeId="Welcome.md" onNavigate={() => {}} />
+          <DataExplorerPane projectId={projectId} folderBreadcrumbs={[]} activeNodeId={file} onNavigate={() => {}} />
           <section style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-            <MarkdownEditor content={text} documentKey="Welcome.md" viewMode="wysiwyg" onChange={() => {}} />
+            <EditorArea activeNodeId={file} activeNodeType="file" activeMimeType="text/plain"
+              activeProject={{ id: projectId, name: 'Research workspace' }} currentTableData={null} textContent={text}
+              isLoadingText={false} markdownViewMode="wysiwyg" setMarkdownViewMode={() => {}} htmlArtifactMode="preview"
+              csvViewMode="preview" onTextChange={() => {}} editorType="monaco" configuredAccessPoints={[]}
+              onActiveTableChange={() => {}} onAccessPointChange={() => {}} onAccessPointRemove={() => {}}
+              onOpenDocument={() => {}} onCreateTool={() => {}} />
           </section>
         </div>
       </main>

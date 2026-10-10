@@ -13,6 +13,7 @@ interface HtmlArtifactPreviewProps {
   content: string;
   nodeName: string;
   mode: HtmlArtifactMode;
+  loadExternalResources?: boolean;
 }
 
 export type HtmlArtifactMode = 'preview' | 'source';
@@ -29,8 +30,9 @@ const HTML_PREVIEW_CSP = [
   "form-action 'none'",
 ].join('; ');
 
-function buildSandboxedDocument(rawHtml: string): string {
-  const csp = `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">`;
+function buildSandboxedDocument(rawHtml: string, loadExternalResources: boolean): string {
+  const policy = loadExternalResources ? HTML_PREVIEW_CSP : HTML_PREVIEW_CSP.replaceAll(" https:", "");
+  const csp = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
   const base = '<base target="_blank">';
 
   if (/<head[\s>]/i.test(rawHtml)) {
@@ -44,9 +46,9 @@ function buildSandboxedDocument(rawHtml: string): string {
   return `<!doctype html><html><head>${csp}${base}</head><body>${rawHtml}</body></html>`;
 }
 
-export function HtmlArtifactPreview({ content, nodeName, mode }: HtmlArtifactPreviewProps) {
+export function HtmlArtifactPreview({ content, nodeName, mode, loadExternalResources = true }: HtmlArtifactPreviewProps) {
   const [sourceMounted, setSourceMounted] = useState(false);
-  const sandboxedDocument = useMemo(() => buildSandboxedDocument(content), [content]);
+  const sandboxedDocument = useMemo(() => buildSandboxedDocument(content, loadExternalResources), [content, loadExternalResources]);
 
   useEffect(() => {
     if (mode === 'source') setSourceMounted(true);

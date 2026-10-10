@@ -1,16 +1,6 @@
-/**
- * Generic Viewer Registry — maps `GenericViewerId` to the React
- * component that renders that file.
- *
- * Adding a new generic viewer:
- *   1. Add the id to `GenericViewerId` in `lib/fileFormats/types.ts`.
- *   2. Add an entry to `VIEWERS` below.
- *   3. Reference the id from one or more `FileFormat.defaultViewer` /
- *      `FileFormat.availableViewers` values in `registry.ts`.
- *
- * "Special" viewers (currently just `json-table`) consume
- * non-standard props and are dispatched directly inside
- * `<EditorArea>` — they are intentionally absent here.
+/** Shared generic file viewers. Hosts own fetching and mutation handlers.
+ * The metadata-based JSON table remains in ProjectWorkspaceView; regular JSON
+ * files follow the format registry and use the Monaco code viewer.
  */
 
 import dynamic from 'next/dynamic';
@@ -54,6 +44,10 @@ export interface ViewerProps {
   htmlArtifactMode?: HtmlArtifactMode;
   /** CSV/TSV-only: table edit, table preview, or raw source. Other viewers ignore. */
   csvViewMode?: CsvViewMode;
+  /** Already authorized image bytes; omit to use the Workspace image loader. */
+  inlineImageUrl?: string;
+  /** Bounded shares do not load external document resources. */
+  loadExternalResources?: boolean;
 }
 
 export interface ViewerDefinition {
@@ -81,11 +75,13 @@ const MarkdownEditorAdapter = dynamic<ViewerProps>(
         onTextChange,
         markdownViewMode,
         onMarkdownViewModeChange,
+        loadExternalResources,
       }: ViewerProps) => (
         <MarkdownEditor
           content={textContent ?? ''}
           onChange={editable ? onTextChange : undefined}
           readOnly={!editable}
+          loadImages={loadExternalResources}
           documentKey={filePath}
           viewMode={markdownViewMode}
           onViewModeChange={onMarkdownViewModeChange}
@@ -167,11 +163,12 @@ const HtmlArtifactAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/html/HtmlArtifactPreview').then((mod) => {
       const { HtmlArtifactPreview } = mod;
-      const Adapter = ({ textContent, nodeName, htmlArtifactMode }: ViewerProps) => (
+      const Adapter = ({ textContent, nodeName, htmlArtifactMode, loadExternalResources }: ViewerProps) => (
         <HtmlArtifactPreview
           content={textContent ?? ''}
           nodeName={nodeName}
           mode={htmlArtifactMode ?? 'preview'}
+          loadExternalResources={loadExternalResources}
         />
       );
       Adapter.displayName = 'HtmlArtifactAdapter';
@@ -183,9 +180,11 @@ const HtmlArtifactAdapter = dynamic<ViewerProps>(
 const ImagePreviewAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/image/ImagePreview').then((mod) => {
-      const { ImagePreview } = mod;
-      const Adapter = ({ projectId, filePath, nodeName }: ViewerProps) => (
-        <ImagePreview projectId={projectId} filePath={filePath} nodeName={nodeName} />
+      const { ImagePreview, ImagePreviewSurface } = mod;
+      const Adapter = ({ projectId, filePath, nodeName, inlineImageUrl }: ViewerProps) => (
+        inlineImageUrl !== undefined
+          ? <ImagePreviewSurface src={inlineImageUrl} nodeName={nodeName} />
+          : <ImagePreview projectId={projectId} filePath={filePath} nodeName={nodeName} />
       );
       Adapter.displayName = 'ImagePreviewAdapter';
       return Adapter;
