@@ -54,7 +54,7 @@ class OfficeSettings(BaseSettings):
         if not self.PUPPYONE_OFFICE_PUBLIC_BASE_URL:
             self.PUPPYONE_OFFICE_PUBLIC_BASE_URL = settings.PUBLIC_URL.rstrip("/")
         if not self.PUPPYONE_OFFICE_REDIS_URL:
-            self.PUPPYONE_OFFICE_REDIS_URL = settings.AUTH_SECURITY_REDIS_URL
+            self.PUPPYONE_OFFICE_REDIS_URL = settings.ETL_REDIS_URL
         required = {
             "PUPPYONE_OFFICE_DOCUMENT_SERVER_URL": self.PUPPYONE_OFFICE_DOCUMENT_SERVER_URL,
             "PUPPYONE_OFFICE_PUBLIC_BASE_URL": self.PUPPYONE_OFFICE_PUBLIC_BASE_URL,

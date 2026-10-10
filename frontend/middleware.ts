@@ -39,8 +39,8 @@ export async function middleware(request: NextRequest) {
     return response;
   };
 
-  // The native flow owns a temporary, independent browser session. Reading or
-  // refreshing Web cookies here would silently mix two login contexts.
+  // Obsolete Desktop login links must show their restart instruction without
+  // reading, refreshing or replacing the independent Web session.
   if (pathname === '/login' && request.nextUrl.searchParams.get('client') === 'desktop')
     return finish();
 

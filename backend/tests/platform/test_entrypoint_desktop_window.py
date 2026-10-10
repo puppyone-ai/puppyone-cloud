@@ -61,7 +61,7 @@ def canonical(request, monkeypatch):
             state["requests"].append(
                 {"method": request.method, "path": request.url.path, "query": request.url.query}
             )
-            if request.url.path not in {"/api/v1/auth/refresh"}:
+            if request.url.path != "/api/v1/auth/config":
                 assert request.headers.get("authorization") == "Bearer isolated-window-access"
         if (
             state["fail_list"]
@@ -73,18 +73,25 @@ def canonical(request, monkeypatch):
             )
         return await call_next(request)
 
-    @app.post("/api/v1/auth/refresh")
+    @app.get("/api/v1/auth/config")
+    def auth_config(request: Request):
+        import base64
+        role = base64.urlsafe_b64encode(b'{"role":"anon"}').decode().rstrip("=")
+        return ApiResponse.success({
+            "supabase_url": str(request.base_url).rstrip("/"),
+            "supabase_anon_key": f"header.{role}.signature",
+        })
+
+    @app.post("/auth/v1/token")
     async def refresh(request: Request):
+        assert request.query_params["grant_type"] == "refresh_token"
         assert (await request.json())["refresh_token"] == "isolated-window-refresh"
-        return ApiResponse.success(
-            {
-                "access_token": "isolated-window-access",
-                "refresh_token": "isolated-window-refresh",
-                "user_id": "user-1",
-                "user_email": "window@example.test",
-                "expires_in": 3600,
-            }
-        )
+        return {
+            "access_token": "isolated-window-access",
+            "refresh_token": "isolated-window-refresh",
+            "user": {"id": "user-1", "email": "window@example.test"},
+            "expires_in": 3600,
+        }
 
     @app.post("/api/v1/auth/initialize")
     def initialize():

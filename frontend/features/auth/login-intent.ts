@@ -1,7 +1,5 @@
 export type SignInProvider = 'email' | 'google' | 'github';
-export type LoginIntent = { kind: 'web'; next: string | null } | { kind: 'desktop'; state: string };
-export const DESKTOP_STATE = /^[A-Za-z0-9_-]{32,128}$/;
-export const DESKTOP_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+export type LoginIntent = { kind: 'web'; next: string | null };
 
 export function safeNext(value: string | null | undefined): string | null {
   if (
@@ -22,29 +20,17 @@ export function safeNext(value: string | null | undefined): string | null {
 }
 
 export function readLoginIntent(url: URL): LoginIntent {
-  if (url.searchParams.get('client') !== 'desktop')
-    return {
-      kind: 'web',
-      next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')),
-    };
-  const state = url.searchParams.get('desktop_state') ?? url.searchParams.get('state') ?? '';
-  if (!DESKTOP_STATE.test(state))
-    throw new Error('Sign-in request is invalid or expired. Start sign-in again.');
-  return { kind: 'desktop', state };
+  if (url.searchParams.get('client') === 'desktop')
+    throw new Error('This Desktop sign-in link is no longer supported. Update Puppyone and start sign-in again.');
+  return { kind: 'web', next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')) };
 }
 
 export function loginReturnPath(intent: LoginIntent): string {
-  const query = new URLSearchParams();
-  if (intent.kind === 'desktop') {
-    query.set('client', 'desktop');
-    query.set('desktop_state', intent.state);
-  } else if (intent.next) query.set('redirect', intent.next);
-  return '/login' + (query.size ? `?${query}` : '');
+  return '/login' + (intent.next ? `?${new URLSearchParams({ redirect: intent.next })}` : '');
 }
 
 export function oauthCallbackUrl(base: string, intent: LoginIntent): string {
   const url = new URL(base);
-  if (intent.kind === 'desktop') url.searchParams.set('desktop_state', intent.state);
-  else if (intent.next) url.searchParams.set('next', intent.next);
+  if (intent.next) url.searchParams.set('next', intent.next);
   return url.toString();
 }

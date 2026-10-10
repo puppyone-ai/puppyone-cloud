@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { safeNext, readLoginIntent } from '@/features/auth/login-intent';
 import { createLoginCoordinator } from '@/features/auth/login-coordinator';
-import { completeDesktopHandoff } from '@/features/auth/desktop-handoff';
+import { desktopCallbackTarget } from '@/features/auth/supabase/desktop-callback';
 
 const mocks = vi.hoisted(() => ({ server: vi.fn(), exchange: vi.fn(), setCookie: vi.fn() }));
 vi.mock('@supabase/ssr', () => ({ createServerClient: mocks.server }));
@@ -40,12 +40,13 @@ it('preserves valid app return path and rejects incomplete Desktop intent', () =
 
 it('Desktop OAuth callback preserves intent without using Web cookie session', async () => {
   const response = await GET(
-    new Request(`https://web.example.test/auth/callback?desktop_state=${state}&code=provider-code`)
+    new Request(`https://web.example.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&code=provider-code`)
   );
   const target = new URL(response.headers.get('location')!);
-  expect(target.pathname).toBe('/login');
-  expect(target.searchParams.get('auth_code')).toBe('provider-code');
-  expect(target.searchParams.get('desktop_state')).toBe(state);
+  expect(target.origin).toBe('http://127.0.0.1:4000');
+  expect(target.pathname).toBe('/auth/callback');
+  expect(target.searchParams.get('code')).toBe('provider-code');
+  expect(target.searchParams.get('state')).toBe(state);
   expect(mocks.server).not.toHaveBeenCalled();
   expect(response.headers.get('cache-control')).toContain('no-store');
   expect(response.headers.get('referrer-policy')).toBe('no-referrer');
@@ -54,12 +55,12 @@ it('Desktop OAuth callback preserves intent without using Web cookie session', a
 it('provider cancellation preserves the Desktop attempt', async () => {
   const response = await GET(
     new Request(
-      `https://web.example.test/auth/callback?desktop_state=${state}&error=access_denied&error_description=private`
+      `https://web.example.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&error=access_denied&error_description=private`
     )
   );
   const target = new URL(response.headers.get('location')!);
-  expect(target.searchParams.get('desktop_state')).toBe(state);
-  expect(target.searchParams.get('error')).toBe('auth_cancelled');
+  expect(target.searchParams.get('state')).toBe(state);
+  expect(target.searchParams.get('error')).toBe('access_denied');
   expect(target.search).not.toContain('private');
 });
 
@@ -86,37 +87,31 @@ it('Web OAuth callback exchanges once, initializes and returns to invite', async
   expect(fetcher.mock.calls).toHaveLength(1);
 });
 
-it('parallel completion shares one exchange and clears only after success', async () => {
-  const clear = vi.fn();
-  const fetcher = vi.fn(async () =>
-    Response.json({
-      data: { redirect_url: `http://127.0.0.1:4000/auth/callback?state=${state}&code=code` },
-    })
-  );
+it('parallel Web completion initializes once without any Desktop handoff', async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL) => Response.json({ data: {} }));
   const coordinator = createLoginCoordinator({
     client: { auth: { getSession: async () => ({ data: { session } }) } } as any,
-    intent: { kind: 'desktop', state },
-    proof: 'proof',
-    clear,
-    fetcher,
+    intent: { kind: 'web', next: '/invite/one' }, fetcher,
   });
-  const results = await Promise.all([
-    coordinator.finish(),
-    coordinator.finish(),
-    coordinator.finish(),
-  ]);
-  expect(new Set(results).size).toBe(1);
+  expect(await Promise.all([coordinator.finish(), coordinator.finish(), coordinator.finish()])).toEqual(['/invite/one', '/invite/one', '/invite/one']);
   expect(fetcher).toHaveBeenCalledOnce();
-  expect(clear).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][0]).toBe('/api/backend/api/v1/auth/initialize');
 });
 
 it.each([
-  'https://evil.test/?code=x',
-  'http://127.0.0.1:4000/wrong?code=x',
-  `http://127.0.0.1:4000/auth/callback?code=x&state=other`,
-])('rejects unexpected handoff destination %s', async redirect => {
-  const fetcher = vi.fn(async () => Response.json({ data: { redirect_url: redirect } }));
-  await expect(completeDesktopHandoff(state, 'proof', session, fetcher)).rejects.toThrow(
-    'invalid callback'
-  );
+  'https://evil.test/auth/callback', 'http://localhost:4000/auth/callback',
+  'http://127.0.0.1:4000/wrong', 'http://127.0.0.1:4000/auth/callback?code=injected',
+  'http://user@127.0.0.1:4000/auth/callback', 'http://127.0.0.1:80/auth/callback',
+  'puppyone://auth/callback', 'http://127.0.0.1.evil.test:4000/auth/callback',
+])('rejects unsafe callback destination %s', target => {
+  const url = new URL('https://web.test/auth/callback');
+  url.search = new URLSearchParams({ desktop_state: state, desktop_callback: target, code: 'code' }).toString();
+  expect(() => desktopCallbackTarget(url)).toThrow();
+});
+
+it('rejects ambiguous state and omits injected credentials from the relay', () => {
+  const url = new URL(`https://web.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&code=code&access_token=secret`);
+  expect(desktopCallbackTarget(url)).not.toContain('secret');
+  url.searchParams.append('desktop_state', state);
+  expect(() => desktopCallbackTarget(url)).toThrow();
 });

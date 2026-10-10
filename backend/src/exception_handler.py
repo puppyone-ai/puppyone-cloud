@@ -6,7 +6,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.common_schemas import ApiResponse
 from src.exceptions import AppException, ErrorCode
-from src.platform.auth.shared_security_store import SecurityStoreUnavailable
 from src.utils.request_context import request_id_var
 
 
@@ -100,28 +99,6 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
         ).model_dump(),
     )
     rid = request_id_var.get()
-    if rid:
-        resp.headers["X-Request-Id"] = rid
-    return resp
-
-
-def security_store_unavailable_handler(
-    request: Request,
-    exc: SecurityStoreUnavailable,
-):
-    """Expose fail-closed authentication infrastructure failures as HTTP 503."""
-    rid = request_id_var.get()
-    logger.bind(request_id=rid).error(
-        "Authentication security store unavailable: {}",
-        exc,
-    )
-    resp = JSONResponse(
-        status_code=503,
-        content=ApiResponse.error(
-            code=ErrorCode.INTERNAL_SERVER_ERROR,
-            message="Authentication security store unavailable",
-        ).model_dump(),
-    )
     if rid:
         resp.headers["X-Request-Id"] = rid
     return resp

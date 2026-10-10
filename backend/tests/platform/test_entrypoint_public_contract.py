@@ -268,6 +268,22 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & resource[category].keys()
         expected["contract"][category].update(resource[category])
+    # Native Supabase sessions retire exactly the custom Redis login broker.
+    auth = json.loads(Path(__file__).with_name("native_auth_retirement_contract_delta.json").read_text())
+    assert set(auth["paths"]["removed"]) == {
+        "/api/v1/auth/check-email",
+        *(f"/api/v1/auth/desktop/{action}" for action in ("start", "bind", "complete", "exchange", "callback")),
+    }
+    assert set(auth["schemas"]["removed"]) == {
+        "ApiResponse_CheckEmailResponse_", "CheckEmailRequest", "CheckEmailResponse",
+        "ApiResponse_DesktopCompleteResponse_", "ApiResponse_DesktopStartResponse_",
+        "DesktopBindRequest", "DesktopCompleteRequest", "DesktopCompleteResponse",
+        "DesktopExchangeRequest", "DesktopStartRequest", "DesktopStartResponse",
+    }
+    for category in ("paths", "schemas"):
+        assert auth[category]["added"] == auth[category]["changed"] == {}
+        for name, digest in auth[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 

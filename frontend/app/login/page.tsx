@@ -23,21 +23,7 @@ const URL_SUCCESS_MESSAGES: Record<string, string> = {
 
 type AuthView = 'main' | 'signin' | 'signup' | 'verify-otp' | 'forgot';
 
-const BACKEND_API_BASE = '/api/backend/api/v1';
-const RESEND_COOLDOWN_SECONDS = 300; // 5 minutes
-
-function backendApiUrl(path: string): string {
-  return `${BACKEND_API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-function getBackendErrorMessage(payload: any, fallback: string): string {
-  const detail = payload?.detail;
-  if (typeof payload?.message === 'string' && payload.message) return payload.message;
-  if (typeof detail === 'string' && detail) return detail;
-  if (typeof detail?.message === 'string' && detail.message) return detail.message;
-  if (typeof payload?.error === 'string' && payload.error) return payload.error;
-  return fallback;
-}
+const RESEND_COOLDOWN_SECONDS = 300;
 
 /**
  * Default export wraps the inner page in <Suspense> because
@@ -118,7 +104,6 @@ function LoginPageInner() {
     finishSignIn,
   } = useAuth();
 
-  const desktopAuthState = loginIntent?.kind === 'desktop' ? loginIntent.state : null;
 
   const [view, setView] = useState<AuthView>('main');
   const [email, setEmail] = useState('');
@@ -138,7 +123,6 @@ function LoginPageInner() {
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSubmittedRef = useRef(false);
   const autoOAuthProviderRef = useRef<'google' | 'github' | null>(null);
-  const autoDesktopCompleteRef = useRef(false);
   const navigationCommittedRef = useRef(false);
 
   const clearFeedback = useCallback(() => {
@@ -205,7 +189,7 @@ function LoginPageInner() {
     // bounce destination survives this cleanup — without this, an
     // unrelated ?error= or ?reset= arriving alongside the invite
     // bounce would wipe the redirect target and dump the user at /home.
-    // Remove transient feedback without discarding the Desktop attempt.
+    // Remove transient feedback without discarding the return path.
     if (loginIntent) window.history.replaceState(window.history.state, '', loginReturnPath(loginIntent));
   }, [searchParams, loginIntent]);
 
@@ -222,8 +206,7 @@ function LoginPageInner() {
     const destination = await finishSignIn();
     if (navigationCommittedRef.current) return;
     navigationCommittedRef.current = true;
-    if (loginIntent?.kind === 'desktop') window.location.assign(destination);
-    else router.push(destination);
+    router.push(destination);
   }, [finishSignIn, loginIntent, router]);
 
   const handleOAuthSignIn = async (provider: 'google' | 'github') => {
@@ -256,39 +239,12 @@ function LoginPageInner() {
     void handleOAuthSignIn(provider);
   }, [searchParams, isAuthReady, availableProviders, session]);
 
-  useEffect(() => {
-    if (!isAuthReady || !desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
-    autoDesktopCompleteRef.current = true;
-    setRedirecting(true);
-    completeLogin().catch((e: unknown) => {
-      setRedirecting(false);
-      setError(e instanceof Error ? e.message : 'Desktop sign-in failed.');
-    });
-  }, [isAuthReady, desktopAuthState, session, redirecting, completeLogin]);
-
-  const handleContinue = async (e: React.FormEvent) => {
+  const handleContinue = (e: React.FormEvent) => {
     e.preventDefault();
     clearFeedback();
-    setLoading('continue');
-    try {
-      const resp = await fetch(backendApiUrl('/auth/check-email'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const json = await resp.json();
-      if (resp.status === 429) throw new Error('Too many attempts. Please wait a moment and try again.');
-      if (!resp.ok) throw new Error(getBackendErrorMessage(json, 'Failed to check email'));
-      const exists = json.data?.exists;
-      setView(exists ? 'signin' : 'signup');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
-    } finally {
-      setLoading(null);
-    }
+    setView('signin');
   };
 
-  // Switch to OTP verification view and reset relevant state.
   const goToVerifyOtp = useCallback((withMessage?: string) => {
     setOtpCode('');
     autoSubmittedRef.current = false;
@@ -488,11 +444,13 @@ function LoginPageInner() {
                     disabled={disabled}
                   />
                   <SubmitButton disabled={disabled} loading={loading === 'continue'}>
-                    {loading === 'continue' ? 'Checking…' : 'Continue'}
+                    Continue
                   </SubmitButton>
                 </form>
               </div>
 
+              <button type="button" disabled={disabled || !email.trim()} onClick={() => { clearFeedback(); setView('signup'); }}
+                className="mt-3 w-full text-sm text-[var(--po-text-muted)]">Create an account</button>
               <Feedback error={error ?? authError} message={message} />
             </div>
           )}

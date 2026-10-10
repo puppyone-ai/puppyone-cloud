@@ -1,7 +1,6 @@
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type { LoginIntent } from './login-intent';
 import { authEvent } from './auth-errors';
-import { completeDesktopHandoff } from './desktop-handoff';
 
 export async function completeWebLogin(
   session: Session,
@@ -30,14 +29,10 @@ export async function completeWebLogin(
 export function createLoginCoordinator({
   client,
   intent,
-  proof,
-  clear,
   fetcher = fetch,
 }: {
   client: SupabaseClient;
   intent: LoginIntent;
-  proof?: string;
-  clear?: () => void;
   fetcher?: typeof fetch;
 }) {
   let completion: Promise<string> | null = null;
@@ -49,14 +44,7 @@ export function createLoginCoordinator({
         if (error || !data.session)
           throw new Error('Sign-in succeeded but no session was returned.');
         authEvent('identity_verified', intent.kind);
-        if (intent.kind === 'web')
-          return completeWebLogin(data.session, intent.next, '/api/backend/api/v1', fetcher);
-        if (!proof) throw new Error('Desktop sign-in request expired. Start sign-in again.');
-        // One in-flight completion for both auth events and explicit form actions.
-        const callback = await completeDesktopHandoff(intent.state, proof, data.session, fetcher);
-        clear?.();
-        authEvent('handoff_issued', intent.kind);
-        return callback;
+        return completeWebLogin(data.session, intent.next, '/api/backend/api/v1', fetcher);
       })();
       // A failed attempt remains visible; a deliberate retry can run again.
       completion.catch(() => {
