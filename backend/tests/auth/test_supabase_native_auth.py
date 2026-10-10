@@ -1,6 +1,6 @@
 """Native identity entry points work without any authentication Redis store."""
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import redis
@@ -20,8 +20,8 @@ def client(monkeypatch):
         yield client
     redis.Redis.from_url.assert_not_called()
 
-@pytest.mark.parametrize("path", ["desktop/start", "desktop/bind", "desktop/complete", "desktop/exchange", "check-email"])
-def test_server_owned_handoff_and_email_enumeration_are_absent(client, path):
+@pytest.mark.parametrize("path", ["desktop/start", "desktop/bind", "desktop/complete", "desktop/exchange"])
+def test_server_owned_handoff_is_absent(client, path):
     assert client.post("/api/v1/auth/" + path, json={}).status_code == 404
 
 def test_public_config_requires_no_state_store(client):
@@ -30,14 +30,14 @@ def test_public_config_requires_no_state_store(client):
     assert response.json()["data"] == {"supabase_url": "https://auth.example.test", "supabase_anon_key": "public-test-key"}
 
 @pytest.mark.parametrize("operation,body,method", [
-    ("login", {"email": "person@example.test", "password": "example-password"}, "sign_in_with_password"),
+    ("login", {"email": "person@example.com", "password": "example-password"}, "sign_in_with_password"),
     ("refresh", {"refresh_token": "example-refresh"}, "refresh_session"),
 ])
 def test_cli_adapter_delegates_once_to_supabase_without_redis(client, monkeypatch, operation, body, method):
     upstream = Mock()
     getattr(upstream.auth, method).return_value = SimpleNamespace(
         session=SimpleNamespace(access_token="test-access", refresh_token="test-refresh", expires_in=3600),
-        user=SimpleNamespace(email="person@example.test"),
+        user=SimpleNamespace(email="person@example.com"),
     )
     monkeypatch.setattr(auth, "_make_auth_client", lambda: upstream)
     response = client.post("/api/v1/auth/" + operation, json=body)
@@ -46,7 +46,7 @@ def test_cli_adapter_delegates_once_to_supabase_without_redis(client, monkeypatc
     getattr(upstream.auth, method).assert_called_once()
 
 @pytest.mark.parametrize("operation,body,method", [
-    ("login", {"email": "person@example.test", "password": "example-password"}, "sign_in_with_password"),
+    ("login", {"email": "person@example.com", "password": "example-password"}, "sign_in_with_password"),
     ("refresh", {"refresh_token": "example-refresh"}, "refresh_session"),
 ])
 def test_native_supabase_rate_limit_is_preserved(client, monkeypatch, operation, body, method):
@@ -58,3 +58,17 @@ def test_native_supabase_rate_limit_is_preserved(client, monkeypatch, operation,
     response = client.post("/api/v1/auth/" + operation, json=body)
     assert response.status_code == 429
     getattr(upstream.auth, method).assert_called_once()
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_email_first_flow_queries_supabase_once_without_redis(client, monkeypatch, registered):
+    monkeypatch.setenv("SUPABASE_KEY", "server-key")
+    provider = AsyncMock()
+    provider.get.return_value = Mock(status_code=200)
+    provider.get.return_value.json.return_value = {"users": [{"email": "person@example.com"}] if registered else []}
+    context = AsyncMock()
+    context.__aenter__.return_value = provider
+    monkeypatch.setattr(auth.httpx, "AsyncClient", Mock(return_value=context))
+    response = client.post("/api/v1/auth/check-email", json={"email": "person@example.com"})
+    assert response.status_code == 200
+    assert response.json()["data"]["exists"] is registered
+    provider.get.assert_awaited_once()

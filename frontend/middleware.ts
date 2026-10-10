@@ -35,12 +35,12 @@ export async function middleware(request: NextRequest) {
     }
     response.headers.set('x-next-intl-locale', detectLocale(request));
     response.headers.set('Cache-Control', 'private, no-store');
-    if (pathname === '/login') response.headers.set('Referrer-Policy', 'no-referrer');
+    if (pathname === '/login') response.headers.set('Referrer-Policy',
+      request.nextUrl.searchParams.get('client') === 'desktop' ? 'origin' : 'no-referrer');
     return response;
   };
 
-  // Obsolete Desktop login links must show their restart instruction without
-  // reading, refreshing or replacing the independent Web session.
+  // The existing login UI owns a temporary Desktop session, independent of Web cookies.
   if (pathname === '/login' && request.nextUrl.searchParams.get('client') === 'desktop')
     return finish();
 

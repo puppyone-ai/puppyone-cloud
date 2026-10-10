@@ -1,3 +1,4 @@
+import { createDesktopContext } from './desktop-context';
 import { createBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getOAuthCallbackUrl } from '@/lib/auth-urls';
@@ -5,15 +6,17 @@ import { authEvent, backendAuthError } from '../auth-errors';
 import { createLoginCoordinator } from '../login-coordinator';
 import { oauthCallbackUrl, readLoginIntent, type SignInProvider } from '../login-intent';
 
-export function createBrowserLogin(location: URL, _storage: Storage, fetcher: typeof fetch = fetch) {
+export function createBrowserLogin(location: URL, storage: Storage, fetcher: typeof fetch = fetch) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase is not configured');
   const intent = readLoginIntent(location);
-  const client = createBrowserClient(url, key) as unknown as SupabaseClient;
+  const temporary = intent.kind === 'desktop' ? createDesktopContext({ url, key, state: intent.state, storage }) : null;
+  const client = temporary?.client ?? (createBrowserClient(url, key) as unknown as SupabaseClient);
   const coordinator = createLoginCoordinator({
     client,
     intent,
+    clear: temporary?.clear,
     fetcher,
   });
   let enabled: SignInProvider[] = ['email'];
@@ -30,6 +33,15 @@ export function createBrowserLogin(location: URL, _storage: Storage, fetcher: ty
       if (!enabled.includes(provider))
         throw new Error('This sign-in method is unavailable in this environment.');
       authEvent('login_started', intent.kind, provider);
+      if (intent.kind === 'desktop') {
+        const authorize = new URL('/auth/v1/authorize', url);
+        authorize.search = new URLSearchParams({ provider,
+          redirect_to: oauthCallbackUrl(getOAuthCallbackUrl(), intent),
+          code_challenge: intent.challenge, code_challenge_method: 's256',
+        }).toString();
+        window.location.assign(authorize.toString());
+        return;
+      }
       const { error } = await client.auth.signInWithOAuth({
         provider,
         options: { redirectTo: oauthCallbackUrl(getOAuthCallbackUrl(), intent) },

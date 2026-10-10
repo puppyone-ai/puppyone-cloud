@@ -42,7 +42,7 @@ function mount(desktop = false) {
   window.history.replaceState(
     {},
     '',
-    desktop ? `/login?client=desktop&desktop_state=${state}` : '/login?redirect=%2Finvite%2Fone'
+    desktop ? `/login?client=desktop&desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A43123%2Fauth%2Fcallback&code_challenge=${state}` : '/login?redirect=%2Finvite%2Fone'
   );
   return render(
     <StrictMode>
@@ -79,6 +79,7 @@ beforeEach(() => {
   mocks.web.mockReturnValue({ auth });
   mocks.desktop.mockReturnValue({ auth });
   fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith('/auth/check-email')) return Response.json({ data: { exists: !String(fetcher.mock.calls.at(-1)?.[1]?.body).includes('new@') } });
     if (url.endsWith('/auth/methods')) return Response.json({ data: { providers: enabled } });
     if (url.endsWith('/auth/initialize')) return Response.json({ data: {} });
     throw new Error('Unexpected request: ' + url);
@@ -133,14 +134,31 @@ it('Web email sign-in preserves invite destination and uses common initializatio
     fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/initialize'))
   ).toHaveLength(1);
   expect(mocks.desktop).not.toHaveBeenCalled();
-  expect(fetcher.mock.calls.some(([url]) => String(url).includes("check-email"))).toBe(false);
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes("check-email"))).toBe(true);
 });
 
-it('obsolete Desktop handoff links fail without using Web session', async () => {
+it('Desktop uses the exact existing email-first UI and never reads Web cookies', async () => {
   mount(true);
-  await screen.findByText('This Desktop sign-in link is no longer supported. Update Puppyone and start sign-in again.');
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByPlaceholderText('Enter your password')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Create an account' })).toBeNull();
+  expect(mocks.desktop).toHaveBeenCalledOnce();
   expect(mocks.web).not.toHaveBeenCalled();
-  expect(fetcher).not.toHaveBeenCalled();
+  const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+  fireEvent.change(screen.getByPlaceholderText('Your email address'), { target: { value: 'user@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.change(await screen.findByPlaceholderText('Enter your password'), { target: { value: 'password123' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  const form = submit.mock.instances[0] as HTMLFormElement;
+  expect(form.method).toBe('post');
+  expect(form.action).toBe('http://127.0.0.1:43123/auth/session');
+  expect(new FormData(form).get('refresh_token')).toBe('refresh');
+  expect(new FormData(form).get('state')).toBe(state);
+  expect(form.action).not.toContain('refresh');
+  expect(mocks.signOut).not.toHaveBeenCalled();
+  expect(mocks.push).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('/auth/desktop'))).toBe(false);
 });
 
 it('failed initialization is actionable and cannot submit a half-initialized login', async () => {
@@ -162,7 +180,7 @@ it('email signup and OTP converge on the same Web completion', async () => {
   const email = screen.getByPlaceholderText('Your email address');
   await waitFor(() => expect((email as HTMLInputElement).disabled).toBe(false));
   fireEvent.change(email, { target: { value: 'new@example.test' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create an account' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   fireEvent.change(await screen.findByPlaceholderText('Create a password'), {
     target: { value: 'password123' },
   });

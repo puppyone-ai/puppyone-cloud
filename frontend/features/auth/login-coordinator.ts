@@ -1,5 +1,6 @@
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import type { LoginIntent } from './login-intent';
+import { completeDesktopSession } from './desktop-session';
 import { authEvent } from './auth-errors';
 
 export async function completeWebLogin(
@@ -29,10 +30,12 @@ export async function completeWebLogin(
 export function createLoginCoordinator({
   client,
   intent,
+  clear,
   fetcher = fetch,
 }: {
   client: SupabaseClient;
   intent: LoginIntent;
+  clear?: () => void;
   fetcher?: typeof fetch;
 }) {
   let completion: Promise<string> | null = null;
@@ -44,6 +47,10 @@ export function createLoginCoordinator({
         if (error || !data.session)
           throw new Error('Sign-in succeeded but no session was returned.');
         authEvent('identity_verified', intent.kind);
+        if (intent.kind === 'desktop') {
+          if (!clear) throw new Error('Desktop sign-in context is unavailable.');
+          return completeDesktopSession(intent, data.session, clear);
+        }
         return completeWebLogin(data.session, intent.next, '/api/backend/api/v1', fetcher);
       })();
       // A failed attempt remains visible; a deliberate retry can run again.

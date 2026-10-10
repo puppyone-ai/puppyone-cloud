@@ -5,14 +5,17 @@ POST   /auth/login           Sign in with email + password, returns access_token
 POST   /auth/refresh         Refresh access_token
 POST   /auth/logout          Revoke the refresh-token session (idempotent)
 POST   /auth/initialize      Idempotent user initialization (profile + org)
+POST   /auth/check-email     Resolve the existing email-first login flow
 GET    /auth/config           Public Supabase config (URL + anon key) for Realtime
 """
 
+import asyncio
 import os
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
 from supabase import create_client
 
 from src.common_schemas import ApiResponse
@@ -52,6 +55,14 @@ class LogoutResponse(BaseModel):
     revoked: bool
 
 
+class CheckEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class CheckEmailResponse(BaseModel):
+    exists: bool
+
+
 def _make_auth_client():
     """Create a throwaway Supabase client for auth operations only.
 
@@ -89,6 +100,48 @@ def get_public_config():
             supabase_anon_key=anon_key,
         )
     )
+
+
+@router.post("/check-email", response_model=ApiResponse[CheckEmailResponse])
+async def check_email(
+    body: CheckEmailRequest,
+):
+    """Preserve the existing email-first UI using Supabase's account lookup.
+
+    No application-owned authentication state or Redis dependency is involved.
+    """
+    start = time.monotonic()
+
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_KEY", "")
+    if not url or not key:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{url}/auth/v1/admin/users",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                params={"filter": body.email, "page": 1, "per_page": 10},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Auth service unavailable")
+
+            users = resp.json().get("users", [])
+            target = body.email.lower()
+            exists = any(u.get("email", "").lower() == target for u in users)
+
+        # Pad response time to a constant floor so attackers can't infer
+        # existence from faster/slower responses (timing side-channel).
+        elapsed = time.monotonic() - start
+        if elapsed < 0.4:
+            await asyncio.sleep(0.4 - elapsed)
+
+        return ApiResponse.success(data=CheckEmailResponse(exists=exists))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Check email failed: {e!s}")
 
 
 @router.post("/login", response_model=ApiResponse[LoginResponse])

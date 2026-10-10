@@ -284,6 +284,12 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         assert auth[category]["added"] == auth[category]["changed"] == {}
         for name, digest in auth[category]["removed"].items():
             assert expected["contract"][category].pop(name) == digest
+    email = json.loads(Path(__file__).with_name("email_first_auth_contract_delta.json").read_text())
+    assert set(email["paths"]) == {"/api/v1/auth/check-email"}
+    assert set(email["schemas"]) == {"CheckEmailRequest", "CheckEmailResponse", "ApiResponse_CheckEmailResponse_"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & email[category].keys()
+        expected["contract"][category].update(email[category])
     assert contract(app.openapi()) == expected["contract"]
 
 
