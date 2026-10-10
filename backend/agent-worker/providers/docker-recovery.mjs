@@ -29,14 +29,16 @@ export function dockerRecovery(root, directory = '/recovery') {
       const id = randomUUID();
       const destination = path.join(directory, id);
       await mkdir(destination);
-      await exec('rsync', ['-a', ...(lastSnapshot ? [`--link-dest=${await location(lastSnapshot)}`] : []),
+      // Tools can preserve mtimes or rewrite same-sized files within one clock tick.
+      // Recovery must compare bytes, not rsync's size/mtime quick check.
+      await exec('rsync', ['-ac', ...(lastSnapshot ? [`--link-dest=${await location(lastSnapshot)}`] : []),
         '--', root + '/', destination + '/'], { timeout: 120000, maxBuffer: 8192 });
       lastSnapshot = id;
       return { id };
     },
     async restore(id) {
       const source = await location(id);
-      await exec('rsync', ['-a', '--delete', '--', source + '/', root + '/'],
+      await exec('rsync', ['-ac', '--delete', '--', source + '/', root + '/'],
         { timeout: 120000, maxBuffer: 8192 });
       lastSnapshot = id;
     },

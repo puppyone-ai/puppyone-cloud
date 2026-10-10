@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, readFile, lstat, readdir, rm, chmod, symlink, readlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, lstat, readdir, rm, chmod, symlink, readlink, utimes } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { dockerRecovery } from './docker-recovery.mjs';
@@ -50,20 +50,27 @@ test('restores actual Git metadata, dirty/index-only files, modes and symlinks',
   assert.equal(await readlink(path.join(root, 'link')), 'history.md');
   assert.equal((await readdir(root)).includes('discard-me.txt'), false);
   await git('fsck', '--full');
+  const dirty = path.join(root, 'history.md'), stamp = await lstat(dirty);
+  await writeFile(dirty, 'CHANGED!');
+  await utimes(dirty, stamp.atime, stamp.mtime);
+  await recovery.restore(saved.id);
+  assert.equal(await readFile(dirty, 'utf8'), 'unstaged');
 });
 
 test('snapshots share unchanged bytes without mutating an earlier checkpoint', async t => {
   const { root, volume, recovery } = await fixture(t);
   await writeFile(path.join(root, 'stable'), 'unchanged');
   await writeFile(path.join(root, 'changed'), 'before');
+  const stamp = await lstat(path.join(root, 'changed'));
   const first = await recovery.snapshot();
-  await writeFile(path.join(root, 'changed'), 'after and different size');
+  await writeFile(path.join(root, 'changed'), 'AFTER!');
+  await utimes(path.join(root, 'changed'), stamp.atime, stamp.mtime);
   const second = await recovery.snapshot();
   const before = path.join(volume, first.id), after = path.join(volume, second.id);
   assert.equal((await lstat(path.join(before, 'stable'))).ino, (await lstat(path.join(after, 'stable'))).ino);
   assert.notEqual((await lstat(path.join(root, 'stable'))).ino, (await lstat(path.join(after, 'stable'))).ino);
   assert.equal(await readFile(path.join(before, 'changed'), 'utf8'), 'before');
-  assert.equal(await readFile(path.join(after, 'changed'), 'utf8'), 'after and different size');
+  assert.equal(await readFile(path.join(after, 'changed'), 'utf8'), 'AFTER!');
 });
 
 test('scratch files and runtime data outside the repository are not copied or restored', async t => {

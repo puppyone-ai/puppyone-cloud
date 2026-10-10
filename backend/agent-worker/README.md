@@ -71,7 +71,9 @@ Unchanged runs create no commit or push. Original operation receipts reconcile
 lost replies; conflicts retain the candidate without force pushing.
 
 Docker recovery uses a root-private named volume with immutable snapshot
-directories; unchanged files share hardlinks. It survives container deletion,
+directories; checksum comparisons preserve same-size/same-mtime edits while
+unchanged files share hardlinks. This reads local bytes and must be included in
+Docker's recovery budget. It survives container deletion,
 not loss of the Docker data disk. E2B uses native durable snapshots and reconnects
 the command stream with sequence deduplication. Recovery restarts the controller
 and model under a new execution fence after faults. Normal successive turns
