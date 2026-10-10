@@ -1,55 +1,75 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useWorkspaceRouter } from '@/features/workspace/navigation';
-import useSWR, { unstable_serialize, useSWRConfig } from 'swr';
-import { File, Folder, Link2, Download, ChevronRight, LockKeyhole, Cloud } from 'lucide-react';
+import useSWR from 'swr';
+import { Files, Link2, Download, LockKeyhole } from 'lucide-react';
 import { workspaceResourcePath, workspaceByteResourcePath, workspaceEntryPath } from '@puppyone/cloud-core';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
-import { readWorkspaceResource, type WorkspaceResource, type ResourceEntry } from './resourceApi';
-import { ResourceContent } from './ResourceContent';
+import { useWorkspaceRouter } from '@/features/workspace/navigation';
+import { ProjectHeaderFrame } from '@/components/project/ProjectHeaderFrame';
+import { ProjectHeaderBreadcrumbs } from '@/components/project/ProjectHeaderBreadcrumbs';
+import { DesktopChromeAction } from '@/components/chrome/DesktopChrome';
+import { WorkspaceFileColumn } from '@/components/sidebar/WorkspaceFileColumn';
+import { FileNavigationRegion } from '@/components/sidebar/FileNavigationRegion';
+import { WorkspaceFilesButton } from '@/components/sidebar/WorkspaceFilesButton';
+import { ResponsiveWorkspaceProvider } from '@/features/workspace/responsive';
+import { WorkspaceLayoutFrame } from '@/features/workspace/WorkspaceLayoutFrame';
+import { createWorkspaceLayoutStore } from '@/features/workspace/layoutStore';
+import { DEFAULT_WORKSPACE_INPUT } from '@/features/workspace/paneLayout';
+import { useWorkspaceRegions } from '@/features/workspace/regions';
+import { DataNoFileSelectedState } from '@/features/files/components/DataNoFileSelectedState';
+import { EditorLoadingSurface } from '@/components/loading';
+import { ReadErrorState } from '@/components/loading/ReadErrorState';
+import { MarkdownModePicker } from '@/features/files/components/FileViewerHeaderActions';
+import type { MarkdownViewMode } from '@/components/editors/markdown';
+import { getProject } from '@/lib/projectsApi';
+import { ResourceContent, isMarkdownResource } from './ResourceContent';
+import type { WorkspaceResource } from './resourceApi';
+import { ResourceExplorer } from './ResourceExplorer';
+import { useResource, defaultPreview } from './resourceQueries';
 import styles from './resource-preview.module.css';
 
 const DOWNLOAD_URL = 'https://www.puppyone.ai/en/download';
 type ResourceLocation = { projectId: string; path: string; pathBytes?: string };
-const resourceKey = (user: string, project: string, path: string, bytes?: string, cursor?: string) =>
-  ['workspace-resource', user, project, path, bytes ?? '', cursor ?? ''];
 
-export function ResourcePreview({ projectId, path, pathBytes }: ResourceLocation) {
+export function ResourcePreview(props: ResourceLocation) {
   const { isAuthReady, session, authError } = useAuth();
-  const returnPath = pathBytes ? workspaceByteResourcePath(projectId, pathBytes) : workspaceResourcePath(projectId, path);
-  let content;
-  if (!isAuthReady) content = <p className={styles.loading} role="status">{authError || 'Loading workspace…'}</p>;
-  else if (!session) content = <section className={styles.empty}>
-    <LockKeyhole size={28} aria-hidden="true" /><h1>Sign in to view this workspace</h1>
-    <p>Use an account that has access to this workspace.</p>
-    <Link className={styles.primary} href={`/login?${new URLSearchParams({ redirect: returnPath })}`}>Sign in</Link>
-  </section>;
-  else content = <ResourceView key={`${session.user.id}:${projectId}`} projectId={projectId} path={path} pathBytes={pathBytes} userId={session.user.id} />;
-  return <main className={styles.page}>
-    <header className={styles.header}>
-      <Link href="/home" className={styles.brand}>Puppyone</Link>
-      <span className={styles.headerContext}><Cloud size={15} aria-hidden="true" /> Shared workspace</span>
-      <a className={styles.download} href={DOWNLOAD_URL}><Download size={15} aria-hidden="true" /> Download Puppyone</a>
-    </header>
-    {content}
-  </main>;
+  const [layout] = useState(() => createWorkspaceLayoutStore({ projects: { ...DEFAULT_WORKSPACE_INPUT.projects, present: false } }));
+  const returnPath = props.pathBytes ? workspaceByteResourcePath(props.projectId, props.pathBytes) : workspaceResourcePath(props.projectId, props.path);
+  return <ResponsiveWorkspaceProvider layoutStore={layout}><WorkspaceLayoutFrame>
+    <main className="workspace-project-layout">
+      {isAuthReady && session ? <ResourceView key={`${session.user.id}:${props.projectId}`} {...props} userId={session.user.id} /> : <>
+        <ProjectHeaderFrame actions={<DownloadLink />}><span className={styles.brand}>Puppyone</span></ProjectHeaderFrame>
+        {!isAuthReady ? <div className={styles.empty} role="status">{authError || 'Loading workspace…'}</div> :
+          <section className={styles.empty}>
+            <LockKeyhole size={24} aria-hidden="true" /><h1>Sign in to view this workspace</h1>
+            <p>Use an account that has access to this workspace.</p>
+            <Link className={styles.signIn} href={`/login?${new URLSearchParams({ redirect: returnPath })}`}>Sign in</Link>
+          </section>}
+      </>}
+    </main>
+  </WorkspaceLayoutFrame></ResponsiveWorkspaceProvider>;
 }
 
 function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation & { userId: string }) {
   const router = useWorkspaceRouter();
-  const location = `${path}:${pathBytes ?? ''}`;
-  const [pagination, setPagination] = useState<{ location: string; cursors: string[] }>({ location, cursors: [] });
-  const pages = pagination.location === location ? pagination.cursors : [];
-  const [copyResult, setCopyResult] = useState({ location, message: '' });
-  const copyStatus = copyResult.location === location ? copyResult.message : '';
-  const { data, error, isLoading, mutate } = useSWR(
-    resourceKey(userId, projectId, path, pathBytes, pages.at(-1)),
-    () => readWorkspaceResource(projectId, path, pages.at(-1), pathBytes),
-    { shouldRetryOnError: false, revalidateOnFocus: false, keepPreviousData: false },
-  );
-  const directory = useCachedDirectory(data, userId, projectId, path);
+  const regions = useWorkspaceRegions();
+  const { data, error, isLoading, mutate } = useResource(userId, projectId, path, pathBytes);
+  const first = data?.kind === 'directory' ? defaultPreview(data.entries) : undefined;
+  const firstFile = useResource(userId, projectId, first?.path ?? null, first?.path_bytes_b64 ?? undefined);
+  const displayed = data?.kind === 'file' ? data : firstFile.data;
+  const previewError = error || firstFile.error;
+  const { data: project } = useSWR(['resource-project', userId, projectId], () => getProject(projectId),
+    { revalidateOnFocus: false, shouldRetryOnError: false });
+  const [copyResult, setCopyResult] = useState({ path, message: '' });
+  const [viewMode, setViewMode] = useState<MarkdownViewMode>('wysiwyg');
+  const segments = useMemo(() => [
+    { label: project?.name || 'Workspace', href: path || pathBytes ? workspaceResourcePath(projectId) : undefined },
+    ...path.split('/').filter(Boolean).map((name, index, parts) => ({ label: name,
+      href: index < parts.length - 1 ? workspaceResourcePath(projectId, parts.slice(0, index + 1).join('/'), true) : undefined })),
+    ...(pathBytes && data ? [{ label: data.entry.name }] : []),
+  ], [project?.name, projectId, path, pathBytes, data]);
   useEffect(() => {
     if (!data) return;
     const canonical = workspaceEntryPath(projectId, data.entry);
@@ -59,105 +79,45 @@ function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation &
     try {
       const locator = data ? workspaceEntryPath(projectId, data.entry) : window.location.pathname + window.location.search;
       await navigator.clipboard.writeText(window.location.origin + locator);
-      setCopyResult({ location, message: 'Link copied. Recipients need workspace access.' });
-    } catch { setCopyResult({ location, message: 'Could not copy. You can copy the address from your browser.' }); }
+      setCopyResult({ path, message: 'Link copied.' });
+    } catch { setCopyResult({ path, message: 'Could not copy. Copy the address from your browser.' }); }
   };
   return <>
-    <nav className={styles.breadcrumbs} aria-label="Workspace path">
-      <Link href={workspaceResourcePath(projectId)} prefetch={false}><Folder size={15} aria-hidden="true" /> Workspace</Link>
-      {path.split('/').filter(Boolean).map((name, index, parts) => <span key={index}>
-        <ChevronRight size={13} aria-hidden="true" />
-        {index === parts.length - 1 ? <span aria-current="page">{name}</span> :
-          <Link href={workspaceResourcePath(projectId, parts.slice(0, index + 1).join('/'), true)} prefetch={false}>{name}</Link>}
-      </span>)}
-      <button className={styles.copy} onClick={() => void copy()} aria-label="Copy link"><Link2 size={15} aria-hidden="true" /><span>Copy link</span></button>
-    </nav>
-    {copyStatus && <p className={styles.notice} role="status">{copyStatus}</p>}
-    <div className={styles.browser}>
-      <DirectorySidebar data={data} directory={directory} projectId={projectId} isLoading={isLoading} pages={pages}
-        paginate={cursors => setPagination({ location, cursors })} />
-      <PreviewPane data={data} error={error} isLoading={isLoading} projectId={projectId} userId={userId}
-        retry={() => { if (pages.length) setPagination({ location, cursors: [] }); else void mutate(); }} />
+    <ProjectHeaderFrame headerRef={regions.header} actions={<div className={styles.actions}>
+      {displayed && isMarkdownResource(displayed) && <MarkdownModePicker mode={viewMode} onChange={setViewMode} />}
+      <DesktopChromeAction icon={<Link2 size={15} />} label="Copy link" onClick={() => void copy()} />
+      <DownloadLink />
+      <span className="sr-only" role="status">{copyResult.path === path ? copyResult.message : ''}</span>
+    </div>}>
+      <WorkspaceFilesButton />
+      <ProjectHeaderBreadcrumbs pathSegments={segments} />
+      <span className={styles.divider} aria-hidden="true" />
+      <span className={styles.filesTab}><Files size={15} strokeWidth={1.8} aria-hidden="true" />Files</span>
+    </ProjectHeaderFrame>
+    <div className={`workspace-primary-body ${styles.body}`} ref={regions.projectBody}>
+      <FileNavigationRegion><WorkspaceFileColumn>
+        <ResourceExplorer userId={userId} projectId={projectId} currentPath={path} selected={displayed?.entry} />
+      </WorkspaceFileColumn></FileNavigationRegion>
+      <section ref={regions.editor} className={`workspace-data-content ${styles.preview}`} aria-label="File preview">
+        <PreviewPane loading={isLoading || firstFile.isLoading} error={previewError} displayed={displayed} directory={data}
+          viewMode={viewMode} retry={() => { void (error ? mutate() : firstFile.mutate()); }} />
+      </section>
     </div>
-    <footer className={styles.footer}><span>Preview your cloud files here.</span> Open Puppyone to work with the full workspace.</footer>
   </>;
 }
 
-/** Retain the already-authorized parent listing across Next page remounts, without a parent read. */
-function useCachedDirectory(data: WorkspaceResource | undefined, userId: string, projectId: string, path: string) {
-  const { cache } = useSWRConfig();
-  const previous = useRef<WorkspaceResource | null>(null);
-  if (data?.kind === 'directory') { previous.current = data; return data; }
-  const parentPath = path.split('/').slice(0, -1).join('/');
-  const cached = cache.get(unstable_serialize(resourceKey(userId, projectId, parentPath)))?.data as WorkspaceResource | undefined;
-  const candidates = [previous.current, cached];
-  if (data?.kind !== 'file') return null;
-  return candidates.find(directory => directory?.kind === 'directory' && directory.entries.some(entry => sameEntry(entry, data.entry))) ?? null;
-}
-
-function PreviewPane({ data, error, isLoading, projectId, userId, retry }: {
-  data?: WorkspaceResource; error?: { status: number }; isLoading: boolean; projectId: string; userId: string; retry: () => void;
+function PreviewPane({ loading, error, displayed, directory, viewMode, retry }: {
+  loading: boolean; error?: { status?: number }; displayed?: WorkspaceResource; directory?: WorkspaceResource;
+  viewMode: MarkdownViewMode; retry: () => void;
 }) {
-  return <section className={styles.preview} aria-label="File preview">
-    {isLoading && <p className={styles.loading} role="status">Loading preview…</p>}
-    {error && <PreviewError status={error.status} retry={retry} />}
-    {!error && data?.kind === 'file' && <FilePreview resource={data} />}
-    {!error && data?.kind === 'directory' && <DirectoryPreview resource={data} projectId={projectId} userId={userId} />}
-  </section>;
+  if (loading) return <EditorLoadingSurface />;
+  if (error) return <ReadErrorState label={error.status === 403 || error.status === 404 ? 'This resource is not available.' : 'Could not load this preview.'} onRetry={retry} />;
+  if (displayed) return <ResourceContent key={displayed.entry.path_bytes_b64 ?? displayed.path} resource={displayed} markdownViewMode={viewMode} />;
+  return <DataNoFileSelectedState mode={directory?.entries.length ? 'has-content' : 'empty-folder'} folderName={directory?.entry.name} />;
 }
 
-function DirectorySidebar({ data, directory, projectId, isLoading, pages, paginate }: {
-  data?: WorkspaceResource; directory: WorkspaceResource | null; projectId: string; isLoading: boolean; pages: string[]; paginate: (cursors: string[]) => void;
-}) {
-  return <aside className={styles.sidebar} aria-label="Workspace files">
-        <header className={styles.sidebarHeader}><Folder size={16} aria-hidden="true" /><h1>{directory?.entry.name || 'Workspace'}</h1><span>Files</span></header>
-        <div className={styles.directoryScroll}>
-          {directory ? <Directory resource={directory} projectId={projectId} selected={data?.kind === 'file' ? data.entry : defaultPreview(directory.entries)} /> :
-            data?.kind === 'file' && <Directory resource={{ ...data, entries: [data.entry] }} projectId={projectId} selected={data.entry} />}
-          {isLoading && !data && <p className={styles.loading} role="status">Loading files…</p>}
-        </div>
-        {data?.kind === 'directory' && (pages.length > 0 || data.next_cursor) && <nav className={styles.pagination} aria-label="Directory pages">
-          <button disabled={!pages.length} onClick={() => paginate(pages.slice(0, -1))}>Previous</button>
-          <span>{pages.length + 1}</span>
-          <button disabled={!data.next_cursor} onClick={() => paginate([...pages, data.next_cursor!])}>Next</button>
-        </nav>}
-        <div className={styles.accessNote}><LockKeyhole size={13} aria-hidden="true" /><span>Workspace access required</span></div>
-      </aside>;
-}
-
-function Directory({ resource, projectId, selected }: { resource: WorkspaceResource; projectId: string; selected?: ResourceEntry }) {
-  const entries = visibleEntries(resource.entries);
-  if (!entries.length) return <p className={styles.directoryEmpty}>This folder is empty.</p>;
-  return <ul className={styles.entries}>{entries.map(entry => <li key={entry.path_bytes_b64 ?? entry.path}>
-    <Link href={workspaceEntryPath(projectId, entry)} prefetch={false} aria-current={selected && sameEntry(entry, selected) ? 'page' : undefined}>
-      {entry.type === 'folder' ? <Folder size={16} aria-hidden="true" /> : <File size={16} aria-hidden="true" />}
-      <span>{entry.name}</span>{entry.type === 'folder' && <ChevronRight size={13} aria-hidden="true" />}
-    </Link>
-  </li>)}</ul>;
-}
-
-function DirectoryPreview({ resource, projectId, userId }: { resource: WorkspaceResource; projectId: string; userId: string }) {
-  const first = defaultPreview(resource.entries);
-  const { data, error, isLoading, mutate } = useSWR(first ? resourceKey(userId, projectId, first.path, first.path_bytes_b64 ?? undefined) : null,
-    () => readWorkspaceResource(projectId, first!.path, undefined, first!.path_bytes_b64 ?? undefined),
-    { shouldRetryOnError: false, revalidateOnFocus: false, keepPreviousData: false });
-  if (isLoading) return <p className={styles.loading} role="status">Loading preview…</p>;
-  if (error) return <PreviewError status={error.status} retry={() => void mutate()} />;
-  if (data) return <FilePreview resource={data} />;
-  return <div className={styles.empty}><File size={30} aria-hidden="true" /><h2>Select a file to preview</h2><p>Browse this workspace and read a document here.</p></div>;
-}
-
-function FilePreview({ resource }: { resource: WorkspaceResource }) {
-  return <><header className={styles.previewHeader}><File size={16} aria-hidden="true" /><span>{resource.entry.name}</span><span className={styles.readOnly}>Read-only preview</span></header>
-    <div className={styles.contentScroll}><ResourceContent resource={resource} /></div></>;
-}
-function sameEntry(a: ResourceEntry, b: ResourceEntry) { return (a.path_bytes_b64 ?? a.path) === (b.path_bytes_b64 ?? b.path); }
-function defaultPreview(entries: ResourceEntry[]) { return visibleEntries(entries).find(entry => entry.type !== 'folder' && /\.(md|markdown|txt|json|csv)$/i.test(entry.name)); }
-function visibleEntries(entries: ResourceEntry[]) { return entries.filter(entry => !['.DS_Store', 'Thumbs.db', '.git'].includes(entry.name)); }
-function PreviewError({ status, retry }: { status: number; retry: () => void }) {
-  const unavailable = status === 403 || status === 404;
-  let message = 'Please try again.';
-  if (unavailable) message = 'The path may have moved, or your account may not have workspace access.';
-  else if (status === 409) message = 'The workspace changed. Reload this directory to continue.';
-  return <section className={styles.empty} role="alert"><h1>{unavailable ? 'This resource is not available' : 'Could not load this preview'}</h1><p>{message}</p><button onClick={retry}>Retry</button></section>;
+function DownloadLink() {
+  return <a className={styles.download} href={DOWNLOAD_URL} aria-label="Download Puppyone" title="Download Puppyone">
+    <Download size={15} aria-hidden="true" /><span data-chrome-label>Download Puppyone</span>
+  </a>;
 }

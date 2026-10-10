@@ -17,6 +17,8 @@ export type MarkdownCodeMirrorEditorProps = {
   livePreview: boolean;
   aiEditFile?: AiEditFile | null;
   htmlTrustMode?: MarkdownHtmlTrustMode;
+  /** Preview surfaces can suppress external image requests. */
+  loadImages?: boolean;
   documentPath?: string;
   markdownLinkGraph?: MarkdownLinkGraph | null;
   onChange?: (value: string) => void;
@@ -30,6 +32,7 @@ export function MarkdownCodeMirrorEditor({
   livePreview,
   aiEditFile = null,
   htmlTrustMode = "safe",
+  loadImages = true,
   documentPath = "",
   markdownLinkGraph = null,
   onChange,
@@ -56,7 +59,7 @@ export function MarkdownCodeMirrorEditor({
         extensions: [
           ...markdownCodeMirrorBaseExtensions(readOnly),
           editableCompartmentRef.current.of(getEditableExtensions(readOnly)),
-          livePreviewCompartmentRef.current.of(livePreview ? markdownLivePreviewExtension(htmlTrustMode, markdownLinkGraph, documentPath) : []),
+          livePreviewCompartmentRef.current.of(livePreview ? markdownLivePreviewExtension(htmlTrustMode, markdownLinkGraph, documentPath, loadImages) : []),
           aiEditCompartmentRef.current.of(markdownAiEditExtension(aiEditFile)),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
@@ -89,9 +92,9 @@ export function MarkdownCodeMirrorEditor({
     if (!view) return;
 
     view.dispatch({
-      effects: livePreviewCompartmentRef.current.reconfigure(livePreview ? markdownLivePreviewExtension(htmlTrustMode, markdownLinkGraph, documentPath) : []),
+      effects: livePreviewCompartmentRef.current.reconfigure(livePreview ? markdownLivePreviewExtension(htmlTrustMode, markdownLinkGraph, documentPath, loadImages) : []),
     });
-  }, [documentPath, livePreview, htmlTrustMode, markdownLinkGraph]);
+  }, [documentPath, livePreview, htmlTrustMode, markdownLinkGraph, loadImages]);
 
   useLayoutEffect(() => {
     const view = viewRef.current;

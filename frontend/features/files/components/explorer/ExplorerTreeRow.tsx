@@ -32,7 +32,6 @@ import {
 } from '@/lib/nodeTypeConfig';
 import {
   SIDEBAR_META_TYPOGRAPHY,
-  SIDEBAR_ROW_TYPOGRAPHY,
 } from '@/lib/uiTypography';
 import type {
   CSSProperties,
@@ -56,16 +55,13 @@ const FILE_DROP_TARGET_BORDER =
   'color-mix(in srgb, var(--po-text) 24%, transparent)';
 const FILE_DROP_SCOPE_BORDER = 'var(--po-border-strong)';
 
-// Row geometry is intentionally shared with the other secondary
-// sidebars. Lines are a visual overlay only; do not solve line gaps by
-// changing the row height, font size, or padding.
-export const EXPLORER_TREE_ROW_HEIGHT = 32;
-export const EXPLORER_TREE_ROW_GAP = 2;
-export const EXPLORER_TREE_INDENT = 16;
-export const EXPLORER_TREE_ROW_MARGIN_X = 6;
-export const EXPLORER_TREE_CONTENT_INSET = 8;
-export const EXPLORER_TREE_ROW_MARGIN_Y = EXPLORER_TREE_ROW_GAP / 2;
-const EXPLORER_TREE_LINE_OVERDRAW = 2;
+import {
+  EXPLORER_TREE_ROW_HEIGHT, EXPLORER_TREE_INDENT,
+  EXPLORER_TREE_ROW_MARGIN_X, EXPLORER_TREE_CONTENT_INSET, EXPLORER_TREE_ROW_MARGIN_Y,
+  explorerRowStyle, explorerLabelStyle, explorerIconStyle, TreeIndentGuide,
+} from './ExplorerRowChrome';
+export { EXPLORER_TREE_ROW_HEIGHT, EXPLORER_TREE_ROW_GAP, EXPLORER_TREE_INDENT,
+  EXPLORER_TREE_ROW_MARGIN_X, EXPLORER_TREE_CONTENT_INSET, EXPLORER_TREE_ROW_MARGIN_Y } from './ExplorerRowChrome';
 const EXPLORER_TREE_META_OFFSET = 14;
 const SUBTREE_MOTION_MIN_MS = 170;
 const SUBTREE_MOTION_MAX_MS = 340;
@@ -572,26 +568,6 @@ function hasFileExtension(name: string): boolean {
   return /\.\w{1,10}$/.test(name);
 }
 
-function TreeIndentGuide({ depth }: { depth: number }) {
-  if (depth <= 0) return null;
-
-  return (
-    <div
-      aria-hidden
-      style={{
-        position: 'absolute',
-        left: depth * EXPLORER_TREE_INDENT,
-        top: -EXPLORER_TREE_LINE_OVERDRAW,
-        bottom: -EXPLORER_TREE_LINE_OVERDRAW,
-        width: 1,
-        background: 'var(--po-tree-guide)',
-        pointerEvents: 'none',
-        zIndex: 0,
-      }}
-    />
-  );
-}
-
 export function ExplorerTreeMetaRow({
   depth,
   children,
@@ -1049,17 +1025,9 @@ export const ExplorerTreeRow = memo(function ExplorerTreeRow({
           if (!handleExternalFileDrop(e)) dropHandlers.onDrop(e);
         }}
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          margin: `${EXPLORER_TREE_ROW_MARGIN_Y}px ${EXPLORER_TREE_ROW_MARGIN_X}px`,
-          height: EXPLORER_TREE_ROW_HEIGHT,
-          boxSizing: 'border-box',
-          borderRadius: 6,
+          ...explorerRowStyle,
           background: rowBackground,
           color: rowColor,
-          ...SIDEBAR_ROW_TYPOGRAPHY,
-          userSelect: 'none',
-          transition: 'background 0.14s, color 0.14s, opacity 0.18s',
           boxShadow:
             isDropTarget || isFileDropTarget
               ? `inset 0 0 0 1px ${FILE_DROP_TARGET_BORDER}`
@@ -1081,32 +1049,12 @@ export const ExplorerTreeRow = memo(function ExplorerTreeRow({
           data-explorer-label=''
           style={{
             '--workspace-row-action-width': `${hasInlineActions ? touchActionCount * 46 + 6 : 6}px`,
-            flex: 1,
-            minWidth: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            height: '100%',
-            boxSizing: 'border-box',
-            paddingLeft:
-              EXPLORER_TREE_CONTENT_INSET + depth * EXPLORER_TREE_INDENT,
-            paddingRight: reservedActionWidth > 0 ? reservedActionWidth + 6 : 6,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            ...explorerLabelStyle(depth, reservedActionWidth > 0 ? reservedActionWidth + 6 : 6),
           } as CSSProperties}
         >
           <div
             onClick={isFolder ? handleToggleExpand : undefined}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              flexShrink: 0,
-              width: 18,
-              height: 18,
-              justifyContent: 'center',
-              position: 'relative',
-            }}
+            style={explorerIconStyle}
           >
             {isFolder && isPendingCreating ? (
               <div className='flex items-center justify-center'>

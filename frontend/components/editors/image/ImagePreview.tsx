@@ -60,6 +60,11 @@ export function ImagePreview({ projectId, filePath, nodeName }: ImagePreviewProp
     return <PageLoading variant="fill" />;
   }
 
+  return <ImagePreviewSurface src={blobUrl} nodeName={nodeName} />;
+}
+
+/** Image surface shared by full files and bounded share previews. */
+export function ImagePreviewSurface({ src, nodeName }: { src: string; nodeName: string }) {
   return (
     <div
       style={{
@@ -77,7 +82,7 @@ export function ImagePreview({ projectId, filePath, nodeName }: ImagePreviewProp
     >
       <div style={{ fontSize: 13, color: 'var(--po-text-subtle)', marginBottom: 12 }}>{nodeName}</div>
       <img
-        src={blobUrl}
+        src={src}
         alt={nodeName}
         style={{
           maxWidth: '100%',

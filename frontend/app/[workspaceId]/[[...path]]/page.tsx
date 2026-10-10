@@ -1,3 +1,4 @@
+import '@/app/responsive-workspace.css';
 import { notFound } from 'next/navigation';
 import { isWorkspaceId, workspaceResourcePath, decodeWorkspacePath } from '@puppyone/cloud-core';
 import { ResourcePreview } from '@/features/resource-preview/ResourcePreview';

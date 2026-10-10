@@ -590,7 +590,7 @@
       "count": 1
     },
     "no-nested-ternary": {
-      "count": 2
+      "count": 1
     }
   },
   "frontend/features/files/components/DataPageOverlays.tsx": {

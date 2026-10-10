@@ -11,6 +11,7 @@ interface MarkdownEditorProps {
   content: string;
   onChange?: (content: string) => void;
   readOnly?: boolean;
+  loadImages?: boolean;
   documentKey?: string;
   defaultMode?: MarkdownViewMode;
   viewMode?: MarkdownViewMode;
@@ -21,6 +22,7 @@ export function MarkdownEditor({
   content,
   onChange,
   readOnly = false,
+  loadImages = true,
   documentKey,
   defaultMode = 'wysiwyg',
   viewMode: controlledViewMode,
@@ -68,6 +70,7 @@ export function MarkdownEditor({
         value={localContent}
         onChange={canEdit ? handleChange : undefined}
         readOnly={!canEdit}
+        loadImages={loadImages}
         livePreview={viewMode === 'wysiwyg'}
       />
 

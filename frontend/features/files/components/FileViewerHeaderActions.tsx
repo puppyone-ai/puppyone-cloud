@@ -90,7 +90,7 @@ export function FileViewerHeaderActions({
     return (
       <HeaderActionGroup>
         {saveButton}
-        <ModePicker mode={resolvedMarkdownViewMode} onChange={onMarkdownViewModeChange} options={MARKDOWN_OPTIONS} />
+        <MarkdownModePicker mode={resolvedMarkdownViewMode} onChange={onMarkdownViewModeChange} />
         {actions}
       </HeaderActionGroup>
     );
@@ -148,6 +148,11 @@ export function FileViewerHeaderActions({
       {actions}
     </HeaderActionGroup>
   );
+}
+
+/** Shared view control; callers supply permitted actions separately. */
+export function MarkdownModePicker({ mode, onChange }: { mode: MarkdownViewMode; onChange: (mode: MarkdownViewMode) => void }) {
+  return <ModePicker mode={mode} onChange={onChange} options={MARKDOWN_OPTIONS} />;
 }
 
 function HeaderActionGroup({ children }: { children: ReactNode }) {
