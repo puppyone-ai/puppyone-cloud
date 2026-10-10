@@ -121,6 +121,54 @@ def worker_factory(execution, project):
     return PiWorker(execution, project, provider="docker", store=InMemoryExecutionSessionStore())
 
 
+class RecoveringToolModel(ModelFixture):
+    """Real Pi must deliver every tool outcome back to the next model turn."""
+
+    def __init__(self, steps):
+        super().__init__()
+        self.steps = steps
+
+    async def completion(self, user, request, body):
+        index = self.calls
+        if index:
+            tools = [m for m in body.model_dump()["messages"] if m["role"] == "tool"]
+            assert self.steps[index - 1][2] in json.dumps(tools[-1]), tools[-1]
+        result = await super().completion(user, request, body)
+        has_tool = index < len(self.steps)
+
+        async def events():
+            async for event in result.events:
+                if isinstance(event, ModelChunk):
+                    for choice in event.frame["choices"]:
+                        if choice["finish_reason"] is not None:
+                            choice["finish_reason"] = "tool_calls" if has_tool else "stop"
+                        else:
+                            name, arguments, _expected = (
+                                self.steps[index] if has_tool else (None, None, None)
+                            )
+                            choice["delta"] = (
+                                {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": f"recover-{index}",
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": json.dumps(arguments),
+                                            },
+                                        }
+                                    ],
+                                }
+                                if has_tool
+                                else {"role": "assistant", "content": "Recovered and completed."}
+                            )
+                yield event
+
+        return InferenceRun(str(uuid4()), events(), result.aclose)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", [None, 0, 2])
 async def test_old_worker_protocol_rejected_before_model_or_tool(prepared, monkeypatch, version):
@@ -1280,3 +1328,173 @@ async def test_detached_writers_cannot_cross_confirmed_tool_boundary(prepared):
     assert read_case(case, "note.md") == b"saved"
     with pytest.raises(FileNotFoundError):
         read_case(case, "late.txt")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first",
+    [
+        ("write", {"path": "/recovery/forbidden.txt", "content": "no"}, "EACCES"),
+        ("bash", {"command": "printf partial > partial.txt; exit 7"}, "7"),
+    ],
+)
+async def test_tool_failure_returns_to_model_and_next_write_is_published(prepared, first):
+    case = prepared
+    model = RecoveringToolModel(
+        [
+            first,
+            ("write", {"path": "recovered.txt", "content": "recovered"}, "recovered.txt"),
+        ]
+    )
+    result = await approve_to_completion(
+        case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    )
+    assert result["state"] == "succeeded", result
+    tools = case.repo.tools(case.run["id"])
+    assert tools[0]["result"]["pi_result"]["isError"] is True
+    assert tools[0]["result"]["pi_result"]["details"]["recoverable"] is True
+    assert tools[1]["result"]["pi_result"].get("isError") is not True
+    assert model.calls == 3
+    assert read_case(case, "recovered.txt") == b"recovered"
+    if first[0] == "bash":
+        assert read_case(case, "partial.txt") == b"partial"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_scratch_paths_and_normal_bash_are_available(prepared):
+    case = prepared
+    scratch = "/tmp/agent-" + uuid4().hex
+    model = RecoveringToolModel(
+        [
+            ("write", {"path": scratch, "content": "scratch-file"}, scratch),
+            ("read", {"path": scratch}, "scratch-file"),
+            ("read", {"path": "/etc/os-release"}, "Debian"),
+            (
+                "bash",
+                {
+                    "command": "ls /proc/self >/dev/null; cat /etc/os-release | head -1; printf WORKSPACE_OPERATION_OK"
+                },
+                "WORKSPACE_OPERATION_OK",
+            ),
+            ("write", {"path": "project.txt", "content": "project-file"}, "project.txt"),
+        ]
+    )
+    result = await approve_to_completion(
+        case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    )
+    assert result["state"] == "succeeded", result
+    assert model.calls == 6
+    assert read_case(case, "project.txt") == b"project-file"
+    assert all(not t["result"]["pi_result"].get("isError") for t in case.repo.tools(case.run["id"]))
+    with pytest.raises(FileNotFoundError):
+        read_case(case, scratch.lstrip("/"))
+
+
+@pytest.mark.asyncio
+async def test_declined_tool_continues_without_executing_or_losing_decision(prepared):
+    case = prepared
+    model = RecoveringToolModel(
+        [
+            ("write", {"path": "declined.txt", "content": "never"}, "declined"),
+            ("read", {"path": "/etc/os-release"}, "Debian"),
+        ]
+    )
+    task = asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    tool = await wait_for_approval(case, task)
+    decision = str(uuid4())
+    for _ in range(2):
+        await asyncio.to_thread(
+            case.service.command,
+            case.user,
+            case.run["id"],
+            "approve",
+            call=tool["call_id"],
+            decision=decision,
+            allow=False,
+        )
+    result = await approve_to_completion(case, task)
+    assert result["state"] == "succeeded", result
+    receipt = case.repo.tools(case.run["id"])[0]
+    assert receipt["state"] == "rejected"
+    assert receipt["decision_id"] == decision
+    assert model.calls == 3
+    with pytest.raises(FileNotFoundError):
+        read_case(case, "declined.txt")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,readonly,code",
+    [
+        ("write", True, "tool_permission_denied"),
+        ("browser", False, "tool_unavailable"),
+        ("write", False, "tool_invalid_input"),
+    ],
+)
+async def test_denial_is_durable_before_reply_and_replays_with_bounded_queries(
+    prepared, name, readonly, code
+):
+    from unittest.mock import AsyncMock
+
+    from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
+
+    case = prepared
+    case.postgres.sql(
+        f"UPDATE agent_runs SET policy=jsonb_set(policy,'{{readonly}}','{json.dumps(readonly)}') WHERE id='{case.run['id']}'"
+    )
+    supervisor = case.supervisor()
+    supervisor.run = case.repo.get(case.run["id"])
+    supervisor.value = {}
+    supervisor.worker = AsyncMock()
+    frame = {
+        "id": "request",
+        "call_id": "denied",
+        "name": name,
+        "input": {"path": "no.txt"},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    if code == "tool_invalid_input":
+        frame["error_result"] = {
+            "isError": True,
+            "content": [{"type": "text", "text": "Invalid path argument"}],
+        }
+    trace = DatabaseTrace("denial")
+    with database_trace(trace):
+        await supervisor.tool_start(frame)
+    assert trace.report()["operations"] == {
+        "POST rpc/agent_run_begin_tool": 1,
+        "POST rpc/agent_run_complete_tool": 1,
+    }
+    receipt = case.repo.tools(case.run["id"])[0]
+    result = supervisor.worker.send.await_args.args[0]["result"]
+    assert result == receipt["result"]["pi_result"]
+    assert result["details"]["code"] == code
+    assert result["isError"] is True
+    assert case.repo.get(case.run["id"])["state"] == "running"
+    replay = DatabaseTrace("replay")
+    with database_trace(replay):
+        await supervisor.tool_start({**frame, "id": "retry"})
+    assert supervisor.worker.send.await_args.args[0]["result"] == result
+    assert replay.report()["operations"] == {"POST rpc/agent_run_begin_tool": 1}
+    assert len(case.repo.tools(case.run["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_unbound_tool_returns_durable_denial_instead_of_run_failure(prepared):
+    from unittest.mock import AsyncMock
+
+    case = prepared
+    supervisor = case.supervisor()
+    supervisor.run, supervisor.value, supervisor.worker = case.run, {}, AsyncMock()
+    frame = {
+        "id": "request",
+        "call_id": "unbound",
+        "name": "search_unknown",
+        "input": {},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    await supervisor.bound_tool(frame)
+    result = supervisor.worker.send.await_args.args[0]["result"]
+    assert result["details"]["code"] == "tool_permission_denied"
+    assert case.repo.tools(case.run["id"])[0]["result"]["pi_result"] == result
+    assert case.repo.get(case.run["id"])["state"] == "running"

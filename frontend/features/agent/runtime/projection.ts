@@ -1,12 +1,13 @@
 import type { MessagePart } from '@/components/chat/types';
-import { runActive, type AgentRun } from './types';
+import { runActive, type AgentRun, type AgentTool } from './types';
 
 export function projectRunMessages(runs: AgentRun[]) {
   return runs.flatMap(run => {
     const parts: MessagePart[] = (run.tools ?? []).map(tool => ({ type: 'tool', toolId: tool.call_id,
       toolName: tool.name, toolInput: JSON.stringify(tool.input),
-      toolStatus: toolStatus(tool.state, runActive(run)),
-      toolOutput: (tool.result?.content ?? []).filter(part => part.type === 'text').map(part => part.text ?? '').join('\n'),
+      toolStatus: toolStatus(tool, runActive(run)),
+      toolOutput: (tool.result?.content ?? []).filter(part => part.type === 'text').map(part => part.text ?? '').join('\n')
+        || (tool.state === 'rejected' ? 'You declined this tool call. The Agent can continue with another approach.' : ''),
     }));
     if (run.snapshot.text) parts.push({ type: 'text', content: run.snapshot.text });
     return [
@@ -31,8 +32,8 @@ export function runStatus(run?: AgentRun): string | null {
   }
 }
 
-function toolStatus(state: string, active: boolean): MessagePart['toolStatus'] {
-  if (state === 'completed') return 'completed';
-  if (state === 'rejected' || !active) return 'error';
+function toolStatus(tool: AgentTool, active: boolean): MessagePart['toolStatus'] {
+  if (tool.state === 'completed') return tool.result?.isError ? 'error' : 'completed';
+  if (tool.state === 'rejected' || !active) return 'error';
   return 'running';
 }
