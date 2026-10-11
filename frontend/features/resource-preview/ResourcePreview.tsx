@@ -102,20 +102,21 @@ function ResourceView({ projectId, path, userId, pathBytes }: ResourceLocation &
         <ResourceExplorer userId={userId} projectId={projectId} currentPath={path} selected={displayed?.entry} />
       </WorkspaceFileColumn></FileNavigationRegion>
       <section ref={regions.editor} className={`workspace-data-content ${styles.preview}`} aria-label="File preview">
-        <PreviewPane loading={isLoading || firstFile.isLoading} error={previewError} displayed={displayed} directory={data}
+        <PreviewPane projectId={projectId} loading={isLoading || firstFile.isLoading} error={previewError} displayed={displayed} directory={data}
           modes={modes} retry={() => { void (error ? mutate() : firstFile.mutate()); }} />
       </section>
     </div>
   </>;
 }
 
-function PreviewPane({ loading, error, displayed, directory, modes, retry }: {
+function PreviewPane({ projectId, loading, error, displayed, directory, modes, retry }: {
+  projectId: string;
   loading: boolean; error?: { status?: number }; displayed?: WorkspaceResource; directory?: WorkspaceResource;
   modes: ResourceViewModes; retry: () => void;
 }) {
   if (loading) return <EditorLoadingSurface />;
   if (error) return <ReadErrorState label={error.status === 403 || error.status === 404 ? 'This resource is not available.' : 'Could not load this preview.'} onRetry={retry} />;
-  if (displayed) return <ResourceContent key={displayed.entry.path_bytes_b64 ?? displayed.path} resource={displayed} {...modes} />;
+  if (displayed) return <ResourceContent key={displayed.entry.path_bytes_b64 ?? displayed.path} projectId={projectId} resource={displayed} {...modes} />;
   return <DataNoFileSelectedState mode={directory?.entries.length ? 'has-content' : 'empty-folder'} folderName={directory?.entry.name} />;
 }
 

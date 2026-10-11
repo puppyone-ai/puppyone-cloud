@@ -11,6 +11,8 @@ vi.mock('@monaco-editor/react', () => ({ default: (props: any) => <textarea aria
   data-language={props.language ?? props.defaultLanguage} readOnly={props.options.readOnly} value={props.value}
   onChange={event => props.onChange?.(event.target.value)} /> }));
 vi.mock('@/contexts/SupabaseAuthProvider', () => ({ useAuth: () => ({ userId: null }) }));
+const files = vi.hoisted(() => ({ raw: vi.fn(), inline: vi.fn() }));
+vi.mock('@/lib/contentTreeApi', () => ({ fetchRawBlob: files.raw, getInlinePreviewUrl: files.inline }));
 vi.mock('next/navigation', () => ({ useParams: () => ({}) }));
 
 function file(name: string, text: string, extra: Partial<WorkspaceResource> = {}): WorkspaceResource {
@@ -20,6 +22,13 @@ function file(name: string, text: string, extra: Partial<WorkspaceResource> = {}
     preview: 'text', content_text: text, content_base64: null, truncated: false, ...extra };
 }
 beforeEach(() => {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+  files.raw.mockReset(); files.inline.mockReset();
+  files.inline.mockResolvedValue("https://files.test/authorized");
+  files.raw.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
+  URL.createObjectURL = vi.fn(() => "blob:authorized-image");
+  URL.revokeObjectURL = vi.fn();
   vi.stubGlobal('ResizeObserver', class {
     constructor(private callback: ResizeObserverCallback) {}
     observe(target: Element) { this.callback([{ target, contentRect: new DOMRect(0, 0, 1000, 600), borderBoxSize: [{ inlineSize: 1000, blockSize: 600 }] } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver); }
@@ -40,14 +49,14 @@ it.each([['notes.md', 'markdown-editor'], ['data.csv', 'csv-table'], ['data.tsv'
 it.each(['csv', 'tsv'])('renders %s with the native table and preserves a read-only source view', async extension => {
   const separator = extension === 'tsv' ? '\t' : ',';
   const resource = file(`data.${extension}`, `Name${separator}Count\nAlice${separator}42\nBob${separator}7`);
-  const view = render(<ResourceContent resource={resource} csvViewMode="preview" />);
+  const view = render(<ResourceContent projectId="p" resource={resource} csvViewMode="preview" />);
   await screen.findByRole('grid');
   expect(await screen.findByText('Alice')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Add row' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Add column' })).toBeNull();
   fireEvent.doubleClick(screen.getByText('Alice'));
   expect(view.container.querySelector('[contenteditable="true"]')).toBeNull();
-  view.rerender(<ResourceContent resource={resource} csvViewMode="source" />);
+  view.rerender(<ResourceContent projectId="p" resource={resource} csvViewMode="source" />);
   const source = await screen.findByRole('textbox', { name: 'Code source' }) as HTMLTextAreaElement;
   expect(source.readOnly).toBe(true);
   expect(source.value).toBe(resource.content_text);
@@ -55,7 +64,7 @@ it.each(['csv', 'tsv'])('renders %s with the native table and preserves a read-o
 
 it('renders JSON with the same Monaco source view configured in Workspace', async () => {
   const resource = file('data.json', '{"name":"Alice","stats":{"count":42},"empty":null}');
-  render(<ResourceContent resource={resource} />);
+  render(<ResourceContent projectId="p" resource={resource} />);
   const source = await screen.findByRole('textbox', { name: 'Code source' }) as HTMLTextAreaElement;
   expect(source.readOnly).toBe(true);
   expect(source.dataset.language).toBe('json');
@@ -63,7 +72,7 @@ it('renders JSON with the same Monaco source view configured in Workspace', asyn
 });
 
 it.each(['{"unfinished":', 'null', '42', '"hello"'])('keeps incomplete or primitive JSON visible: %s', async text => {
-  render(<ResourceContent resource={file('data.json', text, { truncated: true })} />);
+  render(<ResourceContent projectId="p" resource={file('data.json', text, { truncated: true })} />);
   const source = await screen.findByRole('textbox', { name: 'Code source' }) as HTMLTextAreaElement;
   expect(source.value).toBe(text);
   expect(source.readOnly).toBe(true);
@@ -99,27 +108,27 @@ it('shows Git symlinks and conflict markers literally, not as structured documen
   resource.entry.git_mode = '120000';
   expect(resourceViewerId(resource)).toBe('plain-text');
   expect(resourceViewerId(file('data.csv', '<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> branch'))).toBe('plain-text');
-  render(<ResourceContent resource={resource} />);
+  render(<ResourceContent projectId="p" resource={resource} />);
   await screen.findByText('../private/data.json');
 });
 
-it('uses the native HTML preview with scripts and external resource loading disabled', async () => {
-  const view = render(<ResourceContent resource={file('page.html', '<h1>Hello</h1><script>alert(1)</script>')} />);
+it('uses the native HTML preview with the Workspace resource policy and scripts disabled', async () => {
+  const view = render(<ResourceContent projectId="p" resource={file('page.html', '<h1>Hello</h1><script>alert(1)</script>')} />);
   const iframe = await screen.findByTitle('page.html') as HTMLIFrameElement;
   expect(iframe.sandbox?.value ?? iframe.getAttribute('sandbox')).not.toContain('allow-scripts');
   expect(iframe.srcdoc).toContain("script-src 'none'");
-  expect(iframe.srcdoc).toContain('img-src data: blob:;');
-  view.rerender(<ResourceContent resource={file('page.html', '<h1>Hello</h1>')} htmlArtifactMode="source" />);
+  expect(iframe.srcdoc).toContain('img-src data: blob: https:;');
+  view.rerender(<ResourceContent projectId="p" resource={file('page.html', '<h1>Hello</h1>')} htmlArtifactMode="source" />);
   expect((await screen.findByRole('textbox', { name: 'Code source' }) as HTMLTextAreaElement).readOnly).toBe(true);
 });
 
 it('does not fetch raw files for unavailable previews or inline images', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-  const view = render(<ResourceContent resource={file('video.mp4', '', { preview: 'unavailable', content_text: null })} />);
-  await screen.findByText('video.mp4');
+  const view = render(<ResourceContent projectId="p" resource={file('archive.zip', '', { preview: 'unavailable', content_text: null })} />);
+  await screen.findByText('archive.zip');
   const image = file('picture.png', '', { preview: 'image', content_base64: 'AAAA', content_text: null });
   image.entry.mime_type = 'image/png';
-  view.rerender(<ResourceContent resource={image} />);
+  view.rerender(<ResourceContent projectId="p" resource={image} />);
   await waitFor(() => expect(view.container.querySelector('img')?.src).toBe('data:image/png;base64,AAAA'));
   expect(fetch).not.toHaveBeenCalled();
 });
@@ -131,4 +140,57 @@ it('reuses the mode menu without advertising editing in a share', () => {
   fireEvent.click(screen.getByRole('button', { name: 'View mode: Preview table' }));
   expect(screen.getByRole('menuitem', { name: 'Source' })).toBeTruthy();
   expect(screen.queryByRole('menuitem', { name: 'Edit table' })).toBeNull();
+});
+
+it.each(['book.pdf', 'sound.mp3', 'movie.mp4'])('opens %s with the same authorized native viewer as Workspace', async name => {
+  const resource = file(name, '', { preview: 'unavailable', content_text: null });
+  resource.entry.path_bytes_b64 = btoa(name);
+  const view = render(<ResourceContent projectId="p" resource={resource} />);
+  await waitFor(() => expect(files.inline).toHaveBeenCalledWith('p', name, expect.objectContaining({ pathBytes: btoa(name) })));
+  await waitFor(() => expect(view.container.querySelector('iframe, source')?.getAttribute('src')).toBe('https://files.test/authorized'));
+  expect(files.raw).not.toHaveBeenCalled();
+});
+
+it('loads large images without treating a bounded thumbnail as a display limit, and releases their bytes', async () => {
+  const resource = file('large.png', '', { preview: 'unavailable', content_text: null, truncated: true });
+  resource.entry.path_bytes_b64 = 'bGVnYWN5Lf8ucG5n';
+  const view = render(<ResourceContent projectId="p" resource={resource} />);
+  await waitFor(() => expect(view.container.querySelector('img')?.src).toBe('blob:authorized-image'));
+  expect(files.raw).toHaveBeenCalledWith('p', 'large.png', expect.objectContaining({ pathBytes: resource.entry.path_bytes_b64 }));
+  expect(screen.queryByText(/This preview is limited/)).toBeNull();
+  view.unmount();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:authorized-image');
+});
+
+it('never renders an old media URL after changing the project or file', async () => {
+  const view = render(<FileViewer projectId="p" filePath="one.pdf" nodeName="one.pdf" />);
+  await waitFor(() => expect(view.container.querySelector('iframe')?.src).toBe('https://files.test/authorized'));
+  files.inline.mockImplementation(() => new Promise(() => {}));
+  view.rerender(<FileViewer projectId="other" filePath="two.pdf" nodeName="two.pdf" />);
+  expect(view.container.querySelector('iframe')).toBeNull();
+  expect(files.inline.mock.calls[0][2].signal.aborted).toBe(true);
+});
+
+it('renders Markdown images in the same read-only editor, without enabling edits', async () => {
+  const view = render(<ResourceContent projectId="p" resource={file('readme.md', '# Preview\n\n![diagram](https://example.test/diagram.png)')} markdownViewMode="wysiwyg" />);
+  await waitFor(() => expect(view.container.querySelector<HTMLImageElement>('img[src]')?.src).toBe('https://example.test/diagram.png'));
+  expect(view.container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
+});
+
+it('uses identical HTML resource policies on both surfaces and prevents document-controlled navigation', async () => {
+  const content = '<meta http-equiv="refresh" content="0;url=https://other.test"><base href="https://other.test"><link rel="stylesheet" href="https://styles.test/site.css"><h1>Hello</h1>';
+  const share = render(<ResourceContent projectId="p" resource={file('page.html', content)} />);
+  const shareFrame = await screen.findByTitle('page.html') as HTMLIFrameElement;
+  const html = shareFrame.srcdoc;
+  share.unmount();
+  render(<FileViewer projectId="p" filePath="page.html" nodeName="page.html" textContent={content} />);
+  const workspaceFrame = await screen.findByTitle('page.html') as HTMLIFrameElement;
+  expect(workspaceFrame.srcdoc).toBe(html);
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  expect(document.head.firstElementChild?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
+  expect(html).toContain("style-src 'unsafe-inline' https:");
+  expect(html).toContain('font-src data: https:');
+  expect(document.querySelector('meta[http-equiv="refresh"], base[href]')).toBeNull();
+  expect(workspaceFrame.getAttribute('sandbox')).toBe('allow-popups');
+  expect(workspaceFrame.getAttribute('referrerpolicy')).toBe('no-referrer');
 });

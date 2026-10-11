@@ -256,3 +256,67 @@ def test_preview_caps_utf8_and_binary_modes(resource_repo):
 )
 def test_page_limits_and_invalid_cursors(resource_repo, query):
     assert read(resource_repo, **query).status_code in (400, 422)
+
+
+@pytest.mark.parametrize('name', ['complete.md', 'data.csv', 'data.json', 'page.html', 'source.ts', 'config.toml', 'events.jsonl', 'query.sql', 'run.sh'])
+def test_full_resource_text_keeps_complete_utf8_in_one_admitted_snapshot(resource_repo, name):
+    r = resource_repo
+    text = 'a' * (TEXT_PREVIEW_BYTES - 1) + '你好\n' + 'end of complete file'
+    blob = r.put('blob', text.encode())
+    r.publish([TreeEntry(name, b'100644', blob)])
+    response = read(r, name, text_mode='full')
+    assert response.status_code == 200, response.text
+    body = response.json()['data']
+    assert body['content_text'] == text
+    assert not body['truncated']
+    assert r.calls.count('begin') == r.calls.count('release') == 1
+    assert r.calls.count('get') == 3
+    r.authorization.authorize.assert_called_once()
+
+
+def test_full_text_mode_does_not_download_native_media_or_decode_binary(resource_repo):
+    r = resource_repo
+    binary = r.put('blob', b'\x00binary')
+    r.publish([TreeEntry('film.mp4', b'100644', binary), TreeEntry('pic.png', b'100644', binary), TreeEntry('bad.txt', b'100644', binary)])
+    assert read(r, 'film.mp4', text_mode='full').json()['data']['preview'] == 'unavailable'
+    assert r.calls.count('get') == 2
+    r.calls.clear()
+    assert read(r, 'pic.png', text_mode='full').json()['data']['preview'] == 'unavailable'
+    assert r.calls.count('get') == 2
+    assert read(r, 'bad.txt', text_mode='full').json()['data']['preview'] == 'unavailable'
+
+
+@pytest.mark.parametrize('name', [b'movie #?.mp4', b'legacy-\xff.pdf'])
+def test_inline_media_reauthorizes_and_reads_a_single_snapshot_with_lossless_paths(resource_repo, name):
+    r = resource_repo
+    blob = r.put('blob', b'0123456789')
+    r.publish([TreeEntry(name.decode('utf-8', 'surrogateescape'), b'100644', blob)])
+    locator = {'path_bytes_b64': base64.b64encode(name).decode()}
+    signed = r.client.post('/api/v1/content/p/inline/sign', json=locator)
+    assert signed.status_code == 200, signed.text
+    url = signed.json()['data']['url']
+    r.authorization.authorize.reset_mock()
+    response = r.client.get(url, headers={'Range': 'bytes=2-5'})
+    assert response.status_code == 206, response.text
+    assert response.content == b'2345'
+    assert response.headers['content-range'] == 'bytes 2-5/10'
+    assert response.headers['cache-control'] == 'private, no-store'
+    r.authorization.authorize.assert_called_once()
+    assert r.authorization.authorize.call_args.args[1] == 'u'
+    assert r.calls.count('begin') == r.calls.count('release') == 1
+    assert r.calls.count('get') == 3
+    r.calls.clear()
+    r.authorization.authorize.side_effect = HTTPException(404, 'Project not found')
+    assert r.client.get(url).status_code == 404
+    assert not r.calls
+
+
+def test_inline_token_cannot_be_replayed_for_a_different_path(resource_repo):
+    from urllib.parse import parse_qs, urlsplit
+
+    r = resource_repo
+    signed = r.client.post('/api/v1/content/p/inline/sign', json={'path': 'read me.md'})
+    token = parse_qs(urlsplit(signed.json()['data']['url']).query)['token'][0]
+    response = r.client.get('/api/v1/content/p/inline', params={'path': 'other.md', 'token': token})
+    assert response.status_code == 403
+    assert not r.calls

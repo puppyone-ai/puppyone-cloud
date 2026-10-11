@@ -21,6 +21,8 @@ import type { CsvViewMode } from '@/components/editors/spreadsheet/CsvTableViewe
 export interface ViewerProps {
   projectId: string;
   filePath: string;
+  /** Lossless Git path when its display form is not a usable locator. */
+  pathBytes?: string;
   nodeName: string;
   /** UTF-8 text for text-like categories. Empty string when not loaded. */
   textContent?: string;
@@ -46,7 +48,7 @@ export interface ViewerProps {
   csvViewMode?: CsvViewMode;
   /** Already authorized image bytes; omit to use the Workspace image loader. */
   inlineImageUrl?: string;
-  /** Bounded shares do not load external document resources. */
+  /** Resource loading is independent of whether the document is editable. */
   loadExternalResources?: boolean;
 }
 
@@ -181,10 +183,10 @@ const ImagePreviewAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/image/ImagePreview').then((mod) => {
       const { ImagePreview, ImagePreviewSurface } = mod;
-      const Adapter = ({ projectId, filePath, nodeName, inlineImageUrl }: ViewerProps) => (
+      const Adapter = ({ projectId, filePath, pathBytes, nodeName, inlineImageUrl }: ViewerProps) => (
         inlineImageUrl !== undefined
           ? <ImagePreviewSurface src={inlineImageUrl} nodeName={nodeName} />
-          : <ImagePreview projectId={projectId} filePath={filePath} nodeName={nodeName} />
+          : <ImagePreview projectId={projectId} filePath={filePath} pathBytes={pathBytes} nodeName={nodeName} />
       );
       Adapter.displayName = 'ImagePreviewAdapter';
       return Adapter;
@@ -196,10 +198,11 @@ const AudioPreviewAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/audio/AudioPreview').then((mod) => {
       const { AudioPreview } = mod;
-      const Adapter = ({ projectId, filePath, nodeName, mimeType }: ViewerProps) => (
+      const Adapter = ({ projectId, filePath, pathBytes, nodeName, mimeType }: ViewerProps) => (
         <AudioPreview
           projectId={projectId}
           filePath={filePath}
+          pathBytes={pathBytes}
           nodeName={nodeName}
           mimeType={mimeType}
         />
@@ -214,10 +217,11 @@ const VideoPreviewAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/video/VideoPreview').then((mod) => {
       const { VideoPreview } = mod;
-      const Adapter = ({ projectId, filePath, nodeName, mimeType }: ViewerProps) => (
+      const Adapter = ({ projectId, filePath, pathBytes, nodeName, mimeType }: ViewerProps) => (
         <VideoPreview
           projectId={projectId}
           filePath={filePath}
+          pathBytes={pathBytes}
           nodeName={nodeName}
           mimeType={mimeType}
         />
@@ -232,8 +236,8 @@ const PdfPreviewAdapter = dynamic<ViewerProps>(
   () =>
     import('@/components/editors/pdf/PdfPreview').then((mod) => {
       const { PdfPreview } = mod;
-      const Adapter = ({ projectId, filePath, nodeName }: ViewerProps) => (
-        <PdfPreview projectId={projectId} filePath={filePath} nodeName={nodeName} />
+      const Adapter = ({ projectId, filePath, pathBytes, nodeName }: ViewerProps) => (
+        <PdfPreview projectId={projectId} filePath={filePath} pathBytes={pathBytes} nodeName={nodeName} />
       );
       Adapter.displayName = 'PdfPreviewAdapter';
       return Adapter;

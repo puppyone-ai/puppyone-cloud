@@ -356,7 +356,8 @@ class DownloadSignResponse(BaseModel):
 
 
 class InlineSignRequest(BaseModel):
-    path: str = Field(..., description="File path within the project")
+    path: str = Field("", description="File path within the project")
+    path_bytes_b64: str | None = None
 
 
 class InlineSignResponse(BaseModel):
@@ -414,7 +415,7 @@ def sign_inline(
     endpoint instead of an attachment endpoint.
     """
     ensure_project_access(authorization, current_user, project_id)
-    clean_path = validate_path(body.path)
+    clean_path = _read_request_path(body.path, body.path_bytes_b64)
 
     token, expires_at = issue_token(
         project_id=project_id,
@@ -422,9 +423,14 @@ def sign_inline(
         user_id=current_user.user_id,
     )
 
+    locator = (
+        f"path_bytes_b64={quote(body.path_bytes_b64, safe='')}"
+        if body.path_bytes_b64 is not None
+        else f"path={quote(clean_path, safe='')}"
+    )
     url = (
         f"/api/v1/content/{project_id}/inline"
-        f"?path={quote(clean_path, safe='')}&token={quote(token, safe='')}"
+        f"?{locator}&token={quote(token, safe='')}"
     )
 
     return ApiResponse.success(data=InlineSignResponse(url=url, expires_at=expires_at))
@@ -437,32 +443,40 @@ def sign_inline(
 def inline_file(
     project_id: str,
     request: Request,
-    path: str = Query(..., description="File path"),
+    path: str = Query("", description="File path"),
     token: str = Query(..., description="Signed token from /inline/sign"),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
+    authorization: AuthorizationService = Depends(get_authorization_service),
+    path_bytes_b64: Annotated[str | None, Query()] = None,
 ):
     try:
         claims = verify_token(token)
     except DownloadTokenError as exc:
         raise HTTPException(status_code=401, detail=f"invalid token: {exc}")
 
-    clean_path = validate_path(path)
+    clean_path = _read_request_path(path, path_bytes_b64)
     if claims.project_id != project_id or claims.path != clean_path:
         raise HTTPException(status_code=403, detail="token does not match request")
 
+    # Revalidate the token's actor on every request (including media Range
+    # requests). A signed URL does not outlive membership revocation.
+    grant = ensure_project_access(
+        authorization, CurrentUser(user_id=claims.user_id, role="authenticated"), project_id
+    )
     try:
-        entry = ops.stat(project_id, clean_path)
+        with _product_read(
+            ops, project_id, grant, byte_path=path_bytes_b64 is not None
+        ) as (read, _revision):
+            entry = read.stat(project_id, clean_path)
+            if not entry or entry.type == "folder":
+                raise HTTPException(status_code=404, detail="File not found")
+            content = read.read_file(project_id, clean_path)
     except ObjectNotFoundError as exc:
         _raise_storage_integrity_error(project_id, clean_path, exc)
-    if not entry or entry.type == "folder":
-        raise HTTPException(status_code=404, detail=f"File not found: {clean_path}")
-
-    try:
-        content = ops.read_file(project_id, clean_path)
-    except ObjectNotFoundError as exc:
-        _raise_storage_integrity_error(project_id, clean_path, exc)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"File not found: {clean_path}")
+    except (FileNotFoundError, PathNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
+    except VersionReadError as exc:
+        _raise_version_read_error(clean_path, exc)
 
     from src.version_engine.read.tree_reader import detect_mime
 

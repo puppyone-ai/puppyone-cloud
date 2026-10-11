@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
+from src.infra.file_formats import is_text_format
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -80,14 +81,17 @@ def _page_cursor(offset: int | None, binding: list) -> str | None:
     ).decode()
 
 
-def _file_preview(read, project_id: str, path: str, result: ResourceResponse) -> None:
+def _file_preview(
+    read, project_id: str, path: str, result: ResourceResponse, *, full_text: bool = False
+) -> None:
     entry = result.entry
     if entry.type == "gitlink":
         return
     mime = entry.mime_type or "application/octet-stream"
     image = mime in SAFE_IMAGE_TYPES and entry.git_mode != "120000"
     text = (
-        mime.startswith("text/")
+        is_text_format(path)
+        or mime.startswith("text/")
         or mime
         in {
             "application/json",
@@ -102,23 +106,34 @@ def _file_preview(read, project_id: str, path: str, result: ResourceResponse) ->
     )
     if not image and not text:
         return
+    if full_text and mime.startswith("image/") and entry.git_mode != "120000":
+        # Full Workspace views use the native image loader. Do not read/encode a
+        # thumbnail here only to fetch the same large blob again through /raw.
+        return
     # Native reads verify the entire Git blob before slicing. The cap bounds
     # the response, not physical S3 transfer; no unverified partial bytes escape.
     limit = IMAGE_PREVIEW_BYTES if image else TEXT_PREVIEW_BYTES
-    blob = read.read_file_range(project_id, path, limit=limit)
-    entry.size_bytes = blob.total_size
-    result.truncated = blob.total_size > limit
+    if full_text and text and not image:
+        # Same complete text contract as /cat, in this already pinned read.
+        # Binary media remain lazy and use the native authorized file viewers.
+        content = read.read_file(project_id, path)
+        entry.size_bytes = len(content)
+    else:
+        blob = read.read_file_range(project_id, path, limit=limit)
+        content = blob.content
+        entry.size_bytes = blob.total_size
+        result.truncated = blob.total_size > limit
     if image:
         if not result.truncated:
             result.preview = "image"
-            result.content_base64 = base64.b64encode(blob.content).decode()
+            result.content_base64 = base64.b64encode(content).decode()
         return
     try:
         # Ignore only an incomplete final UTF-8 codepoint in a truncated preview.
         import codecs
 
         decoder = codecs.getincrementaldecoder("utf-8")("strict")
-        text_body = decoder.decode(blob.content, final=not result.truncated)
+        text_body = decoder.decode(content, final=not result.truncated)
         if "\x00" not in text_body:
             result.preview = "text"
             result.content_text = text_body
@@ -137,6 +152,7 @@ def read_resource(
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
+    text_mode: Literal["preview", "full"] = "preview",
 ):
     grant = ensure_project_access(authorization, current_user, project_id)
     # Query parsing has already decoded once. A literal "%2F" in a Git name
@@ -173,7 +189,7 @@ def read_resource(
             else:
                 if cursor:
                     raise HTTPException(400, "A file does not accept a directory cursor")
-                _file_preview(read, project_id, clean, result)
+                _file_preview(read, project_id, clean, result, full_text=text_mode == "full")
             return ApiResponse.success(data=result)
     except ObjectNotFoundError as exc:
         _raise_storage_integrity_error(project_id, clean, exc)

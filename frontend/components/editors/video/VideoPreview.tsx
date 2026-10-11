@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { getInlinePreviewUrl } from '@/lib/contentTreeApi';
+import React from 'react';
+import { useFilePreviewUrl } from '@/lib/viewers/useFilePreviewUrl';
 import { PageLoading } from '@/components/loading';
 
 interface VideoPreviewProps {
   projectId: string;
   filePath: string;
+  pathBytes?: string;
   nodeName: string;
   /** Format-resolved MIME (e.g. 'video/mp4'). See AudioPreview note. */
   mimeType?: string;
@@ -17,27 +18,8 @@ interface VideoPreviewProps {
  * owns streaming, buffering, and range requests; we don't fetch the
  * whole file into JS memory before playback.
  */
-export function VideoPreview({ projectId, filePath, nodeName, mimeType }: VideoPreviewProps) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    getInlinePreviewUrl(projectId, filePath)
-      .then((url) => {
-        if (cancelled) return;
-        setPreviewUrl(url);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, filePath]);
+export function VideoPreview({ projectId, filePath, pathBytes, nodeName, mimeType }: VideoPreviewProps) {
+  const { url: previewUrl, error } = useFilePreviewUrl(projectId, filePath, 'inline', pathBytes);
 
   if (error) {
     return (

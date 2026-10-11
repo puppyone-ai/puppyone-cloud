@@ -290,6 +290,15 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & email[category].keys()
         expected["contract"][category].update(email[category])
+    parity = json.loads(Path(__file__).with_name("workspace_viewer_parity_contract_delta.json").read_text())
+    assert set(parity["paths"]) == {
+        "/api/v1/content/{project_id}/resource", "/api/v1/content/{project_id}/inline",
+    }
+    assert set(parity["schemas"]) == {"InlineSignRequest"}
+    for category in ("paths", "schemas"):
+        for name, change in parity[category].items():
+            assert expected["contract"][category][name] == change["before"]
+            expected["contract"][category][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

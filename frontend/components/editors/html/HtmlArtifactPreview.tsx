@@ -21,7 +21,7 @@ export type HtmlArtifactMode = 'preview' | 'source';
 const HTML_PREVIEW_CSP = [
   "default-src 'none'",
   "img-src data: blob: https:",
-  "style-src 'unsafe-inline'",
+  "style-src 'unsafe-inline' https:",
   "font-src data: https:",
   "script-src 'none'",
   "connect-src 'none'",
@@ -32,18 +32,20 @@ const HTML_PREVIEW_CSP = [
 
 function buildSandboxedDocument(rawHtml: string, loadExternalResources: boolean): string {
   const policy = loadExternalResources ? HTML_PREVIEW_CSP : HTML_PREVIEW_CSP.replaceAll(" https:", "");
-  const csp = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
-  const base = '<base target="_blank">';
-
-  if (/<head[\s>]/i.test(rawHtml)) {
-    return rawHtml.replace(/<head([^>]*)>/i, `<head$1>${csp}${base}`);
-  }
-
-  if (/<html[\s>]/i.test(rawHtml)) {
-    return rawHtml.replace(/<html([^>]*)>/i, `<html$1><head>${csp}${base}</head>`);
-  }
-
-  return `<!doctype html><html><head>${csp}${base}</head><body>${rawHtml}</body></html>`;
+  const document = new DOMParser().parseFromString(rawHtml, 'text/html');
+  // Policy must precede every resource, including malformed/fragment HTML.
+  // Document-provided refresh/base elements cannot navigate or change resolution.
+  document.querySelectorAll('base, meta[http-equiv]').forEach(node => node.remove());
+  const csp = document.createElement('meta');
+  csp.httpEquiv = 'Content-Security-Policy';
+  csp.content = policy;
+  const referrer = document.createElement('meta');
+  referrer.name = 'referrer';
+  referrer.content = 'no-referrer';
+  const base = document.createElement('base');
+  base.target = '_blank';
+  document.head.prepend(csp, referrer, base);
+  return `<!doctype html>${document.documentElement.outerHTML}`;
 }
 
 export function HtmlArtifactPreview({ content, nodeName, mode, loadExternalResources = true }: HtmlArtifactPreviewProps) {
@@ -68,6 +70,7 @@ export function HtmlArtifactPreview({ content, nodeName, mode, loadExternalResou
         <iframe
           title={nodeName || 'HTML artifact preview'}
           sandbox="allow-popups"
+          referrerPolicy="no-referrer"
           srcDoc={sandboxedDocument}
           style={{
             flex: 1,

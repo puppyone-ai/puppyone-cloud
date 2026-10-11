@@ -14,5 +14,5 @@ export function FileViewer({ preview, literalText, ...props }: ViewerProps & {
   return <Viewer {...props} editable={editable} onTextChange={editable ? props.onTextChange : undefined}
     monacoLanguage={format.monacoLanguage} formatLabel={format.label}
     inlineImageUrl={preview?.kind === 'image' ? preview.url : undefined}
-    loadExternalResources={!preview} />;
+    loadExternalResources={props.loadExternalResources ?? true} />;
 }

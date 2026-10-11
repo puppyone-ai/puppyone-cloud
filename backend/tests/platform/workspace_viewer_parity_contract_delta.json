@@ -1,0 +1,20 @@
+{
+  "baseline_product_commit": "a1c736be",
+  "scope": "Authorized Share/Workspace viewer parity: optional full text reads and lossless inline media locators; inline reads reauthorize the token actor.",
+  "paths": {
+    "/api/v1/content/{project_id}/resource": {
+      "before": "c2c42443c048e421d7da872d6afe5912a5abdf86dc995193edf6a59b4d6a7269",
+      "after": "ad1aadac13131940960563aec0838a7639449e0430e0593b4e144863ebb804e2"
+    },
+    "/api/v1/content/{project_id}/inline": {
+      "before": "e76c3c89d40a35acffa5d35ff870f07e5292698b78c2550c0a1b4cc09f471a5e",
+      "after": "e39d5ad4134e15296ae61d995db6f6cf3bf57b64a9d241102502cd2ea9917888"
+    }
+  },
+  "schemas": {
+    "InlineSignRequest": {
+      "before": "9c43a6ec278b39da6cfb9ca340d5c985fcd549ad7d2099e68a1e4f9cb4b8e275",
+      "after": "71bc6be9bf1ad6c65976baa842027e1d205537f5438b6517dbebb4c644afd19a"
+    }
+  }
+}

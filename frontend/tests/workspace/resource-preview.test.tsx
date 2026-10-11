@@ -105,12 +105,12 @@ it('does not show cached confidential content after switching to an unauthorized
   expect(mocks.read).toHaveBeenCalledTimes(4);
 });
 
-it('renders Markdown as read-only content without executing HTML or loading remote images', async () => {
+it('renders Markdown as read-only content with Workspace image rendering while keeping scripts disabled', async () => {
   mocks.read.mockImplementation((_id, path) => Promise.resolve(!path ? rootDirectory : { ...resource, content_text: '# Safe\n<script>alert(1)</script>\n![tracking](https://evil.test/pixel)\n[bad](javascript:alert(1))', truncated: true }));
   const view = preview();
   await screen.findByText(/Safe/);
   expect(view.container.querySelector('script')).toBeNull();
-  expect(view.container.querySelector('img[src]')).toBeNull();
+  expect(view.container.querySelector('img[src]')?.getAttribute('src')).toBe('https://evil.test/pixel');
   expect(view.container.querySelector('a[href^="javascript:"]')).toBeNull();
   expect(screen.getByText(/This preview is limited/)).toBeTruthy();
 });

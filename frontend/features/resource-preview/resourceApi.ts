@@ -25,6 +25,8 @@ export interface WorkspaceResource {
 
 export function readWorkspaceResource(projectId: string, path: string, cursor?: string, pathBytes?: string) {
   const query = new URLSearchParams(pathBytes ? { path_bytes_b64: pathBytes } : { path });
+  // A resource link is an authorized read-only Workspace, not a truncated excerpt.
+  query.set('text_mode', 'full');
   if (cursor) query.set('cursor', cursor);
   return get<WorkspaceResource>(`/api/v1/content/${encodeURIComponent(projectId)}/resource?${query}`, {
     cache: 'no-store',
