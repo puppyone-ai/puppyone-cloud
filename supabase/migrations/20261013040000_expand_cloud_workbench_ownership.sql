@@ -64,7 +64,9 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,publi
 DECLARE w public.cloud_workbenches;
 BEGIN
     SELECT * INTO w FROM public.cloud_workbenches WHERE id=p_workbench FOR UPDATE;
-    IF NOT FOUND OR w.user_id IS DISTINCT FROM p_user OR w.project_id IS DISTINCT FROM p_project OR w.owner_deleted_at IS NOT NULL THEN
+    IF NOT FOUND OR w.user_id IS DISTINCT FROM p_user OR w.project_id IS DISTINCT FROM p_project
+        OR w.owner_deleted_at IS NOT NULL
+        OR NOT EXISTS (SELECT 1 FROM public.projects WHERE id=p_project AND lifecycle_status='ready') THEN
         RAISE EXCEPTION 'workbench_unavailable' USING ERRCODE='42501';
     END IF;
     IF jsonb_typeof(p_binding) IS DISTINCT FROM 'object'
@@ -160,8 +162,12 @@ BEGIN
     WHERE owner_deleted_at IS NULL AND
         ((TG_TABLE_NAME='projects' AND project_id=OLD.id::text) OR
          (TG_TABLE_NAME='users' AND user_id::text=OLD.id::text));
+    IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
     RETURN OLD;
 END $$;
+CREATE TRIGGER cloud_workbench_project_deleting BEFORE UPDATE OF lifecycle_status ON public.projects
+    FOR EACH ROW WHEN (NEW.lifecycle_status='deleting' AND OLD.lifecycle_status IS DISTINCT FROM NEW.lifecycle_status)
+    EXECUTE FUNCTION public.cloud_workbench_owner_deleted();
 CREATE TRIGGER cloud_workbench_project_deleted BEFORE DELETE ON public.projects
     FOR EACH ROW EXECUTE FUNCTION public.cloud_workbench_owner_deleted();
 CREATE TRIGGER cloud_workbench_user_deleted BEFORE DELETE ON auth.users

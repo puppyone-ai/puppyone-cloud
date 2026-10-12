@@ -194,14 +194,39 @@ def test_legacy_session_deletion_does_not_own_independent_computer(postgres, sub
     )
 
 
-def test_project_deletion_retains_shared_resource_cleanup_identity(postgres, submitted):
+@pytest.mark.parametrize("deletion", ["deleting", "deleted"])
+def test_project_deletion_retains_shared_resource_cleanup_identity(postgres, submitted, deletion):
     args, run = submitted
-    row = create(postgres, args)
+    created = create(postgres, args)
+    row = call(
+        postgres,
+        "acquire",
+        workbench=created["id"],
+        user=args["user"],
+        project=args["project"],
+        binding={"provider": "docker", "artifact": "fixture"},
+    )["workbench"]
+    intent = {
+        "provider": "docker",
+        "resource_id": "retain-cleanup-identity",
+        "allocation_pending": True,
+        "workbench_id": row["id"],
+        "workbench_generation": row["generation"],
+    }
+    row = transition(postgres, row, "allocating", intent)
+    command = (
+        "UPDATE projects SET lifecycle_status='deleting'"
+        if deletion == "deleting"
+        else "DELETE FROM projects"
+    )
     postgres.sql(
-        f"UPDATE agent_runs SET state='failed' WHERE id='{run['id']}'; DELETE FROM projects WHERE id='{args['project']}'"
+        f"UPDATE agent_runs SET state='failed' WHERE id='{run['id']}'; {command} WHERE id='{args['project']}'"
     )
     retained = postgres.row(f"SELECT * FROM cloud_workbenches WHERE id='{row['id']}'")
     assert retained["owner_deleted_at"] and retained["project_id"] == row["project_id"]
+    assert retained["state"] == "retained" and retained["resource"] == intent
+    with pytest.raises(RuntimeError, match="workbench_fenced"):
+        transition(postgres, row, "running", {**intent, "allocation_pending": False})
     with pytest.raises(RuntimeError, match="workbench_unavailable"):
         call(
             postgres,
