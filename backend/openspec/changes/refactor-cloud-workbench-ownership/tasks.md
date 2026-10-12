@@ -26,8 +26,11 @@ the original request digest and Session execution path.
   resume, pause and deletion, and protects loopback model/Git capabilities.
   Docker task attachment refuses paused resources; E2B tasks require an existing
   lifecycle-owned connection. Task-control lease expiry/duplicate cleanup stop
-  only that task. Trusted Git runs under the same task UID before model start or
-  after quiescence, so cleanup cannot orphan task Git under a shared service UID.
+  only that task. A protected revocation marker and per-task control lock fence
+  late starts and queued Git after cleanup; cleanup ACK waits for in-flight
+  trusted Git. The model UID/GID is dropped before exec, with no-new-privileges.
+  Trusted Git uses the same task UID before model start or after quiescence, so
+  cleanup cannot orphan task Git under a shared service UID.
   The UID allocator, shared supervisor and resource manager are not yet connected.
 - BuildKit acceptance runs real concurrent Pi processes, detached descendants,
   PTY and HTTP preview with deterministic model frames and no external network.
@@ -38,7 +41,9 @@ the original request digest and Session execution path.
 - Run takeover/conversation recovery integration, live branch/ref publication,
   authenticated interaction, activity leases, shared compute metering and
   reconstruction remain unimplemented. The existing Session Git helper is not a completed shared-ref
-  publication contract.
+  publication contract. Concurrent user mutation of Git metadata/configuration
+  also needs explicit adversarial credential/command-isolation verification;
+  the service-only Git lock does not serialize or trust ordinary filesystem edits.
 - The parallel tool-recovery branch still requires integration and revalidation.
   No A1–A6 item is complete merely because these foundation tests pass.
 

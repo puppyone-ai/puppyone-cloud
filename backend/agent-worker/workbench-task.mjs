@@ -43,7 +43,7 @@ export function withWorkbenchGitLock(operation) {
   return withControlLock('git.lock', operation);
 }
 
-export function withTaskStopLock(task, operation) {
+export function withTaskControlLock(task, operation) {
   return withControlLock(`stop-${task.uid}.lock`, operation);
 }
 

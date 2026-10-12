@@ -5,7 +5,8 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
-import { CONTROL_ROOT } from './workbench-task.mjs';
+import { CONTROL_ROOT, STATE, withWorkbenchGitLock } from './workbench-task.mjs';
+import { exists } from './git.mjs';
 const ROOT = '/workspace/repo';
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -33,7 +34,9 @@ function taskConnection(uid, workbench, generation, { execution = randomUUID(), 
     else if (['tool_start','tool_end','checkpoint'].includes(frame.type)) send({ type: 'reply', id: frame.id, allow: true });
     else if (frame.type === 'model_request') {
       state.requests++;
-      const command = `printf ready > ${uid}.ready; while [ ! -e go ]; do sleep .05; done; ` +
+      const command = `set -eu; test "$(id -u)" = ${uid}; test "$(id -G)" = 1000; ` +
+        `grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/$$/status; ` +
+        `printf ready > ${uid}.ready; while [ ! -e go ]; do sleep .05; done; ` +
         `printf '${uid}\\n' >> shared.txt; setsid sh -c 'echo $$ > ${uid}.detached; exec sleep 120' >/dev/null 2>&1 & ` +
         `while :; do date +%s%N > ${uid}.alive; sleep .1; done`;
       const chunk = { id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
@@ -58,9 +61,10 @@ function taskConnection(uid, workbench, generation, { execution = randomUUID(), 
   return { child, state, control, send, execution, expire: () => clearInterval(timer) };
 }
 
-for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_cleanup']) {
+for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_cleanup','publication_cleanup_race']) {
   test(`real concurrent Pi tasks, PTY and preview survive ${ending}`, { skip: !enabled, timeout: 60000 }, async () => {
     const workbench = randomUUID(), generation = randomUUID(), tasks = [], children = [];
+    let unblockGit;
     try {
       for (const uid of [20000,20001]) {
         const task = taskConnection(uid, workbench, generation, { lease: ending === 'lease_expiry' && uid === 20000 ? 2000 : 60000 }); tasks.push(task);
@@ -82,6 +86,15 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
         assert.equal(await content('20002.ready'), '');
         const collision = taskConnection(20000, workbench, generation); tasks.push(collision);
         await assert.rejects(collision.control('capabilities'), /Task UID is already owned/);
+        // A disconnected, prepared controller must not resurrect a cleaned task.
+        const late = taskConnection(20003, workbench, generation); tasks.push(late);
+        await late.control('prepare', { project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null });
+        const cleanup = taskConnection(20003, workbench, generation, { execution: late.execution }); tasks.push(cleanup);
+        await cleanup.control('stop');
+        late.send({ type: 'start', config: { model: 'fixture', max_tokens: 4096, context_window: 131072, prompt: 'Must not restart' } });
+        await poll(() => late.state.errors.some(frame => /revoked/.test(frame.error)));
+        assert.equal(late.state.requests, 0);
+        await assert.rejects(late.control('finalize', { message: 'Must not commit after cleanup' }), /revoked/);
       }
       const terminal = spawn('script', ['-qefc', `test "$PWD" = ${ROOT} && test -t 0 && echo PTY_READY; exec cat`, '/dev/null'],
         { cwd: ROOT, uid: 1001, gid: 1000, stdio: ['pipe','pipe','pipe'] }); children.push(terminal);
@@ -104,7 +117,18 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
       }
       if (ending === 'disconnect') { tasks[0].expire(); tasks[0].child.stdin.end(); await poll(() => tasks[0].child.exitCode !== null); }
       else if (ending === 'lease_expiry') { tasks[0].expire(); await poll(() => tasks[0].child.exitCode !== null); }
-      else if (ending === 'duplicate_cleanup') {
+      else if (ending === 'publication_cleanup_race') {
+        const blocking = withWorkbenchGitLock(() => new Promise(resolve => { unblockGit = resolve; }));
+        await poll(() => unblockGit);
+        const finalizing = tasks[0].control('finalize', { message: 'Original candidate' });
+        await poll(() => exists(`${STATE}/task-20000.model-stopped`));
+        const cleanup = taskConnection(20000, workbench, generation, { execution: tasks[0].execution }); tasks.push(cleanup);
+        let acknowledged = false;
+        const stopping = cleanup.control('stop').then(() => { acknowledged = true; });
+        await sleep(200); assert.equal(acknowledged, false, 'cleanup acknowledged while trusted Git was pending');
+        unblockGit(); await blocking; await finalizing; await stopping;
+        await assert.rejects(tasks[0].control('finalize', { message: 'Late retry' }), /revoked/);
+      } else if (ending === 'duplicate_cleanup') {
         const duplicate = taskConnection(20000, workbench, generation, { execution: tasks[0].execution }); tasks.push(duplicate);
         await Promise.all([tasks[0].control('stop'), duplicate.control('stop')]);
       } else await tasks[0].control(ending, { message: 'Shared worktree checkpoint' });
@@ -121,6 +145,7 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
       await assert.rejects(tasks[1].control('freeze'), /workbench lifecycle/);
       assert.equal(tasks[1].state.requests, 1);
     } finally {
+      unblockGit?.();
       for (const task of tasks) {
         task.expire();
         if (task.child.exitCode === null) { task.child.stdin.end(); await poll(() => task.child.exitCode !== null); }

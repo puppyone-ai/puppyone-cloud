@@ -23,6 +23,7 @@ class SharedRecovery:
         if value.get("publication_candidate") == run["id"]:
             # Preserve the original publication candidate across a lost ACK.
             # Another Session may already have edited/committed the shared tree.
+            await worker.control("quiesce")
             return value
         state = await worker.control("finalize", {"message": f"Agent checkpoint: run {run['id']}"})
         return {**value, "workspace": {**value["workspace"], **state},

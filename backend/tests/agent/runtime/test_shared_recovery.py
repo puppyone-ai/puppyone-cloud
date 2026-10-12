@@ -40,7 +40,7 @@ async def test_finalization_keeps_native_candidate_without_filesystem_restore_po
     worker.control.assert_awaited_once()
     # Retrying a publication must not incorporate somebody else's newer edits.
     assert await SharedRecovery().finalize(worker, {"id": "run", "policy": {}}, result) == result
-    worker.control.assert_awaited_once()
+    assert [call.args[0] for call in worker.control.await_args_list] == ["finalize", "quiesce"]
     with pytest.raises(PermissionError):
         await SharedRecovery().finalize(worker, {"id": "other-run", "policy": {}}, result)
 
