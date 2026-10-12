@@ -41,7 +41,7 @@ async def core_dependency_errors() -> list[str]:
             result.raise_for_status()
 
     async def redis():
-        url = os.getenv("AUTH_SECURITY_REDIS_URL") or os.getenv("ETL_REDIS_URL")
+        url = os.getenv("ETL_REDIS_URL")
         if url:
             async with Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2) as client:
                 await client.ping()

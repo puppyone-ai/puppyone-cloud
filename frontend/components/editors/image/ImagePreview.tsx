@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { fetchRawBlob } from '@/lib/contentTreeApi';
+import React from 'react';
+import { useFilePreviewUrl } from '@/components/editors/useFilePreviewUrl';
 import { PageLoading } from '@/components/loading';
 
 interface ImagePreviewProps {
   projectId: string;
   filePath: string;
+  pathBytes?: string;
   nodeName: string;
 }
 
@@ -15,30 +16,8 @@ interface ImagePreviewProps {
  * PNG/JPG/GIF/WebP/AVIF/SVG/BMP/ICO. HEIC is registry-routed to
  * `binary-placeholder` because no major browser can decode it.
  */
-export function ImagePreview({ projectId, filePath, nodeName }: ImagePreviewProps) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let url: string | null = null;
-
-    fetchRawBlob(projectId, filePath)
-      .then((blob) => {
-        if (cancelled) return;
-        url = URL.createObjectURL(blob);
-        setBlobUrl(url);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-      });
-
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [projectId, filePath]);
+export function ImagePreview({ projectId, filePath, pathBytes, nodeName }: ImagePreviewProps) {
+  const { url: blobUrl, error } = useFilePreviewUrl(projectId, filePath, 'blob', pathBytes);
 
   if (error) {
     return (
@@ -60,6 +39,11 @@ export function ImagePreview({ projectId, filePath, nodeName }: ImagePreviewProp
     return <PageLoading variant="fill" />;
   }
 
+  return <ImagePreviewSurface src={blobUrl} nodeName={nodeName} />;
+}
+
+/** Image surface shared by full files and bounded share previews. */
+export function ImagePreviewSurface({ src, nodeName }: { src: string; nodeName: string }) {
   return (
     <div
       style={{
@@ -77,7 +61,7 @@ export function ImagePreview({ projectId, filePath, nodeName }: ImagePreviewProp
     >
       <div style={{ fontSize: 13, color: 'var(--po-text-subtle)', marginBottom: 12 }}>{nodeName}</div>
       <img
-        src={blobUrl}
+        src={src}
         alt={nodeName}
         style={{
           maxWidth: '100%',

@@ -1,0 +1,10 @@
+{
+  "paths": {
+    "/api/v1/auth/check-email": "115cdf71ed3e0b9280c0b433e33092addceb1df0014d46c930fd213ffd25d7e0"
+  },
+  "schemas": {
+    "ApiResponse_CheckEmailResponse_": "c29a3a2fc920dc84cd792d8acd3873015ea7cb4812d074d8ea02011438f21913",
+    "CheckEmailRequest": "21158e71137a5c72c2d1f0e1846c0f5328521888c42c06a8671c9574633e9977",
+    "CheckEmailResponse": "b1530778572de01afaffb2a912d43f04c2eb021a7210cb9ee64839b1909a5620"
+  }
+}

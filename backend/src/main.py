@@ -44,11 +44,9 @@ from src.exception_handler import (
     app_exception_handler,
     generic_exception_handler,
     http_exception_handler,
-    security_store_unavailable_handler,
     validation_exception_handler,
 )
 from src.exceptions import AppException
-from src.platform.auth.shared_security_store import SecurityStoreUnavailable
 
 exceptions_duration = time.time() - exceptions_start
 
@@ -739,10 +737,6 @@ def create_app() -> FastAPI:
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
-    app.add_exception_handler(  # type: ignore
-        SecurityStoreUnavailable,
-        security_store_unavailable_handler,
-    )
     app.add_exception_handler(Exception, generic_exception_handler)  # type: ignore
     exception_handler_duration = time.time() - exception_handler_start
 

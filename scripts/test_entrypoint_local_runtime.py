@@ -101,7 +101,7 @@ class Stack:
             ACCESS_CREDENTIAL_HASH_SECRET="local-hash-"+secret, INTERNAL_API_SECRET="local-internal-"+secret,
             S3_ENDPOINT_URL=f"http://127.0.0.1:{port+92}", S3_BUCKET_NAME=v["S3_BUCKET"], S3_REGION="us-east-1",
             S3_ACCESS_KEY_ID=v["S3_ACCESS_KEY"], S3_SECRET_ACCESS_KEY=v["S3_SECRET_KEY"],
-            ETL_REDIS_URL=f"redis://127.0.0.1:{port+79}/0", AUTH_SECURITY_REDIS_URL=f"redis://127.0.0.1:{port+79}/1",
+            ETL_REDIS_URL=f"redis://127.0.0.1:{port+79}/0",
             PUBLIC_URL=self.base, FRONTEND_URL=f"http://localhost:{port}", SCHEDULER_ENABLED="false",
             ENABLE_ETL="true", OCR_PROVIDER="mineru", ENTITLEMENTS_MODE="disabled", BILLING_ENFORCEMENT="disabled",
             MANAGED_AI_ENABLED="false", MCP_SERVER_URL=f"http://127.0.0.1:{port+93}", MAIN_SERVICE_URL=self.base,

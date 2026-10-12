@@ -673,7 +673,7 @@ export default function ProjectSettingsDialog({ projectId, onClose }: {
                     <label style={labelStyle}>Project Visibility</label>
                     <div style={descStyle}>
                       {visibility === 'org'
-                        ? 'Anyone in the organization can view and collaborate on this project.'
+                        ? 'Organization members can view this project. Add members as editors or admins to let them make changes.'
                         : 'Only organization owners and explicitly invited members can access this project.'}
                     </div>
                   </div>
@@ -778,7 +778,7 @@ export default function ProjectSettingsDialog({ projectId, onClose }: {
                           <div style={{ fontSize: 13, fontWeight: 500, color: T.text1 }}>Share link</div>
                           <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
                             Anyone with this link can join as Viewer.
-                            {visibility === 'org' && ' Useful for onboarding people who aren’t in the org yet.'}
+                            {visibility === 'org' && ' Invite people to the organization before sharing workspace access.'}
                           </div>
                         </div>
                         <button

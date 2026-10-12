@@ -37,6 +37,7 @@ type LivePreviewDecorations = {
 };
 
 type MarkdownDecorationBuilders = {
+  loadImages: boolean;
   decorations: Range<Decoration>[];
   atomicRanges: Range<Decoration>[];
 };
@@ -53,6 +54,10 @@ type MarkdownCodeBlock = {
   language: string;
   code: string;
 };
+
+const markdownImageLoadingFacet = Facet.define<boolean, boolean>({
+  combine: values => values.every(Boolean),
+});
 
 const markdownHtmlTrustModeFacet = Facet.define<MarkdownHtmlTrustMode, MarkdownHtmlTrustMode>({
   combine(values) {
@@ -98,8 +103,10 @@ export function markdownLivePreviewExtension(
   htmlTrustMode: MarkdownHtmlTrustMode = "safe",
   markdownLinkGraph: MarkdownLinkGraph | null = null,
   documentPath = "",
+  loadImages = true,
 ): Extension {
   return [
+    markdownImageLoadingFacet.of(loadImages),
     markdownHtmlTrustModeFacet.of(htmlTrustMode),
     markdownLinkGraphFacet.of(markdownLinkGraph),
     markdownDocumentPathFacet.of(documentPath),
@@ -265,6 +272,7 @@ function getEventTargetElement(target: EventTarget | null): Element | null {
 
 function buildMarkdownDecorations(state: EditorState): LivePreviewDecorations {
   const builders: MarkdownDecorationBuilders = {
+    loadImages: state.facet(markdownImageLoadingFacet),
     decorations: [],
     atomicRanges: [],
   };
@@ -477,7 +485,7 @@ function addImageDecorations(
     addReplacementDecoration(
       builders,
       Decoration.replace({
-        widget: new ImagePreviewWidget(match[1], match[2]),
+        widget: new ImagePreviewWidget(match[1], match[2], builders.loadImages),
         inclusive: false,
       }),
       matchFrom,
@@ -1424,12 +1432,13 @@ class ImagePreviewWidget extends WidgetType {
   constructor(
     private readonly alt: string,
     private readonly source: string,
+    private readonly loadImages: boolean,
   ) {
     super();
   }
 
   eq(widget: WidgetType): boolean {
-    return widget instanceof ImagePreviewWidget && widget.alt === this.alt && widget.source === this.source;
+    return widget instanceof ImagePreviewWidget && widget.alt === this.alt && widget.source === this.source && widget.loadImages === this.loadImages;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -1437,7 +1446,7 @@ class ImagePreviewWidget extends WidgetType {
     wrapper.className = "cm-md-image-widget";
     wrapper.title = this.source;
 
-    if (/^(https?:|data:|blob:)/i.test(this.source)) {
+    if (this.loadImages && /^(https?:|data:|blob:)/i.test(this.source)) {
       const image = document.createElement("img");
       image.src = this.source;
       image.alt = this.alt;

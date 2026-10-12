@@ -1,0 +1,11 @@
+{
+  "baseline_product_commit": "a29fc1792972ba5bb7bc7e847f8bb6b25cdbb297",
+  "scope": "Additive admitted workspace resource preview; existing contracts unchanged",
+  "paths": {
+    "/api/v1/content/{project_id}/resource": "c2c42443c048e421d7da872d6afe5912a5abdf86dc995193edf6a59b4d6a7269"
+  },
+  "schemas": {
+    "ResourceResponse": "6625ece710fc9ecdd7908378ba54c73edf9dadcd74aa7ac89066f499b6dd17b4",
+    "ApiResponse_ResourceResponse_": "1e69e60b4e440fef134771110a12d047e6d50d6e5752846ec08f4f72686f5fe7"
+  }
+}

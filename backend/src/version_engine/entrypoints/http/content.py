@@ -15,15 +15,17 @@ from fastapi import APIRouter
 
 from src.version_engine.entrypoints.http.content_history import history_router
 from src.version_engine.entrypoints.http.content_operations import operations_router
-from src.version_engine.entrypoints.http.repository_management import management_router
 from src.version_engine.entrypoints.http.content_read import read_router
+from src.version_engine.entrypoints.http.content_resource import resource_router
 from src.version_engine.entrypoints.http.content_write import write_router
+from src.version_engine.entrypoints.http.repository_management import management_router
 
 router = APIRouter(
     prefix="/content",
     tags=["content"],
 )
 
+router.include_router(resource_router)
 router.include_router(read_router)
 router.include_router(write_router)
 router.include_router(history_router)

@@ -223,7 +223,8 @@ function handleAuthFailure(): void {
   if (window.location.pathname.startsWith('/login')) return;
   _redirectingToLogin = true;
   const go = () => {
-    window.location.href = '/login?session=expired';
+    const query = new URLSearchParams({ session: 'expired', redirect: window.location.pathname + window.location.search });
+    window.location.href = `/login?${query}`;
   };
   try {
     Promise.resolve(getSupabase().auth.signOut({ scope: 'local' })).finally(go);

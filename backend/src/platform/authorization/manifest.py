@@ -80,6 +80,7 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
         ("GET", f"/api/v1/content/{{project_id}}/{suffix}"): _human(action)
         for suffix, action in {
             "cat": ProjectAction.CONTENT_READ,
+            "resource": ProjectAction.CONTENT_READ,
             "download": ProjectAction.CONTENT_READ,
             "inline": ProjectAction.CONTENT_READ,
             "ls": ProjectAction.CONTENT_READ,

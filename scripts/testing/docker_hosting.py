@@ -119,7 +119,7 @@ def run_tests(root, output, command, environ, cli_env, image, result):
     resource_receipt = output / 'container-resources.json'
     resource_receipt.unlink(missing_ok=True)
     redis_name = 'issue-062-redis-' + values['HOSTING_TEST_STACK'].removeprefix('puppy-baseline-')
-    values.update(AUTH_SECURITY_REDIS_URL=f'redis://{redis_name}:6379/1',
+    values.update(
                   NOTIFICATIONS_REDIS_URL=f'redis://{redis_name}:6379/2',
                   ETL_REDIS_URL=f'redis://{redis_name}:6379/0')
     with tempfile.TemporaryDirectory(prefix='issue-062-docker-env-') as directory:

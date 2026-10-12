@@ -38,11 +38,11 @@ function publish() {
   mocks.listeners.forEach(listener => listener('SIGNED_IN', session));
   return { data: { session, user: session.user }, error: null };
 }
-function mount(desktop = true) {
+function mount(desktop = false) {
   window.history.replaceState(
     {},
     '',
-    desktop ? `/login?client=desktop&desktop_state=${state}` : '/login?redirect=%2Finvite%2Fone'
+    desktop ? `/login?client=desktop&desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A43123%2Fauth%2Fcallback&code_challenge=${state}` : '/login?redirect=%2Finvite%2Fone'
   );
   return render(
     <StrictMode>
@@ -79,13 +79,8 @@ beforeEach(() => {
   mocks.web.mockReturnValue({ auth });
   mocks.desktop.mockReturnValue({ auth });
   fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith('/auth/check-email')) return Response.json({ data: { exists: !String(fetcher.mock.calls.at(-1)?.[1]?.body).includes('new@') } });
     if (url.endsWith('/auth/methods')) return Response.json({ data: { providers: enabled } });
-    if (url.endsWith('/desktop/bind')) return Response.json({ data: { bound: true } });
-    if (url.endsWith('/desktop/complete'))
-      return Response.json({
-        data: { redirect_url: `http://127.0.0.1:43123/auth/callback?state=${state}&code=one-time` },
-      });
-    if (url.endsWith('/auth/check-email')) return Response.json({ data: { exists: true } });
     if (url.endsWith('/auth/initialize')) return Response.json({ data: {} });
     throw new Error('Unexpected request: ' + url);
   });
@@ -97,7 +92,7 @@ afterEach(() => {
 });
 
 it.each(['Google', 'GitHub'])(
-  'Desktop %s button uses Supabase and preserves desktop intent',
+  'Web %s button uses Supabase and preserves invite destination',
   async provider => {
     mount();
     const button = await screen.findByRole('button', { name: `Continue with ${provider}` });
@@ -106,10 +101,10 @@ it.each(['Google', 'GitHub'])(
     await waitFor(() => expect(mocks.oauth).toHaveBeenCalledTimes(1));
     const options = mocks.oauth.mock.calls[0][0];
     expect(options.provider).toBe(provider.toLowerCase());
-    expect(new URL(options.options.redirectTo).searchParams.get('desktop_state')).toBe(state);
-    expect(mocks.web).not.toHaveBeenCalled();
+    expect(new URL(options.options.redirectTo).searchParams.get('next')).toBe('/invite/one');
+    expect(mocks.web).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls.every(([url]) => !String(url).includes('/desktop/login'))).toBe(true);
-    expect(mocks.desktop).toHaveBeenCalledTimes(1); // Strict Mode replay
+    expect(mocks.desktop).not.toHaveBeenCalled(); // No temporary Desktop browser session
   }
 );
 
@@ -139,51 +134,31 @@ it('Web email sign-in preserves invite destination and uses common initializatio
     fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/initialize'))
   ).toHaveLength(1);
   expect(mocks.desktop).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes("check-email"))).toBe(true);
 });
 
-it('Desktop email sign-in and auth event share a single handoff', async () => {
-  mount();
-  const input = screen.getByPlaceholderText('Your email address');
-  await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
-  fireEvent.change(input, { target: { value: 'user@example.test' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-  const password = await screen.findByPlaceholderText('Enter your password');
-  fireEvent.change(password, { target: { value: 'password123' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
-  await waitFor(() => expect(mocks.stop).toHaveBeenCalled());
-  const calls = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/desktop/complete'));
-  expect(calls).toHaveLength(1);
-  const body = JSON.parse((calls[0] as any)[1].body);
-  expect(body).toMatchObject({ state, access_token: 'access', refresh_token: 'refresh' });
-  expect(body.browser_proof).toMatch(/^[a-f0-9]{64}$/);
-  expect(sessionStorage.length).toBe(0);
-  expect(mocks.signOut).not.toHaveBeenCalled();
-});
-
-it('OAuth return consumes its code once and finishes without touching Web cookies', async () => {
-  sessionStorage.setItem(
-    `puppyone:desktop-auth:${state}:attempt`,
-    JSON.stringify({ createdAt: Date.now(), proof: 'a'.repeat(64) })
-  );
-  window.history.replaceState(
-    {},
-    '',
-    `/login?client=desktop&desktop_state=${state}&auth_code=provider-code`
-  );
-  render(
-    <StrictMode>
-      <SupabaseAuthProvider>
-        <LoginPage />
-      </SupabaseAuthProvider>
-    </StrictMode>
-  );
-  await waitFor(() => expect(mocks.stop).toHaveBeenCalledOnce());
-  expect(mocks.exchange).toHaveBeenCalledExactlyOnceWith('provider-code');
-  expect(window.location.search).not.toContain('auth_code');
-  expect(
-    fetcher.mock.calls.filter(([url]) => String(url).endsWith('/desktop/complete'))
-  ).toHaveLength(1);
+it('Desktop uses the exact existing email-first UI and never reads Web cookies', async () => {
+  mount(true);
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByPlaceholderText('Enter your password')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Create an account' })).toBeNull();
+  expect(mocks.desktop).toHaveBeenCalledOnce();
   expect(mocks.web).not.toHaveBeenCalled();
+  const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+  fireEvent.change(screen.getByPlaceholderText('Your email address'), { target: { value: 'user@example.test' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.change(await screen.findByPlaceholderText('Enter your password'), { target: { value: 'password123' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  const form = submit.mock.instances[0] as HTMLFormElement;
+  expect(form.method).toBe('post');
+  expect(form.action).toBe('http://127.0.0.1:43123/auth/session');
+  expect(new FormData(form).get('refresh_token')).toBe('refresh');
+  expect(new FormData(form).get('state')).toBe(state);
+  expect(form.action).not.toContain('refresh');
+  expect(mocks.signOut).not.toHaveBeenCalled();
+  expect(mocks.push).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('/auth/desktop'))).toBe(false);
 });
 
 it('failed initialization is actionable and cannot submit a half-initialized login', async () => {
@@ -201,12 +176,6 @@ it('failed initialization is actionable and cannot submit a half-initialized log
 });
 
 it('email signup and OTP converge on the same Web completion', async () => {
-  const originalFetch = fetcher.getMockImplementation()! as (url: string) => Promise<Response>;
-  fetcher.mockImplementation(async (url: string) =>
-    url.endsWith('/auth/check-email')
-      ? Response.json({ data: { exists: false } })
-      : originalFetch(url)
-  );
   mount(false);
   const email = screen.getByPlaceholderText('Your email address');
   await waitFor(() => expect((email as HTMLInputElement).disabled).toBe(false));

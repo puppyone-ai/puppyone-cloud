@@ -1,7 +1,8 @@
+import { desktopCallbackUrl } from './supabase/desktop-callback';
 export type SignInProvider = 'email' | 'google' | 'github';
-export type LoginIntent = { kind: 'web'; next: string | null } | { kind: 'desktop'; state: string };
-export const DESKTOP_STATE = /^[A-Za-z0-9_-]{32,128}$/;
 export const DESKTOP_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+export type DesktopLoginIntent = { kind: 'desktop'; state: string; callbackUrl: string; challenge: string };
+export type LoginIntent = { kind: 'web'; next: string | null } | DesktopLoginIntent;
 
 export function safeNext(value: string | null | undefined): string | null {
   if (
@@ -9,7 +10,7 @@ export function safeNext(value: string | null | undefined): string | null {
     !value.startsWith('/') ||
     value.startsWith('//') ||
     /[\\\u0000-\u0020]/.test(value) ||
-    /%(?:5c|0[0-9a-f]|1[0-9a-f]|20)/i.test(value)
+    /%(?:5c|0[0-9a-f]|1[0-9a-f])/i.test(value)
   )
     return null;
   const parsed = new URL(value, 'https://return.invalid');
@@ -22,29 +23,27 @@ export function safeNext(value: string | null | undefined): string | null {
 }
 
 export function readLoginIntent(url: URL): LoginIntent {
-  if (url.searchParams.get('client') !== 'desktop')
-    return {
-      kind: 'web',
-      next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')),
-    };
-  const state = url.searchParams.get('desktop_state') ?? url.searchParams.get('state') ?? '';
-  if (!DESKTOP_STATE.test(state))
-    throw new Error('Sign-in request is invalid or expired. Start sign-in again.');
-  return { kind: 'desktop', state };
+  if (url.searchParams.get('client') === 'desktop') {
+    const state = url.searchParams.get('desktop_state') ?? '';
+    const challenge = url.searchParams.get('code_challenge') ?? '';
+    if (!/^[A-Za-z0-9_-]{43,128}$/.test(state) || !/^[A-Za-z0-9_-]{43}$/.test(challenge)
+      || ['desktop_state', 'desktop_callback', 'code_challenge'].some(key => url.searchParams.getAll(key).length !== 1))
+      throw new Error('Sign-in request is invalid or expired. Start sign-in again from Desktop.');
+    return { kind: 'desktop', state, challenge, callbackUrl: desktopCallbackUrl(url.searchParams.get('desktop_callback') ?? '').toString() };
+  }
+  return { kind: 'web', next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')) };
 }
 
 export function loginReturnPath(intent: LoginIntent): string {
-  const query = new URLSearchParams();
-  if (intent.kind === 'desktop') {
-    query.set('client', 'desktop');
-    query.set('desktop_state', intent.state);
-  } else if (intent.next) query.set('redirect', intent.next);
-  return '/login' + (query.size ? `?${query}` : '');
+  if (intent.kind === 'desktop') return '/login?' + new URLSearchParams({ client: 'desktop', desktop_state: intent.state, desktop_callback: intent.callbackUrl, code_challenge: intent.challenge });
+  return '/login' + (intent.next ? `?${new URLSearchParams({ redirect: intent.next })}` : '');
 }
 
 export function oauthCallbackUrl(base: string, intent: LoginIntent): string {
   const url = new URL(base);
-  if (intent.kind === 'desktop') url.searchParams.set('desktop_state', intent.state);
-  else if (intent.next) url.searchParams.set('next', intent.next);
+  if (intent.kind === 'desktop') {
+    url.searchParams.set('desktop_state', intent.state);
+    url.searchParams.set('desktop_callback', intent.callbackUrl);
+  } else if (intent.next) url.searchParams.set('next', intent.next);
   return url.toString();
 }

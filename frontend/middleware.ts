@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createAuthServerClient } from '@/features/auth/supabase/server-client';
 import { safeNext } from '@/features/auth/login-intent';
+import { isWorkspaceResourcePath } from '@puppyone/cloud-core';
 
 const LOCALES = new Set(['en', 'zh-CN']);
 const PROTECTED_ROUTES = [
@@ -34,12 +35,12 @@ export async function middleware(request: NextRequest) {
     }
     response.headers.set('x-next-intl-locale', detectLocale(request));
     response.headers.set('Cache-Control', 'private, no-store');
-    if (pathname === '/login') response.headers.set('Referrer-Policy', 'no-referrer');
+    if (pathname === '/login') response.headers.set('Referrer-Policy',
+      request.nextUrl.searchParams.get('client') === 'desktop' ? 'origin' : 'no-referrer');
     return response;
   };
 
-  // The native flow owns a temporary, independent browser session. Reading or
-  // refreshing Web cookies here would silently mix two login contexts.
+  // The existing login UI owns a temporary Desktop session, independent of Web cookies.
   if (pathname === '/login' && request.nextUrl.searchParams.get('client') === 'desktop')
     return finish();
 
@@ -66,7 +67,7 @@ export async function middleware(request: NextRequest) {
       new URL(safeNext(request.nextUrl.searchParams.get('redirect')) ?? '/home', request.url)
     );
   }
-  const protectedRoute = PROTECTED_ROUTES.some(
+  const protectedRoute = isWorkspaceResourcePath(pathname) || PROTECTED_ROUTES.some(
     route => pathname === route || pathname.startsWith(route + '/')
   );
   if (!user && protectedRoute) {
@@ -80,6 +81,7 @@ export async function middleware(request: NextRequest) {
 // Auth callbacks own their cookie exchange and are deliberately outside this middleware.
 export const config = {
   matcher: [
+    '/:workspaceId([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/:path*',
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$|auth/callback|auth/confirm|oauth/callback|api).*)',
   ],
 };

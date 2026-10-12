@@ -1,0 +1,31 @@
+{
+  "paths": {
+    "added": {},
+    "changed": {},
+    "removed": {
+      "/api/v1/auth/check-email": "115cdf71ed3e0b9280c0b433e33092addceb1df0014d46c930fd213ffd25d7e0",
+      "/api/v1/auth/desktop/bind": "408a2961a80aa578a47d2249d00340a02a5957ac0ba8c90a56b7f6fd4881601a",
+      "/api/v1/auth/desktop/callback": "16a69404676b900b0e06135b3538e69c54f7f69420f5f3e824d783e614a56609",
+      "/api/v1/auth/desktop/complete": "01872ea4801b8b1664d262690f907903f7b54b9b84daa066891cfaa5a5323bb5",
+      "/api/v1/auth/desktop/exchange": "73107690039c589f3a0e69f16a07aea48fd1855f998f1b09eeb314ecc6b30179",
+      "/api/v1/auth/desktop/start": "c2eede72a17a9c3c596bbb4b494aedd8bae8b5f700d91056098d4cd9f4e34569"
+    }
+  },
+  "schemas": {
+    "added": {},
+    "changed": {},
+    "removed": {
+      "ApiResponse_CheckEmailResponse_": "c29a3a2fc920dc84cd792d8acd3873015ea7cb4812d074d8ea02011438f21913",
+      "ApiResponse_DesktopCompleteResponse_": "05e02cc89aaf3184a93a005a35c0840216a57ee911e90b397d27c7230eaedc6f",
+      "ApiResponse_DesktopStartResponse_": "554b52543918e0b1c54c86a6915dc83e99ffdbf010d5bbf64072c5546c094989",
+      "CheckEmailRequest": "21158e71137a5c72c2d1f0e1846c0f5328521888c42c06a8671c9574633e9977",
+      "CheckEmailResponse": "b1530778572de01afaffb2a912d43f04c2eb021a7210cb9ee64839b1909a5620",
+      "DesktopBindRequest": "865965d5b8bb32c39d81677f23332456c489631d255d38209fd9d328ce09d165",
+      "DesktopCompleteRequest": "403a0c6a200822083599e9c5d5654471e3766d7f96535aab9b73cf6c5d978072",
+      "DesktopCompleteResponse": "18fbbb6304e3eba7967c623557119ce790b4d2c810aef6a006acd2525d19b06b",
+      "DesktopExchangeRequest": "5c79ea4c01cd933dc443944d1da0a1724eb19e082bf47b15057df8e8a1e40b44",
+      "DesktopStartRequest": "b7aadc32f78f6d668e69d6fa5aff227851da383537ac270d2d5108e6f5627c49",
+      "DesktopStartResponse": "cc01370215b98afe6b48d4fb79bc820637a7fe5efd4fa6c9ec529cbf15cb98f8"
+    }
+  }
+}

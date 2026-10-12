@@ -8,8 +8,6 @@ def test_allowed_hosts_accepts_single_string() -> None:
         DEBUG=False,
         SKIP_AUTH=False,
         ACCESS_CREDENTIAL_HASH_SECRET="allowed-hosts-test-secret-not-for-production",
-        AUTH_SECURITY_REDIS_URL="redis://test.invalid:6379/0",
-        DESKTOP_AUTH_PUBLIC_BASE_URL="https://auth.example.com",
         JWT_SECRET="allowed-hosts-jwt-test-secret-not-for-production",
         MCP_TOKEN_SECRET="allowed-hosts-mcp-test-secret-not-for-production",
         ALLOWED_HOSTS="https://frontend.example.com",
@@ -25,8 +23,6 @@ def test_allowed_hosts_accepts_comma_separated_string() -> None:
         DEBUG=False,
         SKIP_AUTH=False,
         ACCESS_CREDENTIAL_HASH_SECRET="allowed-hosts-test-secret-not-for-production",
-        AUTH_SECURITY_REDIS_URL="redis://test.invalid:6379/0",
-        DESKTOP_AUTH_PUBLIC_BASE_URL="https://auth.example.com",
         JWT_SECRET="allowed-hosts-jwt-test-secret-not-for-production",
         MCP_TOKEN_SECRET="allowed-hosts-mcp-test-secret-not-for-production",
         ALLOWED_HOSTS="https://a.example.com, https://b.example.com/",
@@ -74,34 +70,6 @@ def test_allowed_hosts_default_for_development_without_debug() -> None:
     ]
 
 
-def test_auth_security_redis_url_prefers_dedicated_setting() -> None:
-    settings = Settings(
-        _env_file=None,
-        APP_ENV="test",
-        AUTH_SECURITY_REDIS_URL="redis://dedicated.invalid:6379/0",
-        RATELIMIT_REDIS_URL="redis://legacy-rate-limit.invalid:6379/0",
-        ETL_REDIS_URL="redis://legacy-etl.invalid:6379/0",
-    )
-
-    assert settings.auth_security_redis_url == "redis://dedicated.invalid:6379/0"
-
-
-def test_auth_security_redis_url_reuses_legacy_shared_etl_setting() -> None:
-    settings = Settings(
-        _env_file=None,
-        APP_ENV="test",
-        ETL_REDIS_URL="redis://legacy-etl.invalid:6379/0",
-    )
-
-    assert settings.auth_security_redis_url == "redis://legacy-etl.invalid:6379/0"
-
-
-def test_auth_security_redis_url_prefers_legacy_rate_limit_over_etl() -> None:
-    settings = Settings(
-        _env_file=None,
-        APP_ENV="test",
-        RATELIMIT_REDIS_URL="redis://legacy-rate-limit.invalid:6379/0",
-        ETL_REDIS_URL="redis://legacy-etl.invalid:6379/0",
-    )
-
-    assert settings.auth_security_redis_url == "redis://legacy-rate-limit.invalid:6379/0"
+def test_authentication_configuration_has_no_redis_dependency():
+    settings = Settings(_env_file=None, APP_ENV="test", ETL_REDIS_URL="")
+    assert not any(name.startswith(("AUTH_SECURITY_REDIS", "RATELIMIT_REDIS", "DESKTOP_AUTH_")) for name in type(settings).model_fields)
