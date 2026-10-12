@@ -159,5 +159,6 @@ todo/
 backend/.hosting-test-results/
 backend/.organization-test-results/
 backend/.native-migration-test-results/
+e2e/test-results/
 
 /backend/.native-retirement-hosting-results/
