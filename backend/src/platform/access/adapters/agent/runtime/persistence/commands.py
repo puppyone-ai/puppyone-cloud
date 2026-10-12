@@ -121,6 +121,10 @@ class RunRepository(RunQueries):
     def submit_run(self, **values):
         return self.rpc("submit_context", **values)
 
+    def claim_workbench_run(self, *, worker):
+        value = self.rpc("claim_workbench_execution", worker=worker)
+        return {**value["run"], "_execution": value} if value else None
+
     def claim_run(self, *, worker):
         value = self.rpc("claim_execution", worker=worker)
         if value is None:

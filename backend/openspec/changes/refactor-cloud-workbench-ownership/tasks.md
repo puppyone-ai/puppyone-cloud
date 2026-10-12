@@ -3,6 +3,9 @@
 - [ ] Separate task process lifetime from shared provider lifetime; verify legacy tests.
 - [ ] Add durable workbench identity, attachment and fenced lifecycle with upgrade tests.
 - [ ] Route admitted Runs through shared ownership without filesystem rollback.
+  - [x] Connect durable task identities and conversation recovery to the existing supervisor.
+  - [x] Share the existing dispatcher/concurrency limit with explicitly configured shared claims.
+  - [ ] Supply the production workbench lifecycle/metering owner and admission composition; accept the real provider path.
 - [ ] Bind own refs and preserve the native publication authority.
 - [ ] Add authorized interaction policy and workbench lifecycle/usage contracts.
 - [ ] Verify recovery, cleanup, concurrency and repository regressions.
@@ -31,16 +34,23 @@ the original request digest and Session execution path.
   trusted Git. The model UID/GID is dropped before exec, with no-new-privileges.
   Trusted Git uses the same task UID before model start or after quiescence, so
   cleanup cannot orphan task Git under a shared service UID.
-  The UID allocator, shared supervisor and resource manager are not yet connected.
+  The UID allocator and SharedRecovery are now connected to the existing
+  RunSupervisor through SharedTasks. The production resource/metering owner is
+  still missing, so default composition does not claim or admit shared Runs.
 - BuildKit acceptance runs real concurrent Pi processes, detached descendants,
   PTY and HTTP preview with deterministic model frames and no external network.
   This is not Docker adapter pause/resume or E2B acceptance.
-- A separate, unconnected SharedRecovery helper preserves conversation/tool
-  checkpoints without filesystem snapshots and retains an original Run-bound
-  publication candidate on retry. It is not production takeover integration.
-- Run takeover/conversation recovery integration, live branch/ref publication,
-  authenticated interaction, activity leases, shared compute metering and
-  reconstruction remain unimplemented. The existing Session Git helper is not a completed shared-ref
+- Shared supervisor tests use real PostgreSQL/PostgREST and the actual task
+  ledger, run commands, authorization evaluation, checkpoints and dispatcher;
+  the provider/lifecycle and publication ports are synthetic. They cover
+  takeover, unknown tools, cleanup retries, revocation, shutdown, continuation
+  after a known failure and original-candidate publication retry. They do not
+  prove provider lifecycle or native independent-ref publication acceptance.
+- A required WorkbenchOwner port owns compute admission and meter checks; Runs
+  no longer reserve/finish a whole-computer meter in the shared path. Its
+  production implementation, live branch/ref publication, authenticated
+  interaction, activity leases, shared compute metering and reconstruction
+  remain incomplete. The existing Session Git helper is not a completed shared-ref
   publication contract. Concurrent user mutation of Git metadata/configuration
   also needs explicit adversarial credential/command-isolation verification;
   the service-only Git lock does not serialize or trust ordinary filesystem edits.
@@ -53,7 +63,10 @@ Reproduction: from `backend/`, build `agent-worker` as
 context. Run `test_workbench_ownership.py`, `test_workbench_attachment.py`,
 `test_workbench_task_leases.py` and `test_migration_release.py` through the owned
 PostgreSQL fixture; `test_shared_task_adapter.py` and `test_shared_recovery.py`
-cover the currently unconnected Python task/recovery boundaries. The full
+cover the Python task/recovery boundaries. `test_shared_supervisor.py` and
+`test_shared_dispatcher.py` exercise the integrated control-plane path with
+synthetic provider ports. For the user's no-paid-resource boundary, explicitly
+set `CLOUD_AGENT_TEST_E2B=0`, `E2B_API_KEY=''` and `MANAGED_AI_ENABLED=false`. The full
 Docker adapter suite is `test_workbench_task_processes.py`; it must also pass
 before provider acceptance. Canonical issue evidence records command results
 and environmental limitations separately.

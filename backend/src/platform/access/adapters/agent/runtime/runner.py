@@ -42,11 +42,15 @@ class RunSupervisor:
         worker_lifecycle: WorkerLifecycle,
         bound_tools=None,
         workspace=None,
+        shared_tasks=None,
     ):
         self.repo, self.admission, self.publication = repository, admission, publication
         self.inference, self.billing = inference, billing
         self.checkpoints = checkpoints or Checkpoints()
-        self.recovery = Recovery()
+        if workspace is not None and shared_tasks is not None:
+            raise ValueError("Shared tasks cannot use a Session resource owner")
+        self.shared_tasks = shared_tasks
+        self.recovery = shared_tasks.recovery if shared_tasks else Recovery()
         self.worker_factory, self.bound_tools = worker_factory, bound_tools
         self.worker_lifecycle = worker_lifecycle
         self.workspace = workspace
@@ -99,6 +103,9 @@ class RunSupervisor:
         return self.context.grant
 
     async def check_billing(self, billing_run_id):
+        if self.shared_tasks:
+            await self.shared_tasks.check()
+            return
         if billing_run_id:
             try:
                 await self.billing.check_session(billing_run_id)
@@ -174,6 +181,10 @@ class RunSupervisor:
         return manifest
 
     async def run_claim(self, run):
+        if bool(run.get("workbench_id")) != (self.shared_tasks is not None):
+            raise PermissionError("The shared runtime must be configured explicitly")
+        if self.shared_tasks and run.get("billing_run_id"):
+            raise PermissionError("Shared compute cannot be owned by a Run billing reservation")
         self.metrics = DatabaseTrace(run["id"])
         self.started_at = time.monotonic()
         with database_trace(self.metrics):
@@ -205,6 +216,11 @@ class RunSupervisor:
             )
             for task in done:
                 await task
+        except asyncio.CancelledError:
+            if self.shared_tasks and self.worker:
+                with suppress(Exception):
+                    await asyncio.shield(self.worker.stop())
+            raise
         except EndRun as exc:
             outcome = (exc.state, exc.code)
         except PublicationRejected:
@@ -226,7 +242,10 @@ class RunSupervisor:
                 or current["execution_id"] != run["execution_id"]
                 or current["fence"] != run["fence"]
             ):
-                if self.run["billing_run_id"]:
+                if self.shared_tasks and self.worker:
+                    with suppress(Exception):
+                        await self.worker.stop()  # Only the captured old UID; no successor/VM cleanup.
+                elif self.run["billing_run_id"]:
                     await self.billing.detach_session(self.run["billing_run_id"])
                 return
             self.run = current
@@ -249,6 +268,13 @@ class RunSupervisor:
         owner, so the generic ephemeral-session reaper cannot erase its only
         surviving files. Confirmed checkpoints remain valid if a provider died.
         """
+        if self.shared_tasks:
+            try:
+                await self.shared_tasks.close(self.run, self.worker)
+                return True  # Files stay in the independently owned workbench.
+            except Exception:
+                logger.exception("cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]})
+                return False
         if self.value is None and self.run["checkpoint"]:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
         saved = True
@@ -331,14 +357,17 @@ class RunSupervisor:
             raise EndRun("outcome_unknown", "tool_outcome_unknown")
         if self.run["state"] == "publishing":
             saved = await self.checkpoints.load(self.run, self.run["checkpoint"])
-            if saved.get("reason") != "settled" or not saved.get("recovery"):
+            ready = (self.recovery.publication_ready(saved, self.run) if self.shared_tasks
+                     else saved.get("reason") == "settled" and bool(saved.get("recovery")))
+            if not ready:
                 raise EndRun("outcome_unknown", "publication_outcome_unknown")
             # A durable, quiesced candidate can be reconciled by the original
             # operation key. Never rerun the model or invent a new commit.
 
-        # Takeover first quiesces old providers; no old process is reattached as
-        # an execution owner. All confirmed state lives outside that provider.
-        for execution in self.execution["executions"]:
+        # Shared takeover closes old tasks, never their computer or live files.
+        if self.shared_tasks:
+            await self.shared_tasks.close(self.run, predecessors_only=True)
+        for execution in ([] if self.shared_tasks else self.execution["executions"]):
             if execution["id"] != self.run["execution_id"] and execution["resource"]:
                 # With no executing tool, the last checkpoint/receipt is the
                 # complete acknowledged state. Quiesce the old process before
@@ -382,34 +411,28 @@ class RunSupervisor:
                 self.value = await asyncio.to_thread(self.publication.capture, self.run, grant)
             previous = self.execution["previous"]
             if previous and previous["checkpoint"]:
-                if previous["state"] not in {"succeeded", "stopped", "failed"} or (
-                    previous["publication"] or {}
-                ).get("status") not in {"committed", "no_changes"}:
+                if (previous["state"] not in {"succeeded", "stopped", "failed"}
+                    or (not self.shared_tasks and (previous["publication"] or {}).get("status")
+                        not in {"committed", "no_changes"})
+                    or (self.shared_tasks and previous.get("workbench_id") != self.run["workbench_id"])):
                     raise EndRun("failed", "previous_run_requires_resolution")
                 old = await self.checkpoints.load(previous, previous["checkpoint"])
-                self.value.update(
-                    entries=old["entries"], leaf_id=old["leaf_id"], recovery=old.get("recovery")
-                )
+                if self.shared_tasks and (old.get("recovery") is not None or
+                    (old.get("workbench") or {}).get("id", self.run["workbench_id"]) != self.run["workbench_id"]):
+                    raise EndRun("failed", "previous_workbench_binding_mismatch")
+                self.value.update(entries=old["entries"], leaf_id=old["leaf_id"],
+                                  recovery=None if self.shared_tasks else old.get("recovery"))
             self.value["run_entry_start"] = len(self.value.get("entries") or [])
             self.durable = await self.checkpoints.save(self.run, self.value)
-        if self.run["billing_run_id"]:
-            billing_id = await self.billing.resume_session(
-                self.run["billing_run_id"],
-                project_id=self.run["project_id"],
-                actor_id=self.run["user_id"],
-            )
+        if self.shared_tasks:
+            await self.check()  # Recheck the Run fence/revision before resource-owner admission.
+            self.worker, self.value = await self.shared_tasks.acquire(self.run, self.value)
+            self.durable = await self.checkpoints.save(self.run, self.value)
+            billing_id = None  # The lifecycle owner reserved/checks the one shared meter.
         else:
-            billing_id = await self.billing.start_session(
-                audit_context={
-                    "source": "chat_agent",
-                    "run_id": "cloud-agent:" + self.run["id"],
-                    "project_id": self.run["project_id"],
-                    "user_id": self.run["user_id"],
-                    "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
-                }
-            )
-        self.worker = self.worker_factory(self.run["execution_id"], self.run["project_id"])
-        self.worker.restore_point = self.value.get("recovery")
+            billing_id = await self.start_legacy_billing()
+            self.worker = self.worker_factory(self.run["execution_id"], self.run["project_id"])
+            self.worker.restore_point = self.value.get("recovery")
 
         async def git_exchange(frame):
             # Git reads check current Project authority in their own SQL read;
@@ -434,11 +457,11 @@ class RunSupervisor:
             resource=self.worker.resource,
         )
         with database_stage("sandbox_acquire"):
-            resource = (
-                await self.workspace.acquire(self.run, self.value, self.worker)
-                if self.workspace
-                else await self.worker.create()
-            )
+            if self.shared_tasks:
+                resource = self.worker.resource
+            else:
+                resource = (await self.workspace.acquire(self.run, self.value, self.worker)
+                            if self.workspace else await self.worker.create())
         await self.write("resource", {}, resource=resource)
         definitions = (
             await asyncio.to_thread(self.bound_tools.definitions, self.run)
@@ -461,6 +484,16 @@ class RunSupervisor:
         )
         await self.consume()
         await self.publish(self.context.grant)
+
+    async def start_legacy_billing(self):
+        if self.run["billing_run_id"]:
+            return await self.billing.resume_session(self.run["billing_run_id"],
+                project_id=self.run["project_id"], actor_id=self.run["user_id"])
+        return await self.billing.start_session(audit_context={
+            "source": "chat_agent", "run_id": "cloud-agent:" + self.run["id"],
+            "project_id": self.run["project_id"], "user_id": self.run["user_id"],
+            "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
+        })
 
     async def consume(self):
         while True:
@@ -529,7 +562,8 @@ class RunSupervisor:
                     raise ValueError("Sandbox artifact does not support provider workspaces")
                 if frame.get("operation_version") != 1:
                     raise EndRun("failed", "worker_protocol_mismatch")
-                self.value["recovery"] = self.worker.recovery
+                if not self.shared_tasks:
+                    self.value["recovery"] = self.worker.recovery
             else:
                 raise ValueError("Unknown worker frame")
 
@@ -691,8 +725,15 @@ class RunSupervisor:
         # crash. Provider deletion is safe only once recovery data is durable.
         if not self.finished:
             await self.write("heartbeat")
-        completed_execution = self.finished and not retain_resource and self.worker is not None
         workspace_released = False
+        if self.shared_tasks and not retain_resource:
+            try:
+                await self.shared_tasks.close(self.run, self.worker)
+                workspace_released = True
+            except Exception:
+                retain_resource = True
+                logger.exception("cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]})
+        completed_execution = self.finished and not retain_resource and self.worker is not None
         if self.workspace and self.workspace.row and self.worker:
             with database_stage("sandbox_release"):
                 if state == "succeeded" and not retain_resource:

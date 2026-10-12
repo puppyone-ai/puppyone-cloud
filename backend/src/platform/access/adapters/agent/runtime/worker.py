@@ -5,9 +5,11 @@ import logging
 from uuid import uuid4
 
 from src.platform.access.adapters.agent.runtime.admission import Admission
+from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
 from src.platform.access.adapters.agent.runtime.publication import Publication
 from src.platform.access.adapters.agent.runtime.repository import RunRepository
 from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.shared_tasks import SharedTasks
 from src.platform.access.adapters.agent.runtime.tools import BoundTools
 from src.platform.access.adapters.agent.runtime.workspace import SessionWorkspace, reap_workspaces
 from src.platform.billing.gateway import get_billing_gateway
@@ -20,7 +22,7 @@ from src.version_engine.bootstrap.dependencies import build_worker_version_engin
 logger = logging.getLogger(__name__)
 
 
-async def serve():
+async def serve(*, workbench_owner=None):
     from src.config import settings
 
     repository = RunRepository()
@@ -32,6 +34,8 @@ async def serve():
     bound_tools = BoundTools(admission)
     worker_id = str(uuid4())
     active = set()
+    shared_first = False
+    task_repository = SharedTaskRepository(repository.client) if workbench_owner else None
 
     async def supervise(run):
         try:
@@ -44,7 +48,9 @@ async def serve():
                 bound_tools=bound_tools,
                 worker_factory=PiWorker,
                 worker_lifecycle=PiWorker,
-                workspace=SessionWorkspace(repository),
+                workspace=None if run.get("workbench_id") else SessionWorkspace(repository),
+                shared_tasks=(SharedTasks(task_repository, workbench_owner)
+                              if run.get("workbench_id") else None),
             ).run_claim(run)
         except asyncio.CancelledError:
             raise
@@ -56,6 +62,8 @@ async def serve():
         while True:
             try:
                 await reap_workspaces(repository, PiWorker)
+                if workbench_owner:
+                    await workbench_owner.reap()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -69,7 +77,17 @@ async def serve():
                 await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
                 continue
             try:
-                run = await asyncio.to_thread(repository.claim_run, worker=worker_id)
+                claims = [repository.claim_run]
+                if workbench_owner:
+                    claims.append(repository.claim_workbench_run)
+                    if shared_first:
+                        claims.reverse()
+                    shared_first = not shared_first
+                run = None
+                for claim in claims:
+                    run = await asyncio.to_thread(claim, worker=worker_id)
+                    if run is not None:
+                        break
                 if run is None:
                     await asyncio.sleep(1)
                     continue
