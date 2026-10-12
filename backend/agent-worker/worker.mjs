@@ -129,7 +129,7 @@ async function start(value) {
       if (result.error) throw new Error(result.error);
       return result.result;
     } }));
-  ({ session } = await createAgentSession({ cwd: root, agentDir: '/tmp/puppyone-agent', modelRuntime,
+  ({ session } = await createAgentSession({ cwd: root, agentDir: `${process.env.HOME}/.pi/agent`, modelRuntime,
     model: modelRuntime.getModel('puppyone-cloud', config.model), thinkingLevel: 'off', sessionManager: manager,
     resourceLoader, tools: [...builtins.map(t => t.name), ...custom.map(t => t.name)],
     customTools: [...builtins.map(wrap), ...custom],

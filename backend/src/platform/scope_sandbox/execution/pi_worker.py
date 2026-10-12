@@ -9,7 +9,7 @@ import codecs
 import json
 import time
 from contextlib import suppress
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.config import settings
 from src.infra.supabase.instrumentation import database_stage
@@ -58,6 +58,31 @@ class PiWorker:
         self.reconnecting = False
         self.output_sequence = 0
         self.resource["recovery_volume"] = "puppyone-agent-recovery-" + execution_id
+        self.workbench = None
+
+    def bind_workbench(self, identity, generation, execution_uid):
+        """Trusted durable attachment, never a value supplied by a model/client."""
+        UUID(identity)
+        UUID(generation)
+        if type(execution_uid) is not int or not 20000 <= execution_uid < 60000:
+            raise ValueError("Invalid workbench execution UID")
+        if self.process or self.sandbox:
+            raise ValueError("Cannot rebind an active worker")
+        self.workbench = {
+            "id": identity, "generation": generation, "execution_uid": execution_uid
+        }
+        self.resource.update(workspace_id=identity, workbench_id=identity,
+                             workspace_generation=generation)
+
+    async def join(self, resource):
+        """Attach a task to existing compute without changing its execution ID."""
+        if not self.workbench or (
+            resource.get("workbench_id") != self.workbench["id"]
+            or resource.get("workspace_generation") != self.workbench["generation"]
+        ):
+            raise PermissionError("WorkBench resource binding mismatch")
+        await self.resume(resource)
+        return dict(self.resource)
 
     async def _docker(self, *args):
         proc = await asyncio.create_subprocess_exec(
@@ -106,6 +131,8 @@ class PiWorker:
         return worker
 
     async def create(self):
+        if self.workbench and self.restore_point:
+            raise ValueError("A task cannot restore a shared workbench")
         if self.restore_point:
             if (
                 self.restore_point["project_id"] != self.project_id
@@ -214,7 +241,8 @@ class PiWorker:
         ):
             raise PermissionError("Workspace resource binding mismatch")
         self.resource = dict(resource)
-        self.execution_id = resource["session_id"]
+        if not self.workbench:
+            self.execution_id = resource["session_id"]
         self.restore_point = None
         if self.provider == "docker":
             try:
@@ -249,6 +277,8 @@ class PiWorker:
         return dict(self.resource)
 
     async def pause(self):
+        if self.workbench:
+            raise ValueError("Only the workbench lifecycle owner may pause compute")
         # End the run's processes/relay, then park the SAME compute resource.
         # Docker PID 1 is a persistent supervisor, not this control connection.
         self.reconnecting = True
@@ -364,6 +394,12 @@ class PiWorker:
             self.controls.pop(identity, None)
 
     async def _open_control(self):
+        arguments = (
+            ["--task-uid", str(self.workbench["execution_uid"]),
+             "--workbench", self.workbench["id"],
+             "--generation", self.workbench["generation"]]
+            if self.workbench else []
+        )
         if self.provider == "docker":
             command = (
                 [
@@ -374,6 +410,7 @@ class PiWorker:
                     self.resource["resource_id"],
                     "node",
                     "/opt/puppyone-agent/controller.mjs",
+                    *arguments,
                 ]
                 if getattr(self, "attached", False)
                 else ["docker", "start", "-ai", self.resource["resource_id"]]
@@ -404,7 +441,7 @@ class PiWorker:
             self.stderr_reader = asyncio.create_task(drain_stderr())
         else:
             self.handle = await self.sandbox.commands.run(
-                "node /opt/puppyone-agent/controller.mjs",
+                " ".join(["node", "/opt/puppyone-agent/controller.mjs", *arguments]),
                 cwd="/workspace",
                 user="root",
                 stdin=True,
@@ -426,6 +463,8 @@ class PiWorker:
         capabilities = await self.control("capabilities")
         if capabilities.get("workspace_lifecycle") != 1:
             raise RuntimeError("Sandbox artifact does not support Session workspace lifecycle")
+        if self.workbench and capabilities.get("shared_workbench") != 1:
+            raise RuntimeError("Sandbox artifact does not support shared workbench tasks")
         workspace = config["workspace"]
         await self.control(
             "prepare",
@@ -439,7 +478,9 @@ class PiWorker:
                 "reuse": self.reused,
             },
         )
-        if config.get("resume_workspace") and self.restore_point:
+        if self.workbench:
+            self.recovery = None
+        elif config.get("resume_workspace") and self.restore_point:
             self.recovery = self.restore_point
         else:
             self.recovery = await self.snapshot()
@@ -476,6 +517,9 @@ class PiWorker:
             self.store.put(session)
 
     async def stop(self):
+        if self.workbench:
+            await self.detach()
+            return
         tasks = tuple(self.git_tasks)
         for task in tasks:
             task.cancel()
@@ -491,8 +535,29 @@ class PiWorker:
         if self.process:
             await self.process.wait()
 
+    async def detach(self):
+        """End this task's controller and processes, preserving shared compute."""
+        if not self.workbench:
+            raise ValueError("Task detach requires a shared workbench")
+        if not self.reader:
+            return
+        if not self.parked and not self.reader.done():
+            await self.control("park")
+            self.parked = True
+        self.reconnecting = True
+        await self._disconnect_output()
+        if self.process:
+            await self.process.wait()
+        for task in (self.reader, self.stderr_reader, *tuple(self.git_tasks)):
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
     async def snapshot(self):
         """Provider-owned recovery. No file bytes or Git objects cross this API."""
+        if self.workbench:
+            raise ValueError("A task cannot snapshot a shared workbench")
         with database_stage("provider_snapshot"):
             return await self._snapshot()
 

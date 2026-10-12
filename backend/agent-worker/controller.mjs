@@ -7,8 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { channel } from './protocol.mjs';
 import { ROOT, prepare, finalize, push, exists, inspect } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
+import { taskIdentity, taskHome, withGitLock, prepared, markPrepared } from './workbench.mjs';
 const exec = promisify(execFile);
 const control = channel();
+const task = taskIdentity(process.argv.slice(2));
+const taskUid = task?.uid ?? 1000;
+if (task) process.umask(0o002);
+let home = '/home/node';
 let worker, relay, config, lastSnapshot, stopped = false;
 const childIds = new Set();
 async function processes(signal, keepWorker = false) {
@@ -20,7 +25,7 @@ async function processes(signal, keepWorker = false) {
       if (keepWorker && Number(name) === worker?.pid) continue;
       try {
         const status = await readFile(`/proc/${name}/status`,'utf8');
-        if (!/^Uid:\s+1000\s/m.test(status) || /^State:\s+[Zt]\b/m.test(status)) continue;
+        if (!new RegExp(`^Uid:\\s+${taskUid}\\s`, 'm').test(status) || /^State:\s+[Zt]\b/m.test(status)) continue;
         if (signal === 'SIGSTOP' && /^State:\s+T\b/m.test(status)) continue;
         process.kill(Number(name), signal); found = true;
       } catch (error) { if (!['ENOENT','ESRCH'].includes(error.code)) throw error; }
@@ -32,9 +37,12 @@ async function processes(signal, keepWorker = false) {
 }
 async function directories() {
   await mkdir(ROOT,{recursive:true}); await chown(ROOT,1000,1000);
+  if (task) await chmod(ROOT,0o2770);
   await mkdir('/recovery',{recursive:true}); await chmod('/recovery',0o700);
+  home = await taskHome(task);
 }
 async function snapshot() {
+  if (task) throw new Error('A task cannot snapshot a shared workbench');
   await processes('SIGSTOP');
   try {
     // A completed tool may have forked detached writers. They must not modify
@@ -49,8 +57,16 @@ async function snapshot() {
   } finally { if (!stopped) await processes('SIGCONT'); }
 }
 async function prepareWorkspace(value) {
-  config=value; stopped=false; await directories();
+  if (task && (value.restore || value.resume))
+    throw new Error('A task cannot restore a shared workbench');
+  config={...value, shared:Boolean(task)}; stopped=false; await directories();
   relay?.close(); relay=await gitRelay(control.request,config.project_id);
+  if (task) return withGitLock(task, async()=>{
+    if (await prepared(task)) return inspect(ROOT,config);
+    const result = await relay.run(()=>prepare(ROOT,config,relay.url));
+    await markPrepared(task);
+    return result;
+  });
   if (config.restore) {
     if (!/^[0-9a-f-]{36}$/.test(config.restore)) throw new Error('Invalid recovery identity');
     if (!(await exists(`/recovery/${config.restore}`))) throw new Error('Recovery point missing');
@@ -62,8 +78,8 @@ async function prepareWorkspace(value) {
 }
 function start(value) {
   if (worker) throw new Error('Worker already started');
-  worker=spawn('node',['/opt/puppyone-agent/worker.mjs'],{cwd:ROOT,uid:1000,gid:1000,
-    env:{PATH:'/usr/local/bin:/usr/bin:/bin',HOME:'/home/node',NODE_ENV:'production'},stdio:['pipe','pipe','pipe']});
+  worker=spawn('node',['/opt/puppyone-agent/worker.mjs'],{cwd:ROOT,uid:taskUid,gid:1000,
+    env:{PATH:'/usr/local/bin:/usr/bin:/bin',HOME:home,NODE_ENV:'production'},stdio:['pipe','pipe','pipe']});
   worker.stderr.on('data',()=>{});
   createInterface({input:worker.stdout}).on('line',line=>{
     try {
@@ -82,20 +98,20 @@ control.dispatch(async frame=>{
   if (frame.type === 'control') {
     try {
       let result;
-      if (frame.action === 'capabilities') result={workspace_lifecycle:1};
+      if (frame.action === 'capabilities') result={workspace_lifecycle:1,shared_workbench:1};
       else if (frame.action === 'prepare') result=await prepareWorkspace(frame.value);
       else if (frame.action === 'snapshot') result=await snapshot();
-      else if (frame.action === 'inspect') result=await inspect(ROOT,frame.value);
+      else if (frame.action === 'inspect') result=await withGitLock(task,()=>inspect(ROOT,{...frame.value,shared:Boolean(task)}));
       else if (frame.action === 'freeze') {
         await processes('SIGSTOP'); await processes('SIGKILL',true); result={};
       }
       else if (frame.action === 'thaw') { if (!stopped) await processes('SIGCONT'); result={}; }
       else if (frame.action === 'finalize') {
         stopped=true; await processes('SIGKILL'); worker=null;
-        result=await finalize(ROOT,config,frame.value.message);
+        result=await withGitLock(task,()=>finalize(ROOT,config,frame.value.message));
       } else if (frame.action === 'push') {
         if (!stopped) throw new Error('Worker must stop before publication');
-        result=await relay.run(()=>push(ROOT,config,relay.url,frame.value.candidate));
+        result=await withGitLock(task,()=>relay.run(()=>push(ROOT,config,relay.url,frame.value.candidate)));
       } else if (frame.action === 'stop') { stopped=true; await processes('SIGKILL'); result={}; }
       else if (frame.action === 'park') {
         stopped=true; await processes('SIGKILL'); worker=null; relay?.close(); result={};

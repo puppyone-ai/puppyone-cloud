@@ -45,7 +45,8 @@ export async function protectConfig(root, config) {
   await writeFile(temporary,
     `[core]\nrepositoryformatversion = ${config.object_format === 'sha256' ? 1 : 0}\nfilemode = true\nbare = false\n` +
     (config.object_format === 'sha256' ? '[extensions]\nobjectformat = sha256\n' : '') +
-    '[user]\nname = Puppyone Agent\nemail = agent@puppyone.invalid\n', { flag:'wx', mode:0o600 });
+    (config.shared ? '[core]\nsharedRepository = group\n' : '') +
+    '[user]\nname = Puppyone Agent\nemail = agent@puppyone.invalid\n', { flag:'wx', mode:config.shared ? 0o660 : 0o600 });
   if (process.getuid() === 0) await chown(temporary,1000,1000);
   await rename(temporary,path.join(root,'.git/config'));
 }
@@ -61,7 +62,7 @@ export async function inspect(root, config) {
 export async function prepare(root, config, remote, { reuse = false } = {}) {
   validate(config);
   if (!(await exists(path.join(root,'.git')))) {
-    await git(root,['init',`--object-format=${config.object_format}`,'--initial-branch',config.target_ref.slice(11),'.']);
+    await git(root,['init',...(config.shared ? ['--shared=group'] : []),`--object-format=${config.object_format}`,'--initial-branch',config.target_ref.slice(11),'.']);
   } else {
     await protectConfig(root, config);
     if (reuse && await git(root,['status','--porcelain','--untracked-files=all']))
