@@ -16,6 +16,12 @@ export function taskBinding(args) {
 }
 
 export async function initializeTask(task) {
+  // Reject stale connections even if they use a previously unused task UID.
+  try {
+    const bound = JSON.parse(await readFile(`${STATE}/binding.json`, 'utf8'));
+    if (bound.workbench !== task.workbench || bound.generation !== task.generation)
+      throw new Error('Workbench generation mismatch');
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
   // All roots are initialized by trusted control before any model starts.
   // Live control state is NOT a provider recovery copy or disposable scratch.
   await mkdir(CONTROL_ROOT, { recursive: true }); await chmod(CONTROL_ROOT, 0o711);
@@ -32,9 +38,17 @@ export async function initializeTask(task) {
   return home;
 }
 
-export async function withWorkbenchGitLock(operation) {
+export function withWorkbenchGitLock(operation) {
   // Only service Git metadata commands serialize. Tool/user filesystem writes do not.
-  const lock = spawn('flock', ['-x', '-w', '120', `${STATE}/git.lock`,
+  return withControlLock('git.lock', operation);
+}
+
+export function withTaskStopLock(task, operation) {
+  return withControlLock(`stop-${task.uid}.lock`, operation);
+}
+
+async function withControlLock(name, operation) {
+  const lock = spawn('flock', ['-x', '-w', '120', `${STATE}/${name}`,
     'node', '-e', 'process.stdout.write("ready\\n"); process.stdin.resume()'],
     { stdio: ['pipe', 'pipe', 'pipe'] });
   try {
@@ -50,10 +64,12 @@ export async function withWorkbenchGitLock(operation) {
   }
 }
 
-export async function workbenchGit(action, config, value, relay) {
+export async function workbenchGit(task, action, config, value, relay) {
   return new Promise((resolve, reject) => {
     const child = execFile('node', ['/opt/puppyone-agent/workbench-git.mjs'], {
-      uid: 1000, gid: 1000, timeout: 120000, maxBuffer: 1024 * 1024,
+      // Trusted Git runs only before model start or after task quiescence.
+      // Its children must also be killable with this task, never a shared UID.
+      uid: task.uid, gid: 1000, timeout: 120000, maxBuffer: 1024 * 1024,
       env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/home/node', ...relay?.transport },
     }, (error, stdout) => {
       if (error) reject(new Error(`Workbench Git ${action} failed`));

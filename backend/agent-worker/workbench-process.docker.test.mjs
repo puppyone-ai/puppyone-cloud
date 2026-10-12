@@ -16,9 +16,9 @@ async function poll(fn) {
 }
 async function content(name) { try { return await readFile(`${ROOT}/${name}`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return ''; } }
 
-function taskConnection(uid, workbench, generation) {
-  const child = spawn('node', ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, randomUUID()],
-    { stdio: ['pipe','pipe','pipe'] });
+function taskConnection(uid, workbench, generation, { execution = randomUUID(), lease = 60000 } = {}) {
+  const child = spawn('node', ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, execution],
+    { env: { ...process.env, PUPPYONE_WORKBENCH_TASK_LEASE_MS: String(lease) }, stdio: ['pipe','pipe','pipe'] });
   const waiting = new Map(), state = { ready: false, errors: [], requests: 0 };
   let errors = '';
   child.stderr.on('data', data => { errors += data; });
@@ -53,15 +53,17 @@ function taskConnection(uid, workbench, generation) {
   const control = (action, value) => new Promise((resolve, reject) => {
     const id = randomUUID(); waiting.set(id, { resolve, reject }); send({ type: 'control', id, action, value });
   });
-  return { child, state, control, send };
+  const timer = setInterval(() => { if (child.exitCode === null) send({ type: 'control', id: 'lease', action: 'heartbeat' }); }, 250);
+  child.once('exit', () => clearInterval(timer));
+  return { child, state, control, send, execution, expire: () => clearInterval(timer) };
 }
 
-for (const ending of ['stop','finalize','disconnect']) {
+for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_cleanup']) {
   test(`real concurrent Pi tasks, PTY and preview survive ${ending}`, { skip: !enabled, timeout: 60000 }, async () => {
     const workbench = randomUUID(), generation = randomUUID(), tasks = [], children = [];
     try {
       for (const uid of [20000,20001]) {
-        const task = taskConnection(uid, workbench, generation); tasks.push(task);
+        const task = taskConnection(uid, workbench, generation, { lease: ending === 'lease_expiry' && uid === 20000 ? 2000 : 60000 }); tasks.push(task);
         assert.equal((await task.control('capabilities')).shared_workbench, 1);
         await task.control('prepare', { project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null, readonly: false });
         task.send({ type: 'start', config: { model: 'fixture', max_tokens: 4096, context_window: 131072,
@@ -75,8 +77,7 @@ for (const ending of ['stop','finalize','disconnect']) {
         const stale = taskConnection(20002, workbench, randomUUID()); tasks.push(stale);
         await assert.rejects(stale.control('prepare', { project_id: 'fixture', object_format: 'sha1',
           target_ref: 'refs/heads/main', base_oid: null, readonly: false }), /generation mismatch/);
-        stale.send({ type: 'start', config: { model: 'fixture', prompt: 'Must not start' } });
-        await poll(() => stale.state.errors.some(frame => /not startable/.test(frame.error)));
+        await poll(() => stale.child.exitCode !== null);
         assert.equal(stale.state.requests, 0);
         assert.equal(await content('20002.ready'), '');
         const collision = taskConnection(20000, workbench, generation); tasks.push(collision);
@@ -94,8 +95,19 @@ for (const ending of ['stop','finalize','disconnect']) {
       await poll(async () => (await content('20000.detached')) && (await content('20001.detached')) && (await content('20001.alive')));
       const before = await content('20001.alive');
       await writeFile(`${ROOT}/human-unsaved`, 'unique current copy', { mode: 0o664 });
-      if (ending === 'disconnect') { tasks[0].child.stdin.end(); await poll(() => tasks[0].child.exitCode !== null); }
-      else await tasks[0].control(ending, { message: 'Shared worktree checkpoint' });
+      if (ending === 'finalize') {
+        const readonly = taskConnection(20002, workbench, generation); tasks.push(readonly);
+        await readonly.control('prepare', { object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null, readonly: true });
+        const result = await readonly.control('finalize', { message: 'Must not commit other users files' });
+        assert.equal(result.changed, false); assert.equal(result.tip, null);
+        assert.equal(await readFile('/workspace/repo/human-unsaved', 'utf8'), 'unique current copy');
+      }
+      if (ending === 'disconnect') { tasks[0].expire(); tasks[0].child.stdin.end(); await poll(() => tasks[0].child.exitCode !== null); }
+      else if (ending === 'lease_expiry') { tasks[0].expire(); await poll(() => tasks[0].child.exitCode !== null); }
+      else if (ending === 'duplicate_cleanup') {
+        const duplicate = taskConnection(20000, workbench, generation, { execution: tasks[0].execution }); tasks.push(duplicate);
+        await Promise.all([tasks[0].control('stop'), duplicate.control('stop')]);
+      } else await tasks[0].control(ending, { message: 'Shared worktree checkpoint' });
       await poll(async () => (await content('20001.alive')) !== before);
       terminal.stdin.write('PTY_AFTER_TASK_END\n'); await poll(() => output.includes('PTY_AFTER_TASK_END'));
       assert.equal(await (await fetch('http://127.0.0.1:8080')).text(), 'unique current copy');
@@ -110,6 +122,7 @@ for (const ending of ['stop','finalize','disconnect']) {
       assert.equal(tasks[1].state.requests, 1);
     } finally {
       for (const task of tasks) {
+        task.expire();
         if (task.child.exitCode === null) { task.child.stdin.end(); await poll(() => task.child.exitCode !== null); }
       }
       for (const child of children) { child.kill('SIGKILL'); await poll(() => child.exitCode !== null || child.signalCode !== null); }

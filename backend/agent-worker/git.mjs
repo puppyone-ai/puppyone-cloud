@@ -7,7 +7,7 @@ export const ROOT = '/workspace/repo';
 export const MAX_GIT_BYTES = 128 * 1024 * 1024;
 export function git(root, args, transport = {}) {
   return new Promise((resolve, reject) => {
-    execFile('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
+    execFile('git', ['-c',`safe.directory=${root}`,'-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
       '-c','commit.gpgSign=false','-c','maintenance.auto=false','-c','gc.auto=0',
       '-c','protocol.file.allow=never','-c','protocol.ext.allow=never',
       '-c','http.followRedirects=false','-c','credential.helper=', ...args], {

@@ -153,10 +153,14 @@ def test_additive_migration_preserves_existing_agents_and_pre_activation_rollbac
         # Additive operation transactions preserve all populated records, and
         # a rolled-back installation exposes no half-installed command API.
         legacy_resources = None
+        retained_workbench = None
         for migration in migrations:
             if migration.name < "20261009000000":
                 continue
             scratch.sql(migration.read_text().replace("COMMIT;", "ROLLBACK;"))
+            if migration.name == "20261013050000_expand_cloud_workbench_tasks.sql":
+                assert scratch.sql("SELECT to_regclass('public.cloud_workbench_tasks') IS NULL") == "t"
+                assert scratch.row(f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'") == retained_workbench
             scratch.sql(migration.read_text())
             upgraded = scratch.row(f"SELECT * FROM agent_runs WHERE id='{old['id']}'")
             assert {key: upgraded[key] for key in receipt} == receipt
@@ -180,6 +184,19 @@ def test_additive_migration_preserves_existing_agents_and_pre_activation_rollbac
                 legacy_resources = scratch.sql(
                     "SELECT jsonb_agg(w ORDER BY session_id) FROM agent_session_workspaces w"
                 )
+            if migration.name == "20261013040000_expand_cloud_workbench_ownership.sql":
+                from tests.agent.runtime.test_workbench_ownership import transition
+                from tests.agent.runtime.test_workbench_task_leases import running
+
+                revision = scratch.rpc("context", user=user, project=project, agent=agent_id)["revision"]
+                local_args = {**args, "policy": {**args["policy"], "revision": revision}}
+                retained_workbench = transition(scratch, running(scratch, local_args), "retained")
+            if retained_workbench is not None:
+                kept = scratch.row(f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'")
+                assert {key: kept[key] for key in retained_workbench} == retained_workbench
+            if migration.name == "20261013050000_expand_cloud_workbench_tasks.sql":
+                assert kept["next_task_uid"] == 20000
+                assert scratch.sql("SELECT count(*) FROM cloud_workbench_tasks") == "0"
             if legacy_resources is not None:
                 assert (
                     scratch.sql(

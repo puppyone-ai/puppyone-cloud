@@ -103,7 +103,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
                 store=InMemoryExecutionSessionStore(),
             )
             workers.append(task)
-            await task.connect(resource)
+            await task.connect({**resource, "task_execution_id": task.task_execution_id, "task_uid": uid})
             await task.start(config())
         # Genuine terminal with a controlling PTY, not a substitute sleep process.
         terminal = await asyncio.create_subprocess_exec(

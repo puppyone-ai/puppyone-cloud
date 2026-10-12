@@ -5,10 +5,12 @@ computer. This adapter cannot snapshot/restore its files on behalf of a Run.
 """
 
 import asyncio
+import json
 from contextlib import suppress
 from uuid import UUID
 
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
 
 
 class WorkbenchTask(PiWorker):
@@ -31,16 +33,49 @@ class WorkbenchTask(PiWorker):
             self.task_execution_id,
         ]
 
-    async def connect(self, resource):
+    async def connect(self, resource, *, sandbox=None):
         if (
             resource.get("workbench_id") != self.workbench_id
             or resource.get("workbench_generation") != self.workbench_generation
+            or resource.get("project_id") != self.project_id
+            or resource.get("provider") != self.provider
+            or resource.get("task_execution_id") != self.task_execution_id
+            or resource.get("task_uid") != self.task_uid
         ):
             raise PermissionError("Shared workbench resource binding mismatch")
-        # Resource connection is shared; execution identity remains this Run's.
-        await super().resume(resource)
-        self.execution_id = self.task_execution_id
-        self.restore_point = None
+        if self.provider == "docker":
+            try:
+                found = json.loads(await self._docker("container", "inspect", resource["resource_id"]))[0]
+            except RuntimeError as exc:
+                if "No such container" in str(exc) or "No such object" in str(exc):
+                    raise WorkerLost("Workbench resource no longer exists") from exc
+                raise
+            if not found["State"]["Running"] or found["State"].get("Paused"):
+                raise WorkerDisconnected("Workbench lifecycle must make the resource running")
+            artifact = json.loads(await self._docker("image", "inspect", self.image))[0]["Id"]
+            if found["Image"] != artifact:
+                raise WorkerDisconnected("Workbench lifecycle must resolve the artifact mismatch")
+        elif sandbox is None:
+            # E2B connect() can resume compute. Only the resource owner may call
+            # it; tasks consume its already authorized connection, never wake it.
+            raise PermissionError("An E2B connection from the workbench lifecycle is required")
+        elif not self.artifact or sandbox.sandbox_id != resource["resource_id"] or resource.get("template") != self.artifact:
+            raise PermissionError("Shared workbench provider connection binding mismatch")
+        self.sandbox, self.resource = sandbox, dict(resource)
+        self.execution_id, self.restore_point = self.task_execution_id, None
+        self.attached, self.reused = True, True
+
+    async def resume(self, resource):
+        raise PermissionError("Resource resume belongs to the workbench lifecycle")
+
+    @classmethod
+    async def attach(cls, resource, project_id):
+        raise PermissionError("A task requires its durable execution and workbench binding")
+
+    async def touch(self):
+        # A current Run lease may renew its controller, not the whole VM timeout.
+        if self.reader and not self.reader.done():
+            await self.control("heartbeat")
 
     async def create(self):
         raise PermissionError("Resource allocation belongs to the workbench lifecycle")
@@ -63,11 +98,15 @@ class WorkbenchTask(PiWorker):
 
     async def stop(self):
         """Quiesce just this UID and close its channel; never kill/pause the VM."""
+        if not getattr(self, "attached", False):
+            raise WorkerDisconnected("Task cleanup requires a live resource connection")
         self.reconnecting = True
         try:
-            if self.reader and not self.reader.done():
-                async with asyncio.timeout(20):
-                    await self.control("park")
+            async with asyncio.timeout(20):
+                if self.reader is None or self.reader.done():
+                    await self._disconnect_output()
+                    await self._open_control()
+                await self.control("park")
             if self.process:
                 self.process.stdin.close()
                 async with asyncio.timeout(15):

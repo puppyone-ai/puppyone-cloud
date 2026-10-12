@@ -5,13 +5,17 @@ import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
 import { ROOT } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
-import { STATE, taskBinding, initializeTask, signalTask, withWorkbenchGitLock, workbenchGit } from './workbench-task.mjs';
+import { STATE, taskBinding, initializeTask, signalTask, withWorkbenchGitLock, withTaskStopLock, workbenchGit } from './workbench-task.mjs';
 const task = taskBinding(process.argv.slice(2));
 const home = await initializeTask(task);
 const control = channel();
 const childIds = new Set();
-let worker, relay, config, stopped = false, closing = false;
+let worker, relay, config, stopping, stopped = false, closing = false;
+const configuredLease = Number(process.env.PUPPYONE_WORKBENCH_TASK_LEASE_MS || 60000);
+const leaseMilliseconds = Number.isFinite(configuredLease) ? Math.min(60000, Math.max(1000, configuredLease)) : 60000;
+let leaseUntil = Date.now() + leaseMilliseconds;
 process.umask(0o002);
+setInterval(() => { if (Date.now() >= leaseUntil) close(); }, Math.min(1000, leaseMilliseconds / 4)).unref();
 
 async function prepareWorkspace(value) {
   if (value.restore || value.resume) throw new Error('A task cannot restore a shared workbench');
@@ -25,8 +29,8 @@ async function prepareWorkspace(value) {
     await mkdir(ROOT, { recursive: true }); await chown(ROOT, 1000, 1000); await chmod(ROOT, 0o2770);
     relay?.close();
     relay = await gitRelay(control.request, value.project_id, { authenticated: true });
-    const result = stored ? await workbenchGit('inspect', value)
-      : await relay.run(() => workbenchGit('prepare', value, null, relay));
+    const result = stored ? await workbenchGit(task, 'inspect', value)
+      : await relay.run(() => workbenchGit(task, 'prepare', value, null, relay));
     if (!stored) await writeFile(`${STATE}/binding.json`, identity, { flag: 'wx', mode: 0o600 });
     return result;
   });
@@ -35,7 +39,7 @@ async function prepareWorkspace(value) {
 }
 
 function start(value) {
-  if (!config || worker || stopped) throw new Error('Task is not startable');
+  if (!config || worker || stopping || stopped) throw new Error('Task is not startable');
   // Drop inherited privilege and supplementary groups on both providers.
   worker = spawn('setpriv', ['--reuid', String(task.uid), '--regid', '1000', '--clear-groups',
     '--no-new-privs', '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
@@ -56,39 +60,51 @@ function start(value) {
       control.send(frame);
     } catch (error) { control.send({ type: 'failed', error: error.message }); }
   });
-  worker.on('exit', () => { if (!stopped) control.send({ type: 'disconnected' }); });
+  worker.on('exit', () => { if (!stopped && !stopping) control.send({ type: 'disconnected' }); });
   worker.stdin.write(JSON.stringify({ type: 'start', config: value }) + '\n');
 }
 
-async function stop() { stopped = true; await signalTask(task, 'SIGSTOP'); await signalTask(task, 'SIGKILL'); }
+async function stop() {
+  if (!stopping) stopping = withTaskStopLock(task, async () => {
+    await signalTask(task, 'SIGSTOP'); await signalTask(task, 'SIGKILL'); stopped = true;
+  });
+  try { await stopping; } finally { stopping = undefined; }
+}
+function close() {
+  if (closing) return; closing = true;
+  stop().finally(() => { relay?.close(); process.exit(0); });
+}
 let operations = Promise.resolve();
 control.dispatch(frame => {
-  if (frame.type === 'control') {
+  if (frame.type === 'control' && frame.action === 'heartbeat') {
+    if (closing) throw new Error('Task control lease expired');
+    leaseUntil = Date.now() + leaseMilliseconds;
+    control.send({ type: 'control_result', id: frame.id, result: {} });
+  } else if (frame.type === 'control') {
     operations = operations.then(async () => {
       try {
         let result;
         if (frame.action === 'capabilities') result = { shared_workbench: 1 };
         else if (frame.action === 'prepare') result = await prepareWorkspace(frame.value);
         else if (frame.action === 'stop' || frame.action === 'park') { await stop(); result = {}; }
-        else if (frame.action === 'inspect') result = await withWorkbenchGitLock(() => workbenchGit('inspect', config));
+        else if (frame.action === 'inspect') result = await withWorkbenchGitLock(() => workbenchGit(task, 'inspect', config));
         else if (frame.action === 'finalize') {
           await stop();
-          result = await withWorkbenchGitLock(() => workbenchGit('finalize', config, frame.value));
+          result = await withWorkbenchGitLock(() => config.readonly
+            ? workbenchGit(task, 'inspect', config).then(state => ({ ...state, changed: false, automatic_commit: false }))
+            : workbenchGit(task, 'finalize', config, frame.value));
         } else if (frame.action === 'push') {
           if (!stopped) throw new Error('Task must stop before publication');
           result = await withWorkbenchGitLock(() => relay.run(() =>
-            workbenchGit('push', config, frame.value, relay)));
+            workbenchGit(task, 'push', config, frame.value, relay)));
         } else throw new Error('Operation belongs to workbench lifecycle, not a task');
         control.send({ type: 'control_result', id: frame.id, result });
         if (frame.action === 'park') { relay?.close(); setImmediate(() => process.exit(0)); }
       } catch (error) { control.send({ type: 'control_result', id: frame.id, error: error.message }); }
     });
   } else if (frame.type === 'start') start(frame.config);
-  else if (worker && !stopped && (frame.type !== 'reply' || childIds.has(frame.id))) {
+  else if (worker && !stopped && !stopping && (frame.type !== 'reply' || childIds.has(frame.id))) {
     childIds.delete(frame.id); worker.stdin.write(JSON.stringify(frame) + '\n');
   }
 });
-process.stdin.on('end', () => {
-  if (closing) return; closing = true;
-  stop().finally(() => { relay?.close(); process.exit(0); });
-});
+process.stdin.on('end', close);
