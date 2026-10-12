@@ -39,17 +39,29 @@ try {
     pages[person].on('request', r => { if (r.url().includes('/content/')) reads.push(r.url()); });
     await pages[person].goto(f.origin + file);
     await pages[person].getByText('team confidential content', { exact: true }).waitFor();
-    assert.equal(reads.length, 1, `${person}: one request to open the file`);
+    await pages[person].getByRole('link', { name: 'hello #1.md', exact: true }).waitFor();
+    const paths = reads.map(value => {
+      const url = new URL(value);
+      assert.equal(url.pathname, `/api/backend/api/v1/content/${f.project}/resource`);
+      assert.equal(url.searchParams.get('text_mode'), 'full');
+      return url.searchParams.has('path_bytes_b64')
+        ? Buffer.from(url.searchParams.get('path_bytes_b64'), 'base64url').toString('utf8')
+        : url.searchParams.get('path');
+    });
+    // The shared Workspace chrome reads the root and expanded parent directory.
+    // Keep the file-body budget separate and reject duplicate directory reads.
+    assert.deepEqual(paths.sort(), ['', '文档', '文档/hello #1.md'].sort(),
+      `${person}: one file read and one read per visible ancestor directory`);
   }
   await pages.outsider.goto(f.origin + file);
-  await pages.outsider.getByRole('heading', { name: 'This resource is not available' }).waitFor();
+  await pages.outsider.getByRole('alert').filter({ hasText: 'This resource is not available.' }).waitFor();
   assert.ok(!(await pages.outsider.locator('body').innerText()).includes('team confidential content'));
 
   const invitation = await api(pages.owner, 'owner', 'POST', `/organizations/${f.org}/invite`, { email: f.emails.invitee, role: 'member' });
   await pages.invitee.goto(`${f.origin}/invite/${invitation.token}`);
   await pages.invitee.getByText('Joined', { exact: false }).waitFor();
   await pages.invitee.goto(f.origin + file);
-  await pages.invitee.getByRole('heading', { name: 'This resource is not available' }).waitFor();
+  await pages.invitee.getByRole('alert').filter({ hasText: 'This resource is not available.' }).waitFor();
   await api(pages.admin, 'admin', 'POST', `/projects/${f.project}/members`, { user_id: f.users.invitee, role: 'editor' }, 201);
   await pages.invitee.reload();
   await pages.invitee.getByText('team confidential content', { exact: true }).waitFor();
@@ -61,11 +73,11 @@ try {
   await pages.invitee.getByText('team confidential content', { exact: true }).waitFor();
   await api(pages.admin, 'admin', 'DELETE', `/projects/${f.project}/members/${f.users.invitee}`);
   await pages.invitee.reload();
-  await pages.invitee.getByRole('heading', { name: 'This resource is not available' }).waitFor();
+  await pages.invitee.getByRole('alert').filter({ hasText: 'This resource is not available.' }).waitFor();
   assert.ok(!(await pages.invitee.locator('body').innerText()).includes('team confidential content'));
   await pages.invitee.screenshot({ path: `${f.artifacts}/revoked-workspace.png`, fullPage: true });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'passed', identities: 7, anonymousReturn: 'preserved', privateWorkspace: 'explicit-grant', downgrade: 'write-denied', revocation: 'same-session-denied', fileRequests: 1, browserErrors: errors }));
+  console.log(JSON.stringify({ result: 'passed', identities: 7, anonymousReturn: 'preserved', privateWorkspace: 'explicit-grant', downgrade: 'write-denied', revocation: 'same-session-denied', fileRequests: 1, directoryRequests: 2, browserErrors: errors }));
 } finally {
   await browser.close();
 }

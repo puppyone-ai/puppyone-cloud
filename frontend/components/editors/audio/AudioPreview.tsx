@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useFilePreviewUrl } from '@/lib/viewers/useFilePreviewUrl';
+import { useFilePreviewUrl } from '@/components/editors/useFilePreviewUrl';
 import { PageLoading } from '@/components/loading';
 
 interface AudioPreviewProps {
