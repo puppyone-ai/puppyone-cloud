@@ -7,6 +7,7 @@ expose the same framed channel. This module does not own Agent run state.
 import asyncio
 import codecs
 import json
+import shlex
 import time
 from contextlib import suppress
 from uuid import uuid4
@@ -363,6 +364,9 @@ class PiWorker:
         finally:
             self.controls.pop(identity, None)
 
+    def control_command(self):
+        return ["node", "/opt/puppyone-agent/controller.mjs"]
+
     async def _open_control(self):
         if self.provider == "docker":
             command = (
@@ -372,8 +376,7 @@ class PiWorker:
                     "-i",
                     "--user=0:0",
                     self.resource["resource_id"],
-                    "node",
-                    "/opt/puppyone-agent/controller.mjs",
+                    *self.control_command(),
                 ]
                 if getattr(self, "attached", False)
                 else ["docker", "start", "-ai", self.resource["resource_id"]]
@@ -404,7 +407,7 @@ class PiWorker:
             self.stderr_reader = asyncio.create_task(drain_stderr())
         else:
             self.handle = await self.sandbox.commands.run(
-                "node /opt/puppyone-agent/controller.mjs",
+                shlex.join(self.control_command()),
                 cwd="/workspace",
                 user="root",
                 stdin=True,

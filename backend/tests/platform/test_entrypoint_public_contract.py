@@ -299,6 +299,14 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, change in parity[category].items():
             assert expected["contract"][category][name] == change["before"]
             expected["contract"][category][name] = change["after"]
+    workbench = json.loads(
+        Path(__file__).with_name("workbench_selection_contract_delta.json").read_text()
+    )
+    assert workbench["paths"] == {}
+    assert set(workbench["schemas"]) == {"SubmitRun"}
+    for name, change in workbench["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

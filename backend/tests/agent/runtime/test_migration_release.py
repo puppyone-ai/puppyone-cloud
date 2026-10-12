@@ -152,15 +152,40 @@ def test_additive_migration_preserves_existing_agents_and_pre_activation_rollbac
         assert context["revision"]["project"] == project
         # Additive operation transactions preserve all populated records, and
         # a rolled-back installation exposes no half-installed command API.
+        legacy_resources = None
         for migration in migrations:
             if migration.name < "20261009000000":
                 continue
             scratch.sql(migration.read_text().replace("COMMIT;", "ROLLBACK;"))
             scratch.sql(migration.read_text())
-            assert scratch.row(f"SELECT * FROM agent_runs WHERE id='{old['id']}'") == receipt
+            upgraded = scratch.row(f"SELECT * FROM agent_runs WHERE id='{old['id']}'")
+            assert {key: upgraded[key] for key in receipt} == receipt
+            assert upgraded.get("workbench_id") is None  # Legacy rows are not silently adopted.
             assert (
                 scratch.row(f"SELECT config FROM access_surfaces WHERE id='{agent_id}'") == before
             )
             assert scratch.sql("SELECT jsonb_agg(m ORDER BY id) FROM chat_messages m") == messages
+            if migration.name == "20261009020000_expand_agent_session_workspaces.sql":
+                # Include both a retained unique copy and a cleanup receipt whose
+                # Session no longer exists. Neither may be silently adopted/lost.
+                scratch.sql(f"""
+                    INSERT INTO agent_session_workspaces
+                        (session_id,project_id,user_id,binding,state,run_id,resource)
+                    VALUES
+                        ('{old["session_id"]}','{project}','{user}','{{"provider":"docker"}}',
+                         'retained','{old["id"]}','{{"resource_id":"retained-unique-copy","recovery_pointer":"keep"}}'),
+                        ('deleted-session','{project}','{user}','{{"provider":"docker"}}',
+                         'cleanup_pending',NULL,'{{"resource_id":"historical-cleanup-owner"}}');
+                """)
+                legacy_resources = scratch.sql(
+                    "SELECT jsonb_agg(w ORDER BY session_id) FROM agent_session_workspaces w"
+                )
+            if legacy_resources is not None:
+                assert (
+                    scratch.sql(
+                        "SELECT jsonb_agg(w ORDER BY session_id) FROM agent_session_workspaces w"
+                    )
+                    == legacy_resources
+                )
     finally:
         postgres.sql(f"DROP DATABASE {database} WITH (FORCE)")
