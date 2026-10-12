@@ -82,12 +82,12 @@ for (const ending of ['stop','finalize','disconnect']) {
         const collision = taskConnection(20000, workbench, generation); tasks.push(collision);
         await assert.rejects(collision.control('capabilities'), /Task UID is already owned/);
       }
-      const terminal = spawn('script', ['-qefc', "test -t 0 && echo PTY_READY; exec cat", '/dev/null'],
-        { uid: 1001, gid: 1000, stdio: ['pipe','pipe','pipe'] }); children.push(terminal);
+      const terminal = spawn('script', ['-qefc', `test "$PWD" = ${ROOT} && test -t 0 && echo PTY_READY; exec cat`, '/dev/null'],
+        { cwd: ROOT, uid: 1001, gid: 1000, stdio: ['pipe','pipe','pipe'] }); children.push(terminal);
       let output = ''; terminal.stdout.on('data', data => { output += data; });
       await poll(() => output.includes('PTY_READY'));
-      const preview = spawn('node', ['-e', "require('http').createServer((q,s)=>s.end('PREVIEW_ALIVE')).listen(8080,'127.0.0.1',()=>console.log('READY'))"],
-        { uid: 1001, gid: 1000, stdio: ['ignore','pipe','pipe'] }); children.push(preview);
+      const preview = spawn('node', ['-e', "require('http').createServer((q,s)=>s.end(require('fs').readFileSync('human-unsaved'))).listen(8080,'127.0.0.1',()=>console.log('READY'))"],
+        { cwd: ROOT, uid: 1001, gid: 1000, stdio: ['ignore','pipe','pipe'] }); children.push(preview);
       let listening = false; preview.stdout.once('data', () => { listening = true; }); await poll(() => listening);
       await writeFile(`${ROOT}/go`, 'go', { mode: 0o664 });
       await poll(async () => (await content('shared.txt')).includes('20000') && (await content('shared.txt')).includes('20001'));
@@ -98,7 +98,7 @@ for (const ending of ['stop','finalize','disconnect']) {
       else await tasks[0].control(ending, { message: 'Shared worktree checkpoint' });
       await poll(async () => (await content('20001.alive')) !== before);
       terminal.stdin.write('PTY_AFTER_TASK_END\n'); await poll(() => output.includes('PTY_AFTER_TASK_END'));
-      assert.equal(await (await fetch('http://127.0.0.1:8080')).text(), 'PREVIEW_ALIVE');
+      assert.equal(await (await fetch('http://127.0.0.1:8080')).text(), 'unique current copy');
       assert.equal(await content('human-unsaved'), 'unique current copy');
       for (const uid of [20000,20001]) {
         const pid = (await content(`${uid}.detached`)).trim();

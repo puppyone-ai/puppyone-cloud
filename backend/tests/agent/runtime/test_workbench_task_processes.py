@@ -110,11 +110,12 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
             "docker",
             "exec",
             "-i",
+            "--workdir=/workspace/repo",
             "--user=1001:1000",
             resource["resource_id"],
             "script",
             "-qefc",
-            "test -t 0 && printf 'TTY_READY\\n'; exec cat",
+            "test \"$PWD\" = /workspace/repo && test -t 0 && printf 'TTY_READY\\n'; exec cat",
             "/dev/null",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -125,11 +126,12 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         await owner._docker(
             "exec",
             "-d",
+            "--workdir=/workspace/repo",
             "--user=1001:1000",
             resource["resource_id"],
             "node",
             "-e",
-            "require('http').createServer((q,s)=>s.end('PREVIEW_ALIVE')).listen(8080,'127.0.0.1')",
+            "require('http').createServer((q,s)=>s.end(require('fs').readFileSync('human-unsaved.txt'))).listen(8080,'127.0.0.1')",
         )
         admitted = [asyncio.Event(), asyncio.Event()]
         for i, task in enumerate(workers):
@@ -182,7 +184,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
             "-e",
             "fetch('http://127.0.0.1:8080').then(r=>r.text()).then(console.log)",
         )
-        assert preview == "PREVIEW_ALIVE"
+        assert preview == "unique"
         assert await until_file(owner, "/workspace/repo/human-unsaved.txt", "unique") == "unique"
         shared = await until_file(owner, "/workspace/repo/shared.txt", "agent-1")
         assert "agent-0" in shared
