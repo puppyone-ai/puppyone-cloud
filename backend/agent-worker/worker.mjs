@@ -51,7 +51,9 @@ async function start(value) {
     send({ type: 'finished', stopped: false, error: null });
     return;
   }
+  const modelCapability = randomUUID();
   const server = createServer(async (req, res) => {
+    if (req.headers.authorization !== `Bearer ${modelCapability}`) { res.writeHead(403).end(); return; }
     if (req.url !== '/v1/chat/completions' || req.method !== 'POST') { res.writeHead(404).end(); return; }
     try {
       let body = '';
@@ -80,7 +82,7 @@ async function start(value) {
       compat: { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: false,
         maxTokensField: 'max_tokens' } }],
   });
-  await modelRuntime.setRuntimeApiKey('puppyone-cloud', 'control-channel-only');
+  await modelRuntime.setRuntimeApiKey('puppyone-cloud', modelCapability);
   const resourceLoader = {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills: [], diagnostics: [] }), getPrompts: () => ({ prompts: [], diagnostics: [] }),
@@ -99,7 +101,7 @@ async function start(value) {
       if (result.error) throw new Error(result.error);
       return result.result;
     } }));
-  ({ session } = await createAgentSession({ cwd: root, agentDir: '/tmp/puppyone-agent', modelRuntime,
+  ({ session } = await createAgentSession({ cwd: root, agentDir: process.env.PUPPYONE_AGENT_DIR || '/tmp/puppyone-agent', modelRuntime,
     model: modelRuntime.getModel('puppyone-cloud', config.model), thinkingLevel: 'off', sessionManager: manager,
     resourceLoader, tools: [...builtins.map(t => t.name), ...custom.map(t => t.name)],
     customTools: [...builtins.map(wrap), ...custom],

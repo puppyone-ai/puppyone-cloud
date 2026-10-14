@@ -47,7 +47,11 @@ class RunQueries:
         except APIError as exc:
             if exc.code == "PGRST202":
                 raise DatabaseSchemaOutdatedException() from exc
+            if exc.message == "workbench_unavailable":
+                raise HTTPException(404, {"code": exc.message}) from exc
             if exc.message in {
+                "agent_workbench_required",
+                "agent_workbench_session_mismatch",
                 "agent_request_conflict",
                 "agent_context_changed",
                 "agent_session_busy",

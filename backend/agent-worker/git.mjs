@@ -5,9 +5,9 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 export const ROOT = '/workspace/repo';
 export const MAX_GIT_BYTES = 128 * 1024 * 1024;
-export function git(root, args) {
+export function git(root, args, transport = {}) {
   return new Promise((resolve, reject) => {
-    execFile('git', ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
+    execFile('git', ['-c',`safe.directory=${root}`,'-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
       '-c','commit.gpgSign=false','-c','maintenance.auto=false','-c','gc.auto=0',
       '-c','protocol.file.allow=never','-c','protocol.ext.allow=never',
       '-c','http.followRedirects=false','-c','credential.helper=', ...args], {
@@ -15,7 +15,7 @@ export function git(root, args) {
       gid: process.getuid() === 0 ? 1000 : undefined,
       env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/home/node',
         GIT_CONFIG_NOSYSTEM:'1', GIT_CONFIG_GLOBAL:'/dev/null', GIT_TERMINAL_PROMPT:'0',
-        GIT_NO_REPLACE_OBJECTS:'1', GIT_OPTIONAL_LOCKS:'0' },
+        GIT_NO_REPLACE_OBJECTS:'1', GIT_OPTIONAL_LOCKS:'0', ...transport },
       encoding:'utf8', maxBuffer:MAX_GIT_BYTES, timeout:120000,
     }, (error, stdout, stderr) => {
       if (error) { error.output = stdout; error.stderr = stderr; reject(error); }
@@ -58,7 +58,7 @@ export async function inspect(root, config) {
   catch (error) { if (error.code !== 128) throw error; }
   return { object_format: config.object_format, target_ref: head, tip };
 }
-export async function prepare(root, config, remote, { reuse = false } = {}) {
+export async function prepare(root, config, remote, { reuse = false, transport = {} } = {}) {
   validate(config);
   if (!(await exists(path.join(root,'.git')))) {
     await git(root,['init',`--object-format=${config.object_format}`,'--initial-branch',config.target_ref.slice(11),'.']);
@@ -68,7 +68,7 @@ export async function prepare(root, config, remote, { reuse = false } = {}) {
       throw new Error('Cannot synchronize a dirty retained workspace');
   }
   if (config.base_oid) {
-    await git(root,['fetch','--no-tags',remote,`+${config.target_ref}:refs/remotes/origin/selected`]);
+    await git(root,['fetch','--no-tags',remote,`+${config.target_ref}:refs/remotes/origin/selected`],transport);
     const fetched = await git(root,['rev-parse','refs/remotes/origin/selected']);
     if (fetched !== config.base_oid) throw new Error('Cloud branch changed while preparing workspace');
     const current = await inspect(root,config);
@@ -94,11 +94,11 @@ export async function finalize(root, config, message) {
     await git(root,['merge-base','--is-ancestor',config.base_oid,result.tip]);
   return { ...result, changed: result.tip !== config.base_oid, automatic_commit: before.tip !== result.tip };
 }
-export async function push(root, config, remote, candidate) {
+export async function push(root, config, remote, candidate, transport = {}) {
   const state = await inspect(root,config);
   if (state.tip !== candidate || !candidate || config.readonly) throw new Error('Publication candidate changed');
   try {
-    return {output:await git(root,['push','--porcelain','--no-verify',remote,`${candidate}:${config.target_ref}`])};
+    return {output:await git(root,['push','--porcelain','--no-verify',remote,`${candidate}:${config.target_ref}`],transport)};
   } catch (error) {
     // Porcelain explicitly proves a rejected ref. Network/ACK errors remain unknown.
     if (/^!\t[^\n]+\t\[rejected\] \((fetch first|non-fast-forward)\)$/m.test(error.output || ''))
