@@ -85,10 +85,57 @@ def scoped_fs_capabilities(
     *,
     writable: bool,
     allowed_tools: set[str] | None = None,
+    upload_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return the shared capability document used by AP-FS and MCP."""
+    """Return the shared capability document used by AP-FS and MCP.
 
-    return {
+    ``upload_policy`` is injected by the caller rather than imported here.
+    The policy constants live in ``src.platform.upload.policy``, and this
+    module must not depend on the platform upload layer; the HTTP
+    entrypoint already imports both and composes them.
+
+    Clients that would otherwise hardcode the limits should read them from
+    this document instead. See ``upload_policy_document`` for the shape.
+    """
+
+    document: dict[str, Any] = {
         "fs_semantics": SEMANTICS,
         "tools": build_mcp_tool_definitions(writable=writable, allowed_tools=allowed_tools),
+    }
+    if upload_policy is not None:
+        document["upload_policy"] = upload_policy
+    return document
+
+
+def upload_policy_document(
+    *,
+    per_file_max_bytes: int,
+    per_batch_max_files: int,
+    per_batch_max_bytes: int,
+    preflight_file_threshold: int,
+    preflight_bytes_threshold: int,
+    blocklist_segments: Any,
+) -> dict[str, Any]:
+    """Shape the server-authoritative upload policy for clients.
+
+    Enforcement stays server-side. This document exists so a client can
+    run the same preflight locally without mirroring the constants, which
+    is how the CLI and frontend mirrors drifted in the first place.
+
+    ``version`` lets a client detect a policy it does not understand and
+    fall back to server-only enforcement instead of guessing.
+    """
+
+    return {
+        "version": 1,
+        "per_file_max_bytes": per_file_max_bytes,
+        "per_batch_max_files": per_batch_max_files,
+        "per_batch_max_bytes": per_batch_max_bytes,
+        "preflight_file_threshold": preflight_file_threshold,
+        "preflight_bytes_threshold": preflight_bytes_threshold,
+        "blocklist_segments": sorted(blocklist_segments),
+        "notes": [
+            "Limits are enforced server-side; a client preflight is a courtesy.",
+            "Hidden-file and ignore-file handling stay client-side policy.",
+        ],
     }

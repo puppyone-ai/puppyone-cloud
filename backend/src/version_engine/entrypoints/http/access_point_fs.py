@@ -21,7 +21,22 @@ from src.exceptions import ErrorCode
 from src.platform.repository_target.auth_context import repository_view_from_auth
 from src.platform.repository_target.models import repository_target_scope_id
 from src.platform.upload.policy import (
+    DEFAULT_BLOCKLIST_SEGMENTS as POLICY_BLOCKLIST_SEGMENTS,
+)
+from src.platform.upload.policy import (
+    PER_BATCH_MAX_BYTES as POLICY_PER_BATCH_MAX_BYTES,
+)
+from src.platform.upload.policy import (
+    PER_BATCH_MAX_FILES as POLICY_PER_BATCH_MAX_FILES,
+)
+from src.platform.upload.policy import (
     PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
+)
+from src.platform.upload.policy import (
+    PREFLIGHT_BYTES_THRESHOLD as POLICY_PREFLIGHT_BYTES_THRESHOLD,
+)
+from src.platform.upload.policy import (
+    PREFLIGHT_FILE_THRESHOLD as POLICY_PREFLIGHT_FILE_THRESHOLD,
 )
 from src.platform.upload.policy import (
     path_has_blocked_segment,
@@ -57,7 +72,10 @@ from src.version_engine.entrypoints.http.schemas import (
     TouchRequest,
     WriteFileRequest,
 )
-from src.version_engine.scoped_fs.capabilities import scoped_fs_capabilities
+from src.version_engine.scoped_fs.capabilities import (
+    scoped_fs_capabilities,
+    upload_policy_document,
+)
 from src.version_engine.scoped_fs.context import ScopedFsContext
 from src.version_engine.scoped_fs.errors import ScopedFsError
 from src.version_engine.scoped_fs.indexed_grep import (
@@ -773,6 +791,14 @@ async def semantics(
     )
     data = scoped_fs_capabilities(
         writable=is_mode_writable(str(scope.get("mode", "r"))),
+        upload_policy=upload_policy_document(
+            per_file_max_bytes=POLICY_PER_FILE_MAX_BYTES,
+            per_batch_max_files=POLICY_PER_BATCH_MAX_FILES,
+            per_batch_max_bytes=POLICY_PER_BATCH_MAX_BYTES,
+            preflight_file_threshold=POLICY_PREFLIGHT_FILE_THRESHOLD,
+            preflight_bytes_threshold=POLICY_PREFLIGHT_BYTES_THRESHOLD,
+            blocklist_segments=POLICY_BLOCKLIST_SEGMENTS,
+        ),
     )
     data["project_id"] = project_id
     data["scope"] = _scope_payload(scope)
