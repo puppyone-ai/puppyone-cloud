@@ -87,9 +87,14 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         await owner._docker(
             "exec",
             resource["resource_id"],
-            "sh",
-            "-c",
-            "mkdir -p /workspace/repo; chown 1000:1000 /workspace/repo; chmod 2770 /workspace/repo",
+            "node",
+            "--input-type=module",
+            "-e",
+            "import {initializeWorkbench} from '/opt/puppyone-agent/workbench-initialize.mjs';"
+            "process.umask(0o002); await initializeWorkbench("
+            + json.dumps({"workbench": workbench_id, "generation": generation}) + ","
+            + json.dumps({"project_id": "fixture", **config()["workspace"]})
+            + ", () => {throw new Error('Empty fixture must not fetch')});",
         )
         for uid in (20000, 20001):
             task = WorkbenchTask(

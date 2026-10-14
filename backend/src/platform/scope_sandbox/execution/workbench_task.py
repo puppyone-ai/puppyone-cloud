@@ -91,7 +91,7 @@ class WorkbenchTask(PiWorker):
             raise PermissionError("A task cannot restore the workbench filesystem")
         await self._open_control()
         capability = await self.control("capabilities")
-        if capability.get("shared_workbench") != 1:
+        if capability.get("shared_workbench") != 2:
             raise RuntimeError("Sandbox artifact lacks shared workbench task protocol")
         await self.control("prepare", {**config["workspace"], "project_id": self.project_id})
         await self.send({"type": "start", "config": config})

@@ -5,7 +5,8 @@
 - [ ] A1: Make selected-workbench admission the only production execution path.
   - [x] Independent durable identity, actor/project ownership and immutable attachments.
   - [x] Clarify private-user ownership; tasks borrow a running host without create/wake capability.
-  - [ ] Platform workspace creation API with idempotent provisioning and initial Git preparation; explicit workspace wake.
+  - [x] Move initial Git/directory preparation from Chat control into a root-only lifecycle artifact; task protocol v2 attaches only.
+  - [ ] Platform workspace creation API with idempotent provisioning and readiness CAS; explicit workspace wake.
   - [ ] Concrete admission and removal of the Session-owned default composition.
 - [ ] A2: Complete production lifecycle and shared-file/process semantics.
   - [x] Durable task ledger, allocation intent, generation/version/operation fences.
@@ -43,9 +44,14 @@ release readiness have not been inspected or claimed.
 
 Task isolation still uses distinct UIDs and is not sufficient for arbitrary
 shared file permissions between the SAME user's Agents. Different users never
-share a live workspace. Platform provisioning must move to workspace creation,
-including the task controller's remaining initial-directory/Git preparation.
-The task host interface now exposes check/connection only, and acquisition rejects
+share a live workspace. The task controller no longer initializes directories or
+Git: `workbench-lifecycle.mjs` now owns that artifact operation. It records the exact
+initialization input, reconciles a completed checkout without resetting files, and
+refuses readiness for uncertain/dirty partial initialization. Trusted state moved
+out of user-owned `/tmp` into root-protected `/run/puppyone-workbench`. Task protocol
+v2 rejects old artifacts which could clone on Chat start. None of this implements
+the missing creation API, provider allocation owner or database readiness ACK.
+The task host interface exposes check/connection only, and acquisition rejects
 non-running resources before provider access. This does not complete provisioning
 or remove the still-existing legacy production composition. The full-controller Git tests corrected an earlier
 helper-only audit: the old wrapper did restore config mode after completion,
@@ -71,6 +77,9 @@ the fixture now supplies and asserts it, without weakening production behavior.
   captured candidate survives newer commits and unsaved edits.
 - `agent-worker/workbench-git.docker.test.mjs`: real shared controller, task UIDs,
   ordinary terminal Git, concurrent hostile config and stock-Git CGI transport.
+  Creation now runs through the separate lifecycle channel before task attachment;
+  regressions cover missing readiness, duplicate initialization, ACK loss, dirty
+  partial-copy preservation and rejecting a user-planted root symlink.
   The CGI fixture is not the production Version Engine adapter; the separate
   native database/S3 tests validate that authority.
 - `agent-worker/workbench-process.docker.test.mjs`: six real concurrent Pi/bash,
@@ -99,4 +108,7 @@ Python runs. Owned PostgreSQL/PostgREST/MinIO fixtures do not use hosted service
 The latest owned `/bin/true` Docker start probe still timed out after 20 seconds;
 its container was removed. BuildKit execution works, but cannot substitute for
 Docker adapter or E2B lifecycle acceptance. No Docker restart or paid creation
-is authorized. This does not block further local implementation.
+is authorized. A separate owned BuildKit capability probe also found PID namespace
+creation denied (`Operation not permitted`) and cgroup mounted read-only. This is
+an environment-specific result, not E2B evidence or permission to broaden host
+privileges. It does not block further local implementation.

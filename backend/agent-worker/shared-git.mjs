@@ -27,7 +27,7 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
       await git(ROOT, ['init', `--object-format=${config.object_format}`, '--initial-branch', target.slice(11), '.']);
     await mkdir(`${ROOT}/.git/logs`, { recursive: true });
     const before = await inspect();
-    if (before.tip || await run(['ls-files', '--cached', '--others', '--exclude-standard']))
+    if (before.tip || await run(['ls-files', '--cached', '--others']))
       throw new Error('Cannot initialize over existing shared work');
     if (config.base_oid) {
       await run(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${target}:refs/remotes/origin/selected`]);
@@ -40,6 +40,15 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
   }
   const before = await inspect();
   if (action === 'inspect') return before;
+  if (action === 'verify-initialization') {
+    if (before.tip !== (config.base_oid ?? null)) throw new Error('Initialization candidate mismatch');
+    if (before.tip) {
+      await run(['diff-index', '--cached', '--quiet', before.tip, '--']);
+      await run(['diff-files', '--quiet', '--']);
+    } else if (await run(['ls-files', '--cached'])) throw new Error('Initialization has staged files');
+    if (await run(['ls-files', '--others'])) throw new Error('Initialization has unique files');
+    return before;
+  }
   if (action === 'finalize') {
     if (config.readonly) return { ...before, changed: false, automatic_commit: false };
     await run(['add', '-A', '--', '.']);

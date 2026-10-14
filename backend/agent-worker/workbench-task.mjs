@@ -3,9 +3,8 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
 const exec = promisify(execFile);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const CONTROL_ROOT = '/tmp/puppyone-workbench';
-export const STATE = `${CONTROL_ROOT}/control`;
+import { CONTROL_ROOT, STATE, UUID, requireWorkspace } from './workbench-state.mjs';
+export { CONTROL_ROOT, STATE } from './workbench-state.mjs';
 
 export function taskBinding(args) {
   const [uid, workbench, generation, execution] = args;
@@ -16,16 +15,8 @@ export function taskBinding(args) {
 }
 
 export async function initializeTask(task) {
-  // Reject stale connections even if they use a previously unused task UID.
-  try {
-    const bound = JSON.parse(await readFile(`${STATE}/binding.json`, 'utf8'));
-    if (bound.workbench !== task.workbench || bound.generation !== task.generation)
-      throw new Error('Workbench generation mismatch');
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  // All roots are initialized by trusted control before any model starts.
-  // Live control state is NOT a provider recovery copy or disposable scratch.
-  await mkdir(CONTROL_ROOT, { recursive: true }); await chmod(CONTROL_ROOT, 0o711);
-  await mkdir(STATE, { recursive: true }); await chmod(STATE, 0o700);
+  // Tasks cannot initialize the workspace or its platform control roots.
+  await requireWorkspace(task);
   const homes = `${CONTROL_ROOT}/homes`, home = `${homes}/${task.uid}`;
   await mkdir(homes, { recursive: true }); await chmod(homes, 0o711);
   await mkdir(home, { recursive: true }); await chown(home, task.uid, 1000); await chmod(home, 0o700);
@@ -64,12 +55,15 @@ async function withControlLock(name, operation) {
   }
 }
 
-export async function workbenchGit(task, action, config, value, relay) {
+export function workbenchGit(task, action, config, value, relay) {
+  return sharedGitCommand(task.uid, action, config, value, relay);
+}
+
+export async function sharedGitCommand(uid, action, config, value, relay) {
   return new Promise((resolve, reject) => {
     const child = execFile('node', ['/opt/puppyone-agent/workbench-git.mjs'], {
-      // Trusted Git runs only before model start or after task quiescence.
-      // Its children must also be killable with this task, never a shared UID.
-      uid: task.uid, gid: 1000, timeout: 120000, maxBuffer: 1024 * 1024,
+      // Lifecycle initialization uses the file user; task Git uses its captured process owner.
+      uid, gid: 1000, timeout: 120000, maxBuffer: 1024 * 1024,
       env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/home/node', ...relay?.transport },
     }, (error, stdout) => {
       if (error) reject(new Error(`Workbench Git ${action} failed`));

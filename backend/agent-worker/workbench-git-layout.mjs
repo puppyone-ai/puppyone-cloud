@@ -1,7 +1,8 @@
 /** Root-owned Git control view. Only config is private; refs/index/objects remain native shared data. */
 import { mkdir, chmod, writeFile, readFile, symlink, readlink } from 'node:fs/promises';
 import { ROOT } from './git.mjs';
-export const GIT_CONTROL = '/tmp/puppyone-workbench/git';
+import { CONTROL_ROOT } from './workbench-state.mjs';
+export const GIT_CONTROL = `${CONTROL_ROOT}/git`;
 export function gitControl(format) {
   if (!['sha1', 'sha256'].includes(format)) throw new Error('Invalid workbench object format');
   return `${GIT_CONTROL}/${format}`;

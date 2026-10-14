@@ -144,6 +144,7 @@ class PiWorker:
                 "--mount",
                 "type=volume,source=" + self.resource["recovery_volume"] + ",target=/recovery",
                 "--tmpfs=/tmp:rw,nosuid,nodev,size=128m,uid=1000,gid=1000",
+                "--tmpfs=/run:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0755",
                 "--tmpfs=/home/node:rw,nosuid,nodev,size=8m,uid=1000,gid=1000",
                 "-i",
                 inspected["Id"],

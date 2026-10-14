@@ -91,7 +91,10 @@ Shared Git now uses a root-owned read-only control view containing fixed config
 and a neutral unborn HEAD used only as command input, not a published ref.
 Refs, objects, packed refs and reflogs alias the user's native metadata; the
 index path is the original shared index. No worktree, objects or ref database is
-copied. All Git commands run as the task UID, not root. They select the admitted
+copied. Git runs without root privilege: lifecycle initialization uses the file
+user; task Git still uses the existing task UID pending the A2 isolation change.
+Protected control state resides under root-owned `/run`, not the ordinary user's
+writable `/tmp` parent. Commands select the admitted
 ref/OID explicitly and check the user's actual HEAD. Native commit-tree and
 update-ref CAS capture a candidate without running user hooks or changing files.
 

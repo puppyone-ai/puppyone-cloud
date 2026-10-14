@@ -1,11 +1,11 @@
 /** Shared-workbench task protocol. Deliberately separate from legacy snapshot control. */
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
 import { ROOT, exists } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
-import { initializeGitControl } from './workbench-git-layout.mjs';
+import { requireWorkspace } from './workbench-state.mjs';
 import { STATE, taskBinding, initializeTask, signalTask, withWorkbenchGitLock, withTaskControlLock, workbenchGit } from './workbench-task.mjs';
 const task = taskBinding(process.argv.slice(2));
 const home = await initializeTask(task);
@@ -43,18 +43,10 @@ async function prepareWorkspace(value) {
   return liveTask(async () => {
     await requireQuiescent(); config = undefined;
     const prepared = await withWorkbenchGitLock(async () => {
-      const identity = JSON.stringify({ workbench: task.workbench, generation: task.generation });
-      let stored;
-      try { stored = await readFile(`${STATE}/binding.json`, 'utf8'); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (stored && stored !== identity) throw new Error('Workbench generation mismatch');
-      await mkdir(ROOT, { recursive: true }); await chown(ROOT, 1000, 1000); await chmod(ROOT, 0o2770);
-      await initializeGitControl(value.object_format);
+      await requireWorkspace(task);
       relay?.close(); relay = await gitRelay(control.request, value.project_id, { authenticated: true });
-      const result = stored ? await workbenchGit(task, 'inspect', value)
-        : await relay.run(() => workbenchGit(task, 'prepare', value, null, relay));
-      if (!stored) await writeFile(`${STATE}/binding.json`, identity, { flag: 'wx', mode: 0o600 });
-      return result;
+      // Creation/clone belongs exclusively to the lifecycle controller.
+      return workbenchGit(task, 'inspect', value);
     });
     config = value;
     return prepared;
@@ -109,7 +101,7 @@ control.dispatch(frame => {
     operations = operations.then(async () => {
       try {
         let result;
-        if (frame.action === 'capabilities') result = { shared_workbench: 1 };
+        if (frame.action === 'capabilities') result = { shared_workbench: 2 };
         else if (frame.action === 'prepare') result = await prepareWorkspace(frame.value);
         else if (frame.action === 'stop' || frame.action === 'park') { await stop(); result = {}; }
         else if (frame.action === 'quiesce') { await liveTask(quiesceModel); result = {}; }

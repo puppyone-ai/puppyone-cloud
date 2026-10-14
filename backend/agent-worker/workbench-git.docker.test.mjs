@@ -6,15 +6,17 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, symlink, mkdtemp, stat, mkdir, chown } from 'node:fs/promises';
 import { gitControl } from './workbench-git-layout.mjs';
 import { gitHttpFixture } from './workbench-git-http-fixture.mjs';
-import { CONTROL_ROOT } from './workbench-task.mjs';
+import { CONTROL_ROOT, STATE } from './workbench-task.mjs';
 const exec = promisify(execFile), ROOT = '/workspace/repo';
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 function connection(workbench, generation, uid, remote) {
-  const child = spawn('node', ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, randomUUID()],
-    { stdio: ['pipe', 'pipe', 'pipe'] });
+  const command = uid === null
+    ? ['/opt/puppyone-agent/workbench-lifecycle.mjs', workbench, generation]
+    : ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, randomUUID()];
+  const child = spawn('node', command, { stdio: ['pipe', 'pipe', 'pipe'] });
   const waiting = new Map(); let stderr = '';
   child.stderr.on('data', value => { stderr += value; });
   createInterface({ input: child.stdout }).on('line', value => {
@@ -39,12 +41,23 @@ async function user(uid, source) {
 }
 async function fixture(fn, format = 'sha1', remote = null) {
   const identity = [randomUUID(), randomUUID()], clients = [];
+  let exchanges = 0;
+  const transport = remote && { ...remote, exchange: frame => { exchanges++; return remote.exchange(frame); } };
   try {
+    const creation = connection(...identity, null, transport); clients.push(creation);
+    const config = { project_id: 'fixture', object_format: format, target_ref: 'refs/heads/main', base_oid: remote?.base || null };
+    await creation.control('initialize', config);
+    const initializationRequests = exchanges;
+    await creation.control('initialize', config); // Lost API ACK cannot cause another clone/reset.
+    assert.equal(exchanges, initializationRequests);
+    await assert.rejects(creation.control('initialize', { ...config, project_id: 'another-project' }), /intent mismatch/);
+    creation.child.stdin.end(); await once(creation.child, 'exit'); clients.pop();
     for (const uid of [20000, 20001]) {
-      const client = connection(...identity, uid, remote); clients.push(client);
+      const client = connection(...identity, uid, transport); clients.push(client);
       await client.control('prepare', { project_id: 'fixture', object_format: format, target_ref: 'refs/heads/main', base_oid: remote?.base || null });
     }
-    await fn(clients);
+    assert.equal(exchanges, initializationRequests, 'Chat attachment performed Git network initialization');
+    await fn(clients, { identity, config, transport });
   } finally {
     for (const { child } of clients) if (child.exitCode === null) { child.stdin.end(); await once(child, 'exit'); }
     await rm(ROOT, { recursive: true, force: true });
@@ -72,6 +85,78 @@ test(`${format}: shared inspect/finalize preserves config and leaves ordinary Gi
     }
   }, format));
 }
+
+for (const dirty of [false, true]) {
+  test(`initialization ACK loss reconciles without overwriting files (dirty=${dirty})`,
+    { skip: !enabled, timeout: 30000 }, async () => {
+      const remote = await gitHttpFixture('sha1');
+      try {
+        await fixture(async (_, { identity, config, transport }) => {
+          await rm(`${STATE}/binding.json`); // Crash after checkout, before the readiness marker.
+          if (dirty) await user(1000, `await import('node:fs/promises').then(fs=>fs.writeFile('note','unique incomplete copy'));`);
+          const retry = connection(...identity, null, transport);
+          try {
+            if (dirty) await assert.rejects(retry.control('initialize', config), /failed/);
+            else assert.equal((await retry.control('initialize', config)).tip, remote.base);
+            assert.equal(await readFile(`${ROOT}/note`, 'utf8'), dirty ? 'unique incomplete copy' : 'cloud starting point');
+          } finally { retry.child.stdin.end(); await once(retry.child, 'exit'); }
+        }, 'sha1', remote);
+      } finally { await remote.close(); }
+    });
+}
+
+test('first initialization never overwrites an ignored unique file',
+  { skip: !enabled, timeout: 30000 }, async () => {
+    const remote = await gitHttpFixture('sha1');
+    const client = connection(randomUUID(), randomUUID(), null, remote);
+    try {
+      await mkdir(ROOT); await chown(ROOT, 1000, 1000);
+      await exec('git', ['init', '--initial-branch=main', '.'], { cwd: ROOT, uid: 1000, gid: 1000 });
+      await user(1000, `const fs=await import('node:fs/promises');
+        await fs.writeFile('.git/info/exclude','note\\n'); await fs.writeFile('note','ignored unique file');`);
+      await assert.rejects(client.control('initialize', { project_id: 'fixture', object_format: 'sha1',
+        target_ref: 'refs/heads/main', base_oid: remote.base }), /failed/);
+      assert.equal(await readFile(`${ROOT}/note`, 'utf8'), 'ignored unique file');
+      await assert.rejects(readFile(`${STATE}/binding.json`), { code: 'ENOENT' });
+    } finally {
+      client.child.stdin.end(); await once(client.child, 'exit');
+      await rm(ROOT, { recursive: true, force: true }); await rm(CONTROL_ROOT, { recursive: true, force: true });
+      await remote.close();
+    }
+  });
+
+test('lifecycle initialization cannot chown a user-planted root symlink',
+  { skip: !enabled, timeout: 30000 }, async () => {
+    const target = await mkdtemp('/run/workbench-protected-');
+    const client = connection(randomUUID(), randomUUID(), null);
+    try {
+      await symlink(target, ROOT);
+      await assert.rejects(client.control('initialize', { project_id: 'fixture', object_format: 'sha1',
+        target_ref: 'refs/heads/main', base_oid: null }));
+      assert.equal((await stat(target)).uid, 0);
+    } finally {
+      client.child.stdin.end(); await once(client.child, 'exit');
+      await rm(ROOT, { force: true }); await rm(target, { recursive: true, force: true });
+      await rm(CONTROL_ROOT, { recursive: true, force: true });
+    }
+  });
+
+test('the file user cannot access control state or write its parent directory',
+  { skip: !enabled, timeout: 30000 }, async () => fixture(async () => {
+    await assert.rejects(user(1000, `await import('node:fs/promises').then(fs=>fs.readFile(${JSON.stringify(`${STATE}/binding.json`)}));`));
+    await assert.rejects(user(1000, `await import('node:fs/promises').then(fs=>fs.access('/run', 2));`));
+  }));
+
+test('Chat cannot initialize an absent workspace', { skip: !enabled, timeout: 30000 }, async () => {
+  const client = connection(randomUUID(), randomUUID(), 20000);
+  try {
+    await assert.rejects(client.control('prepare', { object_format: 'sha1', target_ref: 'refs/heads/main' }), /not initialized/);
+    await assert.rejects(readFile(`${ROOT}/.git/HEAD`), { code: 'ENOENT' });
+  } finally {
+    if (client.child.exitCode === null) { client.child.stdin.end(); await once(client.child, 'exit'); }
+    await rm(CONTROL_ROOT, { recursive: true, force: true });
+  }
+});
 
 test('ordinary terminal Git remains readable throughout trusted inspections',
   { skip: !enabled, timeout: 30000 }, () => fixture(async clients => {

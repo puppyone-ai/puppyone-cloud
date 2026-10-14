@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { CONTROL_ROOT, STATE, withWorkbenchGitLock } from './workbench-task.mjs';
 import { exists } from './git.mjs';
+import { initializeWorkbench } from './workbench-initialize.mjs';
 const ROOT = '/workspace/repo';
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -66,9 +67,12 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
     const workbench = randomUUID(), generation = randomUUID(), tasks = [], children = [];
     let unblockGit;
     try {
+      process.umask(0o002);
+      await initializeWorkbench({ workbench, generation }, { project_id: 'fixture', object_format: 'sha1',
+        target_ref: 'refs/heads/main', base_oid: null }, () => { throw new Error('Empty initialization must not fetch'); });
       for (const uid of [20000,20001]) {
         const task = taskConnection(uid, workbench, generation, { lease: ending === 'lease_expiry' && uid === 20000 ? 2000 : 60000 }); tasks.push(task);
-        assert.equal((await task.control('capabilities')).shared_workbench, 1);
+        assert.equal((await task.control('capabilities')).shared_workbench, 2);
         await task.control('prepare', { project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null, readonly: false });
         task.send({ type: 'start', config: { model: 'fixture', max_tokens: 4096, context_window: 131072,
           readonly: false, prompt: 'Run the fixture command.' } });
