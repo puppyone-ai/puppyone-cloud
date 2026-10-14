@@ -1,6 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { createRequestScope, withAbort } from './requestScope';
 import { API_BASE_URL } from '@/config/api';
+import { safeNext } from '@/features/auth/login-intent';
 import { scopedResponseBody } from './responseStream';
 import {
   REPOSITORY_TARGET_CONTRACT_HEADER,
@@ -222,9 +223,16 @@ function handleAuthFailure(): void {
   if (typeof window === 'undefined' || _redirectingToLogin) return;
   if (window.location.pathname.startsWith('/login')) return;
   _redirectingToLogin = true;
+  // Carry the current location through the bounce. Without this a stale
+  // cookie silently destroys single-use entry points: a recipient opening
+  // /share/{token} or /invite/{token} was dumped on /login and, after
+  // signing in, landed on /home with the link consumed and never applied.
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  const target = new URL('/login', window.location.origin);
+  target.searchParams.set('session', 'expired');
+  if (safeNext(returnTo)) target.searchParams.set('redirect', returnTo);
   const go = () => {
-    const query = new URLSearchParams({ session: 'expired', redirect: window.location.pathname + window.location.search });
-    window.location.href = `/login?${query}`;
+    window.location.href = target.pathname + target.search;
   };
   try {
     Promise.resolve(getSupabase().auth.signOut({ scope: 'local' })).finally(go);
