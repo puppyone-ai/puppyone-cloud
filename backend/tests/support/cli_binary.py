@@ -35,28 +35,42 @@ _BIN_RELATIVE = Path("bin/puppyone.js")
 
 
 def _candidates() -> list[Path]:
-    explicit = os.environ.get(ENV_BIN, "").strip()
-    found = [Path(explicit)] if explicit else []
-    found.append(_REPO_ROOT / "node_modules/puppyone" / _BIN_RELATIVE)
-    found.append(_REPO_ROOT.parent / "puppyone-cli" / _BIN_RELATIVE)
-    return found
+    return [
+        _REPO_ROOT / "node_modules/puppyone" / _BIN_RELATIVE,
+        _REPO_ROOT.parent / "puppyone-cli" / _BIN_RELATIVE,
+    ]
+
+
+def _usable(candidate: Path) -> str:
+    """Return an empty string when the candidate can run, else the reason."""
+    if not candidate.is_file():
+        return f"{candidate} does not exist"
+    # A checkout without installed dependencies fails at import time with a
+    # message that looks like a product bug. Report it as a missing fixture.
+    if not (candidate.parents[1] / "node_modules/commander").is_dir():
+        return (
+            f"found {candidate} but its dependencies are not installed; "
+            f"run `npm ci` in {candidate.parents[1]}"
+        )
+    return ""
 
 
 @lru_cache(maxsize=1)
 def _resolve() -> tuple[Path | None, str]:
     """Return the CLI entry point, or None plus the reason it is unusable."""
+    # An explicit path is an assertion, not a preference. Falling back from a
+    # wrong one would quietly test a different CLI than the operator named.
+    explicit = os.environ.get(ENV_BIN, "").strip()
+    if explicit:
+        reason = _usable(Path(explicit))
+        if reason:
+            return None, f"{ENV_BIN} is set but unusable: {reason}"
+        return Path(explicit), ""
+
     candidates = _candidates()
     for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        # A checkout without installed dependencies fails at import time with a
-        # message that looks like a product bug. Report it as a missing fixture.
-        if not (candidate.parents[1] / "node_modules/commander").is_dir():
-            return None, (
-                f"Found {candidate} but its dependencies are not installed. "
-                f"Run `npm ci` in {candidate.parents[1]}."
-            )
-        return candidate, ""
+        if not _usable(candidate):
+            return candidate, ""
 
     searched = "\n".join(f"  - {path}" for path in candidates)
     return None, (
