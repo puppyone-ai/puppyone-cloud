@@ -2,9 +2,10 @@
 
 See ``docs/proposals/PUP-3-folder-upload-policy.md`` for the product
 contract this implements. The frontend mirror lives at
-``frontend/lib/uploadPolicy.ts`` and the CLI mirror at
-``cli/src/commands/fs/lib/upload-policy.js``; any constant changes here
-MUST be applied in those two files as well.
+``frontend/lib/uploadPolicy.ts``. A third mirror lives in the separate
+``puppyone-ai/puppyone-cli`` repository at
+``src/commands/fs/lib/upload-policy.js``; any constant change here MUST
+be applied to both.
 
 The policy has three independent filtering stages applied in order:
   1. Hardcoded blocklist  — segments no user wants in their tree (.git/,

@@ -21,7 +21,7 @@ from tests.platform.test_synchronize_clients_http import http_server as http_ser
 from tests.version_engine.test_dashboard_usage_buckets import FakeSB
 
 pytestmark = pytest.mark.integration
-CLI = Path(__file__).resolve().parents[3] / "cli/bin/puppyone.js"
+from tests.support.cli_binary import cli_command
 
 
 @pytest.fixture
@@ -39,12 +39,10 @@ def canonical(request):
 
 @pytest.fixture
 def cli(http_server, tmp_path):
-    assert (CLI.parents[1] / "node_modules/commander").exists(), "Install CLI dependencies"
-
     def run(*, project="project-1", json_mode=True, ok=True):
         result = subprocess.run(
-            ["node", str(CLI), *(["--json"] if json_mode else []), "--api-url", http_server,
-             "--api-key", "isolated-test-token", "--project", project, "status"],
+            cli_command(*(["--json"] if json_mode else []), "--api-url", http_server,
+                        "--api-key", "isolated-test-token", "--project", project, "status"),
             text=True, capture_output=True, timeout=20,
             env={**os.environ, "HOME": str(tmp_path)},
         )

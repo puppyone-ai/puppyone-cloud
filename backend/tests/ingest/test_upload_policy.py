@@ -152,7 +152,7 @@ class TestThresholds:
     def test_constants_match_product_doc(self) -> None:
         # If you change these, also update:
         #   - frontend/lib/uploadPolicy.ts
-        #   - cli/src/commands/fs/lib/upload-policy.js
+        #   - puppyone-cli: src/commands/fs/lib/upload-policy.js
         #   - docs/proposals/PUP-3-folder-upload-policy.md (§2.5)
         assert PER_FILE_MAX_BYTES == 100 * 1024 * 1024
         assert PER_BATCH_MAX_FILES == 5000
@@ -196,24 +196,38 @@ class TestCrossLanguageParity:
     """Real cross-language parity check (replaces the comment that
     *claimed* a CI string comparison existed but never did).
 
-    The upload policy is duplicated by hand in three files:
+    The upload policy is duplicated by hand in three implementations:
       - backend/src/platform/upload/policy.py   (source of truth)
-      - frontend/lib/uploadPolicy.ts
-      - cli/src/commands/fs/lib/upload-policy.js
+      - frontend/lib/uploadPolicy.ts            (same repository)
+      - the ``puppyone`` CLI mirror             (separate repository)
 
-    This test parses all three and asserts the blocklist segments and
-    the five thresholds are byte-for-byte identical. It runs as part of
-    pytest, so the parity guarantee is real and CI-enforced — change one
-    file without the others and this fails.
+    This test parses each available implementation and asserts the
+    blocklist segments and the five thresholds are byte-for-byte
+    identical — change one without the others and this fails.
+
+    The CLI lives in ``puppyone-ai/puppyone-cli`` and is not vendored
+    here, so its mirror is resolved at run time from, in order:
+
+      1. ``$PUPPYONE_CLI_UPLOAD_POLICY_JS``  (explicit path)
+      2. ``node_modules/puppyone/src/...``   (installed npm package)
+      3. ``../puppyone-cli/src/...``         (sibling checkout)
+
+    When none resolve, the CLI leg is skipped so a backend-only checkout
+    stays green. CI must make the CLI available and set
+    ``PUPPYONE_REQUIRE_CLI_PARITY=1``, which turns that skip into a
+    failure.
     """
 
+    import os as _os
     import re as _re
     from pathlib import Path as _Path
 
     _REPO_ROOT = _Path(__file__).resolve().parents[3]
     _PY = _REPO_ROOT / "backend/src/platform/upload/policy.py"
     _TS = _REPO_ROOT / "frontend/lib/uploadPolicy.ts"
-    _JS = _REPO_ROOT / "cli/src/commands/fs/lib/upload-policy.js"
+
+    _CLI_MIRROR_RELATIVE = "src/commands/fs/lib/upload-policy.js"
+    _CLI_ENV_VAR = "PUPPYONE_CLI_UPLOAD_POLICY_JS"
 
     _THRESHOLD_NAMES = (
         "PER_FILE_MAX_BYTES",
@@ -222,6 +236,40 @@ class TestCrossLanguageParity:
         "PREFLIGHT_FILE_THRESHOLD",
         "PREFLIGHT_BYTES_THRESHOLD",
     )
+
+    @classmethod
+    def _cli_mirror_candidates(cls) -> list[_Path]:
+        explicit = cls._os.environ.get(cls._CLI_ENV_VAR, "").strip()
+        candidates = [cls._Path(explicit)] if explicit else []
+        candidates.append(
+            cls._REPO_ROOT / "node_modules/puppyone" / cls._CLI_MIRROR_RELATIVE
+        )
+        candidates.append(
+            cls._REPO_ROOT.parent / "puppyone-cli" / cls._CLI_MIRROR_RELATIVE
+        )
+        return candidates
+
+    @classmethod
+    def _read_cli_mirror(cls) -> str:
+        """Return the CLI mirror source, or skip when it is unavailable.
+
+        ``PUPPYONE_REQUIRE_CLI_PARITY=1`` makes the absence a failure so
+        CI cannot lose this leg of the parity check silently.
+        """
+        candidates = cls._cli_mirror_candidates()
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate.read_text(encoding="utf-8")
+
+        searched = "\n".join(f"  - {path}" for path in candidates)
+        detail = (
+            "puppyone CLI upload-policy mirror not found. Install the CLI "
+            f"(`npm install puppyone`), check out puppyone-cli beside this "
+            f"repository, or set {cls._CLI_ENV_VAR}. Searched:\n{searched}"
+        )
+        if cls._os.environ.get("PUPPYONE_REQUIRE_CLI_PARITY") == "1":
+            pytest.fail(detail)
+        pytest.skip(detail)
 
     @classmethod
     def _eval_int_expr(cls, expr: str) -> int:
@@ -278,25 +326,35 @@ class TestCrossLanguageParity:
         ]
         return set(cls._re.findall(r"""['"]([^'"]+)['"]""", "\n".join(lines)))
 
-    def test_thresholds_identical_across_languages(self) -> None:
+    # Backend/frontend legs live in this repository and must never skip.
+
+    def test_thresholds_identical_backend_frontend(self) -> None:
         py = self._extract_thresholds(self._PY.read_text(encoding="utf-8"))
         ts = self._extract_thresholds(self._TS.read_text(encoding="utf-8"))
-        js = self._extract_thresholds(self._JS.read_text(encoding="utf-8"))
         assert py == ts, f"py vs ts threshold drift: {py} != {ts}"
-        assert py == js, f"py vs js threshold drift: {py} != {js}"
         # And they match the imported Python constants (catches a parser
         # that silently reads stale text).
         assert py["PER_FILE_MAX_BYTES"] == PER_FILE_MAX_BYTES
         assert py["PER_BATCH_MAX_FILES"] == PER_BATCH_MAX_FILES
         assert py["PER_BATCH_MAX_BYTES"] == PER_BATCH_MAX_BYTES
 
-    def test_blocklist_identical_across_languages(self) -> None:
+    def test_blocklist_identical_backend_frontend(self) -> None:
         py = self._extract_blocklist(self._PY.read_text(encoding="utf-8"))
         ts = self._extract_blocklist(self._TS.read_text(encoding="utf-8"))
-        js = self._extract_blocklist(self._JS.read_text(encoding="utf-8"))
         assert py == ts, f"py vs ts blocklist drift: {py ^ ts}"
-        assert py == js, f"py vs js blocklist drift: {py ^ js}"
         assert py == set(DEFAULT_BLOCKLIST_SEGMENTS)
+
+    # CLI leg resolves a separate repository; it may skip locally.
+
+    def test_thresholds_identical_cli_mirror(self) -> None:
+        py = self._extract_thresholds(self._PY.read_text(encoding="utf-8"))
+        js = self._extract_thresholds(self._read_cli_mirror())
+        assert py == js, f"py vs cli threshold drift: {py} != {js}"
+
+    def test_blocklist_identical_cli_mirror(self) -> None:
+        py = self._extract_blocklist(self._PY.read_text(encoding="utf-8"))
+        js = self._extract_blocklist(self._read_cli_mirror())
+        assert py == js, f"py vs cli blocklist drift: {py ^ js}"
 
 
 if __name__ == "__main__":
