@@ -119,6 +119,14 @@ async def test_e2b_snapshot_survives_source_deletion_and_rebinds_controller():
             worker.restore_point = recovery
             await worker.create()
             await worker.start(config(resume_workspace=bool(recovery)))
+            assert "recovery_volume" not in worker.resource
+            assert (await worker.control("capabilities"))["recovery_backend"] == "provider-snapshot"
+            layout = await worker.sandbox.commands.run(
+                "test ! -e /recovery && test -d /workspace/repo/.git && "
+                "test -w /tmp && test -r /opt/puppyone-agent/worker.mjs && echo E2B_LAYOUT_OK",
+                user="node",
+            )
+            assert "E2B_LAYOUT_OK" in layout.stdout
             snapshots.add(worker.recovery["id"])
             requests = 0
             async with asyncio.timeout(180):
@@ -215,6 +223,7 @@ async def test_e2b_stock_git_fetch_commit_push_and_clean_next_turn(prepared, mon
                 case, asyncio.create_task(supervisor.run_claim(case.run)), timeout=240
             )
             assert result["state"] == "succeeded", result
+            assert "recovery_volume" not in supervisor.worker.resource
             assert result["publication"]["status"] == (
                 "committed" if attempt == 0 else "no_changes"
             )

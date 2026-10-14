@@ -2,8 +2,7 @@
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
-import path from 'node:path';
+import { approvalDenied, wrapTool, toolErrorObserver } from './tool-execution.mjs';
 import {
   createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager,
   SettingsManager, VERSION, createReadToolDefinition, createWriteToolDefinition,
@@ -14,6 +13,7 @@ import {
 const root = process.cwd();
 const pending = new Map();
 const models = new Map();
+const executedTools = new Set();
 let session;
 let manager;
 let stopped = false;
@@ -24,24 +24,6 @@ const request = (type, payload) => new Promise((resolve, reject) => {
   pending.set(id, { resolve, reject });
   send({ type, id, ...payload });
 });
-
-async function safePath(value, allowMissing = false) {
-  if (typeof value !== 'string' || value.includes('\0')) throw new Error('Invalid workspace path');
-  const target = path.resolve(root, value);
-  if (target !== root && !target.startsWith(`${root}/`)) throw new Error('Path outside assigned workspace');
-  let check = target;
-  for (;;) {
-    try {
-      const resolved = await realpath(check);
-      if (resolved !== root && !resolved.startsWith(`${root}/`)) throw new Error('Workspace symlink escape');
-      break;
-    } catch (error) {
-      if (!allowMissing || error.code !== 'ENOENT' || check === root) throw error;
-      check = path.dirname(check);
-    }
-  }
-  return target;
-}
 
 function conversation() {
   // All session entries, not just rendered messages: retains compactions and branches.
@@ -55,21 +37,8 @@ async function checkpoint(reason) {
 }
 
 function wrap(definition) {
-  const execute = definition.execute;
-  return { ...definition, execute: async (id, input, signal, update, context) => {
-    if (stopped) throw new Error('Run stopped');
-    if ('path' in input) await safePath(input.path, ['write', 'edit'].includes(definition.name));
-    if (['find', 'grep', 'ls'].includes(definition.name)) await safePath(input.path || '.');
-    const admission = await request('tool_start', { call_id: id, name: definition.name, input, checkpoint: conversation() });
-    if (admission.result) return admission.result;
-    if (!admission.allow) throw new Error('Tool execution denied');
-    let result;
-    try { result = await execute(id, input, signal, update, context); }
-    catch (error) { result = { content: [{ type: 'text', text: String(error.message) }], isError: true }; }
-    // The supervisor links the receipt to a provider recovery point before ACK.
-    await request('tool_end', { call_id: id, name: definition.name, input, result, mutated: !['read', 'ls', 'find', 'grep'].includes(definition.name) });
-    return result;
-  }};
+  return wrapTool(definition, { request, conversation, isStopped: () => stopped,
+    onExecute: id => executedTools.add(id) });
 }
 
 async function start(value) {
@@ -116,7 +85,7 @@ async function start(value) {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills: [], diagnostics: [] }), getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }), getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => config.system_prompt || 'Help with the assigned project files. Work within this workspace.',
+    getSystemPrompt: () => config.system_prompt || 'Help with the assigned project files. Project changes belong in the workspace; sandbox temporary directories are available for scratch work. Tool errors are recoverable: use the result to choose another approach. Never repeat an operation the user declined.',
     getSystemPromptSource: () => undefined, getAppendSystemPrompt: () => [], getAppendSystemPromptSources: () => [],
     extendResources: () => {}, reload: async () => {},
   };
@@ -125,6 +94,7 @@ async function start(value) {
     createBashToolDefinition(root, { exposeSessionEnvironment: false }));
   const custom = (config.tools || []).map(tool => ({ ...tool, label: tool.name,
     execute: async (id, input) => {
+      executedTools.add(id);
       const result = await request('bound_tool', { call_id: id, name: tool.name, input, checkpoint: conversation() });
       if (result.error) throw new Error(result.error);
       return result.result;
@@ -141,6 +111,7 @@ async function start(value) {
       send({ type: 'text', delta: event.assistantMessageEvent.delta });
   });
   session.agent.toolExecution = 'sequential';
+  session.agent.subscribe(toolErrorObserver({ request, conversation, executed: executedTools }));
   send({ type: 'ready', pi_version: VERSION, node_version: process.version, workspace_version: 2, operation_version: 1 });
   try {
     if (config.resume) {
@@ -157,7 +128,7 @@ async function start(value) {
           if (!receipt || receipt.state === 'executing') throw new Error('Tool outcome requires reconciliation');
           let result;
           if (receipt.state === 'completed') result = receipt.result.pi_result;
-          else if (receipt.state === 'rejected') result = {content: [{type: 'text', text: 'Tool execution denied'}], isError: true};
+          else if (receipt.state === 'rejected') result = approvalDenied();
           else {
             const tool = definitions.find(t => t.name === call.name);
             if (!tool) throw new Error('Tool is no longer available');

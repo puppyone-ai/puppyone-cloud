@@ -19,3 +19,20 @@ it('distinguishes publishing, conflict and unknown save outcomes from successful
   expect(runStatus(makeRun({ state: 'outcome_unknown' }))).toContain('confirmation');
   expect(runStatus(makeRun({ state: 'succeeded' }))).toBeNull();
 });
+it('shows a recoverable failure on the tool while the Agent continues and finishes normally', () => {
+  const tools = [{ call_id: 'denied', name: 'write', input: { path: '/recovery/test' }, state: 'completed' as const,
+    result: { content: [{ type: 'text', text: 'Permission denied' }], isError: true,
+      details: { code: 'tool_permission_denied', recoverable: true } } }];
+  for (const state of ['running', 'succeeded'] as const) {
+    const run = makeRun({ state, tools });
+    const messages = projectRunMessages([run]);
+    expect(messages[1].parts?.[0]).toMatchObject({ toolStatus: 'error', toolOutput: 'Permission denied' });
+    expect(messages[1].isStreaming).toBe(state === 'running');
+    expect(runStatus(run)).toBeNull();
+  }
+});
+it('explains a declined tool without showing a run failure', () => {
+  const run = makeRun({ state: 'running', tools: [{ call_id: 'declined', name: 'bash', input: {}, state: 'rejected' }] });
+  expect(projectRunMessages([run])[1].parts?.[0]?.toolOutput).toContain('declined');
+  expect(runStatus(run)).toBeNull();
+});

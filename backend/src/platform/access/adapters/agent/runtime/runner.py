@@ -597,6 +597,9 @@ class RunSupervisor:
             denial = tool_error(
                 "tool_invalid_input", message or "The SDK could not execute this tool call."
             )
+        # Sandbox OS/provider policy enforces process, filesystem and network
+        # boundaries. Do not inspect arbitrary shell text with the shared SSH
+        # endpoint's regex blacklist (even /dev/null used to kill a whole Run).
         # Approval and mutation recovery are separate: ordinary sandbox writes
         # execute automatically and still receive durable receipts/snapshots.
         approval_required = denial is None and approval_reason(name, frame["input"]) is not None
@@ -655,8 +658,6 @@ class RunSupervisor:
         await self.worker.send({"type": "reply", "id": frame["id"]})
 
     async def bound_tool(self, frame):
-        if self.bound_tools is None:
-            raise PermissionError("No configured tools")
         value, manifest = await self.conversation_manifest(frame["checkpoint"], "before_tool")
         receipt = (
             await self.command(
@@ -667,7 +668,28 @@ class RunSupervisor:
             result = receipt["result"]["pi_result"]
         else:
             self.value, self.durable = value, manifest
-            result = await self.bound_tools.execute(self.run, frame["name"], frame["input"])
+            try:
+                if self.bound_tools is None:
+                    raise PermissionError("No configured tools")
+                result = await self.bound_tools.execute(self.run, frame["name"], frame["input"])
+            except (EndRun, WorkerLost):
+                raise
+            except PermissionError:
+                result = tool_error(
+                    "tool_permission_denied",
+                    "This tool is not authorized for this run. Continue with the available tools.",
+                )
+            except ValueError:
+                result = tool_error(
+                    "tool_invalid_input", "The tool input is invalid. Correct it before retrying."
+                )
+            except Exception:
+                logger.exception("cloud_agent_tool_failed", extra={"run_id": self.run["id"]})
+                result = tool_error(
+                    "tool_execution_failed",
+                    "The tool could not return a result. Continue with another approach "
+                    "or retry if the failure is temporary.",
+                )
             await self.command(
                 self.repo.complete_tool,
                 frame,

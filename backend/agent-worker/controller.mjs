@@ -1,15 +1,18 @@
 /** Trusted sandbox control process. Pi and every model tool run as uid 1000. */
-import { spawn, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { mkdir, chmod, chown, readdir, readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { mkdir, chown, readdir, readFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
-import { ROOT, prepare, finalize, push, exists, inspect } from './git.mjs';
+import { ROOT, prepare, finalize, push, inspect } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
-const exec = promisify(execFile);
+// Selected by the trusted provider launcher, never by model/config frames.
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length && args[0] !== '--docker-recovery'))
+  throw new Error('Unsupported controller arguments');
+const recovery = args.length
+  ? (await import('./providers/docker-recovery.mjs')).dockerRecovery(ROOT) : null;
 const control = channel();
-let worker, relay, config, lastSnapshot, stopped = false;
+let worker, relay, config, stopped = false;
 const childIds = new Set();
 async function processes(signal, keepWorker = false) {
   // Include detached descendants, not just the original process group.
@@ -32,30 +35,24 @@ async function processes(signal, keepWorker = false) {
 }
 async function directories() {
   await mkdir(ROOT,{recursive:true}); await chown(ROOT,1000,1000);
-  await mkdir('/recovery',{recursive:true}); await chmod('/recovery',0o700);
+  if (recovery) await recovery.initialize();
 }
 async function snapshot() {
+  if (!recovery) throw new Error('Use the provider snapshot API');
   await processes('SIGSTOP');
   try {
     // A completed tool may have forked detached writers. They must not modify
     // files after its acknowledged boundary or during subsequent read tools.
     await processes('SIGKILL',true);
-    const id=randomUUID(); const destination=`/recovery/${id}`;
-    await mkdir(destination);
-    await exec('rsync',['-a',...(lastSnapshot ? [`--link-dest=/recovery/${lastSnapshot}`] : []),
-      '--',ROOT+'/',destination+'/'],{timeout:120000,maxBuffer:8192});
-    lastSnapshot=id;
-    return { id };
+    return await recovery.snapshot();
   } finally { if (!stopped) await processes('SIGCONT'); }
 }
 async function prepareWorkspace(value) {
+  if (value.restore && !recovery) throw new Error('Local recovery is disabled for this provider');
   config=value; stopped=false; await directories();
   relay?.close(); relay=await gitRelay(control.request,config.project_id);
   if (config.restore) {
-    if (!/^[0-9a-f-]{36}$/.test(config.restore)) throw new Error('Invalid recovery identity');
-    if (!(await exists(`/recovery/${config.restore}`))) throw new Error('Recovery point missing');
-    await exec('rsync',['-a','--delete','--',`/recovery/${config.restore}/`,ROOT+'/'],{timeout:120000});
-    lastSnapshot=config.restore;
+    await recovery.restore(config.restore);
   }
   if (config.resume) return {};
   return relay.run(()=>prepare(ROOT,config,relay.url,{reuse:Boolean(config.restore || config.reuse)}));
@@ -82,7 +79,8 @@ control.dispatch(async frame=>{
   if (frame.type === 'control') {
     try {
       let result;
-      if (frame.action === 'capabilities') result={workspace_lifecycle:1};
+      if (frame.action === 'capabilities') result={workspace_lifecycle:1,
+        recovery_version:1,recovery_backend:recovery ? 'docker-volume' : 'provider-snapshot'};
       else if (frame.action === 'prepare') result=await prepareWorkspace(frame.value);
       else if (frame.action === 'snapshot') result=await snapshot();
       else if (frame.action === 'inspect') result=await inspect(ROOT,frame.value);
