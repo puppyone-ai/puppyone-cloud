@@ -41,21 +41,27 @@ def test_only_configured_methods_are_published_and_cached(monkeypatch, enabled):
     assert len(calls) == 1
 
 
-def test_provider_outage_does_not_pretend_oauth_enabled(monkeypatch):
+def test_provider_outage_keeps_email_available_without_pretending_oauth_enabled(monkeypatch):
     real_client = httpx.AsyncClient
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        return httpx.Response(500, text="secret")
+
     monkeypatch.setenv("SUPABASE_URL", "https://auth.example.test")
     monkeypatch.setattr(methods, "_cached", None)
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
-        lambda **kwargs: real_client(
-            transport=httpx.MockTransport(lambda request: httpx.Response(500, text="secret")),
-            **kwargs,
-        ),
+        lambda **kwargs: real_client(transport=httpx.MockTransport(provider), **kwargs),
     )
     app = FastAPI()
     app.include_router(methods.router)
     with TestClient(app) as client:
-        response = client.get("/methods")
-        assert response.status_code == 503
-        assert "secret" not in response.text
+        for _ in range(2):
+            response = client.get("/methods")
+            assert response.status_code == 200
+            assert response.json()["data"] == {"providers": ["email"]}
+            assert "secret" not in response.text
+    assert len(calls) == 1
