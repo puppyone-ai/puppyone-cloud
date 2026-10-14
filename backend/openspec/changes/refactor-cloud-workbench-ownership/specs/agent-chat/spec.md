@@ -1,11 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Shared workbench execution
-Multiple admitted Agent Sessions SHALL execute concurrently in one workbench's
-current directory and branch without automatic per-Agent copies or write queues.
+A workbench SHALL belong to one user only. That user's admitted Agent Sessions
+SHALL execute concurrently in its current directory and branch without automatic
+per-Agent copies or write queues. Project access SHALL NOT grant access to another
+user's live workbench.
+
+#### Scenario: Project colleague cannot enter the private workspace
+- **WHEN** a different user with access to the same Project requests a workspace connection
+- **THEN** ownership validation rejects the request before provider access
+- **AND** neither the directory nor terminal/preview/task capabilities are shared.
 
 #### Scenario: Another Agent changes a file
-- **WHEN** two Agents are attached to the same workbench
+- **WHEN** two Agents of the same user are attached to that user's workbench
 - **THEN** each sees the other's saved changes in the same directory
 - **AND** conflicts are handled as normal user-managed filesystem/Git conflicts.
 
@@ -28,10 +35,20 @@ Native Git authority, authorization and local Desktop execution remain unchanged
 - **THEN** admission rejects it before allocating resources
 - **AND** no legacy Session sandbox is created.
 
+#### Scenario: Platform creates the workspace
+- **WHEN** the user creates a workspace
+- **THEN** the platform persists the owner and allocation intent, provisions a resource and initializes its directory once
+- **AND** repeated creation reconciles the same operation before acknowledging readiness.
+
 #### Scenario: Multiple Chats select one workspace
-- **WHEN** two Sessions start concurrently in the same selected workspace
-- **THEN** both attach to the same current resource and directory
-- **AND** resource allocation is single-flight, not repeated per Chat.
+- **WHEN** two Sessions start concurrently in the same selected ready workspace
+- **THEN** both attach to the already-created current resource and directory
+- **AND** neither Chat allocates a resource, clones the repository or wakes compute.
+
+#### Scenario: Selected workspace is not running
+- **WHEN** a Chat attempts to attach to a paused, missing or unready workspace
+- **THEN** task admission rejects the attachment without provider creation or resume
+- **AND** creation, wake and reconstruction remain workspace lifecycle operations.
 
 ### Requirement: Independent native publication target
 Workbench publication SHALL advance only its explicit native target ref using
@@ -51,7 +68,9 @@ implicitly when a non-primary workbench publishes.
 
 ### Requirement: Shared files and ordinary Git remain usable
 Task process isolation SHALL NOT make shared workspace files inaccessible to
-other tasks or the user. Trusted inspection SHALL NOT rewrite user Git config.
+other Agents of the SAME user or that user's terminal. They SHALL share one
+ordinary-user filesystem identity, independent of task process-stop isolation.
+Trusted inspection SHALL NOT rewrite user Git config.
 
 #### Scenario: Atomic file save and user Git
 - **WHEN** an Agent saves through a private temporary file and atomic rename

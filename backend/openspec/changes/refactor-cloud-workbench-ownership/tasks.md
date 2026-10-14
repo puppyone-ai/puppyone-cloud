@@ -4,12 +4,14 @@
 - [x] Record the 2026-10-14 approval to remove pre-launch Chat compatibility.
 - [ ] A1: Make selected-workbench admission the only production execution path.
   - [x] Independent durable identity, actor/project ownership and immutable attachments.
-  - [ ] Creation/selection API, concrete admission, and removal of the Session-owned fallback.
+  - [x] Clarify private-user ownership; tasks borrow a running host without create/wake capability.
+  - [ ] Platform workspace creation API with idempotent provisioning and initial Git preparation; explicit workspace wake.
+  - [ ] Concrete admission and removal of the Session-owned default composition.
 - [ ] A2: Complete production lifecycle and shared-file/process semantics.
   - [x] Durable task ledger, allocation intent, generation/version/operation fences.
   - [x] Integrate tasks and conversation-only recovery with the existing supervisor/dispatcher.
   - [x] Task revocation and confirmed cleanup fence late starts and pending Git.
-  - [ ] Resolve the different-UID 0600 atomic-save visibility gap without weakening task cleanup.
+  - [ ] Use one filesystem identity for the owner's Agents/human interactions; replace UID-based stop isolation with a verified task process domain.
   - [ ] Concrete provider owner for acquire/resume/pause/retire and production composition.
   - [ ] Real Docker/E2B lifecycle and shared-execution acceptance.
 - [ ] A3: Complete native publication and document the production contract.
@@ -40,7 +42,12 @@ run through the full ordered local migration chain. Hosted applied versions and
 release readiness have not been inspected or claimed.
 
 Task isolation still uses distinct UIDs and is not sufficient for arbitrary
-shared file permissions. The full-controller Git tests corrected an earlier
+shared file permissions between the SAME user's Agents. Different users never
+share a live workspace. Platform provisioning must move to workspace creation,
+including the task controller's remaining initial-directory/Git preparation.
+The task host interface now exposes check/connection only, and acquisition rejects
+non-running resources before provider access. This does not complete provisioning
+or remove the still-existing legacy production composition. The full-controller Git tests corrected an earlier
 helper-only audit: the old wrapper did restore config mode after completion,
 but a real concurrent terminal still failed during the 0600 window. Both that
 window and config destruction are fixed by the shared control view. The separate

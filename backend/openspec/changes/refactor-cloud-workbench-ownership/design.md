@@ -3,8 +3,11 @@
 ## Product and authority
 
 A selected workspace is one cloud computer: one current resource generation,
-one live worktree and one current branch, shared by its Chats, terminal, preview
-and file access. Starting a Chat does not create another workspace or checkout.
+one live worktree and one current branch, shared by the owning user's Chats,
+terminal, preview and file access. A workspace belongs to exactly one user;
+Project membership or administration does not permit entering another user's
+live workspace. Published Project content is shared through existing grants/Git,
+not through shared compute. Starting a Chat creates neither workspace nor sandbox.
 A running task retains its admitted binding when the user changes UI selection.
 Conflicts are ordinary user-managed filesystem/Git conflicts, not a new merge
 coordinator or mandatory file-write queue.
@@ -27,16 +30,38 @@ This does not authorize deleting project files or abandoning provider resources.
 Historical migrations are immutable; cutover SQL is forward-only and tested
 against populated databases. Deployment coordination remains separate.
 
+## Workspace provisioning
+
+Platform workspace creation, not Chat submission, owns allocation: authorize the
+owner/Project, persist an idempotent identity and allocation intent, provision one
+resource, initialize the directory/Git once, then acknowledge readiness through
+resource generation/version/operation CAS. Return preparing/failed until readiness
+is confirmed. Repeated creation or a lost response reconciles that same operation;
+it does not allocate one machine per Chat or silently replace a unique copy.
+
+Opening/waking a paused workspace is a workspace operation. Tasks only borrow an
+already-running, authorized connection. A task cannot repair missing, paused,
+retired or lost compute by creating/resuming it. Resource retirement leaves the
+workspace identity and responsibility intact; replacement requires its explicit
+lifecycle operation and recoverability checks. No Session owns provider lifetime.
+
 ## Task and file boundaries
 
 Resource lifecycle and task transport are separate capabilities. A task receives
 an already-admitted connection and can stop only its execution. It does not
 inherit resource creation/pause/deletion as methods that merely throw at runtime.
 Provider credentials and trusted control state remain outside user-writable paths.
+The selected target uses one ordinary-user filesystem identity for the owner and
+all their Agents in this workspace. Private-mode saves remain accessible to that
+same identity. Task process domains (including detached descendants) provide stop
+isolation separately; concrete provider support must be tested. Different task
+UIDs are not a product security boundary between this user's Agents. Root/service
+control identity remains separate; this never permits cross-user workspace access.
 
 The merged distinct-task-UID/shared-group implementation is NOT final acceptance:
 2026-10-14 Linux reproduction showed that a 0600 temporary-file rename is not
-readable by another task. The initial helper-only Git probe missed the wrapper's
+readable by another Agent of the SAME user. This is not a request for cross-user
+sharing; it is a defect introduced by the task UID mechanism. The initial helper-only Git probe missed the wrapper's
 final chmod to 0660; the full-controller regression then reproduced the actual
 bug: other Git clients fail during the temporary 0600 inspection window. The
 new shared Git control view fixes that window and config rewriting, but does

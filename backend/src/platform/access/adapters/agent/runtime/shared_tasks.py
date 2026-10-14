@@ -5,24 +5,29 @@ from typing import Any, Protocol
 
 from src.platform.access.adapters.agent.runtime.shared_recovery import SharedRecovery
 from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
+from src.platform.scope_sandbox.execution.worker_port import WorkerLost
 
 
-class WorkbenchOwner(Protocol):
-    """Resource admission/metering is mandatory and independent of Run ownership.
+class WorkbenchHost(Protocol):
+    """Borrow a private user's already-running workspace; never provision for Chat.
 
-    The production dispatcher must not enable shared claims without this owner.
-    connection() returns an already-running authorized connection; it cannot
-    silently create/resume compute while cleaning a task.
+    Creation, initialization and wake belong to workspace lifecycle operations.
+    check() verifies current authorization/resource/metering, not readiness repair.
+    connection() must neither create nor wake compute, including during cleanup.
     """
 
-    async def ensure_running(self, run: dict, workbench: dict, *, base: dict) -> Any: ...
     async def connection(self, workbench: dict) -> Any: ...
     async def check(self, workbench: dict) -> None: ...
+
+
+class WorkbenchOwner(WorkbenchHost, Protocol):
+    """The dispatcher's lifecycle owner; task orchestration only needs its host view."""
+
     async def reap(self) -> None: ...
 
 
 class SharedTasks:
-    def __init__(self, repository, owner: WorkbenchOwner, *, worker_factory=WorkbenchTask):
+    def __init__(self, repository, owner: WorkbenchHost, *, worker_factory=WorkbenchTask):
         if owner is None:
             raise ValueError("A shared workbench lifecycle owner is required")
         self.repository, self.owner, self.worker_factory = repository, owner, worker_factory
@@ -46,12 +51,13 @@ class SharedTasks:
 
     async def acquire(self, run, value):
         row = await self.workbench(run)
-        self.validate_checkpoint(row, value)
-        await self.owner.ensure_running(run, row, base=value["base"])
-        # The owner returns no substitute authority: read back its durable ACK.
-        self.row = await self.workbench(run)
-        identity = self.validate_checkpoint(self.row, value)
-        await self.owner.check(self.row)
+        identity = self.validate_checkpoint(row, value)
+        if row["state"] != "running" or not (row.get("resource") or {}).get("resource_id"):
+            raise WorkerLost("Workbench must already be running before task admission")
+        self.row = row
+        await self.owner.check(row)
+        # SQL acquisition revalidates state/generation and occupancy atomically.
+        # A Chat must never repair this check by allocating/resuming a machine.
         bound = await asyncio.to_thread(self.repository.acquire, run, self.row["generation"])
         worker = await self.connect(run, self.row, bound)
         return worker, {**value, "workbench": identity, "recovery": None}

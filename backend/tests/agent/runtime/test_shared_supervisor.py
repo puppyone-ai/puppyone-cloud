@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 @pytest.fixture
-async def shared_case(postgres, submitted, control_api):
+async def shared_case(postgres, submitted, control_api, request):
     args, _ = submitted
     control_api.table("access_surfaces").update({"config": {
         "llm_model": "fixture", "bash_view": {"path_prefix": "", "excludes": [], "max_mode": "rw"}
@@ -33,6 +33,10 @@ async def shared_case(postgres, submitted, control_api):
     policy = admission.evaluate(context, args["user"], args["project"]).policy
     args = {**args, "policy": policy}
     wb = running(postgres, args)
+    if getattr(request, "param", None):
+        # Lifecycle changed state before this Run was submitted, not under an occupant.
+        postgres.sql(f"UPDATE cloud_workbenches SET state='{request.param}' WHERE id='{wb['id']}'")
+        wb = postgres.row(f"SELECT * FROM cloud_workbenches WHERE id='{wb['id']}'")
     shared_submit(postgres, args, wb)
     run = repo.claim_workbench_run(worker=str(uuid4()))
     tasks = SharedTaskRepository(control_api)
@@ -138,6 +142,31 @@ async def test_existing_supervisor_executes_shared_run_without_vm_side_effects(s
     assert case.repo.tools(final["id"])[0]["result"]["checkpoint"]["state"]["recovery"] is None
     case.forbidden.assert_not_awaited()
     case.owner.check.assert_awaited()
+    case.owner.ensure_running.assert_not_awaited()  # Chat cannot provision/wake compute.
+
+
+@pytest.mark.parametrize("shared_case", ["retired", "allocating", "paused", "resuming", "retained", "cleanup_pending"], indirect=True)
+async def test_chat_rejects_unready_workspace_without_provisioning(shared_case):
+    case = shared_case
+    with pytest.raises(RuntimeError, match="already be running"):
+        await SharedTasks(case.tasks, case.owner, worker_factory=case.TaskWorker).acquire(
+            case.run, workspace_state(case.run, case.base))
+    case.owner.ensure_running.assert_not_awaited()
+    case.owner.connection.assert_not_awaited()
+    case.owner.check.assert_not_awaited()
+    assert case.tasks.active(case.run) == []
+
+
+async def test_workspace_is_private_even_when_another_user_has_the_same_project(shared_case):
+    case = shared_case
+    other_user_run = {**case.run, "user_id": str(uuid4())}
+    with pytest.raises(PermissionError, match="ownership mismatch"):
+        await SharedTasks(case.tasks, case.owner, worker_factory=case.TaskWorker).acquire(
+            other_user_run, workspace_state(case.run, case.base))
+    case.owner.ensure_running.assert_not_awaited()
+    case.owner.connection.assert_not_awaited()
+    case.owner.check.assert_not_awaited()
+    assert case.tasks.active(case.run) == []
 
 
 async def test_takeover_quiesces_predecessor_before_allocating_new_uid(shared_case):
