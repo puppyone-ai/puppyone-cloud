@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { scriptedTask, poll } from './workbench-test-task.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { CONTROL_ROOT, STATE, withWorkbenchGitLock } from './workbench-task.mjs';
@@ -11,55 +11,16 @@ import { initializeWorkbench } from './workbench-initialize.mjs';
 const ROOT = '/workspace/repo';
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function poll(fn) {
-  const until = Date.now() + 15000;
-  while (Date.now() < until) { if (await fn()) return; await sleep(30); }
-  throw new Error('Timed out waiting for real sandbox process');
-}
 async function content(name) { try { return await readFile(`${ROOT}/${name}`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return ''; } }
 
-function taskConnection(uid, workbench, generation, { execution = randomUUID(), lease = 60000 } = {}) {
-  const child = spawn('node', ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, execution],
-    { env: { ...process.env, PUPPYONE_WORKBENCH_TASK_LEASE_MS: String(lease) }, stdio: ['pipe','pipe','pipe'] });
-  const waiting = new Map(), state = { ready: false, errors: [], requests: 0 };
-  let errors = '';
-  child.stderr.on('data', data => { errors += data; });
-  const send = frame => child.stdin.write(JSON.stringify(frame) + '\n');
-  createInterface({ input: child.stdout }).on('line', line => {
-    const frame = JSON.parse(line);
-    if (frame.type === 'control_result') {
-      const reply = waiting.get(frame.id); waiting.delete(frame.id);
-      frame.error ? reply?.reject(new Error(frame.error)) : reply?.resolve(frame.result);
-    } else if (frame.type === 'ready') state.ready = true;
-    else if (['failed','disconnected'].includes(frame.type)) state.errors.push(frame);
-    else if (['tool_start','tool_end','checkpoint'].includes(frame.type)) send({ type: 'reply', id: frame.id, allow: true });
-    else if (frame.type === 'model_request') {
-      state.requests++;
-      const command = `set -eu; test "$(id -u)" = ${uid}; test "$(id -G)" = 1000; ` +
-        `grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/$$/status; ` +
-        `printf ready > ${uid}.ready; while [ ! -e go ]; do sleep .05; done; ` +
-        `printf '${uid}\\n' >> shared.txt; setsid sh -c 'echo $$ > ${uid}.detached; exec sleep 120' >/dev/null 2>&1 & ` +
-        `while :; do date +%s%N > ${uid}.alive; sleep .1; done`;
-      const chunk = { id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_fixture', type: 'function',
-          function: { name: 'bash', arguments: JSON.stringify({ command }) } }] }, finish_reason: null }] };
-      send({ type: 'model_chunk', id: frame.id, frame: chunk });
-      send({ type: 'model_chunk', id: frame.id, frame: { ...chunk,
-        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } });
-      send({ type: 'model_end', id: frame.id });
-    }
-  });
-  child.on('exit', code => {
-    for (const waiter of waiting.values()) waiter.reject(new Error(`Controller exit ${code}: ${errors}`));
-    waiting.clear();
-  });
-  const control = (action, value) => new Promise((resolve, reject) => {
-    const id = randomUUID(); waiting.set(id, { resolve, reject }); send({ type: 'control', id, action, value });
-  });
-  const timer = setInterval(() => { if (child.exitCode === null) send({ type: 'control', id: 'lease', action: 'heartbeat' }); }, 250);
-  child.once('exit', () => clearInterval(timer));
-  return { child, state, control, send, execution, expire: () => clearInterval(timer) };
+function taskConnection(slot, workbench, generation, options = {}) {
+  // Slot names distinguish tasks, not filesystem tenants. Keep unprivileged/no-new-privs assertions.
+  const command = `set -eu; test "$(id -u)" -ne 0; test "$(id -G)" = 1000; ` +
+    `grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/$$/status; ` +
+    `printf ready > ${slot}.ready; while [ ! -e go ]; do sleep .05; done; ` +
+    `printf '${slot}\\n' >> shared.txt; setsid sh -c 'echo $$ > ${slot}.detached; exec sleep 120' >/dev/null 2>&1 & ` +
+    `while :; do date +%s%N > ${slot}.alive; sleep .1; done`;
+  return scriptedTask(slot, workbench, generation, { ...options, command });
 }
 
 for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_cleanup','publication_cleanup_race']) {

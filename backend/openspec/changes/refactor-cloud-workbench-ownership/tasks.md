@@ -63,6 +63,34 @@ The tool-recovery line is already merged in the current 7e38c974 base. Its two
 provider snapshot fixture failures lacked the required SDK disconnect method;
 the fixture now supplies and asserts it, without weakening production behavior.
 
+## Product-chain acceptance (not a sum of component results)
+
+The continuous A1–A6 scenario and reproducible prerequisites are defined in
+`tests/agent/workbench_acceptance/README.md`. It starts at platform creation and
+uses the default API/worker composition, not a supplied test owner or SQL-written
+`running` state. The same workspace then exercises two Chats, live interactions,
+stop isolation, native publication/receipts, activity/metering and safe recovery.
+All phase identities/results and cleanup must belong to that same run. Missing
+phases remain unverified; component passes, skipped cases and CI configuration
+cannot close the issue.
+
+Two executable prerequisite suites intentionally expose current product defects:
+
+- `accept_production_entry.py` uses actual FastAPI routing/default AgentService,
+  authorization and owned native SQL/object storage, without a replacement
+  service/admission/readiness/owner. Identity decoding is a declared fixture and
+  app lifespan/worker/metering are not exercised. Missing workspace currently
+  queues a legacy Run (202); explicit workspace gets an unconfigured-port 503.
+- `workbench-files.acceptance.mjs` uses actual Pi/Bash tasks, not root-created
+  file copies. Private atomic saves currently fail for both another Agent and
+  the ordinary file user. The separate `WorkbenchFileAcceptance.Dockerfile`
+  fails on these assertions; no xfail/skip turns them into passing evidence.
+
+These are **red prerequisites, not implemented full-chain acceptance**. The
+regular six stop/process scenarios still require unprivileged execution,
+no-new-privileges and isolated detached-child cleanup; they no longer require
+that task slot numbers themselves be filesystem UIDs.
+
 ## Evidence and reproduction
 
 - `tests/agent/runtime/test_workbench_target_binding.py`: actual PostgreSQL
