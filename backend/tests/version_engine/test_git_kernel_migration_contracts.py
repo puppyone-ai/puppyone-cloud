@@ -60,7 +60,7 @@ ACTIVE_RUNTIME_SCAN_ROOTS = (
     "backend/tests/conflicts",
     "backend/tests/mcp_service",
     "backend/tests/version_engine",
-    "cli/src",
+    # The puppyone CLI scans its own sources in puppyone-ai/puppyone-cli.
     "docs/README.md",
     "docs/architecture",
     "docs/cli",
