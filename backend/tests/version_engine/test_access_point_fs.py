@@ -748,6 +748,69 @@ async def test_semantics_returns_backend_scoped_fs_capabilities(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_semantics_publishes_server_authoritative_upload_policy(monkeypatch):
+    """Clients must be able to read the upload limits instead of mirroring them.
+
+    The CLI consumes this block in
+    ``puppyone-cli: src/commands/fs/lib/upload-policy-source.js`` and only
+    falls back to its bundled constants when the block is absent or
+    carries an unknown ``version``. Dropping or renaming a field here
+    silently sends every client back to a stale local mirror, so the shape
+    is pinned.
+    """
+    from src.platform.upload.policy import (
+        DEFAULT_BLOCKLIST_SEGMENTS,
+        PER_BATCH_MAX_BYTES,
+        PER_BATCH_MAX_FILES,
+        PER_FILE_MAX_BYTES,
+        PREFLIGHT_BYTES_THRESHOLD,
+        PREFLIGHT_FILE_THRESHOLD,
+    )
+
+    _patch_auth(monkeypatch, scope_path="docs")
+
+    result = await apfs.semantics(
+        x_access_key="key",
+        x_puppyone_user=None,
+        x_puppy_client="cli",
+    )
+
+    policy = result.data["upload_policy"]
+
+    # Version gating: clients reject anything they do not understand.
+    assert policy["version"] == 1
+
+    # The published values are the ingest policy, not a second copy.
+    assert policy["per_file_max_bytes"] == PER_FILE_MAX_BYTES
+    assert policy["per_batch_max_files"] == PER_BATCH_MAX_FILES
+    assert policy["per_batch_max_bytes"] == PER_BATCH_MAX_BYTES
+    assert policy["preflight_file_threshold"] == PREFLIGHT_FILE_THRESHOLD
+    assert policy["preflight_bytes_threshold"] == PREFLIGHT_BYTES_THRESHOLD
+    assert policy["blocklist_segments"] == sorted(DEFAULT_BLOCKLIST_SEGMENTS)
+
+    # Sorted output keeps client rendering and diffs stable.
+    assert policy["blocklist_segments"] == sorted(policy["blocklist_segments"])
+
+    # Every limit the client normalizer requires must be a positive int;
+    # a zero or float sends the CLI to its local fallback.
+    for field in (
+        "per_file_max_bytes",
+        "per_batch_max_files",
+        "per_batch_max_bytes",
+        "preflight_file_threshold",
+        "preflight_bytes_threshold",
+    ):
+        assert isinstance(policy[field], int), field
+        assert not isinstance(policy[field], bool), field
+        assert policy[field] > 0, field
+
+    assert all(isinstance(segment, str) and segment for segment in policy["blocklist_segments"])
+
+    # Enforcement stays server-side; the document says so explicitly.
+    assert any("server-side" in note for note in policy["notes"])
+
+
+@pytest.mark.asyncio
 async def test_find_uses_canonical_backend_conditions(monkeypatch):
     _patch_auth(monkeypatch)
 
