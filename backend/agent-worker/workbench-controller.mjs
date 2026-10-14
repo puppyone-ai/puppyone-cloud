@@ -5,6 +5,7 @@ import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
 import { ROOT, exists } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
+import { initializeGitControl } from './workbench-git-layout.mjs';
 import { STATE, taskBinding, initializeTask, signalTask, withWorkbenchGitLock, withTaskControlLock, workbenchGit } from './workbench-task.mjs';
 const task = taskBinding(process.argv.slice(2));
 const home = await initializeTask(task);
@@ -48,6 +49,7 @@ async function prepareWorkspace(value) {
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (stored && stored !== identity) throw new Error('Workbench generation mismatch');
       await mkdir(ROOT, { recursive: true }); await chown(ROOT, 1000, 1000); await chmod(ROOT, 0o2770);
+      await initializeGitControl(value.object_format);
       relay?.close(); relay = await gitRelay(control.request, value.project_id, { authenticated: true });
       const result = stored ? await workbenchGit(task, 'inspect', value)
         : await relay.run(() => workbenchGit(task, 'prepare', value, null, relay));

@@ -1,73 +1,95 @@
-## Implementation
-- [x] Record accepted decisions and failing sandbox process/file tests.
-- [ ] Separate task process lifetime from shared provider lifetime; verify legacy tests.
-- [ ] Add durable workbench identity, attachment and fenced lifecycle with upgrade tests.
-- [ ] Route admitted Runs through shared ownership without filesystem rollback.
-  - [x] Connect durable task identities and conversation recovery to the existing supervisor.
-  - [x] Share the existing dispatcher/concurrency limit with explicitly configured shared claims.
-  - [ ] Supply the production workbench lifecycle/metering owner and admission composition; accept the real provider path.
-- [ ] Bind own refs and preserve the native publication authority.
-- [ ] Add authorized interaction policy and workbench lifecycle/usage contracts.
-- [ ] Verify recovery, cleanup, concurrency and repository regressions.
-- [ ] Update canonical documentation and ISSUE-118 with actual evidence and gaps.
+## Implementation (A1–A6 remain the closure scope)
 
-## Partial implementation boundary
+- [x] Record the approved shared-computer model and tests before implementation.
+- [x] Record the 2026-10-14 approval to remove pre-launch Chat compatibility.
+- [ ] A1: Make selected-workbench admission the only production execution path.
+  - [x] Independent durable identity, actor/project ownership and immutable attachments.
+  - [ ] Creation/selection API, concrete admission, and removal of the Session-owned fallback.
+- [ ] A2: Complete production lifecycle and shared-file/process semantics.
+  - [x] Durable task ledger, allocation intent, generation/version/operation fences.
+  - [x] Integrate tasks and conversation-only recovery with the existing supervisor/dispatcher.
+  - [x] Task revocation and confirmed cleanup fence late starts and pending Git.
+  - [ ] Resolve the different-UID 0600 atomic-save visibility gap without weakening task cleanup.
+  - [ ] Concrete provider owner for acquire/resume/pause/retire and production composition.
+  - [ ] Real Docker/E2B lifecycle and shared-execution acceptance.
+- [ ] A3: Complete native publication and document the production contract.
+  - [x] Capture target ref from the locked workbench during Run submission; forbid retargeting.
+  - [x] Explicit native ref CAS independent of display HEAD, original operation receipts and explicit native HEAD following.
+  - [x] Publish the captured OID after another local commit, without re-finalizing or rewinding files.
+  - [x] Preserve user Git configuration using a read-only control view over native shared metadata.
+  - [x] Real Linux controller/terminal/config-adversary and stock Git HTTP tests, both object formats.
+  - [ ] Integrate creation/current-branch lifecycle with publication; complete canonical documentation and full provider acceptance.
+- [ ] A4: Authorized generation-bound file/watch, PTY, preview and revocation/reconnect.
+- [ ] A5: Effective activity/background leases, no-Run ownership and one shared compute meter.
+- [ ] A6: Managed scratch cleanup, measured recovery, unavailable snapshot-byte reporting and receipt/unique-copy-checked reconstruction.
+- [ ] Complete canonical documentation, current ISSUE-118 audit and all relevant regressions.
 
-The shared path is NOT activated. `AgentService` rejects an explicit workbench
-selector when no shared admission adapter is installed; the production
-composition root still has no such adapter. Legacy omitted/null selectors keep
-the original request digest and Session execution path.
+## Current implementation boundary
 
-- The Expand migration adds independent identity, immutable Session/Run links,
-  resource intent/generation/version/operation fences and a separate worker
-  claim contract. Existing resources and cleanup receipts are not adopted.
-- The task Expand migration durably allocates non-reused UIDs, records exact
-  cleanup identities before provider commands, fences predecessor cleanup and
-  blocks idle lifecycle claims while tasks/Runs occupy the workbench. Populated
-  upgrade/rollback preserves retained workbench and legacy cleanup resources.
-- Shared task control uses private UIDs/homes, denies resource-level recovery,
-  resume, pause and deletion, and protects loopback model/Git capabilities.
-  Docker task attachment refuses paused resources; E2B tasks require an existing
-  lifecycle-owned connection. Task-control lease expiry/duplicate cleanup stop
-  only that task. A protected revocation marker and per-task control lock fence
-  late starts and queued Git after cleanup; cleanup ACK waits for in-flight
-  trusted Git. The model UID/GID is dropped before exec, with no-new-privileges.
-  Trusted Git uses the same task UID before model start or after quiescence, so
-  cleanup cannot orphan task Git under a shared service UID.
-  The UID allocator and SharedRecovery are now connected to the existing
-  RunSupervisor through SharedTasks. The production resource/metering owner is
-  still missing, so default composition does not claim or admit shared Runs.
-- BuildKit acceptance runs real concurrent Pi processes, detached descendants,
-  PTY and HTTP preview with deterministic model frames and no external network.
-  This is not Docker adapter pause/resume or E2B acceptance.
-- Shared supervisor tests use real PostgreSQL/PostgREST and the actual task
-  ledger, run commands, authorization evaluation, checkpoints and dispatcher;
-  the provider/lifecycle and publication ports are synthetic. They cover
-  takeover, unknown tools, cleanup retries, revocation, shutdown, continuation
-  after a known failure and original-candidate publication retry. They do not
-  prove provider lifecycle or native independent-ref publication acceptance.
-- A required WorkbenchOwner port owns compute admission and meter checks; Runs
-  no longer reserve/finish a whole-computer meter in the shared path. Its
-  production implementation, live branch/ref publication, authenticated
-  interaction, activity leases, shared compute metering and reconstruction
-  remain incomplete. The existing Session Git helper is not a completed shared-ref
-  publication contract. Concurrent user mutation of Git metadata/configuration
-  also needs explicit adversarial credential/command-isolation verification;
-  the service-only Git lock does not serialize or trust ordinary filesystem edits.
-- The parallel tool-recovery branch still requires integration and revalidation.
-  No A1–A6 item is complete merely because these foundation tests pass.
+The shared path is NOT activated. Production still supplies neither an admission
+adapter nor a concrete WorkbenchOwner; the default worker still claims legacy
+Runs. That is a temporary implementation gap, not the desired compatibility
+contract. No new work should expand legacy Chat compatibility. Do not activate a
+partial shared path or change an A1–A6 acceptance item to PASS from helper tests.
 
-Reproduction: from `backend/`, build `agent-worker` as
-`puppyone-cloud-agent:issue-118-process-tests`, then build
-`agent-worker/WorkbenchAcceptance.Dockerfile` with `--no-cache` and the same
-context. Run `test_workbench_ownership.py`, `test_workbench_attachment.py`,
-`test_workbench_task_leases.py` and `test_migration_release.py` through the owned
-PostgreSQL fixture; `test_shared_task_adapter.py` and `test_shared_recovery.py`
-cover the Python task/recovery boundaries. `test_shared_supervisor.py` and
-`test_shared_dispatcher.py` exercise the integrated control-plane path with
-synthetic provider ports. For the user's no-paid-resource boundary, explicitly
-set `CLOUD_AGENT_TEST_E2B=0`, `E2B_API_KEY=''` and `MANAGED_AI_ENABLED=false`. The full
-Docker adapter suite is `test_workbench_task_processes.py`; it must also pass
-before provider acceptance. Canonical issue evidence records command results
-and environmental limitations separately.
+The ownership/task Expand migrations preserve durable cleanup responsibility;
+installing them does not adopt or delete old resources. The new target-binding
+migration affects new shared Runs only and does not rewrite old histories,
+resource identities or repository HEAD. Populated upgrade and rollback tests
+run through the full ordered local migration chain. Hosted applied versions and
+release readiness have not been inspected or claimed.
 
+Task isolation still uses distinct UIDs and is not sufficient for arbitrary
+shared file permissions. The full-controller Git tests corrected an earlier
+helper-only audit: the old wrapper did restore config mode after completion,
+but a real concurrent terminal still failed during the 0600 window. Both that
+window and config destruction are fixed by the shared control view. The separate
+0600 temporary-file rename case remains open.
+
+The tool-recovery line is already merged in the current 7e38c974 base. Its two
+provider snapshot fixture failures lacked the required SDK disconnect method;
+the fixture now supplies and asserts it, without weakening production behavior.
+
+## Evidence and reproduction
+
+- `tests/agent/runtime/test_workbench_target_binding.py`: actual PostgreSQL
+  admission capture, caller mismatch, immutable binding and later workspace ref changes.
+- `tests/repository_hosting/unit/test_workbench_ref_publication.py` and
+  `tests/agent/runtime/test_workbench_publication.py`: explicit ref selection,
+  metadata budget, strict candidate/target, receipt-first retry and no HEAD fallback.
+- `tests/agent/runtime/test_workbench_native_publication.py`: actual owned
+  PostgreSQL/PostgREST/MinIO, native CAS/receipt and display following for SHA-1
+  and SHA-256. No provider is created.
+- `agent-worker/workbench-publication.test.mjs`: owned loopback stock-Git daemon;
+  captured candidate survives newer commits and unsaved edits.
+- `agent-worker/workbench-git.docker.test.mjs`: real shared controller, task UIDs,
+  ordinary terminal Git, concurrent hostile config and stock-Git CGI transport.
+  The CGI fixture is not the production Version Engine adapter; the separate
+  native database/S3 tests validate that authority.
+- `agent-worker/workbench-process.docker.test.mjs`: six real concurrent Pi/bash,
+  detached-child, PTY, preview and revocation scenarios with deterministic model frames.
+- `test_shared_supervisor.py` / `test_shared_dispatcher.py`: real database/control
+  chain, with synthetic provider and publication ports. Not provider acceptance.
+
+Build the pinned worker or use the owned cached image, then from `backend/`:
+
+```sh
+docker build --network=none --no-cache --progress=plain \
+  -f agent-worker/WorkbenchAcceptance.Dockerfile agent-worker
+node --test agent-worker/git.test.mjs agent-worker/protocol.test.mjs \
+  agent-worker/workbench-relay.test.mjs agent-worker/workbench-publication.test.mjs
+```
+
+The acceptance Dockerfile copies candidate modules rather than trusting stale
+source in a base tag. It executes the process and Git suites separately because
+they own the same disposable image paths. CI supplies its freshly built worker
+through WORKBENCH_AGENT_IMAGE. No host mount, paid model or external network is
+used by these Linux scenarios.
+
+Set `CLOUD_AGENT_TEST_E2B=0`, `E2B_API_KEY=''`, `MANAGED_AI_ENABLED=false`,
+`RUNTIME_METERING_MODE=disabled` and loopback-only Supabase placeholders for local
+Python runs. Owned PostgreSQL/PostgREST/MinIO fixtures do not use hosted services.
+The latest owned `/bin/true` Docker start probe still timed out after 20 seconds;
+its container was removed. BuildKit execution works, but cannot substitute for
+Docker adapter or E2B lifecycle acceptance. No Docker restart or paid creation
+is authorized. This does not block further local implementation.

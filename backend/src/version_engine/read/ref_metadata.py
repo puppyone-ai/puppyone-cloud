@@ -89,18 +89,27 @@ class GitBranchBase:
     generation: int
     ref_name: bytes
     expected: RefState
-    head_guard: RefState
+    head_guard: RefState | None
 
     @classmethod
-    def from_metadata(cls, metadata):
+    def from_metadata(cls, metadata, *, target_ref: str | None = None):
         refs = {decode_ref_name(row['name_b64']): row['state'] for row in metadata['refs']}
-        head = refs[b'HEAD']
-        if head['kind'] != 'symbolic':
-            raise ValueError('Agent Git requires a selected branch')
-        name = decode_ref_name(head['target_b64'])
+        if target_ref is None:
+            head = refs[b'HEAD']
+            if head['kind'] != 'symbolic':
+                raise ValueError('Agent Git requires a selected branch')
+            name = decode_ref_name(head['target_b64'])
+            guard = RefState(target=name)
+        else:
+            if not isinstance(target_ref, str):
+                raise ValueError('invalid Git target ref')
+            name = target_ref.encode('utf-8')
+            validate_ref_name(name)
+            # An explicitly selected branch does not own the display/default HEAD.
+            guard = None
         expected = refs.get(name, {'kind': 'absent'})
         value = cls(metadata['object_format'], metadata['generation'], name,
-                    RefState(oid=expected.get('oid')), RefState(target=name))
+                    RefState(oid=expected.get('oid')), guard)
         return cls.parse(value.wire())
 
     @classmethod
@@ -112,23 +121,26 @@ class GitBranchBase:
         name = decode_ref_name(wire['target_ref_b64'])
         if not name.startswith(b'refs/heads/'):
             raise ValueError('Git branch required')
+        if wire.get('target_ref') != name.decode('utf-8'):
+            raise ValueError('Git target ref mismatch')
         guard = wire['head_guard']
-        if guard != {'kind': 'symbolic', 'target_b64': wire['target_ref_b64']}:
+        if guard is not None and guard != {'kind': 'symbolic', 'target_b64': wire['target_ref_b64']}:
             raise ValueError('Git HEAD guard mismatch')
         oid = wire['expected_oid']
         if oid is not None and not isinstance(oid, str):
             raise ValueError('invalid Git base OID')
-        value = cls(wire['object_format'], wire['generation'], name, RefState(oid=oid), RefState(target=name))
+        value = cls(wire['object_format'], wire['generation'], name, RefState(oid=oid),
+                    RefState(target=name) if guard is not None else None)
         value.expected.wire(value.object_format)
-        value.head_guard.wire(value.object_format)
         return value
 
     def wire(self):
         return {'repository_profile': 'native', 'object_format': self.object_format,
                 'generation': self.generation, 'target_ref_b64': base64.b64encode(self.ref_name).decode(),
                 'target_ref': self.ref_name.decode('utf-8'), 'expected_oid': self.expected.oid,
-                'head_guard': self.head_guard.wire(self.object_format)}
+                'head_guard': self.head_guard.wire(self.object_format) if self.head_guard else None}
 
     def edits(self, candidate):
         from src.version_engine.write_engine.ref_transaction import RefEdit
-        return (RefEdit(b'HEAD', self.head_guard), RefEdit(self.ref_name, self.expected, RefState(oid=candidate)))
+        guard = (RefEdit(b'HEAD', self.head_guard),) if self.head_guard else ()
+        return (*guard, RefEdit(self.ref_name, self.expected, RefState(oid=candidate)))

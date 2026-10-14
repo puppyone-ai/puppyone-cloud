@@ -6,6 +6,8 @@ on:
       - 'backend/src/**'
       - 'backend/tests/agent/**'
       - 'backend/tests/repository_hosting/integration/test_read_request_budgets.py'
+      - 'backend/tests/repository_hosting/unit/test_workbench_ref_publication.py'
+      - 'backend/tests/repository_hosting/unit/test_publication_context_budget.py'
       - 'backend/agent-worker/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
@@ -59,11 +61,17 @@ jobs:
         run: |
           mkdir -p .agent-test-results
           uv run pytest tests/agent/runtime tests/repository_hosting/integration/test_read_request_budgets.py \
+            tests/repository_hosting/unit/test_workbench_ref_publication.py \
+            tests/repository_hosting/unit/test_publication_context_budget.py \
             --ignore=tests/agent/runtime/test_desktop_integration.py \
             --hosting-live --hosting-s3 \
             -q --junitxml=.agent-test-results/junit.xml --basetemp=.agent-test-results/cases
           node --test agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs \
-            agent-worker/controller.test.mjs agent-worker/providers/*.test.mjs
+            agent-worker/controller.test.mjs agent-worker/providers/*.test.mjs \
+            agent-worker/workbench-publication.test.mjs agent-worker/workbench-relay.test.mjs
+          docker build --network=none --no-cache --progress=plain \
+            --build-arg WORKBENCH_AGENT_IMAGE=puppyone-cloud-agent:workspace-v3 \
+            -f agent-worker/WorkbenchAcceptance.Dockerfile agent-worker
           # Execute the actual harness with its pinned Node and Pi artifact.
           docker run --rm --network=none --entrypoint node \
             --mount "type=bind,src=$PWD/agent-worker/worker.integration.test.mjs,dst=/opt/puppyone-agent/worker.integration.test.mjs,readonly" \
