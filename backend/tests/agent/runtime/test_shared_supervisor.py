@@ -8,13 +8,16 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.admission import Admission
-from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
+from src.platform.access.adapters.agent.runtime.control.workspace import workspace_state
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
-from src.platform.access.adapters.agent.runtime.repository import RunRepository
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.shared_tasks import SharedTasks
-from src.platform.access.adapters.agent.runtime.workspace import workspace_state
 from tests.agent.runtime.test_workbench_attachment import shared_submit
 from tests.agent.runtime.test_workbench_task_leases import release, running, task
 
@@ -24,9 +27,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 @pytest.fixture
 async def shared_case(postgres, submitted, control_api):
     args, _ = submitted
-    control_api.table("access_surfaces").update({"config": {
-        "llm_model": "fixture", "bash_view": {"path_prefix": "", "excludes": [], "max_mode": "rw"}
-    }}).eq("id", args["agent"]).execute()
+    control_api.table("access_surfaces").update(
+        {
+            "config": {
+                "llm_model": "fixture",
+                "bash_view": {"path_prefix": "", "excludes": [], "max_mode": "rw"},
+            }
+        }
+    ).eq("id", args["agent"]).execute()
     repo = RunRepository(control_api)
     admission = Admission(repo)
     context = repo.load_run_context(args["user"], args["project"], args["agent"])
@@ -36,7 +44,12 @@ async def shared_case(postgres, submitted, control_api):
     shared_submit(postgres, args, wb)
     run = repo.claim_workbench_run(worker=str(uuid4()))
     tasks = SharedTaskRepository(control_api)
-    base = {"generation": str(uuid4()), "object_format": "sha1", "target_ref": wb["target_ref"], "expected_oid": None}
+    base = {
+        "generation": str(uuid4()),
+        "object_format": "sha1",
+        "target_ref": wb["target_ref"],
+        "expected_oid": None,
+    }
     files = {"human": "newer unsaved human content"}
     opened, stopped, starts, controls = [], [], [], []
     stop_error, fail_after_tool = [], []
@@ -50,22 +63,42 @@ async def shared_case(postgres, submitted, control_api):
             self.resource, self.recovery = {}, None
 
         async def connect(self, resource, **kwargs):
-            durable = postgres.row(f"SELECT resource FROM agent_run_executions WHERE id='{self.execution_id}'")
+            durable = postgres.row(
+                f"SELECT resource FROM agent_run_executions WHERE id='{self.execution_id}'"
+            )
             assert durable["resource"] == resource  # Identity precedes provider access.
             self.resource = copy.deepcopy(resource)
             opened.append(self)
 
-        async def start(self, config):
+        async def prepare(self, config):
             assert self.restore_point is None
             assert not config["resume_workspace"]
+
+        async def start_loop(self, config):
             starts.append(config)
             checkpoint = {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None}
             call = {"call_id": "fixture", "name": "bash", "input": {"command": "printf saved"}}
             frames = [
-                {"type": "ready", "pi_version": "0.85.1", "node_version": "v22.22.3", "workspace_version": 2, "operation_version": 1},
+                {
+                    "type": "ready",
+                    "pi_version": "0.85.1",
+                    "node_version": "v22.22.3",
+                    "workspace_version": 2,
+                    "operation_version": 1,
+                },
                 {"type": "tool_start", "id": "start", **call, "checkpoint": checkpoint},
-                {"type": "tool_end", "id": "end", **call, "result": {"content": [{"type": "text", "text": "saved"}]}},
-                {"type": "checkpoint", "id": "settled", "reason": "settled", "checkpoint": checkpoint},
+                {
+                    "type": "tool_end",
+                    "id": "end",
+                    **call,
+                    "result": {"content": [{"type": "text", "text": "saved"}]},
+                },
+                {
+                    "type": "checkpoint",
+                    "id": "settled",
+                    "reason": "settled",
+                    "checkpoint": checkpoint,
+                },
                 {"type": "finished"},
             ]
             if fail_after_tool:
@@ -86,7 +119,8 @@ async def shared_case(postgres, submitted, control_api):
             raise AssertionError("Unexpected shared control: " + action)
 
         async def send(self, frame):
-            pass
+            if frame["type"] == "start":
+                await self.start_loop(frame["config"])
 
         async def touch(self):
             pass
@@ -109,14 +143,28 @@ async def shared_case(postgres, submitted, control_api):
         publish=AsyncMock(return_value={"status": "no_changes"}),
     )
     forbidden = AsyncMock(side_effect=AssertionError("Run touched whole-computer ownership"))
-    billing = SimpleNamespace(start_session=forbidden, resume_session=forbidden,
-                              finish_session=forbidden, detach_session=forbidden)
+    billing = SimpleNamespace(
+        start_session=forbidden,
+        resume_session=forbidden,
+        finish_session=forbidden,
+        detach_session=forbidden,
+    )
     lifecycle = SimpleNamespace(cleanup=forbidden, attach=forbidden)
 
     def supervisor():
-        return RunSupervisor(repo, admission, publication, None, billing,
-            worker_factory=None, worker_lifecycle=lifecycle,
-            shared_tasks=SharedTasks(tasks, owner, worker_factory=TaskWorker))
+        return RunSupervisor(
+            repo,
+            admission,
+            publication,
+            None,
+            billing,
+            loop=PiLoop(),
+            execution=SandboxExecution(),
+            filesystem=SandboxFilesystem(),
+            worker_factory=None,
+            worker_lifecycle=lifecycle,
+            shared_tasks=SharedTasks(tasks, owner, worker_factory=TaskWorker),
+        )
 
     return SimpleNamespace(**locals())
 
@@ -133,7 +181,12 @@ async def test_existing_supervisor_executes_shared_run_without_vm_side_effects(s
     assert case.stopped == [case.run["execution_id"]]
     assert case.tasks.active(case.run) == []
     assert case.tasks.active(other) == [untouched]
-    assert case.postgres.row(f"SELECT state FROM cloud_workbenches WHERE id='{case.wb['id']}'")["state"] == "running"
+    assert (
+        case.postgres.row(f"SELECT state FROM cloud_workbenches WHERE id='{case.wb['id']}'")[
+            "state"
+        ]
+        == "running"
+    )
     assert case.files == {"human": "newer unsaved human content"}
     assert case.repo.tools(final["id"])[0]["result"]["checkpoint"]["state"]["recovery"] is None
     case.forbidden.assert_not_awaited()
@@ -143,7 +196,9 @@ async def test_existing_supervisor_executes_shared_run_without_vm_side_effects(s
 async def test_takeover_quiesces_predecessor_before_allocating_new_uid(shared_case):
     case = shared_case
     old = task(case.postgres, case.run, case.wb)
-    case.postgres.sql(f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'")
+    case.postgres.sql(
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
+    )
     current = case.repo.claim_workbench_run(worker="takeover")
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "succeeded"
@@ -160,7 +215,9 @@ async def test_cleanup_failure_is_durable_and_terminal_retry_only_cleans_own_tas
     assert final["state"] == "succeeded"  # Confirmed publication is not undone by cleanup.
     assert final["snapshot"]["resource_retained"] is True
     assert len(case.tasks.active(case.run)) == 1
-    case.postgres.sql(f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{final['id']}'")
+    case.postgres.sql(
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{final['id']}'"
+    )
     current = case.repo.claim_workbench_run(worker="cleanup")
     case.stop_error.clear()
     await case.supervisor().run_claim(current)
@@ -173,12 +230,18 @@ async def test_cleanup_failure_is_durable_and_terminal_retry_only_cleans_own_tas
 async def test_unknown_tool_does_not_replay_or_restore_shared_files(shared_case):
     case = shared_case
     task(case.postgres, case.run, case.wb)
-    value = workspace_state(case.run, case.base)
+    value = {**PiLoop().initial_state(), **workspace_state(case.run, case.base)}
     value["workbench"] = {"id": case.wb["id"], "generation": case.wb["generation"]}
     manifest = await Checkpoints().save(case.run, value)
-    case.repo.begin_tool(case.run, {"call_id": "ambiguous", "name": "bash", "input": {"command": "printf maybe"}},
-                         checkpoint=manifest, approval_required=False)
-    case.postgres.sql(f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'")
+    case.repo.begin_tool(
+        case.run,
+        {"call_id": "ambiguous", "name": "bash", "input": {"command": "printf maybe"}},
+        checkpoint=manifest,
+        approval_required=False,
+    )
+    case.postgres.sql(
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
+    )
     current = case.repo.claim_workbench_run(worker="unknown")
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "outcome_unknown"
@@ -246,16 +309,23 @@ async def test_uncertain_provider_connection_keeps_reserved_identity_for_cleanup
     case.forbidden.assert_not_awaited()
 
 
-async def test_publication_retry_keeps_original_candidate_and_skips_model_and_git_finalize(shared_case):
+async def test_publication_retry_keeps_original_candidate_and_skips_model_and_git_finalize(
+    shared_case,
+):
     case = shared_case
     task(case.postgres, case.run, case.wb)
-    value = workspace_state(case.run, case.base)
-    value.update(workbench={"id": case.wb["id"], "generation": case.wb["generation"]},
-                 reason="settled", publication_candidate=case.run["id"])
+    value = {**PiLoop().initial_state(), **workspace_state(case.run, case.base)}
+    value.update(
+        workbench={"id": case.wb["id"], "generation": case.wb["generation"]},
+        reason="settled",
+        publication_candidate=case.run["id"],
+    )
     value["workspace"].update(changed=True, tip="a" * 40)
     manifest = await Checkpoints().save(case.run, value)
     case.repo.write(case.run, "checkpoint", checkpoint=manifest, state="publishing")
-    case.postgres.sql(f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'")
+    case.postgres.sql(
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
+    )
     current = case.repo.claim_workbench_run(worker="publish-retry")
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "succeeded"
@@ -271,7 +341,9 @@ async def test_publication_retry_keeps_original_candidate_and_skips_model_and_gi
 async def test_fenced_coordinator_cannot_discover_or_stop_successor(shared_case):
     case = shared_case
     old = task(case.postgres, case.run, case.wb)
-    case.postgres.sql(f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'")
+    case.postgres.sql(
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
+    )
     current = case.repo.claim_workbench_run(worker="new-owner")
     release(case.postgres, current, old)
     successor = task(case.postgres, current, case.wb)
@@ -283,7 +355,7 @@ async def test_fenced_coordinator_cannot_discover_or_stop_successor(shared_case)
 @pytest.mark.parametrize("damage", ["snapshot", "generation", "target"])
 async def test_incompatible_checkpoint_rejected_before_lifecycle_access(shared_case, damage):
     case = shared_case
-    value = workspace_state(case.run, case.base)
+    value = {**PiLoop().initial_state(), **workspace_state(case.run, case.base)}
     if damage == "snapshot":
         value["recovery"] = {"id": "legacy-snapshot"}
     elif damage == "generation":
@@ -291,15 +363,27 @@ async def test_incompatible_checkpoint_rejected_before_lifecycle_access(shared_c
     else:
         value["base"] = {**value["base"], "target_ref": "refs/heads/another"}
     with pytest.raises(PermissionError):
-        await SharedTasks(case.tasks, case.owner, worker_factory=case.TaskWorker).acquire(case.run, value)
+        await SharedTasks(case.tasks, case.owner, worker_factory=case.TaskWorker).acquire(
+            case.run, value
+        )
     case.owner.ensure_running.assert_not_awaited()
     assert case.tasks.active(case.run) == []
 
 
 async def test_unconfigured_supervisor_rejects_shared_claim_before_any_cleanup(shared_case):
     case = shared_case
-    value = RunSupervisor(case.repo, case.admission, case.publication, None, case.billing,
-                          worker_factory=None, worker_lifecycle=case.lifecycle)
+    value = RunSupervisor(
+        case.repo,
+        case.admission,
+        case.publication,
+        None,
+        case.billing,
+        loop=PiLoop(),
+        execution=SandboxExecution(),
+        filesystem=SandboxFilesystem(),
+        worker_factory=None,
+        worker_lifecycle=case.lifecycle,
+    )
     with pytest.raises(PermissionError, match="shared"):
         await value.run_claim(case.run)
     case.forbidden.assert_not_awaited()

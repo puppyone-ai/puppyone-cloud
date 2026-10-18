@@ -8,13 +8,16 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.admission import Admission
-from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
-from src.platform.access.adapters.agent.runtime.publication import Publication
-from src.platform.access.adapters.agent.runtime.repository import RunRepository
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.workspace import SessionWorkspace
+from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.publication import Publication
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.service import AgentService
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, ModelChunk
@@ -284,7 +287,7 @@ async def prepared(services, postgres, submitted, request):
         admission=admission,
         service=service,
         run=run,
-        publication=Publication(RunGitTransport(container.repo_manager)),
+        publication=Publication(RunGitTransport(container.repo_manager), SandboxFilesystem()),
         checkpoints=Checkpoints(),
         ops=ops,
         user=user,
@@ -301,9 +304,12 @@ async def prepared(services, postgres, submitted, request):
             model or ModelFixture(),
             get_runtime_metering_service(),
             checkpoints=value.checkpoints,
+            loop=PiLoop(),
+            execution=SandboxExecution(),
+            filesystem=SandboxFilesystem(),
             worker_factory=worker_factory,
             worker_lifecycle=PiWorker,
-            workspace=SessionWorkspace(repo),
+            workspace=SessionWorkspace(repo, SandboxFilesystem()),
         )
 
     value.supervisor = supervisor

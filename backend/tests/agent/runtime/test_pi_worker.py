@@ -199,7 +199,7 @@ async def test_provider_snapshot_preserves_partial_tool_write_before_cleanup():
 
 @pytest.mark.asyncio
 async def test_full_pi_branches_compaction_restore_from_manifest(submitted):
-    from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
+    from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 
     checkpoint_store = Checkpoints()
     run = submitted[1]

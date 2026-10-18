@@ -86,7 +86,7 @@ class WorkbenchTask(PiWorker):
     async def create(self):
         raise PermissionError("Resource allocation belongs to the workbench lifecycle")
 
-    async def start(self, config):
+    async def prepare(self, config):
         if self.restore_point or config.get("resume_workspace"):
             raise PermissionError("A task cannot restore the workbench filesystem")
         await self._open_control()
@@ -94,7 +94,7 @@ class WorkbenchTask(PiWorker):
         if capability.get("shared_workbench") != 1:
             raise RuntimeError("Sandbox artifact lacks shared workbench task protocol")
         await self.control("prepare", {**config["workspace"], "project_id": self.project_id})
-        await self.send({"type": "start", "config": config})
+        return self.recovery
 
     async def snapshot(self):
         raise PermissionError("Resource snapshots belong to the workbench lifecycle")

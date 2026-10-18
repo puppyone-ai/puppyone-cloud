@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from src.exceptions import DatabaseSchemaOutdatedException, NotFoundException
 from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from tests.agent.runtime.test_supervisor import ModelFixture
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
 

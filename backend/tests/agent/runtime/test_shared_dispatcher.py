@@ -40,7 +40,7 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
     monkeypatch.setattr(settings, "CLOUD_AGENT_CONCURRENCY", 2 if enabled else 1)
     monkeypatch.setattr(worker, "RunRepository", lambda: repo)
     monkeypatch.setattr(worker, "Admission", lambda _: object())
-    monkeypatch.setattr(worker, "Publication", lambda _: object())
+    monkeypatch.setattr(worker, "Publication", lambda transport, filesystem: object())
     monkeypatch.setattr(worker, "RunGitTransport", lambda _: object())
     monkeypatch.setattr(worker, "BoundTools", lambda _: object())
     monkeypatch.setattr(worker, "build_worker_version_engine_container", lambda **_: SimpleNamespace(repo_manager=None))

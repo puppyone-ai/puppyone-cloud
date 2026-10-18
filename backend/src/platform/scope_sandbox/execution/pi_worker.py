@@ -430,7 +430,7 @@ class PiWorker:
 
             self.reader = asyncio.create_task(wait())
 
-    async def start(self, config):
+    async def prepare(self, config):
         await self._open_control()
         capabilities = await self.control("capabilities")
         if capabilities.get("workspace_lifecycle") != 1:
@@ -458,6 +458,11 @@ class PiWorker:
             self.recovery = self.restore_point
         else:
             self.recovery = await self.snapshot()
+        return self.recovery
+
+    async def start(self, config):
+        # Compatibility entry point for existing direct worker callers.
+        await self.prepare(config)
         await self.send({"type": "start", "config": config})
 
     async def send(self, value):

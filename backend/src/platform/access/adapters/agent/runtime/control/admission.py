@@ -7,8 +7,8 @@ import re
 from fastapi import HTTPException
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.context import RunContext
-from src.platform.access.adapters.agent.runtime.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.context import RunContext
+from src.platform.access.adapters.agent.runtime.control.ports import RunStore
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.authorization.models import ProjectAction
 

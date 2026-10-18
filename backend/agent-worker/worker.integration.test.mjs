@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { approvalDenied } from './tool-execution.mjs';
+import { createPiLoop } from './loop.mjs';
+import { localFilesystem } from './filesystem.mjs';
+import { localExecution } from './execution.mjs';
 
 async function runHarness(steps, { declined = false, readonly = false } = {}) {
   const temporary = await mkdtemp(path.join(tmpdir(), 'puppyone-pi-tools-'));
@@ -75,6 +78,58 @@ async function runHarness(steps, { declined = false, readonly = false } = {}) {
     await rm(temporary, { recursive: true, force: true });
   }
 }
+
+test('real Pi accepts independently hosted execution and filesystem tools', { timeout: 25000 }, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'puppyone-pi-capabilities-'));
+  const calls = [], files = new Map();
+  // Retain the real SDK schemas, replace where the operations execute.
+  const bash = { ...localExecution(root).tools()[0], execute: async (_id, input) => {
+    calls.push(['execution', input.command]);
+    files.set('result.txt', 'external-content');
+    return { content: [{ type: 'text', text: 'remote command completed' }] };
+  } };
+  const read = { ...localFilesystem(root).readTools()[0], execute: async (_id, input) => {
+    calls.push(['filesystem', input.path]);
+    return { content: [{ type: 'text', text: files.get(input.path) }] };
+  } };
+  let modelCalls = 0, resolve, reject;
+  const finished = new Promise((yes, no) => { resolve = yes; reject = no; });
+  const loop = createPiLoop({ root, agentDir: path.join(root, 'agent'),
+    filesystem: { readTools: () => [read], writeTools: () => [] },
+    execution: { tools: () => [bash] },
+    send: frame => queueMicrotask(() => {
+      try {
+        if (frame.type === 'failed') throw new Error(frame.error);
+        if (frame.type === 'finished') { assert.equal(frame.error, null); resolve(); }
+        if (frame.type === 'checkpoint' || frame.type === 'tool_end')
+          loop.receive({ type: 'reply', id: frame.id });
+        if (frame.type === 'tool_start') loop.receive({ type: 'reply', id: frame.id, allow: true });
+        if (frame.type !== 'model_request') return;
+        const index = modelCalls++;
+        if (index === 2) assert.match(JSON.stringify(frame.request.messages.at(-1)), /external-content/);
+        const tool = [ ['bash', { command: 'write using remote execution' }], ['read', { path: 'result.txt' }] ][index];
+        const delta = tool ? { role: 'assistant', tool_calls: [{ index: 0, id: `call-${index}`,
+          type: 'function', function: { name: tool[0], arguments: JSON.stringify(tool[1]) } }] }
+          : { role: 'assistant', content: 'Done' };
+        const chunk = { id: `model-${index}`, object: 'chat.completion.chunk', created: 1, model: 'fixture',
+          choices: [{ index: 0, delta, finish_reason: null }] };
+        loop.receive({ type: 'model_chunk', id: frame.id, frame: chunk });
+        loop.receive({ type: 'model_chunk', id: frame.id, frame: { ...chunk,
+          choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } });
+        loop.receive({ type: 'model_end', id: frame.id });
+      } catch (error) { reject(error); }
+    }),
+  });
+  try {
+    loop.receive({ type: 'start', config: { model: 'fixture', context_window: 8192,
+      max_tokens: 1024, prompt: 'Exercise supplied tools', readonly: false } });
+    await finished;
+    assert.equal(modelCalls, 3);
+    assert.deepEqual(calls, [['execution', 'write using remote execution'], ['filesystem', 'result.txt']]);
+    await assert.rejects(readFile(path.join(root, 'result.txt')), { code: 'ENOENT' });
+  } finally { loop.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test('Pi continues after a failing Bash command and can write the next file', { timeout: 25000 }, async () => {
   const result = await runHarness([

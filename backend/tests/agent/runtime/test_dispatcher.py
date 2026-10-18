@@ -8,7 +8,7 @@ import pytest
 
 from src.config import settings
 from src.platform.access.adapters.agent.runtime import worker
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from tests.agent.runtime.test_supervisor import DestructiveModel
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
 

@@ -8,19 +8,23 @@ from uuid import uuid4
 
 from src.config import settings
 from src.infra.supabase.instrumentation import DatabaseTrace, database_stage, database_trace
-from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.heartbeat import EndRun, ExecutionLease
-from src.platform.access.adapters.agent.runtime.model_progress import ModelProgress
-from src.platform.access.adapters.agent.runtime.models import TERMINAL
-from src.platform.access.adapters.agent.runtime.ports import RunStore
-from src.platform.access.adapters.agent.runtime.publication import PublicationRejected
-from src.platform.access.adapters.agent.runtime.recovery import Recovery
-from src.platform.access.adapters.agent.runtime.tool_policy import approval_reason
-from src.platform.access.adapters.agent.runtime.tool_results import (
+from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun, ExecutionLease
+from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
+from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
+from src.platform.access.adapters.agent.runtime.control.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.publication import PublicationRejected
+from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
+from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
+from src.platform.access.adapters.agent.runtime.control.tool_policy import approval_reason
+from src.platform.access.adapters.agent.runtime.control.tool_results import (
     approval_denied,
     tool_denial,
     tool_error,
 )
+from src.platform.access.adapters.agent.runtime.execution.port import BoundToolPort, ExecutionPort
+from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
+from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopProtocolError
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
 from src.platform.scope_sandbox.execution.worker_port import WorkerLifecycle, WorkerLost
@@ -37,10 +41,13 @@ class RunSupervisor:
         inference,
         billing,
         *,
+        loop: LoopPort,
+        execution: ExecutionPort,
+        filesystem: FilesystemPort,
         checkpoints=None,
         worker_factory,
         worker_lifecycle: WorkerLifecycle,
-        bound_tools=None,
+        bound_tools: BoundToolPort | None = None,
         workspace=None,
         shared_tasks=None,
     ):
@@ -50,7 +57,10 @@ class RunSupervisor:
         if workspace is not None and shared_tasks is not None:
             raise ValueError("Shared tasks cannot use a Session resource owner")
         self.shared_tasks = shared_tasks
-        self.recovery = shared_tasks.recovery if shared_tasks else Recovery()
+        self.loop, self.task_execution, self.filesystem = loop, execution, filesystem
+        self.recovery = (
+            SharedRecovery(execution, filesystem) if shared_tasks else Recovery(filesystem)
+        )
         self.worker_factory, self.bound_tools = worker_factory, bound_tools
         self.worker_lifecycle = worker_lifecycle
         self.workspace = workspace
@@ -92,7 +102,7 @@ class RunSupervisor:
     async def conversation_manifest(self, supplied, reason):
         value = {
             **self.value,
-            **{key: supplied[key] for key in ("version", "pi_version", "entries", "leaf_id")},
+            **self.loop.checkpoint(supplied),
             "reason": reason,
         }
         return value, await self.checkpoints.save(self.run, value)
@@ -244,7 +254,9 @@ class RunSupervisor:
             ):
                 if self.shared_tasks and self.worker:
                     with suppress(Exception):
-                        await self.worker.stop()  # Only the captured old UID; no successor/VM cleanup.
+                        await (
+                            self.worker.stop()
+                        )  # Only the captured old UID; no successor/VM cleanup.
                 elif self.run["billing_run_id"]:
                     await self.billing.detach_session(self.run["billing_run_id"])
                 return
@@ -273,7 +285,9 @@ class RunSupervisor:
                 await self.shared_tasks.close(self.run, self.worker)
                 return True  # Files stay in the independently owned workbench.
             except Exception:
-                logger.exception("cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]})
+                logger.exception(
+                    "cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]}
+                )
                 return False
         if self.value is None and self.run["checkpoint"]:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
@@ -298,18 +312,18 @@ class RunSupervisor:
                     resource, self.run["project_id"]
                 )
                 if self.value.get("reason") != "settled":
-                    await worker.control("stop")
+                    await self.task_execution.quiesce(worker)
                     workspace = self.value["workspace"]
                     # Recover a commit created before the manifest ACK was lost.
                     # Damaged metadata must not prevent preservation of the files.
                     with suppress(Exception):
-                        actual = await worker.control("inspect", workspace)
+                        actual = await self.filesystem.inspect(worker, workspace)
                         workspace = {
                             **workspace,
                             **actual,
                             "changed": actual["tip"] != workspace["base_oid"],
                         }
-                    recovery = await worker.snapshot()
+                    recovery = await self.filesystem.snapshot(worker)
                     await self.save(
                         {**self.value, "workspace": workspace, "recovery": recovery}, "interrupted"
                     )
@@ -357,8 +371,11 @@ class RunSupervisor:
             raise EndRun("outcome_unknown", "tool_outcome_unknown")
         if self.run["state"] == "publishing":
             saved = await self.checkpoints.load(self.run, self.run["checkpoint"])
-            ready = (self.recovery.publication_ready(saved, self.run) if self.shared_tasks
-                     else saved.get("reason") == "settled" and bool(saved.get("recovery")))
+            ready = (
+                self.recovery.publication_ready(saved, self.run)
+                if self.shared_tasks
+                else saved.get("reason") == "settled" and bool(saved.get("recovery"))
+            )
             if not ready:
                 raise EndRun("outcome_unknown", "publication_outcome_unknown")
             # A durable, quiesced candidate can be reconciled by the original
@@ -367,7 +384,7 @@ class RunSupervisor:
         # Shared takeover closes old tasks, never their computer or live files.
         if self.shared_tasks:
             await self.shared_tasks.close(self.run, predecessors_only=True)
-        for execution in ([] if self.shared_tasks else self.execution["executions"]):
+        for execution in [] if self.shared_tasks else self.execution["executions"]:
             if execution["id"] != self.run["execution_id"] and execution["resource"]:
                 # With no executing tool, the last checkpoint/receipt is the
                 # complete acknowledged state. Quiesce the old process before
@@ -379,9 +396,7 @@ class RunSupervisor:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
             # A completed receipt may have committed just before the current
             # manifest update. Its provider reference includes resulting files.
-            present = {
-                e.get("message", {}).get("toolCallId") for e in self.value.get("entries") or []
-            }
+            present = self.loop.completed_tools(self.value)
             for tool in tools:
                 if tool["state"] == "completed" and tool["call_id"] not in present:
                     self.value = await self.checkpoints.load(self.run, tool["result"]["checkpoint"])
@@ -392,15 +407,7 @@ class RunSupervisor:
             # A model stream can die after partial UI text but before its Pi
             # message is acknowledged. Rebuild this run's visible text from
             # durable entries before continuing, avoiding duplicated prefixes.
-            confirmed = "".join(
-                part.get("text", "")
-                for entry in (self.value.get("entries") or [])[
-                    self.value.get("run_entry_start", 0) :
-                ]
-                if entry.get("message", {}).get("role") == "assistant"
-                for part in entry["message"].get("content", [])
-                if part.get("type") == "text"
-            )[-200000:]
+            confirmed = self.loop.confirmed_text(self.value)
             await self.write(
                 "text_reset",
                 {"text": confirmed},
@@ -408,21 +415,35 @@ class RunSupervisor:
             )
         else:
             with database_stage("workspace_prepare"):
-                self.value = await asyncio.to_thread(self.publication.capture, self.run, grant)
+                self.value = {
+                    **self.loop.initial_state(),
+                    **await asyncio.to_thread(self.publication.capture, self.run, grant),
+                }
             previous = self.execution["previous"]
             if previous and previous["checkpoint"]:
-                if (previous["state"] not in {"succeeded", "stopped", "failed"}
-                    or (not self.shared_tasks and (previous["publication"] or {}).get("status")
-                        not in {"committed", "no_changes"})
-                    or (self.shared_tasks and previous.get("workbench_id") != self.run["workbench_id"])):
+                if (
+                    previous["state"] not in {"succeeded", "stopped", "failed"}
+                    or (
+                        not self.shared_tasks
+                        and (previous["publication"] or {}).get("status")
+                        not in {"committed", "no_changes"}
+                    )
+                    or (
+                        self.shared_tasks
+                        and previous.get("workbench_id") != self.run["workbench_id"]
+                    )
+                ):
                     raise EndRun("failed", "previous_run_requires_resolution")
                 old = await self.checkpoints.load(previous, previous["checkpoint"])
-                if self.shared_tasks and (old.get("recovery") is not None or
-                    (old.get("workbench") or {}).get("id", self.run["workbench_id"]) != self.run["workbench_id"]):
+                if self.shared_tasks and (
+                    old.get("recovery") is not None
+                    or (old.get("workbench") or {}).get("id", self.run["workbench_id"])
+                    != self.run["workbench_id"]
+                ):
                     raise EndRun("failed", "previous_workbench_binding_mismatch")
-                self.value.update(entries=old["entries"], leaf_id=old["leaf_id"],
-                                  recovery=None if self.shared_tasks else old.get("recovery"))
-            self.value["run_entry_start"] = len(self.value.get("entries") or [])
+                self.value.update(self.loop.continue_session(old))
+                self.value["recovery"] = None if self.shared_tasks else old.get("recovery")
+            self.value.update(self.loop.begin_run(self.value))
             self.durable = await self.checkpoints.save(self.run, self.value)
         if self.shared_tasks:
             await self.check()  # Recheck the Run fence/revision before resource-owner admission.
@@ -432,7 +453,7 @@ class RunSupervisor:
         else:
             billing_id = await self.start_legacy_billing()
             self.worker = self.worker_factory(self.run["execution_id"], self.run["project_id"])
-            self.worker.restore_point = self.value.get("recovery")
+            self.filesystem.bind_recovery(self.worker, self.value.get("recovery"))
 
         async def git_exchange(frame):
             # Git reads check current Project authority in their own SQL read;
@@ -460,8 +481,11 @@ class RunSupervisor:
             if self.shared_tasks:
                 resource = self.worker.resource
             else:
-                resource = (await self.workspace.acquire(self.run, self.value, self.worker)
-                            if self.workspace else await self.worker.create())
+                resource = (
+                    await self.workspace.acquire(self.run, self.value, self.worker)
+                    if self.workspace
+                    else await self.worker.create()
+                )
         await self.write("resource", {}, resource=resource)
         definitions = (
             await asyncio.to_thread(self.bound_tools.definitions, self.run)
@@ -469,35 +493,47 @@ class RunSupervisor:
             else []
         )
         self.worker_started_at = time.monotonic()
-        await self.worker.start(
-            {
-                **self.run["policy"],
-                **{key: self.value[key] for key in ("version", "pi_version", "entries", "leaf_id")},
-                "workspace": self.value["workspace"],
-                "resume_workspace": resume and bool(self.value.get("recovery")),
-                "prompt": self.run["prompt"],
-                "finalize_only": self.value.get("agent_settled", False),
-                "resume": resume and self.value["reason"] != "prepared",
-                "tools": definitions,
-                "receipts": tools,
-            }
+        config = {
+            **self.run["policy"],
+            **self.loop.checkpoint(self.value),
+            "workspace": self.value["workspace"],
+            "resume_workspace": resume and bool(self.value.get("recovery")),
+            "prompt": self.run["prompt"],
+            "finalize_only": self.value.get("agent_settled", False),
+            "resume": resume and self.value["reason"] != "prepared",
+            "tools": definitions,
+            "receipts": tools,
+        }
+        self.value["recovery"] = await self.filesystem.prepare(
+            self.worker, self.value["workspace"], resume=config["resume_workspace"]
         )
+        await self.loop.start(self.worker, config)
         await self.consume()
         await self.publish(self.context.grant)
 
     async def start_legacy_billing(self):
         if self.run["billing_run_id"]:
-            return await self.billing.resume_session(self.run["billing_run_id"],
-                project_id=self.run["project_id"], actor_id=self.run["user_id"])
-        return await self.billing.start_session(audit_context={
-            "source": "chat_agent", "run_id": "cloud-agent:" + self.run["id"],
-            "project_id": self.run["project_id"], "user_id": self.run["user_id"],
-            "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
-        })
+            return await self.billing.resume_session(
+                self.run["billing_run_id"],
+                project_id=self.run["project_id"],
+                actor_id=self.run["user_id"],
+            )
+        return await self.billing.start_session(
+            audit_context={
+                "source": "chat_agent",
+                "run_id": "cloud-agent:" + self.run["id"],
+                "project_id": self.run["project_id"],
+                "user_id": self.run["user_id"],
+                "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
+            }
+        )
 
     async def consume(self):
         while True:
-            frame = await self.worker.receive()
+            try:
+                frame = await self.loop.receive(self.worker)
+            except LoopProtocolError as exc:
+                raise EndRun("failed", exc.code) from exc
             kind = frame.get("type")
             if kind in {
                 "checkpoint",
@@ -518,14 +554,12 @@ class RunSupervisor:
                     await self.flush_text()
             elif kind == "checkpoint":
                 supplied = frame["checkpoint"]
-                value = {
-                    key: supplied[key] for key in ("version", "pi_version", "entries", "leaf_id")
-                }
+                value = self.loop.checkpoint(supplied)
                 reason = "agent_settled" if frame["reason"] == "settled" else frame["reason"]
                 if reason == "agent_settled":
                     value["agent_settled"] = True
                 await self.save({**self.value, **value}, reason)
-                await self.worker.send({"type": "reply", "id": frame["id"]})
+                await self.loop.send(self.worker, {"type": "reply", "id": frame["id"]})
             elif kind == "tool_start":
                 await self.tool_start(frame)
             elif kind == "tool_end":
@@ -556,14 +590,6 @@ class RunSupervisor:
                         "sandbox_restore_and_start", time.monotonic() - self.worker_started_at
                     )
                     self.worker_started_at = None
-                if frame.get("pi_version") != "0.85.1" or frame.get("node_version") != "v22.22.3":
-                    raise ValueError("Unexpected worker artifact")
-                if frame.get("workspace_version") != 2:
-                    raise ValueError("Sandbox artifact does not support provider workspaces")
-                if frame.get("operation_version") != 1:
-                    raise EndRun("failed", "worker_protocol_mismatch")
-                if not self.shared_tasks:
-                    self.value["recovery"] = self.worker.recovery
             else:
                 raise ValueError("Unknown worker frame")
 
@@ -599,8 +625,8 @@ class RunSupervisor:
             )
             async for event in inference.events:
                 if isinstance(event, ModelChunk):
-                    await self.worker.send(
-                        {"type": "model_chunk", "id": request_id, "frame": event.frame}
+                    await self.loop.send(
+                        self.worker, {"type": "model_chunk", "id": request_id, "frame": event.frame}
                     )
                 elif isinstance(event, InferenceFailed):
                     error = event.code
@@ -616,7 +642,9 @@ class RunSupervisor:
                     async with asyncio.timeout(10):
                         await inference.aclose()
             finally:
-                await self.worker.send({"type": "model_end", "id": request_id, "error": error})
+                await self.loop.send(
+                    self.worker, {"type": "model_end", "id": request_id, "error": error}
+                )
                 self.model_progress.delivered(request_id)
 
     async def tool_start(self, frame):
@@ -643,8 +671,9 @@ class RunSupervisor:
         )
         receipt = reply["tool"]
         if receipt["state"] == "completed":
-            await self.worker.send(
-                {"type": "reply", "id": frame["id"], "result": receipt["result"]["pi_result"]}
+            await self.loop.send(
+                self.worker,
+                {"type": "reply", "id": frame["id"], "result": self.loop.receipt_result(receipt)},
             )
             return
         self.value, self.durable = value, manifest
@@ -652,27 +681,33 @@ class RunSupervisor:
             await self.command(
                 self.repo.complete_tool,
                 frame,
-                result={"pi_result": denial, "checkpoint": manifest},
+                result=self.loop.receipt_payload(denial, manifest),
                 checkpoint=manifest,
             )
-            await self.worker.send({"type": "reply", "id": frame["id"], "result": denial})
+            await self.loop.send(
+                self.worker, {"type": "reply", "id": frame["id"], "result": denial}
+            )
             return
         while receipt["state"] == "waiting":
             await asyncio.sleep(1)
             reply = await self.command(
-                self.repo.begin_tool, frame, checkpoint=manifest, approval_required=approval_required
+                self.repo.begin_tool,
+                frame,
+                checkpoint=manifest,
+                approval_required=approval_required,
             )
             receipt = reply["tool"]
         if receipt["state"] == "rejected":
             # The rejected receipt and original input are already durable.
             # Preserve its decision identity rather than pretending it executed.
             await self.command(self.repo.continue_after_rejection, frame)
-            await self.worker.send(
-                {"type": "reply", "id": frame["id"], "result": approval_denied()}
+            await self.loop.send(
+                self.worker, {"type": "reply", "id": frame["id"], "result": approval_denied()}
             )
             return
-        await self.worker.send(
-            {"type": "reply", "id": frame["id"], "allow": receipt["state"] != "rejected"}
+        await self.loop.send(
+            self.worker,
+            {"type": "reply", "id": frame["id"], "allow": receipt["state"] != "rejected"},
         )
         self.tool_started_at[frame["call_id"]] = time.monotonic()
 
@@ -685,11 +720,11 @@ class RunSupervisor:
         await self.command(
             self.repo.complete_tool,
             frame,
-            result={"pi_result": frame["result"], "checkpoint": manifest},
+            result=self.loop.receipt_payload(frame["result"], manifest),
             checkpoint=manifest,
         )
         self.value, self.durable = value, manifest
-        await self.worker.send({"type": "reply", "id": frame["id"]})
+        await self.loop.send(self.worker, {"type": "reply", "id": frame["id"]})
 
     async def bound_tool(self, frame):
         value, manifest = await self.conversation_manifest(frame["checkpoint"], "before_tool")
@@ -699,7 +734,7 @@ class RunSupervisor:
             )
         )["tool"]
         if receipt["state"] == "completed":
-            result = receipt["result"]["pi_result"]
+            result = self.loop.receipt_result(receipt)
         else:
             self.value, self.durable = value, manifest
             try:
@@ -727,10 +762,10 @@ class RunSupervisor:
             await self.command(
                 self.repo.complete_tool,
                 frame,
-                result={"pi_result": result, "checkpoint": manifest},
+                result=self.loop.receipt_payload(result, manifest),
                 checkpoint=manifest,
             )
-        await self.worker.send({"type": "reply", "id": frame["id"], "result": result})
+        await self.loop.send(self.worker, {"type": "reply", "id": frame["id"], "result": result})
 
     async def publish(self, grant):
         with database_stage("publication"):
@@ -754,7 +789,9 @@ class RunSupervisor:
                 workspace_released = True
             except Exception:
                 retain_resource = True
-                logger.exception("cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]})
+                logger.exception(
+                    "cloud_agent_task_cleanup_retained", extra={"run_id": self.run["id"]}
+                )
         completed_execution = self.finished and not retain_resource and self.worker is not None
         if self.workspace and self.workspace.row and self.worker:
             with database_stage("sandbox_release"):

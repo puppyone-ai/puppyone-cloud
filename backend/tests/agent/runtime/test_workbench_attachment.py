@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.admission import digest
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.admission import digest
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from tests.agent.runtime.test_workbench_ownership import create
 
 

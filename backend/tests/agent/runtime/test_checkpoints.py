@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

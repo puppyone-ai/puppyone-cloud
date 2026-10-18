@@ -5,6 +5,10 @@ Agent IDs, model/prompt/view configuration, tool bindings and scheduler triggers
 remain the configuration source. There is one durable run path for chat and
 scheduled execution; `POST /agents` and the old runtime DTO are removed.
 
+`worker.mjs` owns transport and composition. It supplies filesystem and execution
+tools to `loop.mjs`; the current implementations use the same native working
+directory. Controllers retain resource, isolation and trusted Git responsibilities.
+
 ## Run locally
 
 Build from the repository root:

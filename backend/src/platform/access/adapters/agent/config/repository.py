@@ -891,5 +891,5 @@ class AgentRepository:
             .limit(limit)
             .execute()
         )
-        from src.platform.access.adapters.agent.runtime.models import public_run
+        from src.platform.access.adapters.agent.runtime.control.models import public_run
         return [public_run(row) for row in response.data or []]

@@ -3,7 +3,6 @@
 import asyncio
 from typing import Any, Protocol
 
-from src.platform.access.adapters.agent.runtime.shared_recovery import SharedRecovery
 from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
 
 
@@ -27,7 +26,6 @@ class SharedTasks:
             raise ValueError("A shared workbench lifecycle owner is required")
         self.repository, self.owner, self.worker_factory = repository, owner, worker_factory
         self.row = None
-        self.recovery = SharedRecovery()
 
     async def workbench(self, run):
         row = await asyncio.to_thread(self.repository.workbench, run["workbench_id"])

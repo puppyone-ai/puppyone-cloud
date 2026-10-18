@@ -5,9 +5,9 @@ import asyncio
 from fastapi import HTTPException
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.admission import Admission, digest
-from src.platform.access.adapters.agent.runtime.models import public_run
-from src.platform.access.adapters.agent.runtime.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.admission import Admission, digest
+from src.platform.access.adapters.agent.runtime.control.models import public_run
+from src.platform.access.adapters.agent.runtime.control.ports import RunStore
 from src.platform.authorization.models import ProjectAction
 
 
@@ -116,7 +116,7 @@ class AgentService:
         )
 
     async def events(self, user_id, run_id, after):
-        from src.platform.access.adapters.agent.runtime.models import TERMINAL
+        from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 
         while True:
             value = await asyncio.to_thread(self.view, user_id, run_id, after)

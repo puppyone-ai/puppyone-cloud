@@ -2,11 +2,12 @@
 
 import asyncio
 
-from src.platform.access.adapters.agent.runtime.ports import GitTransport
-from src.platform.access.adapters.agent.runtime.workspace import (
+from src.platform.access.adapters.agent.runtime.control.ports import GitTransport
+from src.platform.access.adapters.agent.runtime.control.workspace import (
     require_full_project,
     workspace_state,
 )
+from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
 from src.platform.project.write_lease import ProjectWriteLease
 from src.version_engine.adapters.git.run_transport import RunPublication
 from src.version_engine.read.ref_metadata import GitBranchBase
@@ -21,8 +22,9 @@ def actor(run):
 
 
 class Publication:
-    def __init__(self, transport: GitTransport):
+    def __init__(self, transport: GitTransport, filesystem: FilesystemPort):
         self.transport = transport
+        self.filesystem = filesystem
 
     def capture(self, run, grant):
         require_full_project(run)
@@ -68,7 +70,7 @@ class Publication:
                     "code": "cloud_branch_changed",
                 }
             try:
-                pushed = await worker.control("push", {"candidate": state["tip"]})
+                pushed = await self.filesystem.push(worker, state["tip"])
             except Exception:
                 # ACK loss must be reconciled by original identity, never by current HEAD.
                 result = await asyncio.to_thread(

@@ -139,14 +139,17 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
     previous = {"provider": "e2b", "id": "previous"}
     value.recovery = previous
     value.control = AsyncMock()
-    value.handle = SimpleNamespace(pid=42)
+    disconnect = AsyncMock()
+    value.handle = SimpleNamespace(pid=42, disconnect=disconnect)
     value.reader = asyncio.create_task(asyncio.Event().wait())
     handle = SimpleNamespace(pid=42, wait=AsyncMock(side_effect=asyncio.Event().wait))
     snapshot = AsyncMock(return_value=SimpleNamespace(snapshot_id="native-snapshot"))
     if fails:
         snapshot.side_effect = RuntimeError("provider snapshot unavailable")
     value.sandbox = SimpleNamespace(
-        create_snapshot=snapshot, commands=SimpleNamespace(connect=AsyncMock(return_value=handle))
+        create_snapshot=snapshot, commands=SimpleNamespace(
+            connect=AsyncMock(return_value=handle), list=AsyncMock(return_value=[])
+        )
     )
     try:
         if fails:
@@ -166,6 +169,8 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
             value.sandbox.commands.connect.assert_awaited_once_with(
                 42, timeout=0, on_stdout=value._output
             )
+        disconnect.assert_awaited_once()
+        value.sandbox.commands.list.assert_awaited_once_with(request_timeout=15)
         snapshot.assert_awaited_once()
         assert [call.args[0] for call in value.control.call_args_list] == ["freeze", "thaw"]
         assert not value.reconnecting

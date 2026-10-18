@@ -19,7 +19,7 @@ from src.config import settings
 from src.infra.supabase.instrumentation import DatabaseTrace
 from src.platform.access.adapters.agent.dependencies import get_agent_service
 from src.platform.access.adapters.agent.router import router
-from src.platform.access.adapters.agent.runtime.telemetry import AgentDatabaseTelemetry
+from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.auth.service import AuthService
 from src.platform.project.write_lease import ProjectWriteLease

@@ -50,7 +50,7 @@ def test_instrumentation_preserves_proxy_routes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamed_api_telemetry_includes_late_database_calls(caplog):
-    from src.platform.access.adapters.agent.runtime.telemetry import AgentDatabaseTelemetry
+    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     client = httpx.Client(
         transport=DatabaseTransport(httpx.MockTransport(lambda _: httpx.Response(200)))

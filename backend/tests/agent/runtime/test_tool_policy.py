@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.tool_policy import approval_reason
+from src.platform.access.adapters.agent.runtime.control.tool_policy import approval_reason
 
 
 @pytest.mark.parametrize(

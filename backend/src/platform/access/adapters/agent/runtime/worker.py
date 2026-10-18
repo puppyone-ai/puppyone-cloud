@@ -4,14 +4,20 @@ import asyncio
 import logging
 from uuid import uuid4
 
-from src.platform.access.adapters.agent.runtime.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.publication import Publication
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
+from src.platform.access.adapters.agent.runtime.control.workspace import (
+    SessionWorkspace,
+    reap_workspaces,
+)
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.execution.tools import BoundTools
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
-from src.platform.access.adapters.agent.runtime.publication import Publication
-from src.platform.access.adapters.agent.runtime.repository import RunRepository
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.shared_tasks import SharedTasks
-from src.platform.access.adapters.agent.runtime.tools import BoundTools
-from src.platform.access.adapters.agent.runtime.workspace import SessionWorkspace, reap_workspaces
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
@@ -28,7 +34,8 @@ async def serve(*, workbench_owner=None):
     repository = RunRepository()
     admission = Admission(repository)
     engine = build_worker_version_engine_container(probe=True)
-    publication = Publication(RunGitTransport(engine.repo_manager))
+    filesystem = SandboxFilesystem()
+    publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
     billing = get_runtime_metering_service()
     bound_tools = BoundTools(admission)
@@ -46,11 +53,17 @@ async def serve(*, workbench_owner=None):
                 inference,
                 billing,
                 bound_tools=bound_tools,
+                loop=PiLoop(),
+                execution=SandboxExecution(),
+                filesystem=filesystem,
                 worker_factory=PiWorker,
                 worker_lifecycle=PiWorker,
-                workspace=None if run.get("workbench_id") else SessionWorkspace(repository),
-                shared_tasks=(SharedTasks(task_repository, workbench_owner)
-                              if run.get("workbench_id") else None),
+                workspace=None if run.get("workbench_id") else SessionWorkspace(repository, filesystem),
+                shared_tasks=(
+                    SharedTasks(task_repository, workbench_owner)
+                    if run.get("workbench_id")
+                    else None
+                ),
             ).run_claim(run)
         except asyncio.CancelledError:
             raise

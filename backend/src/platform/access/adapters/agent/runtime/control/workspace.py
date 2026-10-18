@@ -3,14 +3,15 @@
 import asyncio
 import logging
 
+from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
 from src.platform.scope_sandbox.execution.worker_port import WorkerLost
 
 logger = logging.getLogger(__name__)
 
 
 class SessionWorkspace:
-    def __init__(self, repository):
-        self.repository = repository
+    def __init__(self, repository, filesystem: FilesystemPort):
+        self.repository, self.filesystem = repository, filesystem
         self.row = None
 
     async def transition(self, run, state, resource=None):
@@ -57,10 +58,11 @@ class SessionWorkspace:
         # exact metadata/name for recovery from a lost allocation response.
         if self.row["resource"] is None:
             await self.transition(run, "allocating", worker.resource)
-        worker.restore_point = (
+        self.filesystem.bind_recovery(
+            worker,
             value.get("recovery")
             if run["checkpoint"] and value.get("reason") != "prepared"
-            else None
+            else None,
         )
         resource = await worker.create()
         await self.transition(run, "running", resource)
@@ -128,10 +130,6 @@ def workspace_state(run, base):
     if not isinstance(target, str) or not target.startswith("refs/heads/"):
         raise ValueError("Agent Git requires a selected cloud branch")
     return {
-        "version": 2,
-        "pi_version": "0.85.1",
-        "entries": None,
-        "leaf_id": None,
         "base": base,
         "reason": "prepared",
         "recovery": None,

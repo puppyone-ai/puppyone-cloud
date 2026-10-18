@@ -1,7 +1,13 @@
 """Recover conversation progress, never rewind a shared computer's live files."""
 
+from src.platform.access.adapters.agent.runtime.execution.port import ExecutionPort
+from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
+
 
 class SharedRecovery:
+    def __init__(self, execution: ExecutionPort, filesystem: FilesystemPort):
+        self.execution, self.filesystem = execution, filesystem
+
     @staticmethod
     def publication_ready(value, run):
         return (value.get("reason") == "settled" and value.get("publication_candidate") == run["id"]
@@ -29,8 +35,8 @@ class SharedRecovery:
         if value.get("publication_candidate") == run["id"]:
             # Preserve the original publication candidate across a lost ACK.
             # Another Session may already have edited/committed the shared tree.
-            await worker.control("quiesce")
+            await self.execution.quiesce(worker, shared=True)
             return value
-        state = await worker.control("finalize", {"message": f"Agent checkpoint: run {run['id']}"})
+        state = await self.filesystem.finalize(worker, f"Agent checkpoint: run {run['id']}")
         return {**value, "workspace": {**value["workspace"], **state},
                 "reason": "settled", "publication_candidate": run["id"], "recovery": None}

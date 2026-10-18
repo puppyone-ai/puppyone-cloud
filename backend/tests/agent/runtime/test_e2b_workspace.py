@@ -181,7 +181,7 @@ async def test_e2b_snapshot_survives_source_deletion_and_rebinds_controller():
 async def test_e2b_stock_git_fetch_commit_push_and_clean_next_turn(prepared, monkeypatch):
     from e2b import AsyncSandbox
 
-    from src.platform.access.adapters.agent.runtime.workspace import reap_workspaces
+    from src.platform.access.adapters.agent.runtime.control.workspace import reap_workspaces
     from tests.agent.runtime.test_supervisor import (
         BashModel,
         approve_to_completion,

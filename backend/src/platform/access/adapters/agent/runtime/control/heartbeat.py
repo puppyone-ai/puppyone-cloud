@@ -3,8 +3,8 @@
 import asyncio
 
 from src.infra.supabase.instrumentation import database_stage
-from src.platform.access.adapters.agent.runtime.models import TERMINAL
-from src.platform.access.adapters.agent.runtime.ports import RenewalPort
+from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
+from src.platform.access.adapters.agent.runtime.control.ports import RenewalPort
 
 
 class EndRun(Exception):

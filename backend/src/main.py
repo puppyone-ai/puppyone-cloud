@@ -582,7 +582,7 @@ def create_app() -> FastAPI:
     from src.utils.middleware import RequestContextMiddleware
 
     app.add_middleware(RequestContextMiddleware)
-    from src.platform.access.adapters.agent.runtime.telemetry import AgentDatabaseTelemetry
+    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     app.add_middleware(AgentDatabaseTelemetry)
 

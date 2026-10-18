@@ -6,7 +6,7 @@ for a tool approval is deliberately outside this deadline.
 
 import time
 
-from src.platform.access.adapters.agent.runtime.heartbeat import EndRun
+from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun
 
 
 class ModelProgress:
