@@ -12,4 +12,4 @@ The modular Loop/Execution/Filesystem ports still leave product reads on publish
 
 ## Impact
 Affected specs: agent-chat. Affected code: Agent runtime, scope_sandbox execution, cloud workbench lifecycle, file UI and additive database migrations.
-The user explicitly approved implementation of these boundaries in this session. No hosted activation, paid provider execution or production schema changes are implied.
+The user explicitly approved implementation and subsequently requested real Fly end-to-end testing, including the disposable provider resources necessary for that test. Production activation and production schema changes remain outside this test.

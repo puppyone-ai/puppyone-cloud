@@ -358,16 +358,7 @@ def _create_sandbox_impl() -> SandboxBase:
     """
     from src.config import settings
 
-    sandbox_type = settings.SANDBOX_TYPE
-
-    # Auto mode: detect environment
-    if sandbox_type == "auto":
-        if settings.E2B_API_KEY:
-            sandbox_type = "e2b"
-            print("[SandboxService] Auto-detected E2B_API_KEY, using E2B sandbox")
-        else:
-            sandbox_type = "docker"
-            print("[SandboxService] No E2B_API_KEY found, using Docker sandbox")
+    sandbox_type = get_sandbox_type()
 
     # Create the corresponding implementation
     if sandbox_type == "e2b":

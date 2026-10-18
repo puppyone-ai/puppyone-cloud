@@ -7,6 +7,8 @@
 - [x] Connect cloud tree/editor/file preview to the live workspace and preserve drafts.
 - [x] Verify native private-file sharing and task-only termination in Linux BuildKit.
 - [x] Update the canonical runtime architecture and provider configuration documentation.
+- [x] Package a checksum-pinned flyctl in backend builds; validate Fly credentials independently of unused E2B execution.
+- [x] Add an opt-in Fly runtime chain and verify its owned JWT/API/database/object-storage prerequisites.
 
 ## Acceptance and merge
 

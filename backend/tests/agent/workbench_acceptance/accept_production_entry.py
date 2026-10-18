@@ -1,20 +1,23 @@
 """A1 production-entry checks for default private workspace admission.
 
 Invoke this non-default filename explicitly. This is NOT full-chain acceptance:
-no provider, dispatcher, billing lifecycle or authenticated interaction is exercised.
-Only identity decoding is substituted; routing, DI, admission and SQL are real.
+No provider, dispatcher or billing lifecycle is exercised here. Routing, JWT
+verification, DI, admission and SQL are real; identities use a test signing key.
 """
 
+import secrets
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import jwt
 import pytest
 
+from src.config import settings
 from src.main import create_app
 from src.platform.access.adapters.agent import dependencies as agent_dependencies
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
+from src.platform.auth import dependencies as auth_dependencies
 from src.platform.project.write_lease import ProjectWriteLease
 from tests.agent.runtime.conftest import (
     control_api as control_api,
@@ -65,21 +68,45 @@ async def entry(services, postgres, monkeypatch):
     async with ProjectWriteLease(project, "acceptance.seed"):
         await ops.write_file(project, "seed.txt", b"seed", who="user:" + user)
     monkeypatch.setattr(agent_dependencies, "_agent_service", None)
+    monkeypatch.setattr(auth_dependencies, "_auth_service", None)
+    monkeypatch.setattr(settings, "SKIP_AUTH", False)
+    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+    monkeypatch.setattr(settings, "SUPABASE_PUBLIC_URL", "http://owned.invalid")
     app = create_app()
-    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
-        user_id=user, email="acceptance@example.invalid", role="authenticated"
+    app.state.version_engine = engine
+    token = jwt.encode(
+        {
+            "sub": user,
+            "aud": "authenticated",
+            "iss": "http://owned.invalid/auth/v1",
+            "role": "authenticated",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600,
+        },
+        settings.JWT_SECRET,
+        algorithm=settings.JWT_ALGORITHM,
     )
+    assert auth_dependencies.get_current_user not in app.dependency_overrides
     assert agent_dependencies.get_agent_service not in app.dependency_overrides
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://owned.invalid"
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://owned.invalid",
+            headers={"Authorization": "Bearer " + token},
         ) as http:
             yield SimpleNamespace(
-                http=http, postgres=postgres, project=project, agent=agent, client=client
+                http=http,
+                postgres=postgres,
+                project=project,
+                agent=agent,
+                client=client,
+                user=user,
+                org=org,
+                app=app,
+                engine=engine,
             )
     finally:
-        # The API currently wrongly queues a legacy Run. Close only our own rows;
-        # this fixture never starts a worker or creates compute.
+        # Close only owned fixture rows; provider fixtures clean their own compute.
         postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE project_id='{project}'")
 
 

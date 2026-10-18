@@ -10,14 +10,16 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
 1. Existing runtime/SQL/Node/BuildKit suites: component regressions. Synthetic
    owners, direct SQL task setup and stock-Git CGI are useful here only.
 2. The executable prerequisites below: production-entry and actual Pi/file
-   behavior. Native-file prerequisites pass locally; the production-entry
-   prerequisite still needs owned object storage. Neither is a complete product chain.
+   behavior. Native-file and authenticated production-entry prerequisites pass
+   locally. Neither is a complete product chain.
 3. Product chain: one invocation and one private workspace created through the
    production creation entry, default service/worker composition, native Git
-   authority and actual provider. **Not implemented/run yet.**
+   authority and actual provider. `accept_fly.py` implements the scoped Fly
+   runtime scenario below; it has not passed on real Fly resources yet.
 4. Provider-specific lifecycle/network/metering acceptance: separate Docker,
-   E2B and Fly results. Local evidence never implies E2B acceptance. No paid execution is
-   authorized by this test suite.
+   E2B and Fly results. Local evidence never implies hosted-provider acceptance.
+   The user authorized disposable Fly resources for this test; opt-in remains
+   mandatory so routine regression jobs cannot incur provider charges.
 
 ## Required continuous scenario (all still required)
 
@@ -50,9 +52,9 @@ converted into a test that expects the bug. Its non-default filename separates
 an unfinished product acceptance gate from existing component regression jobs.
 
 It constructs the actual FastAPI app and default `get_agent_service`, with real
-admission/authorization and owned SQL/native object storage. Only the authenticated
-subject is supplied by a fixture; the service, workbench owner, readiness and
-publication are **not** replaced. It seeds identities and a published repository,
+admission/authorization and owned SQL/native object storage. Test identities use
+locally signed JWTs and production token verification; no authentication or Agent
+service dependency is replaced. It seeds identities and a published repository,
 never a ready workbench, Run/task or resource receipt. It does not start app
 lifespan/dispatcher, provision compute or run inference. Metering is disabled:
 this is an entry check, **not** A5 acceptance.
@@ -73,8 +75,45 @@ python -m pytest -q tests/agent/workbench_acceptance/accept_production_entry.py 
 The fixture enables admission locally without starting an inference consumer.
 The updated assertions require two Chats with no explicit workspace selection to
 share one private default binding, with different users isolated. This entry
-prerequisite has not been executed against owned object storage in this run.
-The previous missing-admission failure is not the current implementation contract.
+prerequisite passed against owned PostgreSQL/PostgREST/MinIO on 2026-10-19.
+It does not exercise Supabase login or token issuance.
+
+## Real Fly runtime scenario
+
+`accept_fly.py` uses authenticated HTTP, the default dispatcher/lifecycle owner,
+real Fly Machines/Volumes/SSH, Pi/Bash, live file read/write/watch, and native Git
+publication into owned PostgreSQL/MinIO. It asserts saved files are visible
+while Bash is still running and before publication, editor conflict handling,
+two independent Chats sharing one Machine, and stop/reopen preserving files.
+The teardown deletes only the test Project's own Machines and Volumes and emits
+a receipt with source/image/resource identities and completed stages.
+
+Model responses are deterministic; metering is disabled. This is a runtime
+provider test, not A5 billing, browser rendering, PTY, or complete A1–A6 acceptance.
+
+Provision a disposable Fly app and publish `agent-worker/Dockerfile` for
+`linux/amd64` to its registry. Set `CLOUD_AGENT_FLY_APP`, `CLOUD_AGENT_FLY_TOKEN`
+and `CLOUD_AGENT_FLY_IMAGE=registry.fly.io/<app>@sha256:<digest>` locally; never
+commit credentials. API and worker deployments install pinned flyctl 0.4.118.
+Other hosts can run `python scripts/install_flyctl.py /absolute/path/to/fly` and
+set `CLOUD_AGENT_FLY_CLI` to that path. Use the owned service binaries above.
+
+```sh
+CLOUD_AGENT_TEST_FLY=1 CLOUD_AGENT_FLY_TEST_RECEIPT=/tmp/fly-runtime.json \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_fly.py \
+  --junitxml=/tmp/fly-runtime.xml
+```
+
+Current result: blocked before allocation because no Fly account token/app/image
+is configured; `fly auth whoami` reports no access token and the browser is signed
+out. The explicit live invocation fails its preflight; it is not a skipped PASS.
+Configuration/provider/authenticated-entry regressions: 18 passed; the expanded
+legacy sandbox, Fly adapter and billing-configuration regression batch: 65 passed.
+The pinned CLI installer also passed an actual Linux BuildKit install/version check.
+The `linux/amd64` worker image `puppyone-cloud-agent:fly-e2e` was built locally
+(image identity `sha256:63d91830393d8ffb22666898af4e33875103e7a3c422f09e72955e642530cfe9`)
+and passed all three native-file BuildKit scenarios. It has not been pushed to
+Fly's registry. No Fly resource or paid inference was created by these checks.
 
 ## Executable private-file prerequisites (A2)
 
