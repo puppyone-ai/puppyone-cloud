@@ -28,12 +28,19 @@ from src.version_engine.bootstrap.dependencies import build_worker_version_engin
 logger = logging.getLogger(__name__)
 
 
-async def serve(*, workbench_owner=None):
+_DEFAULT_OWNER = object()
+
+
+async def serve(*, workbench_owner=_DEFAULT_OWNER):
     from src.config import settings
 
     repository = RunRepository()
     admission = Admission(repository)
     engine = build_worker_version_engine_container(probe=True)
+    if workbench_owner is _DEFAULT_OWNER:
+        from src.platform.scope_sandbox.workbench_service import build_workbench_service
+
+        workbench_owner = build_workbench_service(engine=engine)
     filesystem = SandboxFilesystem()
     publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
@@ -58,7 +65,9 @@ async def serve(*, workbench_owner=None):
                 filesystem=filesystem,
                 worker_factory=PiWorker,
                 worker_lifecycle=PiWorker,
-                workspace=None if run.get("workbench_id") else SessionWorkspace(repository, filesystem),
+                workspace=None
+                if run.get("workbench_id")
+                else SessionWorkspace(repository, filesystem),
                 shared_tasks=(
                     SharedTasks(task_repository, workbench_owner)
                     if run.get("workbench_id")

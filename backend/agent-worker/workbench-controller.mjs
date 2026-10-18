@@ -1,10 +1,11 @@
 /** Shared-workbench task protocol. Deliberately separate from legacy snapshot control. */
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
 import { ROOT, exists } from './git.mjs';
 import { gitRelay } from './git-relay.mjs';
+import { requireWorkspace } from './workbench-state.mjs';
 import { STATE, taskBinding, initializeTask, signalTask, withWorkbenchGitLock, withTaskControlLock, workbenchGit } from './workbench-task.mjs';
 const task = taskBinding(process.argv.slice(2));
 const home = await initializeTask(task);
@@ -42,17 +43,10 @@ async function prepareWorkspace(value) {
   return liveTask(async () => {
     await requireQuiescent(); config = undefined;
     const prepared = await withWorkbenchGitLock(async () => {
-      const identity = JSON.stringify({ workbench: task.workbench, generation: task.generation });
-      let stored;
-      try { stored = await readFile(`${STATE}/binding.json`, 'utf8'); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      if (stored && stored !== identity) throw new Error('Workbench generation mismatch');
-      await mkdir(ROOT, { recursive: true }); await chown(ROOT, 1000, 1000); await chmod(ROOT, 0o2770);
+      await requireWorkspace(task);
       relay?.close(); relay = await gitRelay(control.request, value.project_id, { authenticated: true });
-      const result = stored ? await workbenchGit(task, 'inspect', value)
-        : await relay.run(() => workbenchGit(task, 'prepare', value, null, relay));
-      if (!stored) await writeFile(`${STATE}/binding.json`, identity, { flag: 'wx', mode: 0o600 });
-      return result;
+      // Creation/clone belongs exclusively to the lifecycle controller.
+      return workbenchGit(task, 'inspect', value);
     });
     config = value;
     return prepared;
@@ -63,11 +57,11 @@ function start(value) {
     if (!config || worker || stopped || await exists(flag('started')) || await exists(flag('model-stopped')))
       throw new Error('Task is not startable');
     await writeFile(flag('started'), '', { flag: 'wx', mode: 0o600 });
-    // Drop UID/GID before exec, not in a root setpriv launcher that might switch
-    // identities after cleanup scanned the task UID. libuv also clears groups.
+    // Drop UID/GID before exec. The task GID is inherited by detached children;
+    // the shared file UID preserves ordinary native file ownership.
     worker = spawn('setpriv', ['--no-new-privs', '--inh-caps=-all', '--ambient-caps=-all',
       'node', '/opt/puppyone-agent/worker.mjs'], {
-      cwd: ROOT, uid: task.uid, gid: 1000, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: ROOT, uid: 1000, gid: task.uid, stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: home, NODE_ENV: 'production',
         PUPPYONE_AGENT_DIR: `${home}/pi`,
         GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: ROOT },
@@ -107,7 +101,7 @@ control.dispatch(frame => {
     operations = operations.then(async () => {
       try {
         let result;
-        if (frame.action === 'capabilities') result = { shared_workbench: 1 };
+        if (frame.action === 'capabilities') result = { shared_workbench: 3 };
         else if (frame.action === 'prepare') result = await prepareWorkspace(frame.value);
         else if (frame.action === 'stop' || frame.action === 'park') { await stop(); result = {}; }
         else if (frame.action === 'quiesce') { await liveTask(quiesceModel); result = {}; }

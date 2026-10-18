@@ -4,19 +4,25 @@ import asyncio
 from typing import Any, Protocol
 
 from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
+from src.platform.scope_sandbox.execution.worker_port import WorkerLost
 
 
-class WorkbenchOwner(Protocol):
-    """Resource admission/metering is mandatory and independent of Run ownership.
+class WorkbenchHost(Protocol):
+    """Borrow a private user's already-running workspace for a task.
 
-    The production dispatcher must not enable shared claims without this owner.
-    connection() returns an already-running authorized connection; it cannot
-    silently create/resume compute while cleaning a task.
+    Creation, initialization and wake belong to workspace lifecycle operations.
+    check() verifies current authorization/resource/metering, not readiness repair.
+    connection() must neither create nor wake compute, including during cleanup.
     """
 
-    async def ensure_running(self, run: dict, workbench: dict, *, base: dict) -> Any: ...
     async def connection(self, workbench: dict) -> Any: ...
     async def check(self, workbench: dict) -> None: ...
+
+
+class WorkbenchOwner(WorkbenchHost, Protocol):
+    """Own allocation/wake; shared tasks borrow the resulting running resource."""
+
+    async def ensure_running(self, run: dict, workbench: dict, *, base: dict) -> dict: ...
     async def reap(self) -> None: ...
 
 
@@ -44,33 +50,54 @@ class SharedTasks:
 
     async def acquire(self, run, value):
         row = await self.workbench(run)
-        self.validate_checkpoint(row, value)
-        await self.owner.ensure_running(run, row, base=value["base"])
-        # The owner returns no substitute authority: read back its durable ACK.
-        self.row = await self.workbench(run)
-        identity = self.validate_checkpoint(self.row, value)
-        await self.owner.check(self.row)
+        # Reject stale checkpoints before any lifecycle side effect.
+        if value.get("workbench") is not None or value.get("recovery") is not None:
+            self.validate_checkpoint(row, value)
+        if row["state"] != "running":
+            row = await self.owner.ensure_running(run, row, base=value["base"])
+        identity = self.validate_checkpoint(row, value)
+        if row["state"] != "running" or not (row.get("resource") or {}).get("resource_id"):
+            raise WorkerLost("Workbench must already be running before task admission")
+        self.row = row
+        await self.owner.check(row)
+        # SQL acquisition revalidates state/generation and occupancy atomically.
+        # Only ensure_running above may change resource state; task attachment cannot.
         bound = await asyncio.to_thread(self.repository.acquire, run, self.row["generation"])
         worker = await self.connect(run, self.row, bound)
         return worker, {**value, "workbench": identity, "recovery": None}
 
     async def connect(self, run, row, bound):
-        if (bound["run_id"] != run["id"] or bound["workbench_id"] != row["id"]
-                or bound["generation"] != row["generation"] or bound["fence"] > run["fence"]):
+        if (
+            bound["run_id"] != run["id"]
+            or bound["workbench_id"] != row["id"]
+            or bound["generation"] != row["generation"]
+            or bound["fence"] > run["fence"]
+        ):
             raise PermissionError("Shared task cleanup binding mismatch")
         resource = bound["resource"]
-        if (resource.get("task_execution_id") != bound["execution_id"]
-                or resource.get("task_uid") != bound["task_uid"]
-                or resource.get("workbench_id") != row["id"]
-                or resource.get("workbench_generation") != row["generation"]
-                or resource.get("project_id") != run["project_id"]
-                or resource.get("provider") != row["binding"].get("provider")
-                or resource.get("resource_id") != (row["resource"] or {}).get("resource_id")):
+        if (
+            resource.get("task_execution_id") != bound["execution_id"]
+            or resource.get("task_uid") != bound["task_uid"]
+            or resource.get("workbench_id") != row["id"]
+            or resource.get("workbench_generation") != row["generation"]
+            or resource.get("project_id") != run["project_id"]
+            or resource.get("provider") != row["binding"].get("provider")
+            or resource.get("resource_id") != (row["resource"] or {}).get("resource_id")
+        ):
             raise PermissionError("Shared task resource mismatch")
         connection = await self.owner.connection(row)
-        worker = self.worker_factory(bound["execution_id"], run["project_id"],
-            workbench_id=row["id"], generation=row["generation"], task_uid=bound["task_uid"],
-            provider=resource["provider"], image=row["binding"].get("artifact"))
+        worker = self.worker_factory(
+            bound["execution_id"],
+            run["project_id"],
+            workbench_id=row["id"],
+            generation=row["generation"],
+            task_uid=bound["task_uid"],
+            provider=resource["provider"],
+            image=resource.get("image_id", row["binding"].get("artifact")),
+            artifact=resource.get(
+                "template", resource.get("image_id", row["binding"].get("artifact"))
+            ),
+        )
         worker.restore_point = None
         await worker.connect(resource, sandbox=connection)
         return worker
@@ -83,7 +110,9 @@ class SharedTasks:
         for bound in await asyncio.to_thread(self.repository.active, run):
             if predecessors_only and bound["execution_id"] == run["execution_id"]:
                 continue
-            current = worker if worker and worker.task_execution_id == bound["execution_id"] else None
+            current = (
+                worker if worker and worker.task_execution_id == bound["execution_id"] else None
+            )
             if current is None:
                 current = await self.connect(run, await self.workbench(run), bound)
             if current.resource != bound["resource"] or current.task_uid != bound["task_uid"]:

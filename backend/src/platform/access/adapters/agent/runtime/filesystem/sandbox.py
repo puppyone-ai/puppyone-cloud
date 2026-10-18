@@ -1,6 +1,10 @@
 """Keep the existing native working-directory protocol and recovery material."""
 
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemChannel, Row
+from src.platform.access.adapters.agent.runtime.filesystem.port import (
+    FilesystemChannel,
+    FilesystemError,
+    Row,
+)
 
 
 class SandboxFilesystem:
@@ -23,3 +27,13 @@ class SandboxFilesystem:
 
     async def push(self, channel: FilesystemChannel, candidate: str) -> Row:
         return await channel.control("push", {"candidate": candidate})
+
+    async def operation(self, channel: FilesystemChannel, operation: Row) -> Row:
+        response = await channel.control("files", operation)
+        error = response.get("error")
+        if error:
+            raise FilesystemError(error)
+        return response["result"]
+
+    async def watch(self, channel: FilesystemChannel) -> None:
+        await channel.control("watch")

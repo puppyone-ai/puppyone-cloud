@@ -141,6 +141,7 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
     value.control = AsyncMock()
     disconnect = AsyncMock()
     value.handle = SimpleNamespace(pid=42, disconnect=disconnect)
+
     value.reader = asyncio.create_task(asyncio.Event().wait())
     handle = SimpleNamespace(pid=42, wait=AsyncMock(side_effect=asyncio.Event().wait))
     snapshot = AsyncMock(return_value=SimpleNamespace(snapshot_id="native-snapshot"))
@@ -150,6 +151,7 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
         create_snapshot=snapshot, commands=SimpleNamespace(
             connect=AsyncMock(return_value=handle), list=AsyncMock(return_value=[])
         )
+
     )
     try:
         if fails:

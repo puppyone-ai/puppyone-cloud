@@ -33,9 +33,9 @@ class RunGitTransport:
     def __init__(self, manager):
         self.manager = manager
 
-    def describe(self, project, grant):
+    def describe(self, project, grant, *, target_ref=None):
         return GitBranchBase.from_metadata(
-            self.manager.get_native_ref_metadata(project, grant)
+            self.manager.get_native_ref_metadata(project, grant), target_ref=target_ref
         ).wire()
 
     def result(self, project, grant, request_key):

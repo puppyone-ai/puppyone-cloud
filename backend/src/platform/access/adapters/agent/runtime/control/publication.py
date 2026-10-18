@@ -26,11 +26,36 @@ class Publication:
         self.transport = transport
         self.filesystem = filesystem
 
+    @staticmethod
+    def target(run):
+        if not run.get("workbench_id"):
+            return None
+        target = run["policy"].get("workbench_target_ref")
+        if not isinstance(target, str) or not target.startswith("refs/heads/"):
+            raise PermissionError("Workbench publication target is not admitted")
+        return target
+
+    def describe(self, run, grant):
+        target = self.target(run)
+        options = {"target_ref": target} if target is not None else {}
+        return self.transport.describe(run["project_id"], grant, **options)
+
+    def validate_target(self, run, value):
+        target = self.target(run)
+        if target is not None:
+            base = GitBranchBase.parse(value["base"])
+            if (base.ref_name.decode() != target or base.head_guard is not None
+                    or value["workspace"]["target_ref"] != target):
+                raise PermissionError("Workbench publication target changed")
+
     def capture(self, run, grant):
         require_full_project(run)
-        return workspace_state(run, self.transport.describe(run["project_id"], grant))
+        value = workspace_state(run, self.describe(run, grant))
+        self.validate_target(run, value)
+        return value
 
     async def exchange(self, run, value, grant, frame):
+        self.validate_target(run, value)
         publishing = "git-receive-pack" in frame.get("path", "")
         if not publishing:
             return await self.transport.exchange(
@@ -52,6 +77,7 @@ class Publication:
             )
 
     async def publish(self, run, checkpoint, grant, worker):
+        self.validate_target(run, checkpoint)
         state = checkpoint["workspace"]
         if not state.get("changed"):
             return {"status": "no_changes"}
@@ -61,7 +87,7 @@ class Publication:
         if result is not None and result["status"] == "pending":
             raise RuntimeError("Original Git publication is still pending")
         if result is None:
-            current = await asyncio.to_thread(self.transport.describe, run["project_id"], grant)
+            current = await asyncio.to_thread(self.describe, run, grant)
             if GitBranchBase.parse(current) != GitBranchBase.parse(checkpoint["base"]):
                 return {
                     "status": "conflict",

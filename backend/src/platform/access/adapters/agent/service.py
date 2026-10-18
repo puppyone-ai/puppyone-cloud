@@ -26,7 +26,7 @@ class AgentService:
         self.admission = admission or Admission(self.repository)
         self.workbenches = workbenches
 
-    def submit(self, user_id, request):
+    def submit(self, user_id, request, *, interactive=True):
         identity = submission_digest(request)
         context = self.admission.load(
             user_id, request.project_id, request.agent_id, request.scope_id, str(request.request_id)
@@ -37,13 +37,21 @@ class AgentService:
                 raise HTTPException(409, "Request identity was reused with different input")
             return public_run(old)
         policy = context.policy
-        if request.workbench_id is not None:
-            # Installing the Expand schema does not activate an unready worker.
-            # The composition root must supply the shared admission contract.
-            if self.workbenches is None:
-                raise HTTPException(503, {"code": "cloud_workbench_unavailable"})
-            self.workbenches.admit(context, str(request.workbench_id))
-            policy = {**policy, "workbench_id": str(request.workbench_id)}
+        if self.workbenches is not None:
+            row = (
+                self.workbenches.admit(
+                    context, str(request.workbench_id) if request.workbench_id else None
+                )
+                if interactive
+                else self.workbenches.automation(context, str(request.request_id))
+            )
+            policy = {
+                **policy,
+                "workbench_id": row["id"],
+                "workbench_target_ref": row["target_ref"],
+            }
+        elif request.workbench_id is not None:
+            raise HTTPException(503, {"code": "cloud_workbench_unavailable"})
         if not settings.MANAGED_AI_ENABLED:
             raise HTTPException(503, {"code": "managed_agent_inference_disabled"})
         if not policy["model"]:

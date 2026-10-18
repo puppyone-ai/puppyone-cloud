@@ -452,7 +452,11 @@ class RunSupervisor:
             billing_id = None  # The lifecycle owner reserved/checks the one shared meter.
         else:
             billing_id = await self.start_legacy_billing()
-            self.worker = self.worker_factory(self.run["execution_id"], self.run["project_id"])
+            self.worker = (
+                await self.workspace.worker(self.run, self.worker_factory)
+                if self.workspace
+                else self.worker_factory(self.run["execution_id"], self.run["project_id"])
+            )
             self.filesystem.bind_recovery(self.worker, self.value.get("recovery"))
 
         async def git_exchange(frame):

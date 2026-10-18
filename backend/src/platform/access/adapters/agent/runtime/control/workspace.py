@@ -14,6 +14,21 @@ class SessionWorkspace:
         self.repository, self.filesystem = repository, filesystem
         self.row = None
 
+    async def worker(self, run, factory):
+        # A deployment default only selects NEW resources. An existing Session
+        # keeps its provider and artifact even after switching the default.
+        row = await asyncio.to_thread(self.repository.workspace, run["session_id"])
+        if row and row["binding"]:
+            binding, resource = row["binding"], row["resource"] or {}
+            return factory(
+                run["execution_id"],
+                run["project_id"],
+                provider=binding["provider"],
+                image=resource.get("image_id", binding["artifact"]),
+                artifact=binding["artifact"],
+            )
+        return factory(run["execution_id"], run["project_id"])
+
     async def transition(self, run, state, resource=None):
         self.row = await asyncio.to_thread(
             self.repository.workspace_transition, run, self.row, state, resource

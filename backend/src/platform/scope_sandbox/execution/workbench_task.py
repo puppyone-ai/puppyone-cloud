@@ -5,12 +5,11 @@ computer. This adapter cannot snapshot/restore its files on behalf of a Run.
 """
 
 import asyncio
-import json
 from contextlib import suppress
 from uuid import UUID
 
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
+from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
 
 
 class WorkbenchTask(PiWorker):
@@ -49,24 +48,7 @@ class WorkbenchTask(PiWorker):
             or resource.get("task_uid") != self.task_uid
         ):
             raise PermissionError("Shared workbench resource binding mismatch")
-        if self.provider == "docker":
-            try:
-                found = json.loads(await self._docker("container", "inspect", resource["resource_id"]))[0]
-            except RuntimeError as exc:
-                if "No such container" in str(exc) or "No such object" in str(exc):
-                    raise WorkerLost("Workbench resource no longer exists") from exc
-                raise
-            if not found["State"]["Running"] or found["State"].get("Paused"):
-                raise WorkerDisconnected("Workbench lifecycle must make the resource running")
-            artifact = json.loads(await self._docker("image", "inspect", self.image))[0]["Id"]
-            if found["Image"] != artifact:
-                raise WorkerDisconnected("Workbench lifecycle must resolve the artifact mismatch")
-        elif sandbox is None:
-            # E2B connect() can resume compute. Only the resource owner may call
-            # it; tasks consume its already authorized connection, never wake it.
-            raise PermissionError("An E2B connection from the workbench lifecycle is required")
-        elif not self.artifact or sandbox.sandbox_id != resource["resource_id"] or resource.get("template") != self.artifact:
-            raise PermissionError("Shared workbench provider connection binding mismatch")
+        await self.runtime.connect_task(self, resource, sandbox)
         self.sandbox, self.resource = sandbox, dict(resource)
         self.execution_id, self.restore_point = self.task_execution_id, None
         self.attached, self.reused = True, True
@@ -91,7 +73,7 @@ class WorkbenchTask(PiWorker):
             raise PermissionError("A task cannot restore the workbench filesystem")
         await self._open_control()
         capability = await self.control("capabilities")
-        if capability.get("shared_workbench") != 1:
+        if capability.get("shared_workbench") != 3:
             raise RuntimeError("Sandbox artifact lacks shared workbench task protocol")
         await self.control("prepare", {**config["workspace"], "project_id": self.project_id})
         return self.recovery
@@ -103,7 +85,7 @@ class WorkbenchTask(PiWorker):
         raise PermissionError("Resource pause belongs to the workbench lifecycle")
 
     async def stop(self):
-        """Quiesce just this UID and close its channel; never kill/pause the VM."""
+        """Quiesce just this task identity and close its channel; never kill/pause the VM."""
         if not getattr(self, "attached", False):
             raise WorkerDisconnected("Task cleanup requires a live resource connection")
         self.reconnecting = True

@@ -75,6 +75,25 @@ async def test_e2b_task_requires_the_lifecycle_owners_existing_connection():
         await value.connect(resource, sandbox=SimpleNamespace(sandbox_id="another-computer"))
 
 
+@pytest.mark.parametrize("protocol", [0, 1, 2, 3])
+async def test_task_requires_attach_only_protocol_before_preparing_or_starting(protocol):
+    value, _ = worker()
+    value._open_control = AsyncMock()
+    value.control = AsyncMock(side_effect=[{"shared_workbench": protocol}, {}])
+    value.send = AsyncMock()
+    config = {"workspace": {"target_ref": "refs/heads/main"}}
+    if protocol != 3:
+        with pytest.raises(RuntimeError, match="protocol"):
+            await value.start(config)
+        value.control.assert_awaited_once_with("capabilities")
+        value.send.assert_not_awaited()
+    else:
+        await value.start(config)
+        assert value.control.await_args_list[1].args == (
+            "prepare", {"target_ref": "refs/heads/main", "project_id": "project"})
+        value.send.assert_awaited_once_with({"type": "start", "config": config})
+
+
 async def test_legacy_resume_and_attach_are_not_task_capabilities():
     value, resource = worker()
     value._docker = AsyncMock(side_effect=AssertionError("task called provider lifecycle"))

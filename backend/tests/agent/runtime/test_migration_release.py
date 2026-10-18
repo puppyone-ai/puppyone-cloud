@@ -11,18 +11,28 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "missing_command", "disabled_guard", "deletion_guard", "proof_bypass"]
+    "fault",
+    [
+        None,
+        "missing_command",
+        "missing_workbench_command",
+        "disabled_guard",
+        "deletion_guard",
+        "proof_bypass",
+    ],
 )
 def test_hosted_release_gate_checks_workspace_and_proof_contracts(postgres, fault):
     """The same read-only SQL used by CD rejects partial/insecure installs."""
     mutations = {
         "missing_command": "ALTER FUNCTION agent_run_workspace_due(integer) RENAME TO missing_workspace_due",
+        "missing_workbench_command": "ALTER FUNCTION cloud_workbench_default(uuid,text,jsonb) RENAME TO missing_workbench_default",
         "disabled_guard": "ALTER TABLE version_ref_transactions DISABLE TRIGGER version_publish_object_proofs",
         "deletion_guard": "ALTER TABLE projects DISABLE TRIGGER agent_workspace_project_deleting",
         "proof_bypass": "GRANT INSERT ON version_object_proofs TO service_role",
     }
     expected = {
         "missing_command": "CLOUD_AGENT_FUNCTION_MISSING",
+        "missing_workbench_command": "CLOUD_AGENT_FUNCTION_MISSING",
         "disabled_guard": "CLOUD_AGENT_PUBLICATION_GUARD_MISSING",
         "deletion_guard": "CLOUD_AGENT_PUBLICATION_GUARD_MISSING",
         "proof_bypass": "CLOUD_AGENT_PROOF_DIRECT_ACCESS",
@@ -159,8 +169,15 @@ def test_additive_migration_preserves_existing_agents_and_pre_activation_rollbac
                 continue
             scratch.sql(migration.read_text().replace("COMMIT;", "ROLLBACK;"))
             if migration.name == "20261013050000_expand_cloud_workbench_tasks.sql":
-                assert scratch.sql("SELECT to_regclass('public.cloud_workbench_tasks') IS NULL") == "t"
-                assert scratch.row(f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'") == retained_workbench
+                assert (
+                    scratch.sql("SELECT to_regclass('public.cloud_workbench_tasks') IS NULL") == "t"
+                )
+                assert (
+                    scratch.row(
+                        f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'"
+                    )
+                    == retained_workbench
+                )
             scratch.sql(migration.read_text())
             upgraded = scratch.row(f"SELECT * FROM agent_runs WHERE id='{old['id']}'")
             assert {key: upgraded[key] for key in receipt} == receipt
@@ -188,11 +205,15 @@ def test_additive_migration_preserves_existing_agents_and_pre_activation_rollbac
                 from tests.agent.runtime.test_workbench_ownership import transition
                 from tests.agent.runtime.test_workbench_task_leases import running
 
-                revision = scratch.rpc("context", user=user, project=project, agent=agent_id)["revision"]
+                revision = scratch.rpc("context", user=user, project=project, agent=agent_id)[
+                    "revision"
+                ]
                 local_args = {**args, "policy": {**args["policy"], "revision": revision}}
                 retained_workbench = transition(scratch, running(scratch, local_args), "retained")
             if retained_workbench is not None:
-                kept = scratch.row(f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'")
+                kept = scratch.row(
+                    f"SELECT * FROM cloud_workbenches WHERE id='{retained_workbench['id']}'"
+                )
                 assert {key: kept[key] for key in retained_workbench} == retained_workbench
             if migration.name == "20261013050000_expand_cloud_workbench_tasks.sql":
                 assert kept["next_task_uid"] == 20000

@@ -2,63 +2,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import { scriptedTask, poll } from './workbench-test-task.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { CONTROL_ROOT, STATE, withWorkbenchGitLock } from './workbench-task.mjs';
 import { exists } from './git.mjs';
+import { initializeWorkbench } from './workbench-initialize.mjs';
 const ROOT = '/workspace/repo';
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function poll(fn) {
-  const until = Date.now() + 15000;
-  while (Date.now() < until) { if (await fn()) return; await sleep(30); }
-  throw new Error('Timed out waiting for real sandbox process');
-}
 async function content(name) { try { return await readFile(`${ROOT}/${name}`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return ''; } }
 
-function taskConnection(uid, workbench, generation, { execution = randomUUID(), lease = 60000 } = {}) {
-  const child = spawn('node', ['/opt/puppyone-agent/workbench-controller.mjs', String(uid), workbench, generation, execution],
-    { env: { ...process.env, PUPPYONE_WORKBENCH_TASK_LEASE_MS: String(lease) }, stdio: ['pipe','pipe','pipe'] });
-  const waiting = new Map(), state = { ready: false, errors: [], requests: 0 };
-  let errors = '';
-  child.stderr.on('data', data => { errors += data; });
-  const send = frame => child.stdin.write(JSON.stringify(frame) + '\n');
-  createInterface({ input: child.stdout }).on('line', line => {
-    const frame = JSON.parse(line);
-    if (frame.type === 'control_result') {
-      const reply = waiting.get(frame.id); waiting.delete(frame.id);
-      frame.error ? reply?.reject(new Error(frame.error)) : reply?.resolve(frame.result);
-    } else if (frame.type === 'ready') state.ready = true;
-    else if (['failed','disconnected'].includes(frame.type)) state.errors.push(frame);
-    else if (['tool_start','tool_end','checkpoint'].includes(frame.type)) send({ type: 'reply', id: frame.id, allow: true });
-    else if (frame.type === 'model_request') {
-      state.requests++;
-      const command = `set -eu; test "$(id -u)" = ${uid}; test "$(id -G)" = 1000; ` +
-        `grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/$$/status; ` +
-        `printf ready > ${uid}.ready; while [ ! -e go ]; do sleep .05; done; ` +
-        `printf '${uid}\\n' >> shared.txt; setsid sh -c 'echo $$ > ${uid}.detached; exec sleep 120' >/dev/null 2>&1 & ` +
-        `while :; do date +%s%N > ${uid}.alive; sleep .1; done`;
-      const chunk = { id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_fixture', type: 'function',
-          function: { name: 'bash', arguments: JSON.stringify({ command }) } }] }, finish_reason: null }] };
-      send({ type: 'model_chunk', id: frame.id, frame: chunk });
-      send({ type: 'model_chunk', id: frame.id, frame: { ...chunk,
-        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } });
-      send({ type: 'model_end', id: frame.id });
-    }
-  });
-  child.on('exit', code => {
-    for (const waiter of waiting.values()) waiter.reject(new Error(`Controller exit ${code}: ${errors}`));
-    waiting.clear();
-  });
-  const control = (action, value) => new Promise((resolve, reject) => {
-    const id = randomUUID(); waiting.set(id, { resolve, reject }); send({ type: 'control', id, action, value });
-  });
-  const timer = setInterval(() => { if (child.exitCode === null) send({ type: 'control', id: 'lease', action: 'heartbeat' }); }, 250);
-  child.once('exit', () => clearInterval(timer));
-  return { child, state, control, send, execution, expire: () => clearInterval(timer) };
+function taskConnection(slot, workbench, generation, options = {}) {
+  // Slot names distinguish tasks, not filesystem tenants. Keep unprivileged/no-new-privs assertions.
+  const command = `set -eu; test "$(id -u)" = 1000; test "$(id -G)" = ${slot}; ` +
+    `grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/$$/status; ` +
+    `printf ready > ${slot}.ready; while [ ! -e go ]; do sleep .05; done; ` +
+    `printf '${slot}\\n' >> shared.txt; setsid sh -c 'echo $$ > ${slot}.detached; exec sleep 120' >/dev/null 2>&1 & ` +
+    `while :; do date +%s%N > ${slot}.alive; sleep .1; done`;
+  return scriptedTask(slot, workbench, generation, { ...options, command });
 }
 
 for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_cleanup','publication_cleanup_race']) {
@@ -66,9 +28,12 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
     const workbench = randomUUID(), generation = randomUUID(), tasks = [], children = [];
     let unblockGit;
     try {
+      process.umask(0o002);
+      await initializeWorkbench({ workbench, generation }, { project_id: 'fixture', object_format: 'sha1',
+        target_ref: 'refs/heads/main', base_oid: null }, () => { throw new Error('Empty initialization must not fetch'); });
       for (const uid of [20000,20001]) {
         const task = taskConnection(uid, workbench, generation, { lease: ending === 'lease_expiry' && uid === 20000 ? 2000 : 60000 }); tasks.push(task);
-        assert.equal((await task.control('capabilities')).shared_workbench, 1);
+        assert.equal((await task.control('capabilities')).shared_workbench, 3);
         await task.control('prepare', { project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null, readonly: false });
         task.send({ type: 'start', config: { model: 'fixture', max_tokens: 4096, context_window: 131072,
           readonly: false, prompt: 'Run the fixture command.' } });
@@ -85,7 +50,7 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
         assert.equal(stale.state.requests, 0);
         assert.equal(await content('20002.ready'), '');
         const collision = taskConnection(20000, workbench, generation); tasks.push(collision);
-        await assert.rejects(collision.control('capabilities'), /Task UID is already owned/);
+        await assert.rejects(collision.control('capabilities'), /Task identity is already owned/);
         // A disconnected, prepared controller must not resurrect a cleaned task.
         const late = taskConnection(20003, workbench, generation); tasks.push(late);
         await late.control('prepare', { project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null });
@@ -97,11 +62,11 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
         await assert.rejects(late.control('finalize', { message: 'Must not commit after cleanup' }), /revoked/);
       }
       const terminal = spawn('script', ['-qefc', `test "$PWD" = ${ROOT} && test -t 0 && echo PTY_READY; exec cat`, '/dev/null'],
-        { cwd: ROOT, uid: 1001, gid: 1000, stdio: ['pipe','pipe','pipe'] }); children.push(terminal);
+        { cwd: ROOT, uid: 1000, gid: 1000, stdio: ['pipe','pipe','pipe'] }); children.push(terminal);
       let output = ''; terminal.stdout.on('data', data => { output += data; });
       await poll(() => output.includes('PTY_READY'));
       const preview = spawn('node', ['-e', "require('http').createServer((q,s)=>s.end(require('fs').readFileSync('human-unsaved'))).listen(8080,'127.0.0.1',()=>console.log('READY'))"],
-        { cwd: ROOT, uid: 1001, gid: 1000, stdio: ['ignore','pipe','pipe'] }); children.push(preview);
+        { cwd: ROOT, uid: 1000, gid: 1000, stdio: ['ignore','pipe','pipe'] }); children.push(preview);
       let listening = false; preview.stdout.once('data', () => { listening = true; }); await poll(() => listening);
       await writeFile(`${ROOT}/go`, 'go', { mode: 0o664 });
       await poll(async () => (await content('shared.txt')).includes('20000') && (await content('shared.txt')).includes('20001'));

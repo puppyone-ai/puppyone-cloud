@@ -1,0 +1,141 @@
+# Workbench product-chain acceptance
+
+This suite covers `refactor-cloud-workbench-ownership` and its follow-up
+`complete-agent-workspace-runtime`. The latter supplies default user/Project
+admission, provider ownership and native file APIs.
+It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
+
+## Evidence levels
+
+1. Existing runtime/SQL/Node/BuildKit suites: component regressions. Synthetic
+   owners, direct SQL task setup and stock-Git CGI are useful here only.
+2. The executable prerequisites below: production-entry and actual Pi/file
+   behavior. Native-file prerequisites pass locally; the production-entry
+   prerequisite still needs owned object storage. Neither is a complete product chain.
+3. Product chain: one invocation and one private workspace created through the
+   production creation entry, default service/worker composition, native Git
+   authority and actual provider. **Not implemented/run yet.**
+4. Provider-specific lifecycle/network/metering acceptance: separate Docker,
+   E2B and Fly results. Local evidence never implies E2B acceptance. No paid execution is
+   authorized by this test suite.
+
+## Required continuous scenario (all still required)
+
+| Phase | Required executable assertions / evidence |
+| --- | --- |
+| A1 creation and admission | Create via production workspace API; concurrent duplicate request and lost response resolve to one ID/resource/initial checkout. Persist allocation before side effects and confirm readiness by CAS. Chats without an explicit selection resolve the same private default workspace; the lifecycle owner ensures readiness before task attachment. Invalid ownership rejects without queuing legacy work. Same-Project second user cannot attach. Start two independent Chats through the real API and **default** dispatcher. |
+| A2 shared execution | Correlate owner/workspace/generation/resource and both task IDs. Actual Pi write/edit/Bash and ordinary-user terminal observe the same directory and branch. Private `0600` temp-file rename remains readable without chmod/copy. Stop/completion/failure/takeover and detached-child cleanup preserve the other Agent, terminal, preview and current unsaved edits. Old generation/controller cannot act after replacement. |
+| A3 publication | The same initialized workspace sends actual Git bytes through the production private relay and Version Engine to owned PostgreSQL/object storage, for SHA-1 and SHA-256. Check original candidate/base/ref/operation receipts after ACK loss and later local/remote HEAD movement; competing ref CAS, explicit display following, hostile config and capability isolation. No stock CGI substitute here. |
+| A4 live interaction | Use authenticated file/watch/PTY/preview **product endpoints** (public PTY and running-app preview endpoints remain a separate incomplete surface), not `docker exec` in their place. Verify writes, watch cursor/reconnect, PTY input and preview content in the same workspace. Revocation and generation changes invalidate all old capabilities. Published/history reads do not wake compute. |
+| A5 activity and accounting | Exercise active Agent, interactive human, background lease, idle and no-Run cases. Prove one workspace compute charge, separate Run model usage, pause/wake intervals and any holding charges. Disabled metering cannot pass this phase. Polling alone cannot renew activity. |
+| A6 retention and reconstruction | Clean only registered scratch. Preserve ambiguous receipts, unpublished/ignored files and required memory. Reconstruct only after explicit recoverability proof. Measure actual connection/readiness/interaction/recovery durations; unavailable snapshot bytes remain unknown, not zero. Verify provider/resource cleanup and no lost responsibility after failure or restart. |
+
+For closure, record source commit + dirty/tree identity, image digest/template +
+SDK version, request/workspace/generation/task/operation IDs, native receipt/ref
+results, stage outcomes and cleanup results in the same reproducible run. Never
+record bearer/provider secrets. A failure blocks dependent stages; unexecuted
+stages stay unverified. Zero collection, skipped/xfail cases, helper success,
+configured CI or six independently fabricated ready states are not a PASS.
+
+Only external model responses may be deterministic in the local composed chain;
+Pi, tools, authorization, lifecycle/readiness, dispatcher, publication, interaction
+and metering behavior must remain production implementations. Infrastructure
+may be owned PostgreSQL/PostgREST/MinIO. An identity-decoding fixture does not
+prove real JWT authentication and must be declared separately.
+
+## Executable production-entry prerequisites (A1)
+
+`accept_production_entry.py` is explicitly invoked, not hidden behind xfail or
+converted into a test that expects the bug. Its non-default filename separates
+an unfinished product acceptance gate from existing component regression jobs.
+
+It constructs the actual FastAPI app and default `get_agent_service`, with real
+admission/authorization and owned SQL/native object storage. Only the authenticated
+subject is supplied by a fixture; the service, workbench owner, readiness and
+publication are **not** replaced. It seeds identities and a published repository,
+never a ready workbench, Run/task or resource receipt. It does not start app
+lifespan/dispatcher, provision compute or run inference. Metering is disabled:
+this is an entry check, **not** A5 acceptance.
+
+From `backend/`, use already-installed local tools (do not download or use hosted
+services). Supply `PUPPYONE_TEST_POSTGREST_BIN` and `PUPPYONE_TEST_MINIO_BIN` as
+absolute paths to owned test binaries, and PostgreSQL 17 on PATH:
+
+```sh
+export SUPABASE_URL=http://127.0.0.1:9 SUPABASE_KEY=workbench-local
+export INTERNAL_API_SECRET=workbench-local AWS_EC2_METADATA_DISABLED=true
+export SANDBOX_TYPE=docker MANAGED_AI_ENABLED=false RUNTIME_METERING_MODE=disabled
+export E2B_API_KEY='' CLOUD_AGENT_TEST_E2B=0 OPENAI_API_KEY='' ANTHROPIC_API_KEY=''
+python -m pytest -q tests/agent/workbench_acceptance/accept_production_entry.py \
+  --junitxml=/tmp/workbench-entry.xml
+```
+
+The fixture enables admission locally without starting an inference consumer.
+The updated assertions require two Chats with no explicit workspace selection to
+share one private default binding, with different users isolated. This entry
+prerequisite has not been executed against owned object storage in this run.
+The previous missing-admission failure is not the current implementation contract.
+
+## Executable private-file prerequisites (A2)
+
+This invokes the real worker image, lifecycle initializer, task controllers,
+Pi SDK and Bash tools. The second Agent reads the actual first Agent's saved
+file, not a root/test-created copy. An ordinary terminal uses the workspace's
+file-owner UID. No model API, external network, provider VM or host mount is used.
+
+```sh
+docker build --pull=false --network=none --no-cache --progress=plain \
+  --build-arg WORKBENCH_AGENT_IMAGE=YOUR_LOCALLY_BUILT_CANDIDATE_IMAGE \
+  -f agent-worker/WorkbenchFileAcceptance.Dockerfile agent-worker
+```
+
+Three native-file cases pass in Linux BuildKit: private atomic saves shared by
+actual Pi tasks, ordinary-user access, and file/watch channel visibility before
+Git publication. Unsupported environments fail rather than skip green. This does not allocate through the platform creation API,
+exercise product terminal authorization, or establish provider acceptance.
+The six process-stop scenarios and twelve initialization/Git cases also pass
+as supplementary regressions. They do not establish full product-chain acceptance.
+
+## Activation
+
+Do not activate or close the feature from these prerequisites. Complete the
+production creation/lifecycle/default composition and the continuous scenario
+above before declaring product-chain success. The current prerequisites can be
+fixed independently, but making them green alone cannot satisfy A1–A6.
+
+## Local candidate evidence (2026-10-19)
+
+Candidate: `codex/agent-workspace-runtime`, based on local `qubits` `f4eccb9058f7e8ab859b4f88b2b0abf79905dc2c`,
+with the publication/lifecycle work from `codex/issue-118-completion` `a61435c5`.
+This is a source candidate, not a merged/deployed/accepted release.
+
+- Required backend regression: 3,216 passed, 885 skipped, 399 deselected.
+  The subsequent provider-contract run includes the final Fly private-disk
+  allocation assertion: 10 passed. These use mocks, not hosted providers.
+- Owned PostgreSQL/PostgREST combined lifecycle, authorization fencing, legacy
+  preservation, populated migration rollback/reapply: 88 passed. Auth stubs and
+  omitted Supabase-only extensions are declared by `native_postgres.py`.
+- Final Linux worker artifact: `sha256:499fdac5291718db41d9cb025fa0f9649cd4fee47ae53d3696ca2e243748e8b6`.
+  Offline BuildKit: 6 process-stop, 12 Git/initialization and 3 native-file
+  scenarios passed. Local Node protocol/Git regressions: 23 passed.
+- Frontend workspace: 351 passed; full frontend: 459 passed and one existing
+  `login-page.test.tsx` email-sign-in initialization failure, reproduced on
+  original `qubits`. TypeScript passed. Repository ESLint: no errors, 91 warnings.
+  Dependency analysis adds no errors; the existing `apiClient.ts` to
+  `features/auth/login-intent.ts` violation remains on both branches.
+- Both OpenSpec changes validate strictly. Canonical documentation validation
+  still reports two unrelated broken ISSUE-115/117 links in Desktop's
+  `experimental-path-forks.md` and 25 existing cross-repository warnings.
+
+Local target migration diff adds only `20261014040000` (publication target
+binding from the predecessor branch) and `20261019010000` (workspace runtime).
+No historical migration or data artifact is rewritten. The actual last accepted
+hosted release/applied-version set has not been inspected.
+
+The required full populated Docker/Supabase upgrade rehearsal is blocked:
+new regular Docker containers remain Created while six existing user containers
+are running. BuildKit works, but is not a substitute for the release rehearsal.
+No existing user container was stopped. No target-branch merge, push, deployment,
+paid provider run, complete product-chain acceptance or hosted acceptance is
+claimed. Native folder archive download, public PTY and running-app preview
+endpoints remain outside this file API; regular file previews are connected.

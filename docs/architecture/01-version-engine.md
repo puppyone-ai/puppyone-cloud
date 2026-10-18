@@ -87,11 +87,27 @@ initiating user's current grant and a durable task/step identity; they do not
 publish as the Project creator by default. Table read-modify-write operations
 carry the revision that supplied their input.
 
+Live Agent workspace reads/writes use the authorized native Filesystem API and
+may precede any commit. They are mutable working files, not a second version
+authority. Publication still goes through the native Git/ref transaction funnel;
+Git history and published Product Operation reads keep their existing contracts.
+
 Git workspace preparation reads only admitted refs, format and generation; its
 `GitBranchBase` CAS identity does not require the Product splice base tree.
 Transport service construction can use this operation's format metadata without
 another authority-selection query. Each actual read still obtains admitted
 refs or a live pin, and generation changes reject the bound Git request.
+
+A workbench can select an explicit `refs/heads/*` target independently of the
+Project display/default-clone HEAD. Its `GitBranchBase` carries target OID CAS
+without an unrelated HEAD guard; a HEAD-derived operation retains its HEAD
+guard. New shared Runs capture their target from the locked workbench in the
+admission transaction. A workbench push changes only that ref. Following it is
+an explicit native symbolic HEAD selection through existing repository
+management, not a second display-pointer table or an automatic merge.
+Publication retries query the original operation receipt and use the original
+candidate OID even if the live local HEAD has advanced. These contracts do not
+activate the still-incomplete shared provider lifecycle.
 
 A receive operation lends its live snapshot to billing and file-policy checks.
 `get_version_publication_context` groups initial repository/result/policy reads;

@@ -57,6 +57,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
                 request_id=request_id,
                 prompt=config.get("task_content") or "",
             ),
+            interactive=False,
         )
         # The run is the durable execution log. A scheduler process may exit
         # immediately after this receipt without interrupting the Agent.

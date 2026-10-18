@@ -1,12 +1,18 @@
 """Working-directory preservation and Git operations required by this runtime.
 
-Live editor read/write/watch is a separate, not-yet-admitted product capability.
-This port must never imply that published Git content is the live directory.
+Native live operations are independent of publication/recovery. A separate
+authorized workspace channel serves the editor and change notifications.
 """
 
 from typing import Any, Protocol
 
 Row = dict[str, Any]
+
+
+class FilesystemError(Exception):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
 
 
 class FilesystemChannel(Protocol):
@@ -26,3 +32,5 @@ class FilesystemPort(Protocol):
     async def snapshot(self, channel: FilesystemChannel) -> Row: ...
     async def finalize(self, channel: FilesystemChannel, message: str) -> Row: ...
     async def push(self, channel: FilesystemChannel, candidate: str) -> Row: ...
+    async def operation(self, channel: FilesystemChannel, operation: Row) -> Row: ...
+    async def watch(self, channel: FilesystemChannel) -> None: ...

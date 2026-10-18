@@ -95,8 +95,13 @@ export async function finalize(root, config, message) {
   return { ...result, changed: result.tip !== config.base_oid, automatic_commit: before.tip !== result.tip };
 }
 export async function push(root, config, remote, candidate, transport = {}) {
-  const state = await inspect(root,config);
-  if (state.tip !== candidate || !candidate || config.readonly) throw new Error('Publication candidate changed');
+  await inspect(root,config); // A branch switch still invalidates this task's binding.
+  const width = config.object_format === 'sha256' ? 64 : 40;
+  if (typeof candidate !== 'string' || !new RegExp(`^[0-9a-f]{${width}}$`).test(candidate) || config.readonly)
+    throw new Error('Invalid publication candidate');
+  if (await git(root,['cat-file','-t',candidate]) !== 'commit') throw new Error('Publication candidate is not a commit');
+  // Another task may have committed after this Run finalized. Push the captured
+  // OID, not today's HEAD; the host validates the original candidate/ref and CAS.
   try {
     return {output:await git(root,['push','--porcelain','--no-verify',remote,`${candidate}:${config.target_ref}`],transport)};
   } catch (error) {

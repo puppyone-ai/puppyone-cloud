@@ -326,6 +326,8 @@ class Settings(BaseSettings):
     def enforce_hosted_sandbox_safety(self):
         """Hosted deployments may never fall back to a shared-kernel Docker sandbox."""
         if self.APP_ENV in {"staging", "production"}:
+            if self.CLOUD_AGENT_SANDBOX_PROVIDER == "docker":
+                raise ValueError("Hosted Cloud Agent requires E2B or Fly (no Docker fallback)")
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
             if not self.E2B_API_KEY:
@@ -373,6 +375,13 @@ class Settings(BaseSettings):
     # - "auto": Auto-select (use E2B if E2B_API_KEY is available, otherwise use Docker)
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
+    # Only new Agent workspaces use this default. Existing bindings remain pinned.
+    CLOUD_AGENT_SANDBOX_PROVIDER: Literal["auto", "docker", "e2b", "fly"] = "auto"
+    CLOUD_AGENT_FLY_APP: str = ""
+    CLOUD_AGENT_FLY_TOKEN: str = ""
+    CLOUD_AGENT_FLY_REGION: str = "sin"
+    CLOUD_AGENT_FLY_IMAGE: str = ""
+    CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""

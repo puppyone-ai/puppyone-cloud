@@ -67,6 +67,15 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     # target. The credential is a data-plane principal, not a local checkout.
     ("POST", "/api/v1/projects/{project_id}/git-credentials"): _human(ProjectAction.CONTENT_READ),
 
+    # Private live workspace; the service also checks owner and generation.
+    ("POST", "/api/v1/projects/{project_id}/workbench/files"): _human(ProjectAction.CONTENT_WRITE),
+    ("GET", "/api/v1/projects/{project_id}/workbench"): _human(ProjectAction.CONTENT_READ),
+    ("POST", "/api/v1/projects/{project_id}/workbench"): _human(ProjectAction.AGENT_RUN),
+    ("GET", "/api/v1/projects/{project_id}/workbench/files"): _human(ProjectAction.CONTENT_READ),
+    ("GET", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_READ),
+    ("PUT", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_WRITE),
+    ("GET", "/api/v1/projects/{project_id}/workbench/events"): _human(ProjectAction.CONTENT_READ),
+
     # Content and History surfaces.
     # Managed Office sessions are resource-owner operations, not project grants.
     # Engine callbacks/source reads use scoped capability verification.

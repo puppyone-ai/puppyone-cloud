@@ -146,9 +146,10 @@ export async function deleteProject(projectId: string): Promise<ProjectDeletionS
 // 表/节点相关API - 使用 Tree API (path-based)
 export async function getTable(
   projectId: string,
-  nodePath: string
+  nodePath: string,
+  source?: Pick<typeof import('./contentTreeApi'), 'stat' | 'readFile'>,
 ): Promise<TableData> {
-  const { stat, readFile } = await import('@/lib/contentTreeApi');
+  const { stat, readFile } = source ?? await import('@/lib/contentTreeApi');
   const s = await stat(projectId, nodePath);
 
   const format = resolveFormat({ name: nodePath, mimeType: s.mime_type ?? null });

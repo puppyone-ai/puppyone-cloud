@@ -1,4 +1,5 @@
 'use client';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
 import { EditorSaveButton } from '@/components/editors/EditorSaveButton';
 import type { HtmlArtifactMode } from '@/components/editors/html/HtmlArtifactPreview';
@@ -6,7 +7,6 @@ import type { MarkdownViewMode } from '@/components/editors/markdown';
 import type { CsvViewMode } from '@/components/editors/spreadsheet/CsvTableViewer';
 import type { EditorType } from '@/components/ProjectsHeader';
 import styles from '@/features/files/components/FileViewerHeaderActions.module.css';
-import { downloadNode } from '@/lib/contentTreeApi';
 import type { GenericViewerId, SpecialViewerId } from '@/lib/fileFormats/types';
 import type { SaveStatus } from '@/lib/hooks/useManualSave';
 import { APP_Z_INDEX } from '@/lib/zIndex';
@@ -164,6 +164,7 @@ function FileActionsMenu({
   projectId: string;
   filePath: string;
 }) {
+  const {files: {downloadNode}} = useWorkspaceFiles();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [hovered, setHovered] = useState(false);
