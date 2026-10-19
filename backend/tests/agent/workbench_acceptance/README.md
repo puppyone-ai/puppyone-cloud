@@ -15,7 +15,7 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
 3. Product chain: one invocation and one private workspace created through the
    production creation entry, default service/worker composition, native Git
    authority and actual provider. `accept_fly.py` implements the scoped Fly
-   runtime scenario below; it has not passed on real Fly resources yet.
+   runtime scenario below; it passed on real Fly resources on 2026-10-19.
 4. Provider-specific lifecycle/network/metering acceptance: separate Docker,
    E2B and Fly results. Local evidence never implies hosted-provider acceptance.
    The user authorized disposable Fly resources for this test; opt-in remains
@@ -85,6 +85,8 @@ real Fly Machines/Volumes/SSH, Pi/Bash, live file read/write/watch, and native G
 publication into owned PostgreSQL/MinIO. It asserts saved files are visible
 while Bash is still running and before publication, editor conflict handling,
 two independent Chats sharing one Machine, and stop/reopen preserving files.
+Task cleanup must be acknowledged before either Run becomes terminal. The test
+also checks rejected IPv4/IPv6 task egress against the live firewall counter.
 The teardown deletes only the test Project's own Machines and Volumes and emits
 a receipt with source/image/resource identities and completed stages.
 
@@ -104,16 +106,31 @@ CLOUD_AGENT_TEST_FLY=1 CLOUD_AGENT_FLY_TEST_RECEIPT=/tmp/fly-runtime.json \
   --junitxml=/tmp/fly-runtime.xml
 ```
 
-Current result: blocked before allocation because no Fly account token/app/image
-is configured; `fly auth whoami` reports no access token and the browser is signed
-out. The explicit live invocation fails its preflight; it is not a skipped PASS.
-Configuration/provider/authenticated-entry regressions: 18 passed; the expanded
-legacy sandbox, Fly adapter and billing-configuration regression batch: 65 passed.
-The pinned CLI installer also passed an actual Linux BuildKit install/version check.
-The `linux/amd64` worker image `puppyone-cloud-agent:fly-e2e` was built locally
-(image identity `sha256:63d91830393d8ffb22666898af4e33875103e7a3c422f09e72955e642530cfe9`)
-and passed all three native-file BuildKit scenarios. It has not been pushed to
-Fly's registry. No Fly resource or paid inference was created by these checks.
+Result: **1 passed** on real Fly Machines/Volumes/SSH in `sin` (334.08 seconds,
+including fixture setup). The exact tested source diff maps to `520b5670`;
+[the receipt](fly-runtime-receipt.json) records its hash, image digest, both Run
+IDs, Machine/Volume identities, native publication and cleanup. Model replies
+were deterministic; no paid inference was called. Full required backend
+regression on the same implementation: 3,232 passed, 885 skipped, 399 deselected.
+
+The live run exposed and fixed enriched mount-response validation, unsupported
+iptables owner matching, boot-readiness admission, and heartbeat/cleanup races.
+Fly now uses native nftables; an unconfigured firewall prevents boot. Only GET
+transport failures receive bounded retries; mutations retain their existing
+reconciliation contract. A fresh cleanup controller starts a fresh frame
+sequence, and an acknowledged park cannot race a later task heartbeat.
+
+Cold readiness measured 57.92 seconds. Successful file requests from this local
+test host took 16.17–25.90 seconds (median 19.36): per-request provider checks and
+SSH setup remain an interaction performance gap. Functional success does not
+establish an interactive latency target. Existing `NO_PROXY` exclusions are
+preserved by the local-service fixture; this run used a direct control API path
+after the workstation proxy reset a previous attempt.
+
+Machine absence and Volume deletion are asserted. Fly exposes soft-deleted
+Volumes as `pending_destroy`; these are no longer billed, per
+[Fly's billing contract](https://docs.fly.io/about/billing#volume-billing).
+This receipt is scoped runtime evidence, not complete A1–A6 or hosted activation.
 
 ## Executable private-file prerequisites (A2)
 
@@ -148,13 +165,13 @@ Candidate: `codex/agent-workspace-runtime`, based on local `qubits` `f4eccb9058f
 with the publication/lifecycle work from `codex/issue-118-completion` `a61435c5`.
 This is a source candidate, not a merged/deployed/accepted release.
 
-- Required backend regression: 3,216 passed, 885 skipped, 399 deselected.
-  The subsequent provider-contract run includes the final Fly private-disk
-  allocation assertion: 10 passed. These use mocks, not hosted providers.
+- Required backend regression after the live Fly fixes: 3,232 passed,
+  885 skipped, 399 deselected. Provider-contract unit cases use mocks; the
+  separate real Fly receipt above establishes the scoped hosted runtime chain.
 - Owned PostgreSQL/PostgREST combined lifecycle, authorization fencing, legacy
   preservation, populated migration rollback/reapply: 88 passed. Auth stubs and
   omitted Supabase-only extensions are declared by `native_postgres.py`.
-- Final Linux worker artifact: `sha256:499fdac5291718db41d9cb025fa0f9649cd4fee47ae53d3696ca2e243748e8b6`.
+- Earlier local ARM worker artifact: `sha256:499fdac5291718db41d9cb025fa0f9649cd4fee47ae53d3696ca2e243748e8b6`.
   Offline BuildKit: 6 process-stop, 12 Git/initialization and 3 native-file
   scenarios passed. Local Node protocol/Git regressions: 23 passed.
 - Frontend workspace: 351 passed; full frontend: 459 passed and one existing
@@ -174,7 +191,7 @@ hosted release/applied-version set has not been inspected.
 The required full populated Docker/Supabase upgrade rehearsal is blocked:
 new regular Docker containers remain Created while six existing user containers
 are running. BuildKit works, but is not a substitute for the release rehearsal.
-No existing user container was stopped. No target-branch merge, push, deployment,
-paid provider run, complete product-chain acceptance or hosted acceptance is
-claimed. Native folder archive download, public PTY and running-app preview
+No existing user container was stopped. No target-branch merge, push, production
+deployment, complete A1–A6 acceptance or hosted activation is claimed. Native
+folder archive download, public PTY and running-app preview
 endpoints remain outside this file API; regular file previews are connected.

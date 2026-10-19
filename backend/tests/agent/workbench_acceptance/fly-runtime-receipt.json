@@ -1,0 +1,111 @@
+{
+  "provider": "fly",
+  "result": "passed",
+  "project_id": "6bdf91b1-0e28-4131-b3af-79ff0d777c83",
+  "image": "registry.fly.io/puppy-agent-e2e-20261019-8e418d02@sha256:952c7eedddd60053641bdfb195d34801b1ead75cfeac05c59c43652640ad0319",
+  "stages": [
+    "authenticated Chat -> default dispatcher -> real Fly/Pi",
+    "task IPv4/IPv6 egress denied -> Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit",
+    "real stock Git publication -> native refs and S3 objects",
+    "independent Chat sessions reuse one Machine and directory",
+    "lifecycle stop -> reads do not wake -> explicit reopen preserves Machine/disk/files"
+  ],
+  "metering": "disabled (not billing acceptance)",
+  "source_commit": "f211635019a818657cdf43b27daabe06a26ccb7a",
+  "dirty_source": true,
+  "source_diff_sha256": "a8352d2d924b54e5a98661d8057a9048a521e85fb61c5b145be6dd178013b87e",
+  "run_ids": [
+    "a84296b0-7acd-4027-9606-a5299c1d5f34",
+    "f3914ba5-f086-4846-8929-52e5616cc6c9"
+  ],
+  "workbench_id": "44704110-d5db-40a1-bbcb-912e537c26b6",
+  "generation": "47cdbfb5-5674-4a09-a2ed-36a82e55809c",
+  "machine_id": "2861235a365e68",
+  "volume_id": "vol_vxmzjz586nxk6xz4",
+  "ready_seconds": 57.92,
+  "stage_seconds": [
+    57.92,
+    202.04,
+    209.51,
+    236.51,
+    299.17
+  ],
+  "firewall_rejected_packets": 3,
+  "publication": {
+    "refs": [
+      {
+        "new": {
+          "oid": "44acfea66d418f595c1b91670ccbb3764ab6e889",
+          "kind": "oid"
+        },
+        "changed": true,
+        "name_b64": "cmVmcy9oZWFkcy93b3Jrc3BhY2VzLzE2NzE3MzAzLWRmOWItNGFhNC1iMTA4LTYxMmVjMzU4NWZkMQ==",
+        "observed": {
+          "kind": "absent"
+        }
+      }
+    ],
+    "reason": null,
+    "status": "committed",
+    "commit_id": "44acfea66d418f595c1b91670ccbb3764ab6e889",
+    "generation": 1,
+    "project_id": "6bdf91b1-0e28-4131-b3af-79ff0d777c83",
+    "receipt_id": "bf5b2e26-0f72-5e18-8518-eec785a25958",
+    "target_ref": "refs/heads/workspaces/16717303-df9b-4aa4-b108-612ec3585fd1",
+    "ref_sequence": 2,
+    "transaction_id": "c7c5ab17-62a2-4018-bd15-0d1b3858ac7d"
+  },
+  "deleted_volumes": [
+    {
+      "id": "vol_vxmzjz586nxk6xz4",
+      "state": "pending_destroy"
+    }
+  ],
+  "cleanup": "owned Machines absent; Volumes deleted (absent or pending_destroy)",
+  "elapsed_seconds": 321.77,
+  "validated_source_commit": "520b56704b3ddb5034b60767e8848be5b53fb158",
+  "verification_date": "2026-10-19",
+  "region": "sin",
+  "flyctl_version": "0.4.118",
+  "model": "deterministic test responses; real Pi and Bash",
+  "services": "owned local PostgreSQL, PostgREST and MinIO; real JWT verification",
+  "successful_file_api_latency_ms": {
+    "count": 6,
+    "min": 16166.31,
+    "median": 19357.71,
+    "max": 25897.5
+  },
+  "backend_regression": {
+    "passed": 3232,
+    "skipped": 885,
+    "deselected": 399
+  },
+  "disposable_app_cleanup": {
+    "app": "puppy-agent-e2e-20261019-8e418d02",
+    "machines": [],
+    "volumes": [
+      {
+        "id": "vol_4912pmg65l7ke13r",
+        "state": "pending_destroy"
+      },
+      {
+        "id": "vol_42k91jj3wj326k34",
+        "state": "pending_destroy"
+      },
+      {
+        "id": "vol_re1wpj68p3en6xd4",
+        "state": "pending_destroy"
+      },
+      {
+        "id": "vol_rnzgdg8kxgw7n2pr",
+        "state": "pending_destroy"
+      },
+      {
+        "id": "vol_vxmzjz586nxk6xz4",
+        "state": "pending_destroy"
+      }
+    ],
+    "test_token_revoked": true,
+    "app_absent": true
+  }
+}
