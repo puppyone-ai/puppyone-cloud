@@ -83,7 +83,7 @@ async def test_native_operation_status_http_is_current_read_and_sanitizes_failur
     from httpx import ConnectError
 
     from src.platform.authorization.models import ProjectAction
-    from src.version_engine.entrypoints.http.content_operations import read_operation_status
+    from src.platform.access.adapters.api.operations import read_operation_status
 
     main_thread = threading.get_ident()
     def authorize(*_):
@@ -135,9 +135,9 @@ def test_native_operation_status_scope_cannot_borrow_full_repository_result_auth
 async def test_native_operation_status_runtime_route_and_named_wire_schema(monkeypatch):
     from fastapi import Request, Response
 
-    from src.version_engine.entrypoints.git import operations
-    from src.version_engine.entrypoints.http.content_operations import operations_router
-    from src.version_engine.entrypoints.http.schemas import NativeOperationStatusEnvelope
+    from src.platform.access.adapters.git import operations
+    from src.platform.access.adapters.api.operations import operations_router
+    from src.platform.access.repository_schemas import NativeOperationStatusEnvelope
 
     assert operations.operations_router.routes[0].response_model is NativeOperationStatusEnvelope
     assert operations_router.routes[0].response_model is NativeOperationStatusEnvelope
@@ -162,8 +162,8 @@ async def test_native_operation_status_runtime_route_and_named_wire_schema(monke
 async def test_native_operation_status_routes_cannot_substitute_authorization_planes(monkeypatch):
     from fastapi import HTTPException, Request, Response
 
-    from src.version_engine.entrypoints.git import operations
-    from src.version_engine.entrypoints.http.content_operations import read_operation_status
+    from src.platform.access.adapters.git import operations
+    from src.platform.access.adapters.api.operations import read_operation_status
 
     lookup = Mock()
     monkeypatch.setattr(operations, "resolve_git_project_auth", AsyncMock(return_value={"_runtime_grant": GRANT}))

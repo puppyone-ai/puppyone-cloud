@@ -13,7 +13,7 @@ from src.platform.repository_target.models import (
     ScopeTarget,
 )
 from src.version_engine.derived.object_gc import collect_object_gc_roots
-from src.version_engine.entrypoints.git.native import select_native_git_endpoint
+from src.platform.access.adapters.git.native import select_native_git_endpoint
 from src.version_engine.infrastructure.supabase.gc_repository import (
     ObjectGcInventory,
     ObjectGcRepository,

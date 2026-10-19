@@ -10,7 +10,7 @@ import uuid
 import pytest
 from fastapi import FastAPI, Request
 
-from src.version_engine.adapters.git.native_repository import NativeGitRepository
+from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from tests.repository_hosting.harness.conformance import remote_snapshot
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.http import clone_client

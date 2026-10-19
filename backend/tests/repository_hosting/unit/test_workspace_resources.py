@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
 from src.platform.authorization.dependencies import get_authorization_service
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.version_engine.domain.errors import ObjectNotFoundError
-from src.version_engine.entrypoints.http.content import router
-from src.version_engine.entrypoints.http.content_resource import TEXT_PREVIEW_BYTES
+from src.platform.access.adapters.api.router import router
+from src.platform.access.adapters.api.resource import TEXT_PREVIEW_BYTES
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.write_engine.git_object_format import TreeEntry, encode_object, encode_tree
 from tests.repository_hosting.integration.test_ref_transaction_service import grant

@@ -42,11 +42,11 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = BACKEND_ROOT.parent
 
 PRODUCT_WRITE_MODULES = (
-    "src/version_engine/adapters/product/operation_adapter.py",
+    "src/file_operations/operation_adapter.py",
     "src/version_engine/write_engine/engine.py",
     "src/version_engine/write_engine/native_operation_writer.py",
     "src/version_engine/derived/native_events.py",
-    "src/version_engine/entrypoints/http/content_write.py",
+    "src/platform/access/adapters/api/write.py",
 )
 
 ACTIVE_RUNTIME_SCAN_ROOTS = (
@@ -55,7 +55,20 @@ ACTIVE_RUNTIME_SCAN_ROOTS = (
     "backend/CLAUDE.md",
     "backend/mcp_service",
     "backend/scripts",
-    "backend/src/repo",
+    "backend/src/platform/repository_target",
+    "backend/src/file_operations",
+    "backend/src/platform/access/adapters/api",
+    "backend/src/platform/access/adapters/cli",
+    "backend/src/platform/access/adapters/git",
+    "backend/src/platform/access/adapters/mcp_endpoint",
+    "backend/src/platform/access/adapters/agent/runtime/control/git_transport.py",
+    "backend/src/platform/access/filesystem",
+    "backend/src/platform/access/identity_router.py",
+    "backend/src/platform/access/identity_schemas.py",
+    "backend/src/platform/access/models.py",
+    "backend/src/platform/access/credentials.py",
+    "backend/src/platform/access/credential_repository.py",
+    "backend/src/platform/access/repository_schemas.py",
     "backend/src/version_engine",
     "backend/tests/conflicts",
     "backend/tests/mcp_service",
@@ -825,7 +838,7 @@ def test_core_no_longer_imports_removed_protocol_normalize_path() -> None:
 
 def test_access_point_auth_uses_repo_scopes_without_legacy_fallback() -> None:
     checked = (
-        BACKEND_ROOT / "src/version_engine/entrypoints/http/access_point.py",
+        BACKEND_ROOT / "src/platform/access/credentials.py",
         BACKEND_ROOT / "src/version_engine/admission/identity.py",
     )
 
@@ -880,7 +893,7 @@ def test_access_tables_are_confined_to_repository_boundaries() -> None:
             "/repository.py" in rel
             or rel.endswith("_repository.py")
             or "/supabase/" in rel
-            or rel.endswith("access_credentials.py")
+            or rel.endswith("credential_repository.py")
             or rel.endswith("access_surface_repository.py")
             or rel.endswith("scope_repository.py")
             # Agent reads moved from repository.py into its typed query adapter.
@@ -902,7 +915,7 @@ def test_access_tables_are_confined_to_repository_boundaries() -> None:
 
 
 def test_scope_credentials_are_hash_only_access_surface_credentials() -> None:
-    scope_repo = (BACKEND_ROOT / "src/repo/scope_repository.py").read_text(encoding="utf-8")
+    scope_repo = (BACKEND_ROOT / "src/platform/repository_target/scope_repository.py").read_text(encoding="utf-8")
     surface_repo = (BACKEND_ROOT / "src/platform/access/surface_repository.py").read_text(
         encoding="utf-8"
     )
@@ -1048,7 +1061,8 @@ def test_mcp_transport_has_one_backend_runtime_and_one_binding_store() -> None:
 
     guide = (BACKEND_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "MCP 四层职责与唯一数据路径" in guide
-    assert "version_engine/scoped_fs" in guide
+    assert "platform/access/filesystem" in guide
+    assert "platform/access/adapters/mcp_endpoint/runtime.py" in guide
 
 
 def test_version_alias_views_are_not_exposed_as_rls_bypasses() -> None:
@@ -1075,9 +1089,9 @@ def test_version_alias_views_are_not_exposed_as_rls_bypasses() -> None:
 def test_product_write_path_does_not_import_git_transport_materialization() -> None:
     offenders: list[str] = []
     banned_modules = {
-        "src.version_engine.adapters.git.object_quarantine",
-        "src.version_engine.adapters.git.upload_pack",
-        "src.version_engine.adapters.git.receive_pack",
+        "src.platform.access.adapters.git.object_quarantine",
+        "src.platform.access.adapters.git.upload_pack",
+        "src.platform.access.adapters.git.receive_pack",
     }
     banned_names = {
         "temporary_bare_repo",
@@ -1122,7 +1136,7 @@ def test_product_write_path_does_not_depend_on_git_view_projection() -> None:
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 imported = {alias.name for alias in node.names}
-                if module == "src.version_engine.adapters.git.view_projection":
+                if module == "src.platform.access.adapters.git.view_projection":
                     offenders.append(f"{rel}:{node.lineno}:{module}")
                 if imported & banned_names:
                     offenders.append(

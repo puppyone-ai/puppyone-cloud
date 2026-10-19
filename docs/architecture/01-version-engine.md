@@ -180,26 +180,91 @@ retention blocks collection until source preservation is verified.
 ## Source organization
 
 ```text
+backend/src/platform/access/
+  credential_repository.py     shared hashing, persistence and credential lifecycle
+  credentials.py               Git/CLI admission and legacy Scope credential resolution
+  identity_router.py / identity_schemas.py
+                               project connection identity
+  filesystem/                  existing shared CLI/MCP operations and capability schemas
+  adapters/git/                Git HTTP authentication, routing and wire/pack transport
+  adapters/mcp_endpoint/
+    resolver.py / runtime.py   MCP bearer admission and internal tool dispatch
+  adapters/agent/runtime/control/git_transport.py
+                               run-bound bridge to the shared Git transport
+  repository_schemas.py        shared Web, Git metadata and CLI wire models
+  adapters/cli/
+    router.py / context.py      AP-FS route composition and CLI admission
+    read.py / write.py / search.py
+                               existing CLI file operations and search
+  adapters/api/
+    router.py                  content route composition
+    read.py / resource.py      file and workspace resource HTTP reads
+    write.py / history.py      file writes, versions, diff and restore
+    operations.py              operation status and ref metadata
+    repository_management.py   repository, ref and HEAD management
+    helpers.py / read_context.py
+                               HTTP authorization, snapshot/error mapping
+    download_token.py          signed download claims
+    audit.py / websocket.py    audit queries and version notifications
+
+backend/src/platform/repository_target/
+  models.py / schemas.py       Project-root, Scope geometry and wire models
+  scope_repository.py / scope_service.py / scope_router.py
+                               existing Scope CRUD without credential lookup
+
+backend/src/file_operations/
+  commands.py                 hosted file command normalization and dispatch
+  native_commands.py          normalized intent, digest and pinned-tree splice
+  operation_adapter.py        admitted file reads and native publication orchestration
+  upload_policy.py            shared existing Upload/CLI file rules
+
 backend/src/version_engine/
-  entrypoints/git/             HTTP transport and credential admission
-  entrypoints/http/            Product content/history/repository APIs
-  adapters/git/native_*        direct-object Git protocol
-  adapters/git/object_*        bounded pack and object handling
-  adapters/product/            normalized commands and tree splices
   write_engine/
+    tree_patch.py              Git tree mutation algorithms
     native_operation_writer.py Product journal and commit construction
     ref_transaction.py         shared publication coordination
     git_object_*.py            standard Git format and graph validation
     engine.py                  native initialization facade only
   read/
     repository_snapshot.py     pinned ref/closure provenance
-    native_tree_reader.py      trees and exact file bytes
+    native_tree_reader.py      shared admitted read context, trees and exact bytes
     native_history.py          commit DAG, history, diff and timestamps
-  infrastructure/supabase/     refs, admissions, capacity, billing and GC ports
+  infrastructure/             shared file locks, async contexts and Git view cache
+    supabase/                 refs, admissions, capacity, billing and GC ports
   storage/                    canonical S3 layout and mutation fencing
   derived/native_events.py     native index/notification worker
   bootstrap/                  explicit request/worker dependency wiring
 ```
+
+Web repository HTTP and notification routes are mounted from the Access API
+adapter. Shared repository schemas sit outside that adapter so Git metadata and
+CLI AP-FS can reuse their wire definitions without importing Web handlers.
+All Product operation and command consumers use `src.file_operations`; the old
+Product compatibility modules are removed. History and Product reads share
+`open_tree_read` in the native tree reader module, preserving grant checks,
+snapshot cleanup, error mapping and optional pinned reads. CLI routes are split
+by read/write/search responsibilities. HTTP URLs, command semantics, request
+identities and native publication remain unchanged.
+
+Git transport no longer lives in the kernel. GC uses core object-format facts;
+shared locks/cache stay in infrastructure. Agent run transport calls the same
+Git adapter. Existing CLI/MCP filesystem helpers have one Access owner, while
+MCP runtime dispatch and bearer resolution belong to its adapter. Scope models
+and persistence belong to repository_target; its router retains the existing
+Access reference check before deletion, without moving that check into geometry
+persistence. The old repo, Git entrypoint and scoped_fs modules are removed.
+
+Credential persistence has one Access owner; protocol admission stays distinct.
+CLI AP-FS currently accepts Git HTTP tokens, while MCP retains bearer tokens,
+surface/policy checks and its unavailable native Scope response. Relocation does
+not make tokens interchangeable or change issuance, expiry or revocation.
+
+Known gap: the CLI resolver accepts Project-root credentials, but
+`admit_cli_fs_command` still requires a Scope and rejects the root with 403.
+Native Scope credentials are also unavailable. The explicit
+`backend/tests/repository_hosting/accept_access.py` Web/Git/CLI scenario therefore
+fails at `fs cat`; credential resolution alone does not establish working CLI
+file access. This pre-existing admission gap is separate from the module moves.
 
 Scope geometry and Runtime target types remain separate from repository
 identity. This release does not carry forward the old scoped engine. An old

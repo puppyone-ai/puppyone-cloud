@@ -126,7 +126,7 @@ async def test_agent_runtime_cannot_own_object_storage_or_git_codecs():
     forbidden = (
         "src.infra.s3",
         "src.version_engine.storage",
-        "src.version_engine.adapters.git.object_pack",
+        "src.platform.access.adapters.git.object_pack",
         "src.version_engine.write_engine.git_object",
     )
     for path in root.rglob("*.py"):

@@ -198,7 +198,7 @@ async def _do_import(
             files_changed=0,
         )
 
-    from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+    from src.file_operations.operation_adapter import ProductOperationAdapter
 
     repo_manager = build_worker_version_engine_container().repo_manager
     ops = ProductOperationAdapter(repo_manager).for_user(

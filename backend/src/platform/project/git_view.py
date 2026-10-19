@@ -1,6 +1,6 @@
 """Human control-plane diagnostics of the canonical native repository."""
 
-from src.version_engine.entrypoints.git.native import NativeGitEndpoint
+from src.platform.access.adapters.git.native import NativeGitEndpoint
 
 
 class ProjectGitViewService:

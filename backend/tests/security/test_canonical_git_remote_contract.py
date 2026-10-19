@@ -9,7 +9,7 @@ from src.platform.repository_target.schemas import (
     ProjectRootTargetSchema,
     ScopeTargetSchema,
 )
-from src.repo.scope_repository import _row_to_scope
+from src.platform.repository_target.scope_repository import _row_to_scope
 
 ROOT = Path(__file__).resolve().parents[3]
 MIGRATION = (
@@ -197,8 +197,8 @@ def test_runtime_has_no_local_checkout_registration_module_or_identity_fields():
         source_root / "platform/repository_context/router.py",
         source_root / "platform/repository_context/schemas.py",
         source_root / "platform/repository_context/service.py",
-        source_root / "repo/access_credentials.py",
-        source_root / "version_engine/entrypoints/git/auth.py",
+        source_root / "platform/access/credential_repository.py",
+        source_root / "platform/access/adapters/git/auth.py",
     ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in identity_sources)
     # External-source bindings are not local checkout registrations. Allow only
@@ -252,7 +252,7 @@ def test_final_migration_physically_removes_workspace_binding_schema():
 
 
 def test_canonical_and_legacy_routes_converge_after_target_resolution():
-    router = (ROOT / "backend/src/version_engine/entrypoints/git/router.py").read_text(
+    router = (ROOT / "backend/src/platform/access/adapters/git/router.py").read_text(
         encoding="utf-8"
     )
 

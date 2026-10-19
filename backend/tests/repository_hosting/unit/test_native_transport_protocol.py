@@ -3,10 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.version_engine.adapters.git.native_repository import (
+from src.platform.access.adapters.git.native_repository import (
     NativeGitRepository,
 )
-from src.version_engine.adapters.git.protocol import pkt_line, read_pkt_lines
+from src.platform.access.adapters.git.protocol import pkt_line, read_pkt_lines
 from src.version_engine.write_engine.ref_transaction import RefTransactionService
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
 
@@ -121,7 +121,7 @@ def test_native_transport_does_not_execute_environment_git_config(monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/tmp/untrusted-hooks")
-    from src.version_engine.adapters.git.native_wire import version
+    from src.platform.access.adapters.git.native_wire import version
 
     def forbidden(*args, **kwargs):
         pytest.fail("native discovery executed a subprocess")

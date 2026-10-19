@@ -8,7 +8,7 @@ from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.file_operations.commands import VersionWriteCommandService
 from src.version_engine.bootstrap.dependencies import (
     get_version_write_command_service,
     get_version_write_engine,

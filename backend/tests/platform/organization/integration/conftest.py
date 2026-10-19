@@ -32,7 +32,7 @@ from src.platform.project.dependencies import (
 from src.platform.project.repository import ProjectRepositorySupabase
 from src.platform.project.write_lease import ProjectWriteLease
 from src.utils.middleware import RequestContextMiddleware
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.file_operations.commands import VersionWriteCommandService
 from src.version_engine.bootstrap.dependencies import (
     get_product_operation_adapter,
     get_version_write_command_service,
@@ -113,9 +113,9 @@ async def team(prepared, services, postgres, monkeypatch):
     from src.platform.access.adapters.agent.router import router as agent_router
     from src.platform.organization.router import router as org_router
     from src.platform.project.router import router as project_router
-    from src.version_engine.entrypoints.http.content_read import read_router
-    from src.version_engine.entrypoints.http.content_resource import resource_router
-    from src.version_engine.entrypoints.http.content_write import write_router
+    from src.platform.access.adapters.api.read import read_router
+    from src.platform.access.adapters.api.resource import resource_router
+    from src.platform.access.adapters.api.write import write_router
 
     app = FastAPI()
     app.add_middleware(

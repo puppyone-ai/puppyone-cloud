@@ -8,6 +8,7 @@ repository and never a human authorization grant.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -109,3 +110,17 @@ class RepositoryPathProjection:
             "exclude": list(self.excludes),
             "mode": self.mode,
         }
+
+
+@dataclass
+class RepositoryScope:
+    """A real, non-empty path boundary within a Project repository."""
+
+    id: str
+    project_id: str
+    name: str
+    path: str                       # canonical, non-empty, no leading/trailing /
+    exclude: list[str]
+    max_mode: str                   # 'r' | 'rw'
+    created_at: datetime
+    updated_at: datetime

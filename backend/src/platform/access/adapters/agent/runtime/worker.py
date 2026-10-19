@@ -22,7 +22,7 @@ from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.version_engine.adapters.git.run_transport import RunGitTransport
+from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 logger = logging.getLogger(__name__)

@@ -10,9 +10,9 @@ from src.platform.authorization.models import (
     RuntimePrincipal,
 )
 from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
-from src.version_engine.entrypoints.git import auth as git_auth
-from src.version_engine.entrypoints.git import router as git_router
-from src.version_engine.entrypoints.git.locator import (
+from src.platform.access.adapters.git import auth as git_auth
+from src.platform.access.adapters.git import router as git_router
+from src.platform.access.adapters.git.locator import (
     GitRemoteLocator,
     canonical_git_path,
     canonical_git_url,

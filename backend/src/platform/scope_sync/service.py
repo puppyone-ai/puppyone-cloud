@@ -39,13 +39,16 @@ def _parse_client(value: str | None) -> ClientKind:
 
 
 def _scope_service():
-    from src.repo.scope_service import ScopeService
+    from src.platform.repository_target.scope_service import ScopeService
     return ScopeService()
 
 
 def _scope_by_access_key(access_key: str):
-    from src.repo.scope_repository import RepositoryScopeRepository
-    return RepositoryScopeRepository().get_by_access_key(access_key)
+    from src.infra.supabase.client import SupabaseClient
+    from src.platform.access.credentials import resolve_scope_access_credential
+
+    resolved = resolve_scope_access_credential(SupabaseClient(), access_key)
+    return resolved.scope if resolved is not None else None
 
 
 class ScopeSyncService:

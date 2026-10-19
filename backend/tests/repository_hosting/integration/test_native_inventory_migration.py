@@ -28,7 +28,7 @@ from src.platform.authorization.models import (
     ProjectRole,
 )
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.git.native_repository import NativeGitRepository
+from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.version_engine.derived.object_gc import run_git_object_gc
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.repository_snapshot import repository_snapshot

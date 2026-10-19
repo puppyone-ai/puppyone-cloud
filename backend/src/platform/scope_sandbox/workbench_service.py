@@ -455,7 +455,7 @@ class WorkbenchService(WorkbenchAdmission):
 def build_workbench_service(*, engine=None):
     from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
     from src.platform.billing.runtime import get_runtime_metering_service
-    from src.version_engine.adapters.git.run_transport import RunGitTransport
+    from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
     from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
     engine = engine or build_worker_version_engine_container()

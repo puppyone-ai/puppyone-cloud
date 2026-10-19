@@ -33,8 +33,8 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.repo.access_credentials import AccessCredentialRepository
-from src.repo.scope_service import ScopeService
+from src.platform.access.credential_repository import AccessCredentialRepository
+from src.platform.repository_target.scope_service import ScopeService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 logger = logging.getLogger(__name__)

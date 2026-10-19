@@ -11,9 +11,16 @@ from src.platform.repository_target.models import (
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.entrypoints.http import access_point_fs as apfs
-from src.version_engine.entrypoints.http.access_point_fs import _filter_entries
+from src.file_operations.commands import VersionWriteCommandService
+from src.platform.access.adapters.cli import (
+    context as cli_context,
+    read as cli_read,
+    write as cli_write,
+    search as cli_search,
+    router as cli_router,
+)
+from src.platform.access import repository_schemas as cli_schemas
+from src.platform.access.adapters.cli.context import _filter_entries
 from src.version_engine.infrastructure.supabase.scope_repository import SupabaseScopeBackend
 from src.version_engine.storage.object_store import StorageBackend
 
@@ -103,8 +110,7 @@ def _patch_auth(monkeypatch, scope_path: str = ""):
         max_mode="rw",
     )
     monkeypatch.setattr(
-        apfs,
-        "resolve_access_point",
+        cli_context, "resolve_access_point",
         lambda _key: (
             "project-id",
             {
@@ -122,49 +128,47 @@ def _patch_auth(monkeypatch, scope_path: str = ""):
         ),
     )
     monkeypatch.setattr(SupabaseScopeBackend, "list_all_strict", lambda _self: [])
-    monkeypatch.setattr(apfs, "admit_cli_fs_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_context, "admit_cli_fs_command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        apfs,
-        "_run_grep_indexed_payload",
+        cli_search, "_run_grep_indexed_payload",
         lambda **_kwargs: {"index_status": "missing"},
     )
     monkeypatch.setattr(
-        apfs,
-        "_upload_max_bytes_for_project",
-        lambda _project_id: apfs.POLICY_PER_FILE_MAX_BYTES,
+        cli_write, "_upload_max_bytes_for_project",
+        lambda _project_id: cli_write.POLICY_PER_FILE_MAX_BYTES,
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("handler_name", "expected_command", "kwargs"),
+    ("handler", "expected_command", "kwargs"),
     [
-        ("list_dir", "ls", {}),
-        ("semantics", "semantics", {}),
-        ("tree", "tree", {}),
-        ("grep", "grep", {"pattern": "needle"}),
+        (cli_read.list_dir, "ls", {}),
+        (cli_router.semantics, "semantics", {}),
+        (cli_read.tree, "tree", {}),
+        (cli_search.grep, "grep", {"pattern": "needle"}),
         (
-            "grep_indexed",
+            cli_search.grep_indexed,
             "grep",
-            {"body": apfs._GrepIndexedRequest(pattern="needle")},
+            {"body": cli_search._GrepIndexedRequest(pattern="needle")},
         ),
-        ("read_file", "cat", {"path": "notes.md"}),
-        ("raw_file", "download", {"path": "notes.md"}),
-        ("upload_file", "upload", {"request": None, "path": "notes.md"}),
-        ("stat", "stat", {"path": "notes.md"}),
-        ("write_file", "write", {"body": apfs.WriteFileRequest(path="notes.md", content="hi")}),
-        ("mkdir", "mkdir", {"body": apfs.MkdirRequest(path="docs")}),
-        ("touch", "touch", {"body": apfs.TouchRequest(path="notes.md")}),
-        ("move", "mv", {"body": apfs.MoveRequest(old_path="a.md", new_path="b.md")}),
-        ("copy", "cp", {"body": apfs.CopyRequest(old_path="a.md", new_path="b.md")}),
-        ("rmdir", "rmdir", {"body": apfs.RmdirRequest(path="docs")}),
-        ("remove", "rm", {"body": apfs.RemoveRequest(path="notes.md")}),
-        ("find_index", "find", {"name": "*.md"}),
+        (cli_read.read_file, "cat", {"path": "notes.md"}),
+        (cli_read.raw_file, "download", {"path": "notes.md"}),
+        (cli_write.upload_file, "upload", {"request": None, "path": "notes.md"}),
+        (cli_read.stat, "stat", {"path": "notes.md"}),
+        (cli_write.write_file, "write", {"body": cli_schemas.WriteFileRequest(path="notes.md", content="hi")}),
+        (cli_write.mkdir, "mkdir", {"body": cli_schemas.MkdirRequest(path="docs")}),
+        (cli_write.touch, "touch", {"body": cli_schemas.TouchRequest(path="notes.md")}),
+        (cli_write.move, "mv", {"body": cli_schemas.MoveRequest(old_path="a.md", new_path="b.md")}),
+        (cli_write.copy, "cp", {"body": cli_schemas.CopyRequest(old_path="a.md", new_path="b.md")}),
+        (cli_write.rmdir, "rmdir", {"body": cli_schemas.RmdirRequest(path="docs")}),
+        (cli_write.remove, "rm", {"body": cli_schemas.RemoveRequest(path="notes.md")}),
+        (cli_search.find_index, "find", {"name": "*.md"}),
     ],
 )
 async def test_ap_fs_handlers_admit_expected_cli_command(
     monkeypatch,
-    handler_name,
+    handler,
     expected_command,
     kwargs,
 ):
@@ -174,10 +178,11 @@ async def test_ap_fs_handlers_admit_expected_cli_command(
         seen_commands.append(auth_kwargs.get("command"))
         raise HTTPException(status_code=499, detail="stop after auth")
 
-    monkeypatch.setattr(apfs, "_resolve_auth", _capture_auth)
+    for module in (cli_read, cli_write, cli_search, cli_router):
+        monkeypatch.setattr(module, "_resolve_auth", _capture_auth)
 
     with pytest.raises(HTTPException) as exc:
-        await getattr(apfs, handler_name)(**kwargs)
+        await handler(**kwargs)
 
     assert exc.value.status_code == 499
     assert seen_commands == [expected_command]
@@ -483,7 +488,7 @@ def test_filter_entries_can_include_dot_entries():
 async def test_cat_defaults_to_raw_text_for_json(monkeypatch):
     _patch_auth(monkeypatch)
     raw = b'{\n  "b": 1,\n  "a": 2\n}\n'
-    result = await apfs.read_file(
+    result = await cli_read.read_file(
         path="data.json",
         structured=False,
         x_access_key="key",
@@ -500,7 +505,7 @@ async def test_cat_defaults_to_raw_text_for_json(monkeypatch):
 async def test_cat_structured_mode_parses_json(monkeypatch):
     _patch_auth(monkeypatch)
     raw = b'{\n  "b": 1,\n  "a": 2\n}\n'
-    result = await apfs.read_file(
+    result = await cli_read.read_file(
         path="data.json",
         structured=True,
         x_access_key="key",
@@ -518,7 +523,7 @@ async def test_raw_file_returns_unmodified_bytes(monkeypatch):
     _patch_auth(monkeypatch)
     raw = b"\x00raw\nbytes"
 
-    result = await apfs.raw_file(
+    result = await cli_read.raw_file(
         path="blob.bin",
         start=0,
         limit=None,
@@ -538,7 +543,7 @@ async def test_raw_file_can_return_byte_slice(monkeypatch):
     raw = b"abcdef"
     ops = _FakeOps(files={"blob.bin": raw})
 
-    result = await apfs.raw_file(
+    result = await cli_read.raw_file(
         path="blob.bin",
         start=2,
         limit=3,
@@ -556,7 +561,7 @@ async def test_raw_file_can_return_byte_slice(monkeypatch):
 @pytest.mark.asyncio
 async def test_upload_writes_raw_bytes_through_product_operation_adapter(monkeypatch):
     _patch_auth(monkeypatch)
-    monkeypatch.setattr(apfs, "_upload_max_bytes_for_project", lambda _project_id: 1024 * 1024)
+    monkeypatch.setattr(cli_write, "_upload_max_bytes_for_project", lambda _project_id: 1024 * 1024)
     ops = _FakeOps()
 
     class _Request:
@@ -565,7 +570,7 @@ async def test_upload_writes_raw_bytes_through_product_operation_adapter(monkeyp
         async def body(self):
             return b"\x00bytes"
 
-    result = await apfs.upload_file(
+    result = await cli_write.upload_file(
         request=_Request(),
         path="bin.dat",
         base_commit_id="base",
@@ -588,8 +593,8 @@ async def test_write_defers_projection_for_cli_latency(monkeypatch):
     _patch_auth(monkeypatch)
     ops = _FakeOps()
 
-    result = await apfs.write_file(
-        apfs.WriteFileRequest(
+    result = await cli_write.write_file(
+        cli_schemas.WriteFileRequest(
             path="note.md",
             content="hello",
             node_type="markdown",
@@ -612,7 +617,7 @@ async def test_root_stat_uses_scope_head_fast_path(monkeypatch):
     _patch_auth(monkeypatch, scope_path="docs")
     ops = _FakeOps(stats={"docs": _entry("docs", "folder")})
 
-    result = await apfs.stat(
+    result = await cli_read.stat(
         path="",
         x_access_key="key",
         x_puppyone_user=None,
@@ -636,7 +641,7 @@ async def test_root_stat_uses_scope_head_fast_path(monkeypatch):
 async def test_ls_file_returns_the_file_itself(monkeypatch):
     _patch_auth(monkeypatch)
     file_entry = _entry("docs/readme.md", "markdown", size_bytes=12)
-    result = await apfs.list_dir(
+    result = await cli_read.list_dir(
         path="docs/readme.md",
         include_size=True,
         x_access_key="key",
@@ -654,7 +659,7 @@ async def test_ls_missing_path_raises_not_found(monkeypatch):
     _patch_auth(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.list_dir(
+        await cli_read.list_dir(
             path="missing",
             x_access_key="key",
             x_puppyone_user=None,
@@ -668,7 +673,7 @@ async def test_ls_missing_path_raises_not_found(monkeypatch):
 @pytest.mark.asyncio
 async def test_tree_directories_only_filters_files(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.tree(
+    result = await cli_read.tree(
         path="",
         directories_only=True,
         x_access_key="key",
@@ -691,7 +696,7 @@ async def test_tree_directories_only_filters_files(monkeypatch):
 @pytest.mark.asyncio
 async def test_tree_limit_marks_truncated(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.tree(
+    result = await cli_read.tree(
         path="",
         limit=2,
         x_access_key="key",
@@ -720,7 +725,7 @@ async def test_tree_missing_path_raises_not_found(monkeypatch):
     _patch_auth(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.tree(
+        await cli_read.tree(
             path="missing",
             x_access_key="key",
             x_puppyone_user=None,
@@ -735,7 +740,7 @@ async def test_tree_missing_path_raises_not_found(monkeypatch):
 async def test_semantics_returns_backend_scoped_fs_capabilities(monkeypatch):
     _patch_auth(monkeypatch, scope_path="docs")
 
-    result = await apfs.semantics(
+    result = await cli_router.semantics(
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -758,7 +763,7 @@ async def test_semantics_publishes_server_authoritative_upload_policy(monkeypatc
     silently sends every client back to a stale local mirror, so the shape
     is pinned.
     """
-    from src.platform.upload.policy import (
+    from src.file_operations.upload_policy import (
         DEFAULT_BLOCKLIST_SEGMENTS,
         PER_BATCH_MAX_BYTES,
         PER_BATCH_MAX_FILES,
@@ -769,7 +774,7 @@ async def test_semantics_publishes_server_authoritative_upload_policy(monkeypatc
 
     _patch_auth(monkeypatch, scope_path="docs")
 
-    result = await apfs.semantics(
+    result = await cli_router.semantics(
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -814,7 +819,7 @@ async def test_semantics_publishes_server_authoritative_upload_policy(monkeypatc
 async def test_find_uses_canonical_backend_conditions(monkeypatch):
     _patch_auth(monkeypatch)
 
-    result = await apfs.find_index(
+    result = await cli_search.find_index(
         path="docs",
         conditions=json.dumps(
             [
@@ -895,8 +900,8 @@ async def test_grep_uses_authoritative_indexed_backend(monkeypatch):
             "head_commit_id": "head",
         }
 
-    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
-    result = await apfs.grep(
+    monkeypatch.setattr(cli_search, "_run_grep_indexed_payload", _indexed_payload)
+    result = await cli_search.grep(
         pattern="hello",
         path="docs",
         regex=False,
@@ -934,8 +939,8 @@ async def test_grep_require_file_list_skips_indexed_backend(monkeypatch):
     def _unexpected_index(**_kwargs):
         raise AssertionError("indexed grep should not run when a complete file list is required")
 
-    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _unexpected_index)
-    result = await apfs.grep(
+    monkeypatch.setattr(cli_search, "_run_grep_indexed_payload", _unexpected_index)
+    result = await cli_search.grep(
         pattern="hello",
         path="",
         regex=False,
@@ -1052,8 +1057,8 @@ async def test_grep_indexed_backend_still_applies_walk_filters(monkeypatch):
             "head_commit_id": "head",
         }
 
-    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
-    result = await apfs.grep(
+    monkeypatch.setattr(cli_search, "_run_grep_indexed_payload", _indexed_payload)
+    result = await cli_search.grep(
         pattern="needle",
         path="",
         regex=False,
@@ -1123,8 +1128,8 @@ async def test_grep_indexed_backend_honors_max_depth(monkeypatch):
             "head_commit_id": "head",
         }
 
-    monkeypatch.setattr(apfs, "_run_grep_indexed_payload", _indexed_payload)
-    result = await apfs.grep(
+    monkeypatch.setattr(cli_search, "_run_grep_indexed_payload", _indexed_payload)
+    result = await cli_search.grep(
         pattern="needle",
         path="docs",
         regex=False,
@@ -1150,8 +1155,7 @@ async def test_grep_stale_index_falls_back_to_live_scan(monkeypatch):
     _patch_auth(monkeypatch)
 
     monkeypatch.setattr(
-        apfs,
-        "_run_grep_indexed_payload",
+        cli_search, "_run_grep_indexed_payload",
         lambda **_kwargs: {
             "index_status": "stale",
             "hits": [
@@ -1167,7 +1171,7 @@ async def test_grep_stale_index_falls_back_to_live_scan(monkeypatch):
             ],
         },
     )
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern="fresh",
         path="",
         regex=False,
@@ -1194,7 +1198,7 @@ async def test_grep_stale_index_falls_back_to_live_scan(monkeypatch):
 @pytest.mark.asyncio
 async def test_grep_live_scans_text_files(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern="hello",
         path="",
         regex=False,
@@ -1229,7 +1233,7 @@ async def test_grep_live_scans_text_files(monkeypatch):
 @pytest.mark.asyncio
 async def test_grep_regex_and_ignore_case(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern=r"hello\s+\w+",
         path="README.md",
         regex=True,
@@ -1256,7 +1260,7 @@ async def test_grep_regex_and_ignore_case(monkeypatch):
 @pytest.mark.asyncio
 async def test_grep_result_limit_marks_truncated(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern="x",
         path="",
         regex=False,
@@ -1285,7 +1289,7 @@ async def test_grep_result_limit_marks_truncated(monkeypatch):
 @pytest.mark.asyncio
 async def test_grep_unix_flags_only_matching_max_count_and_globs(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern=r"alpha|beta",
         path="",
         regex=True,
@@ -1335,7 +1339,7 @@ async def test_grep_unix_flags_only_matching_max_count_and_globs(monkeypatch):
 @pytest.mark.asyncio
 async def test_grep_invert_match_returns_non_matching_lines(monkeypatch):
     _patch_auth(monkeypatch)
-    result = await apfs.grep(
+    result = await cli_search.grep(
         pattern="skip",
         path="README.md",
         regex=False,
@@ -1368,8 +1372,8 @@ async def test_mkdir_without_parents_requires_existing_parent(monkeypatch):
     ops = _FakeOps()
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.mkdir(
-            apfs.MkdirRequest(path="a/b"),
+        await cli_write.mkdir(
+            cli_schemas.MkdirRequest(path="a/b"),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1385,8 +1389,8 @@ async def test_mkdir_parents_allows_missing_parent(monkeypatch):
     _patch_auth(monkeypatch)
     ops = _FakeOps()
 
-    result = await apfs.mkdir(
-        apfs.MkdirRequest(path="a/b", parents=True, base_commit_id="base"),
+    result = await cli_write.mkdir(
+        cli_schemas.MkdirRequest(path="a/b", parents=True, base_commit_id="base"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1403,8 +1407,8 @@ async def test_mkdir_parents_existing_directory_is_noop(monkeypatch):
     _patch_auth(monkeypatch)
     ops = _FakeOps(stats={"dir": _entry("dir", "folder")})
 
-    result = await apfs.mkdir(
-        apfs.MkdirRequest(path="dir", parents=True),
+    result = await cli_write.mkdir(
+        cli_schemas.MkdirRequest(path="dir", parents=True),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1422,8 +1426,8 @@ async def test_mkdir_existing_directory_without_parents_raises(monkeypatch):
     ops = _FakeOps(stats={"dir": _entry("dir", "folder")})
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.mkdir(
-            apfs.MkdirRequest(path="dir"),
+        await cli_write.mkdir(
+            cli_schemas.MkdirRequest(path="dir"),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1444,8 +1448,8 @@ async def test_mv_existing_directory_target_moves_inside_it(monkeypatch):
         }
     )
 
-    result = await apfs.move(
-        apfs.MoveRequest(old_path="a.txt", new_path="dir"),
+    result = await cli_write.move(
+        cli_schemas.MoveRequest(old_path="a.txt", new_path="dir"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1466,8 +1470,8 @@ async def test_mv_no_clobber_skips_existing_destination(monkeypatch):
         }
     )
 
-    result = await apfs.move(
-        apfs.MoveRequest(old_path="a.txt", new_path="b.txt", no_clobber=True),
+    result = await cli_write.move(
+        cli_schemas.MoveRequest(old_path="a.txt", new_path="b.txt", no_clobber=True),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1484,8 +1488,8 @@ async def test_touch_missing_file_writes_empty_file_through_product_operation_ad
     _patch_auth(monkeypatch)
     ops = _FakeOps()
 
-    result = await apfs.touch(
-        apfs.TouchRequest(path="new.txt", base_commit_id="base"),
+    result = await cli_write.touch(
+        cli_schemas.TouchRequest(path="new.txt", base_commit_id="base"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1513,8 +1517,8 @@ async def test_touch_existing_file_records_mtime_commit(monkeypatch):
     _patch_auth(monkeypatch)
     ops = _FakeOps(stats={"existing.txt": _entry("existing.txt", "file")})
 
-    result = await apfs.touch(
-        apfs.TouchRequest(path="existing.txt"),
+    result = await cli_write.touch(
+        cli_schemas.TouchRequest(path="existing.txt"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1537,8 +1541,8 @@ async def test_cp_existing_directory_target_copies_inside_it(monkeypatch):
         }
     )
 
-    result = await apfs.copy(
-        apfs.CopyRequest(old_path="a.txt", new_path="dir"),
+    result = await cli_write.copy(
+        cli_schemas.CopyRequest(old_path="a.txt", new_path="dir"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1556,8 +1560,8 @@ async def test_cp_explicit_target_directory_requires_directory(monkeypatch):
     ops = _FakeOps(stats={"a.txt": _entry("a.txt", "file")})
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.copy(
-            apfs.CopyRequest(old_path="a.txt", new_path="missing", target_directory=True),
+        await cli_write.copy(
+            cli_schemas.CopyRequest(old_path="a.txt", new_path="missing", target_directory=True),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1579,8 +1583,8 @@ async def test_cp_explicit_root_target_directory_uses_plain_child_path(monkeypat
         }
     )
 
-    result = await apfs.copy(
-        apfs.CopyRequest(old_path="a.txt", new_path=".", target_directory=True),
+    result = await cli_write.copy(
+        cli_schemas.CopyRequest(old_path="a.txt", new_path=".", target_directory=True),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1597,8 +1601,8 @@ async def test_cp_directory_requires_recursive(monkeypatch):
     ops = _FakeOps(stats={"docs": _entry("docs", "folder")})
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.copy(
-            apfs.CopyRequest(old_path="docs", new_path="docs-copy"),
+        await cli_write.copy(
+            cli_schemas.CopyRequest(old_path="docs", new_path="docs-copy"),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1619,8 +1623,8 @@ async def test_cp_no_clobber_skips_existing_destination(monkeypatch):
         }
     )
 
-    result = await apfs.copy(
-        apfs.CopyRequest(old_path="a.txt", new_path="b.txt", no_clobber=True),
+    result = await cli_write.copy(
+        cli_schemas.CopyRequest(old_path="a.txt", new_path="b.txt", no_clobber=True),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1643,8 +1647,8 @@ async def test_mv_no_target_directory_rejects_existing_directory(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.move(
-            apfs.MoveRequest(old_path="a.txt", new_path="dir", no_target_directory=True),
+        await cli_write.move(
+            cli_schemas.MoveRequest(old_path="a.txt", new_path="dir", no_target_directory=True),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1666,8 +1670,8 @@ async def test_mv_no_target_directory_no_clobber_skips_existing_directory(monkey
         }
     )
 
-    result = await apfs.move(
-        apfs.MoveRequest(
+    result = await cli_write.move(
+        cli_schemas.MoveRequest(
             old_path="a.txt",
             new_path="dir",
             no_target_directory=True,
@@ -1695,8 +1699,8 @@ async def test_mv_rejects_folder_move_into_own_descendant(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.move(
-            apfs.MoveRequest(old_path="old", new_path="old/sub"),
+        await cli_write.move(
+            cli_schemas.MoveRequest(old_path="old", new_path="old/sub"),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1717,8 +1721,8 @@ async def test_rmdir_removes_empty_directory_through_product_operation_adapter(m
         list_by_path={"empty": []},
     )
 
-    result = await apfs.rmdir(
-        apfs.RmdirRequest(path="empty", base_commit_id="base"),
+    result = await cli_write.rmdir(
+        cli_schemas.RmdirRequest(path="empty", base_commit_id="base"),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1740,8 +1744,8 @@ async def test_rmdir_rejects_non_empty_directory(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await apfs.rmdir(
-            apfs.RmdirRequest(path="dir"),
+        await cli_write.rmdir(
+            cli_schemas.RmdirRequest(path="dir"),
             x_access_key="key",
             x_puppyone_user=None,
             x_puppy_client="cli",
@@ -1768,8 +1772,8 @@ async def test_rmdir_parents_removes_empty_parent_chain(monkeypatch):
         },
     )
 
-    result = await apfs.rmdir(
-        apfs.RmdirRequest(path="a/b/c", parents=True),
+    result = await cli_write.rmdir(
+        cli_schemas.RmdirRequest(path="a/b/c", parents=True),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",
@@ -1790,8 +1794,8 @@ async def test_rm_accepts_multiple_paths(monkeypatch):
         }
     )
 
-    result = await apfs.remove(
-        apfs.RemoveRequest(paths=["a.txt", "b.txt"], recursive=False),
+    result = await cli_write.remove(
+        cli_schemas.RemoveRequest(paths=["a.txt", "b.txt"], recursive=False),
         x_access_key="key",
         x_puppyone_user=None,
         x_puppy_client="cli",

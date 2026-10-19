@@ -10,7 +10,7 @@ import pytest
 from supabase import ClientOptions, create_client
 
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.native_history import NativeHistory

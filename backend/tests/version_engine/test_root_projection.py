@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
 
 

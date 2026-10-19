@@ -326,7 +326,7 @@ def build_leased_worker_write_commands(
     user_id: str | None = None,
     operation_key: str | None = None,
 ) -> LeasedVersionWriteCommandService:
-    from src.version_engine.adapters.product.commands import VersionWriteCommandService
+    from src.file_operations.commands import VersionWriteCommandService
     from src.version_engine.bootstrap.dependencies import (
         build_worker_version_engine_container,
     )
@@ -373,13 +373,13 @@ async def git_project_write_lease(request: Request) -> AsyncIterator[None]:
     if not project_id:
         access_key = str(request.path_params.get("access_key") or "")
         if access_key:
-            from src.version_engine.entrypoints.git.router import (
+            from src.platform.access.adapters.git.router import (
                 resolve_git_access_point,
             )
 
             project_id, auth = await resolve_git_access_point(access_key, request)
     else:
-        from src.version_engine.entrypoints.git.auth import (
+        from src.platform.access.adapters.git.auth import (
             resolve_git_project_auth,
             resolve_git_scope_auth,
         )

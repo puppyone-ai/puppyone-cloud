@@ -16,7 +16,7 @@ from src.exceptions import NotFoundException
 from src.platform.activity.dependencies import get_activity_service
 from src.platform.activity.public_router import router as activity_router
 from src.platform.auth.dependencies import get_current_user
-from src.version_engine.entrypoints.http.content_history import get_commit_content
+from src.platform.access.adapters.api.history import get_commit_content
 from src.version_engine.read.admin import VersionAdminService
 from tests.authorization_fakes import authorization_for
 

@@ -18,6 +18,11 @@
 - [ ] Verify E2B and Fly against actual hosted resources separately.
 - [ ] Merge the validated candidate to qubits after required merge gates pass.
 
+On 2026-10-19 the user requested source commit and local qubits integration
+before completing the outstanding acceptance. This does not satisfy the
+validated-candidate gate above. The later structure-refactor acceptance is
+recorded in `../refactor-git-mcp-scope-boundaries/tasks.md`.
+
 Native PostgreSQL and BuildKit regressions are supplementary evidence, not the
 full Docker/Supabase upgrade or hosted provider acceptance. Public PTY and running
 application preview APIs are not delivered by the native file API.

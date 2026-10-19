@@ -28,10 +28,10 @@ from src.platform.repository_target.models import (
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.repo.models import ResolvedScopeCredential
+from src.platform.access.models import ResolvedScopeCredential
 from src.utils.logger import log_error, log_warning
 from src.version_engine.admission.channel_pause import enforce_channel_pause
-from src.version_engine.infrastructure.supabase.scope_repository import (
+from src.platform.access.credentials import (
     resolve_scope_access_credential,
 )
 

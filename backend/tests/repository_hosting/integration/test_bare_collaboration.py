@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from src.version_engine.adapters.git.protocol import pkt_line
+from src.platform.access.adapters.git.protocol import pkt_line
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.postgres import Postgres, literal
 from tests.repository_hosting.integration.test_bare_repository_application import (

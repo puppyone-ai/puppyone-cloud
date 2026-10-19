@@ -24,7 +24,7 @@ from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, Model
 from src.platform.project.write_lease import ProjectWriteLease
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
 from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.version_engine.adapters.git.run_transport import RunGitTransport
+from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from tests.agent.runtime.workspace_assertions import recovery_file, recovery_git
 
 pytestmark = pytest.mark.integration
@@ -664,7 +664,7 @@ async def test_native_canonical_publication_and_receipt(prepared):
 
 
 async def native_write(case, name, content):
-    from src.version_engine.adapters.product.tree_patch import splice_batch
+    from src.version_engine.write_engine.tree_patch import splice_batch
 
     grant = case.admission.authorization.resolve_project_grant(case.project, case.user)
     with case.ops.open_read(case.project, grant) as reader:

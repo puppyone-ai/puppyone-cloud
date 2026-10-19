@@ -4,12 +4,11 @@ Called by internal services (e.g., MCP Server), authenticated via SECRET
 """
 
 import asyncio
-import hmac
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from src.config import settings
+from src.internal.dependencies import verify_internal_secret
 from src.content.table.dependencies import get_table_service
 from src.exceptions import AppException
 from src.infra.search.dependencies import get_search_service
@@ -23,8 +22,8 @@ from src.platform.entitlements.models import EntitlementUpsert
 from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.repository import OrganizationRepository
 from src.utils.logger import log_warning
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.commands import VersionWriteCommandService
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.dependencies import (
     get_product_operation_adapter,
 )
@@ -48,18 +47,6 @@ PROJECT_SCOPED_INTERNAL_ENDPOINTS = {
     "/internal/nodes/rename",
     "/internal/nodes/move",
 }
-
-
-async def verify_internal_secret(x_internal_secret: str = Header(...)) -> None:
-    configured_secret = (settings.INTERNAL_API_SECRET or "").strip()
-    if not configured_secret:
-        raise HTTPException(
-            status_code=503,
-            detail="Internal API secret is not configured",
-        )
-
-    if not hmac.compare_digest(x_internal_secret, configured_secret):
-        raise HTTPException(status_code=403, detail="Invalid internal secret")
 
 
 def _enforce_acting_user_project_access(

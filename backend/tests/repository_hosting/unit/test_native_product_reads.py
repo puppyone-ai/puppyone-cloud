@@ -6,8 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.version_engine.domain.errors import ObjectNotFoundError
+from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.version_engine.domain.errors import NativeObjectNotFoundError, ObjectNotFoundError
+from src.version_engine.read.native_tree_reader import open_tree_read
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.write_engine.git_object_format import TreeEntry, encode_object, encode_tree
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
@@ -109,6 +110,31 @@ def test_product_read_uses_captured_ref_bytes_modes_and_head(native_reads):
     manager.get_server_repo.assert_not_called()
 
 
+@pytest.mark.parametrize("bulk", [False, True])
+@pytest.mark.parametrize("failure", [ObjectNotFoundError, RuntimeError])
+def test_shared_read_context_releases_its_single_pin_on_failure(native_reads, bulk, failure):
+    _ops, manager, _wire, calls, *_rest = native_reads
+    backend = manager.read_backend
+    backend.pinned_reader = Mock(return_value=backend)
+    expected = NativeObjectNotFoundError if failure is ObjectNotFoundError else failure
+    with pytest.raises(expected, match="read interrupted"):
+        with open_tree_read(manager, "p", grant("p"), bulk=bulk) as reader:
+            assert reader.read_file("p", "file") == b"raw\x00bytes"
+            raise failure("read interrupted")
+    assert calls.count("begin") == calls.count("release") == 1
+    assert backend.pinned_reader.call_count == int(bulk)
+    with pytest.raises(RuntimeError, match="snapshot is closed"):
+        reader.read_file("p", "file")
+
+
+def test_shared_read_context_rejects_foreign_grant_before_opening_snapshot(native_reads):
+    _ops, manager, _wire, calls, *_rest = native_reads
+    with pytest.raises(PermissionError), open_tree_read(manager, "p", grant("other")):
+        pytest.fail("foreign grant admitted")
+    manager.open_native_read.assert_not_called()
+    assert not calls
+
+
 def test_product_read_missing_tree_fails_without_legacy_fallback(native_reads):
     ops, manager, _wire, calls, objects, _root, _commit, _blob, child = native_reads
     del objects[child]
@@ -156,7 +182,7 @@ def test_product_read_unborn_is_intrinsic_and_metadata_failures_do_not_downgrade
 def test_native_content_routes_use_admitted_product_view(native_reads, method):
     from starlette.requests import Request
 
-    from src.version_engine.entrypoints.http import content_read
+    from src.platform.access.adapters.api import read as content_read
 
     ops, manager, _wire, calls, _objects, _root, commit, _blob, _child = native_reads
     kwargs = dict(
@@ -202,7 +228,7 @@ def test_native_content_routes_use_admitted_product_view(native_reads, method):
 def test_native_content_byte_paths_are_lossless_and_read_only_grants_work(native_reads, method):
     from starlette.requests import Request
 
-    from src.version_engine.entrypoints.http import content_read
+    from src.platform.access.adapters.api import read as content_read
 
     ops, manager, _wire, _calls, _objects, _root, commit, _blob, _child = native_reads
     encoded = base64.b64encode(b"raw-\xff").decode()
@@ -234,7 +260,7 @@ def test_native_missing_objects_do_not_consult_legacy_incident_classification(
 ):
     from fastapi import HTTPException
 
-    from src.version_engine.entrypoints.http import content_read
+    from src.platform.access.adapters.api import read as content_read
 
     ops, manager, _wire, calls, _objects, _root, _commit, _blob, _child = native_reads
     manager.read_backend.get_durable = Mock(
@@ -263,7 +289,7 @@ def test_native_missing_objects_do_not_consult_legacy_incident_classification(
 def test_native_byte_paths_reject_traversal_and_oversize(raw):
     from fastapi import HTTPException
 
-    from src.version_engine.entrypoints.http.content_read import _read_request_path
+    from src.platform.access.adapters.api.read import _read_request_path
 
     with pytest.raises(HTTPException) as error:
         _read_request_path("", base64.b64encode(raw).decode())
@@ -271,7 +297,7 @@ def test_native_byte_paths_reject_traversal_and_oversize(raw):
 
 
 def test_native_byte_path_limit_preserves_existing_unicode_path_contract():
-    from src.version_engine.entrypoints.http.content_read import _read_request_path
+    from src.platform.access.adapters.api.read import _read_request_path
 
     path = "文" * 500
     assert _read_request_path(path, None) == path
@@ -279,7 +305,7 @@ def test_native_byte_path_limit_preserves_existing_unicode_path_contract():
 
 
 def test_git_filename_headers_cannot_inject_headers():
-    from src.version_engine.entrypoints.http.content_read import (
+    from src.platform.access.adapters.api.read import (
         _content_disposition_attachment,
         _content_disposition_inline,
     )

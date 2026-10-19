@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
+from src.file_operations.commands import VersionWriteCommandService
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.container import (
     VersionEngineContainer,
     build_version_engine_container,

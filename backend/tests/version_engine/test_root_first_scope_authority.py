@@ -10,7 +10,7 @@ import pytest
 
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
 
 

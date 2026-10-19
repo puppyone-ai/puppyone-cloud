@@ -14,7 +14,7 @@ from src.exceptions import AppException, BusinessException, ErrorCode, NotFoundE
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.model_repository import AccessModelRepository
 from src.platform.access.models import ACCESS_KINDS, AccessSurface
-from src.repo.scope_repository import RepositoryScopeRepository
+from src.platform.repository_target.scope_repository import RepositoryScopeRepository
 from src.platform.repository_target.models import (
     ProjectRootTarget,
     RepositoryTarget,

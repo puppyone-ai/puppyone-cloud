@@ -23,8 +23,8 @@ from src.platform.billing.runtime import guard_unmetered_hosted_runtime
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.utils.logger import log_error, log_info
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.commands import VersionWriteCommandService
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.dependencies import (
     get_product_operation_adapter,
     get_version_write_command_service,

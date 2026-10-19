@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from src.version_engine.scoped_fs import resolver
+from src.platform.access.adapters.mcp_endpoint import resolver
 
 
 class _Query:

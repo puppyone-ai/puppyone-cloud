@@ -10,7 +10,7 @@ from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
     ProjectHostResourceBusy,
 )
-from src.version_engine.adapters.git._filelock import file_exclusive_lock
+from src.version_engine.infrastructure.file_lock import file_exclusive_lock
 
 
 def _write_git_view(cache_root: Path, project_id: str, view_id: str) -> Path:

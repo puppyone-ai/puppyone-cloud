@@ -99,7 +99,7 @@ python -m mcp_service
 ## Current Standalone MCP Tools
 
 Standalone MCP endpoints expose scoped filesystem tools from
-`src.version_engine.scoped_fs`:
+`src.platform.access.filesystem`:
 
 - `fs_semantics`
 - `fs_ls`
@@ -160,7 +160,7 @@ curl -X POST http://localhost:9090/api/v1/mcp/proxy \
 
 Add filesystem tools in this order:
 
-1. Define the tool contract in `src.version_engine.scoped_fs.registry`.
-2. Implement behavior in `src.version_engine.scoped_fs.service`.
+1. Define the tool contract in `src.platform.access.filesystem.registry`.
+2. Implement behavior in `src.platform.access.filesystem.service`.
 3. Keep MCP service as a thin protocol adapter.
 4. Add registry, internal runtime, and MCP server routing tests.

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.file_operations.commands import VersionWriteCommandService
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_graph import HistoryGraphService

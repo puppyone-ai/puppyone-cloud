@@ -211,7 +211,8 @@ fixed independently, but making them green alone cannot satisfy A1–A6.
 
 Candidate: `codex/agent-workspace-runtime`, based on local `qubits` `f4eccb9058f7e8ab859b4f88b2b0abf79905dc2c`,
 with the publication/lifecycle work from `codex/issue-118-completion` `a61435c5`.
-This is a source candidate, not a merged/deployed/accepted release.
+These results describe the source candidate at this evidence checkpoint;
+subsequent source integration does not establish a deployed/accepted release.
 
 - Required backend regression on `77f94f29`: 3,252 passed,
   885 skipped, 399 deselected. Provider-contract unit cases use mocks; the
@@ -245,7 +246,14 @@ hosted release/applied-version set has not been inspected.
 The required full populated Docker/Supabase upgrade rehearsal is blocked:
 new regular Docker containers remain Created while six existing user containers
 are running. BuildKit works, but is not a substitute for the release rehearsal.
-No existing user container was stopped. No target-branch merge, push, production
-deployment, complete A1–A6 acceptance or hosted activation is claimed. Native
+No existing user container was stopped. These historical results do not claim
+a target-branch merge, push, production deployment, complete A1–A6 acceptance or hosted activation. Native
 folder archive download, public PTY and running-app preview
 endpoints remain outside this file API; regular file previews are connected.
+
+The subsequent six-batch structure refactor and its actual-environment
+acceptance are recorded in
+[`refactor-git-mcp-scope-boundaries`](../../../openspec/changes/refactor-git-mcp-scope-boundaries/tasks.md).
+The user requested local source integration before the remaining acceptance
+gates were complete. The CLI admission failure and missing fresh provider
+results remain explicit; this request does not close A1–A6 or activate hosting.

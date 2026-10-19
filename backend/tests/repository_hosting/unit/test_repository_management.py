@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from postgrest.exceptions import APIError
 
-from src.version_engine.entrypoints.http.repository_management import (
+from src.platform.access.adapters.api.repository_management import (
     RepositoryHeadUpdate,
     change_head,
 )

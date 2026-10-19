@@ -47,10 +47,10 @@ class HistoryGraphService:
         return await asyncio.to_thread(self._native_page, project_id, grant, limit, cursor)
 
     def _native_page(self, project_id, grant, limit, cursor):
-        from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+        from src.version_engine.read.native_tree_reader import open_tree_read
         from src.version_engine.read.native_history import NativeHistory
 
-        with ProductOperationAdapter(self._repos).open_read(project_id, grant) as reader:
+        with open_tree_read(self._repos, project_id, grant) as reader:
             history = NativeHistory(reader.snapshot, max_commits=self._max_traversal_nodes)
             state = self._cursor_codec.decode(cursor, project_id=project_id) if cursor else None
             start = 0

@@ -67,13 +67,13 @@ class _FakeScopeClient:
 
 
 def _find():
-    from src.version_engine.infrastructure.supabase import scope_repository
-    return scope_repository.resolve_scope_access_credential
+    from src.platform.access.credentials import resolve_scope_access_credential
+    return resolve_scope_access_credential
 
 
 def test_scope_auth_always_resolves_by_hash_first(monkeypatch):
     from src.config import settings
-    from src.repo.access_credentials import access_token_hash
+    from src.platform.access.credential_repository import access_token_hash
     monkeypatch.setattr(
         settings,
         "ACCESS_CREDENTIAL_HASH_SECRET",

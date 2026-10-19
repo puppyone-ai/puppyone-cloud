@@ -233,7 +233,7 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setattr(access, "resolve_org_ids", lambda *a, **kw: ["org-1"])
     monkeypatch.setattr(access, "_get_user_project_ids", lambda sb, org, auth, user:
                         auth.accessible_project_ids(["project-1", "project-2"], user))
-    monkeypatch.setattr("src.repo.access_credentials.AccessCredentialRepository", lambda *a: SimpleNamespace(
+    monkeypatch.setattr("src.platform.access.credential_repository.AccessCredentialRepository", lambda *a: SimpleNamespace(
         list_active_by_surface=lambda ids: {key: {"key_last4": "TEST"} for key in ids if key in state.surfaces.issued},
     ))
 

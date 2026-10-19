@@ -12,7 +12,7 @@ from src.version_engine.bootstrap.dependencies import (
     get_product_operation_adapter,
     get_version_admin_service,
 )
-from src.version_engine.entrypoints.http.content_history import history_router
+from src.platform.access.adapters.api.history import history_router
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_cursor import HistoryCursorCodec
 from src.version_engine.read.history_graph import HistoryGraphService

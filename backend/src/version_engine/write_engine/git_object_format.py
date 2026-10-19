@@ -13,6 +13,9 @@ from collections.abc import Iterable
 from typing import NamedTuple
 
 
+ZERO_ID = "0" * 40
+
+
 def _frame(obj_type: str, content: bytes) -> bytes:
     return f"{obj_type} {len(content)}".encode("ascii") + b"\x00" + content
 

@@ -7,8 +7,8 @@ import pytest
 from postgrest.exceptions import APIError
 
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
-from src.version_engine.adapters.product.tree_patch import splice_batch
+from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 from src.version_engine.write_engine.ref_transaction import RefEdit, RefState
 from tests.repository_hosting.harness.postgres import literal

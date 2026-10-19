@@ -6,7 +6,7 @@ import httpx
 import pytest
 from supabase import ClientOptions, create_client
 
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.domain.errors import NativeObjectNotFoundError
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from tests.repository_hosting.harness.git import Git

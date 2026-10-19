@@ -1,7 +1,7 @@
 """Sandbox endpoint repository over access_surfaces + repository_scopes."""
 
-from src.repo.access_credentials import AccessCredentialRepository
-from src.repo.scope_service import ScopeService
+from src.platform.access.credential_repository import AccessCredentialRepository
+from src.platform.repository_target.scope_service import ScopeService
 from src.utils.id_generator import generate_uuid_v7
 
 PROVIDER = "sandbox"

@@ -62,8 +62,8 @@ def test_bare_limits_large_object_concurrent_cold_fetch_and_rejection(bare_appli
 
     from fastapi import HTTPException, Request
 
-    from src.version_engine.adapters.git.execution import MAX_PACK_BYTES
-    from src.version_engine.entrypoints.git.router import _spool_git_request_body
+    from src.platform.access.adapters.git.execution import MAX_PACK_BYTES
+    from src.platform.access.adapters.git.router import _spool_git_request_body
 
     request = Request(
         {"type": "http", "headers": [(b"content-length", str(MAX_PACK_BYTES + 1).encode())]}
@@ -75,7 +75,7 @@ def test_bare_limits_large_object_concurrent_cold_fetch_and_rejection(bare_appli
 def test_bare_long_chunked_receive_renews_real_project_lease(bare_application, tmp_path):
     import time
 
-    from src.version_engine.adapters.git.protocol import pkt_line
+    from src.platform.access.adapters.git.protocol import pkt_line
 
     app, pg = bare_application, Postgres()
     _org, project, remote, secret = create_bare(app, branch="main")

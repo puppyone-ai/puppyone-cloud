@@ -28,7 +28,7 @@ class _FakeStreamRequest:
 
 
 def _router():
-    from src.version_engine.entrypoints.git import router
+    from src.platform.access.adapters.git import router
     return router
 
 
@@ -99,7 +99,7 @@ def test_receive_pack_always_has_smaller_finite_cap(
 
 def test_run_git_happy_path_with_timeout():
     """The timeout kwarg must not break a normal fast git invocation."""
-    from src.version_engine.adapters.git.protocol import run_git
+    from src.platform.access.adapters.git.protocol import run_git
 
     out = run_git(["--version"], timeout=30)
     assert b"git version" in out
@@ -109,7 +109,7 @@ def test_run_git_times_out(monkeypatch):
     """A hanging git process surfaces as RuntimeError, not a hang."""
     import subprocess
 
-    from src.version_engine.adapters.git import protocol
+    from src.platform.access.adapters.git import protocol
 
     def _boom(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="git", timeout=kwargs.get("timeout", 0))

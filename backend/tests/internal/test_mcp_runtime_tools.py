@@ -6,12 +6,52 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from src.internal import mcp_runtime
-from src.version_engine.scoped_fs.errors import ScopedFsPermissionDenied
-from src.version_engine.scoped_fs.context import ScopedFsContext
-from src.version_engine.scoped_fs import service as scoped_fs_service
-from src.version_engine.scoped_fs.resolver import ResolvedMcpRuntime
-from src.version_engine.scoped_fs.service import ScopedFsService
+from src.platform.access.adapters.mcp_endpoint import runtime as mcp_runtime
+from src.platform.access.filesystem.errors import ScopedFsPermissionDenied
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem import service as scoped_fs_service
+from src.platform.access.adapters.mcp_endpoint.resolver import ResolvedMcpRuntime
+from src.platform.access.filesystem.service import ScopedFsService
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["tools", "call"])
+@pytest.mark.parametrize("configured,supplied,status", [
+    ("", "secret", 503),
+    ("secret", "wrong", 403),
+    ("secret", "secret", 501),
+])
+async def test_moved_runtime_keeps_internal_gate_before_credential_lookup(
+    monkeypatch, path, configured, supplied, status,
+):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "INTERNAL_API_SECRET", configured)
+    looked_up = []
+
+    def unavailable(key):
+        looked_up.append(key)
+        raise HTTPException(501, detail={"code": "native_scope_not_available"})
+
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", unavailable)
+    app = FastAPI()
+    app.include_router(mcp_runtime.router)
+    for dependency in (
+        mcp_runtime.get_product_operation_adapter,
+        mcp_runtime.get_version_write_command_service,
+        mcp_runtime.get_search_service,
+    ):
+        app.dependency_overrides[dependency] = lambda: None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/internal/mcp-runtime/{path}",
+            headers={"X-Internal-Secret": supplied},
+            json={"api_key": "mcp_test", "name": "fs_ls", "arguments": {}},
+        )
+    assert response.status_code == status
+    assert looked_up == (["mcp_test"] if status == 501 else [])
 
 
 def _ctx(mode: str) -> ScopedFsContext:

@@ -7,8 +7,13 @@ never filesystem traversal. Raw names and modes remain intact in the projection.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 
-from src.version_engine.domain.errors import PathNotFoundError
+from src.version_engine.domain.errors import (
+    NativeObjectNotFoundError,
+    ObjectNotFoundError,
+    PathNotFoundError,
+)
 from src.version_engine.read.repository_snapshot import RepositorySnapshot
 from src.version_engine.read.tree_reader import (
     VersionBlobRead,
@@ -17,6 +22,20 @@ from src.version_engine.read.tree_reader import (
     detect_type,
 )
 from src.version_engine.write_engine.git_object_format import TreeEntry, decode_tree
+from src.version_engine.write_engine.ref_transaction import admitted_actor
+
+
+@contextmanager
+def open_tree_read(repo_manager, project_id, grant, *, selector=b"HEAD", bulk=False):
+    """Own one admitted snapshot and its optional pinned reader until exit."""
+    admitted_actor(grant, project_id, write=False)
+    with repo_manager.open_native_read(project_id, grant) as snapshot:
+        try:
+            if bulk:
+                snapshot.backend = snapshot.backend.pinned_reader(snapshot)
+            yield NativeTreeReader(snapshot, selector=selector)
+        except ObjectNotFoundError as exc:
+            raise NativeObjectNotFoundError(str(exc)) from exc
 
 
 class NativeTreeReader:

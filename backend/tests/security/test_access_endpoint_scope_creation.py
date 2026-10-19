@@ -6,7 +6,7 @@ import pytest
 
 from src.platform.access.adapters.mcp_endpoint import repository as mcp
 from src.platform.access.adapters.sandbox_endpoint import repository as sandbox
-from src.repo.scope_service import ScopeService
+from src.platform.repository_target.scope_service import ScopeService
 
 
 @pytest.fixture(params=[(mcp, mcp.McpEndpointRepository), (sandbox, sandbox.SandboxEndpointRepository)])

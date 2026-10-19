@@ -88,15 +88,13 @@ backend/
 │   ├── config.py              # 全局配置 (Pydantic Settings)
 │   │
 │   ├── version_engine/        # Git-native 版本引擎 (核心读写通道)
-│   │   ├── adapters/
-│   │   │   ├── git/           # Git smart-HTTP clone/fetch/push
-│   │   │   └── product/       # grant-bound ProductOperationAdapter
 │   │   ├── write_engine/      # 原生 operation、ref transaction、Git 格式
 │   │   ├── read/              # 固定 ref 快照的 tree/history reader
-│   │   ├── entrypoints/       # Git / Product HTTP 入口
 │   │   ├── infrastructure/    # PostgreSQL authority / admission
 │   │   ├── storage/           # canonical S3 对象、容量与 GC fencing
 │   │   └── derived/           # 原生索引队列与 GC
+│   │
+│   ├── file_operations/       # Hosted file commands, Product operations and file rules
 │   │
 │   ├── content/
 │   │   └── table/             # 结构化数据表 (JSON Pointer)
@@ -108,7 +106,8 @@ backend/
 │   │   ├── upload/            # 上传业务、旧 ingest 上传 URL 的实现
 │   │   ├── imports/           # 一次性导入，含数据库保存
 │   │   ├── synchronize/       # 持续绑定/SyncRun；github/ 在这里
-│   │   ├── access/            # AccessSurface；agent/MCP/sandbox 在 adapters/
+│   │   ├── access/            # AccessSurface、共用凭证、filesystem；Web/CLI/Git/Agent/MCP adapters
+│   │   ├── repository_target/ # Project-root/Scope 类型与路径范围管理
 │   │   ├── auth/              # JWT 认证
 │   │   ├── organization/      # 组织管理
 │   │   ├── project/           # 项目管理
@@ -139,14 +138,14 @@ MCP client
 mcp_service/                         transport only
     │ /internal/mcp-runtime/tools|call
     ▼
-src/internal/mcp_runtime.py          tool registry + dispatch
+src/platform/access/adapters/mcp_endpoint/runtime.py          tool registry + dispatch
     │ one hash credential lookup + one scope/policy resolution
     ▼
 access_surface_credentials ── access_surfaces ── Project + optional repository_scopes
     │                                 │
     │ custom bindings                 │ filesystem operations
     ▼                                 ▼
-access_tools                   version_engine/scoped_fs
+access_tools                   platform/access/filesystem
                                       │
                                       ▼
                               Version Engine Git data
@@ -154,8 +153,8 @@ access_tools                   version_engine/scoped_fs
 
 - **传输层**：`mcp_service` 只处理协议、session、通知和 RPC 适配，不解析
   agent/endpoint 配置，不缓存凭证，不读取产品数据。
-- **能力层**：`src/internal/mcp_runtime.py` 是唯一工具注册和调用入口；所有
-  文件数据读写由 `version_engine/scoped_fs` 完成。绑定的 search 工具只读取
+- **能力层**：`src/platform/access/adapters/mcp_endpoint/runtime.py` 是唯一工具注册和调用入口；既有 CLI/MCP
+  文件工具由 `platform/access/filesystem` 提供。MCP resolver 对 native Scope 继续返回 501。绑定的 search 工具只读取
   由同一 scope 内容构建的索引，并再次验证 tool path 位于该 scope 内。
 - **配置层**：agent 与 MCP endpoint 都是 `access_surfaces`；API key 只在
   `access_surface_credentials` 以 hash 保存和认证；自定义工具绑定只在
@@ -204,10 +203,10 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 
 | 路由前缀 | 模块 | 说明 |
 |----------|------|------|
-| `/api/v1/content/{project_id}` | version_engine/routers/content_router | Content API (ls/cat/stat/tree/write/mkdir/mv/rm/history/diff) |
-| `/api/v1/ap-fs` | version_engine/routers/access_point_fs | Puppyone CLI scoped filesystem API |
-| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | version_engine/entrypoints/git/router | Canonical Git smart-HTTP; stable locator plus separate HTTP credential |
-| `/git/ap/{access_key}.git` | version_engine/entrypoints/git/router | Instrumented legacy compatibility only; no new URL construction |
+| `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Content API (ls/cat/stat/tree/write/mkdir/mv/rm/history/diff) |
+| `/api/v1/ap-fs` | platform/access/adapters/cli/router | Puppyone CLI scoped filesystem API |
+| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | platform/access/adapters/git/router | Canonical Git smart-HTTP; stable locator plus separate HTTP credential |
+| `/git/ap/{access_key}.git` | platform/access/adapters/git/router | Instrumented legacy compatibility only; no new URL construction |
 | `/api/v1/tables` | content/table | 数据表 JSON Pointer 操作 |
 | `/api/v1/projects` | platform/project | 项目管理 |
 | `/api/v1/organizations` | platform/organization | 组织管理 |

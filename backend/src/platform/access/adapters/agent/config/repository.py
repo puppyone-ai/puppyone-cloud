@@ -4,8 +4,8 @@ from typing import List, Optional
 from datetime import datetime, timezone
 
 from src.platform.access.adapters.agent.config.models import Agent, AgentBash, AgentTool
-from src.repo.scope_service import ScopeService
-from src.repo.access_credentials import AccessCredentialRepository
+from src.platform.repository_target.scope_service import ScopeService
+from src.platform.access.credential_repository import AccessCredentialRepository
 from src.utils.id_generator import generate_uuid_v7
 
 

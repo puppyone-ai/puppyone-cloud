@@ -15,28 +15,8 @@ storage maps it explicitly to ``repository_scopes.max_mode`` here.
 from __future__ import annotations
 
 from src.infra.supabase.client import SupabaseClient
-from src.repo.models import ResolvedScopeCredential
 from src.utils.logger import log_error
 from src.version_engine.infrastructure.supabase.scope_manager import ScopeBackend
-
-
-def resolve_scope_access_credential(
-    supabase: SupabaseClient,
-    access_key: str,
-) -> ResolvedScopeCredential | None:
-    """Resolve a bearer credential, Access Surface, and exact Scope target.
-
-    L2 identity + L1 access-point routing both need this lookup, and the
-    storage work used to be duplicated between them. The repository module is
-    the single source of truth so revocation, target, and capability checks
-    stay together. Storage failures propagate so callers can return an
-    unavailable state instead of misclassifying them as bad credentials.
-
-    Returns ``None`` only when the credential/Surface/Scope chain is invalid.
-    """
-    from src.repo.scope_repository import RepositoryScopeRepository
-
-    return RepositoryScopeRepository(supabase.client).resolve_access_key(access_key)
 
 
 class SupabaseScopeBackend(ScopeBackend):

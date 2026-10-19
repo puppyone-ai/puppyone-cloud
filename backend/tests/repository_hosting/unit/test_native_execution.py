@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException, Request
 
-from src.version_engine.adapters.git.execution import admission, run_git, run_owned
+from src.platform.access.adapters.git.execution import admission, run_git, run_owned
 
 pytestmark = pytest.mark.hosting_component
 
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.hosting_component
 async def test_native_request_limits_reject_before_spooling_or_running_git(
     monkeypatch, limit_source
 ):
-    from src.version_engine.entrypoints.git import router
+    from src.platform.access.adapters.git import router
 
     calls = []
 

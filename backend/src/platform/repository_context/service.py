@@ -36,7 +36,7 @@ from src.platform.repository_target.schemas import (
     RepositoryTargetSchema,
     repository_target_domain,
 )
-from src.repo.access_credentials import access_token_hash
+from src.platform.access.credential_repository import access_token_hash
 
 _DEPENDENCY_READ_ATTEMPTS = 2
 _logger = logging.getLogger("puppyone.repository_context")
