@@ -62,7 +62,7 @@ class WorkbenchTask(PiWorker):
 
     async def touch(self):
         # A current Run lease may renew its controller, not the whole VM timeout.
-        if self.reader and not self.reader.done():
+        if not self.reconnecting and not self.parked and self.reader and not self.reader.done():
             await self.control("heartbeat")
 
     async def create(self):
@@ -88,13 +88,19 @@ class WorkbenchTask(PiWorker):
         """Quiesce just this task identity and close its channel; never kill/pause the VM."""
         if not getattr(self, "attached", False):
             raise WorkerDisconnected("Task cleanup requires a live resource connection")
+        if self.parked:
+            return  # The exact task already acknowledged irreversible revocation.
         self.reconnecting = True
         try:
             async with asyncio.timeout(20):
                 if self.reader is None or self.reader.done():
                     await self._disconnect_output()
+                    # This is a new controller process, not a replay of the old
+                    # subscription. Its output starts at sequence one again.
+                    self.output_sequence, self.buffer = 0, ""
                     await self._open_control()
                 await self.control("park")
+                self.parked = True
             if self.process:
                 self.process.stdin.close()
                 async with asyncio.timeout(15):

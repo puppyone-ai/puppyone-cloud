@@ -7,8 +7,10 @@ infrastructure fixture: this proves runtime integration, not billing acceptance.
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import shlex
 import socket
 import subprocess
 import time
@@ -118,6 +120,41 @@ async def eventually(action, predicate, *, timeout=180):
             await asyncio.sleep(0.3)
 
 
+async def firewall_hits(resource):
+    """Read the provider firewall counter; product files still use their API."""
+    process = await asyncio.create_subprocess_exec(
+        settings.CLOUD_AGENT_FLY_CLI,
+        "ssh",
+        "console",
+        "--quiet",
+        "--app",
+        resource["app"],
+        "--machine",
+        resource["resource_id"],
+        "--user",
+        "root",
+        "--command",
+        "nft -j list chain inet puppyone_task_egress output",
+        env={**os.environ, "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        async with asyncio.timeout(45):
+            stdout, _stderr = await process.communicate()
+        assert process.returncode == 0, "Unable to read Fly firewall counter"
+        return sum(
+            expression["counter"]["packets"]
+            for item in json.loads(stdout)["nftables"]
+            for expression in item.get("rule", {}).get("expr", [])
+            if "counter" in expression
+        )
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+
 async def cleanup_owned(case, provider, receipt):
     """Delete only resources identified by this new test Project/generations.
 
@@ -162,12 +199,21 @@ async def cleanup_owned(case, provider, receipt):
                 continue
             assert not volume.get("attached_machine_id"), "Owned disk still attached; retaining"
             await provider._request(resource, "DELETE", "/volumes/" + volume["id"])
-        await eventually(
+        deleted = await eventually(
             lambda resource=resource: provider._request(resource, "GET", "/volumes"),
-            lambda volumes, name=name: not any(v["name"] == name for v in volumes),
+            # Fly soft-deletes Volumes; pending_destroy stays in the raw API
+            # list but is no longer attachable or billed (Fly billing docs).
+            lambda volumes, name=name: all(
+                v["name"] != name
+                or (v["state"] == "pending_destroy" and not v.get("attached_machine_id"))
+                for v in volumes
+            ),
             timeout=60,
         )
-    receipt["cleanup"] = "owned Machines and Volumes absent"
+        receipt.setdefault("deleted_volumes", []).extend(
+            {"id": v["id"], "state": v["state"]} for v in deleted if v["name"] == name
+        )
+    receipt["cleanup"] = "owned Machines absent; Volumes deleted (absent or pending_destroy)"
 
 
 async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
@@ -184,17 +230,41 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
         "dirty_source": bool(
             subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
         ),
+        "source_diff_sha256": hashlib.sha256(
+            subprocess.check_output(["git", "diff", "HEAD", "--binary"])
+        ).hexdigest(),
     }
     monkeypatch.setattr(dispatcher, "get_inference_service", lambda *_: model)
     worker_task, watcher = None, None
     start = time.monotonic()
+
+    def passed(stage):
+        receipt["stages"].append(stage)
+        receipt.setdefault("stage_seconds", []).append(round(time.monotonic() - start, 2))
+        print("FLY_RUNTIME_STAGE " + stage, flush=True)
+
     try:
         async with http_server(case.app, case.http.headers) as http:
             root = f"/api/v1/projects/{case.project}/workbench"
             denied = await http.get(root, headers={"Authorization": ""})
             assert denied.status_code == 401
             assert (await http.get(root)).json() == {"workspace": None}
+            egress_probe = """
+import errno, os, socket
+assert os.getuid() == 1000
+for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4700::1111')]:
+    with socket.socket(family, socket.SOCK_STREAM) as connection:
+        connection.settimeout(3)
+        try:
+            connection.connect((host, 443))
+        except OSError as error:
+            # ICMP admin-prohibited maps to EHOSTUNREACH for IPv4 on Fly.
+            assert error.errno in (errno.EACCES, errno.EPERM, errno.EHOSTUNREACH), repr(error)
+        else:
+            raise AssertionError('Unrestricted task egress: ' + host)
+"""
             model.delegate = BashModel(
+                "python3 -c " + shlex.quote(egress_probe) + "; "
                 'test "$(cat seed.txt)" = seed; '
                 'umask 077; printf "saved before Git" > atomic.tmp; mv atomic.tmp agent.txt; '
                 "for i in $(seq 1 1200); do test -f release.txt && break; sleep 0.1; done; "
@@ -233,7 +303,7 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
                 volume_id=resource["volume_id"],
                 ready_seconds=round(time.monotonic() - start, 2),
             )
-            receipt["stages"].append("authenticated Chat -> default dispatcher -> real Fly/Pi")
+            passed("authenticated Chat -> default dispatcher -> real Fly/Pi")
             changes = []
 
             async def watch():
@@ -260,10 +330,15 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
                     root + "/file", params={"generation": generation, "path": path}
                 )
 
-            saved = await eventually(
-                lambda: read("agent.txt"), lambda r: r.status_code == 200, timeout=90
-            )
+            async def saved_file():
+                current = (await http.get(f"/api/v1/agents/runs/{run['id']}")).json()
+                assert current["state"] not in TERMINAL, current
+                return await read("agent.txt")
+
+            saved = await eventually(saved_file, lambda r: r.status_code == 200, timeout=90)
             assert base64.b64decode(saved.json()["content_base64"]) == b"saved before Git"
+            receipt["firewall_rejected_packets"] = await firewall_hits(resource)
+            assert receipt["firewall_rejected_packets"] >= 2
             listing = await http.get(root + "/files", params={"generation": generation})
             assert listing.status_code == 200, listing.text
             assert "agent.txt" in {item["name"] for item in listing.json()["entries"]}
@@ -296,8 +371,8 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
             conflict = await write("human.txt", b"stale write", "0" * 64)
             assert conflict.status_code == 409, conflict.text
             assert (await write("release.txt", b"continue")).status_code == 200
-            receipt["stages"].append(
-                "Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit"
+            passed(
+                "task IPv4/IPv6 egress denied -> Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit"
             )
 
             async def completed(identity):
@@ -308,6 +383,15 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
 
                 final = await eventually(snapshot, lambda r: r["state"] in TERMINAL)
                 assert final["state"] == "succeeded", final
+                active = (
+                    case.client.table("cloud_workbench_tasks")
+                    .select("execution_id")
+                    .eq("run_id", identity)
+                    .eq("state", "active")
+                    .execute()
+                    .data
+                )
+                assert not active, "Terminal Run retained an unconfirmed task cleanup"
                 return final
 
             final = await completed(run["id"])
@@ -319,7 +403,7 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
             ) as reader:
                 assert reader.read_file(case.project, "agent.txt") == b"saved before Git"
                 assert reader.read_file(case.project, "human.txt") == b"edited through API"
-            receipt["stages"].append("real stock Git publication -> native refs and S3 objects")
+            passed("real stock Git publication -> native refs and S3 objects")
             receipt["publication"] = final["publication"]
 
             model.delegate = BashModel(
@@ -338,7 +422,7 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
                 if m.get("config", {}).get("metadata", {}).get("project_id") == case.project
             ]
             assert [m["id"] for m in owned] == [resource["resource_id"]]
-            receipt["stages"].append("independent Chat sessions reuse one Machine and directory")
+            passed("independent Chat sessions reuse one Machine and directory")
 
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
@@ -364,7 +448,7 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
                 owner.repository.get(workbench)["resource"]["resource_id"]
                 == resource["resource_id"]
             )
-            receipt["stages"].append(
+            passed(
                 "lifecycle stop -> reads do not wake -> explicit reopen preserves Machine/disk/files"
             )
             receipt["result"] = "runtime_passed_cleanup_pending"

@@ -1,5 +1,6 @@
 """Task attachment must not inherit the legacy computer owner's side effects."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -123,3 +124,48 @@ async def test_cleanup_reconnects_a_task_controller_before_confirming_processes_
     await value.stop()
     value._open_control.assert_awaited_once()
     value.control.assert_awaited_once_with("park")
+
+
+async def test_heartbeat_does_not_race_task_parking():
+    value, resource = worker("e2b")
+    value.resource, value.attached = resource, True
+    entered, release = asyncio.Event(), asyncio.Event()
+    value.reader = asyncio.create_task(asyncio.Event().wait())
+    value._disconnect_output = AsyncMock()
+
+    async def park(action):
+        assert action == "park"
+        entered.set()
+        await release.wait()
+        return {}
+
+    value.control = AsyncMock(side_effect=park)
+    stopping = asyncio.create_task(value.stop())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await value.touch()
+    finally:
+        release.set()
+        await stopping
+    assert value.parked
+    await value.stop()
+    value.control.assert_awaited_once_with("park")
+
+
+async def test_cleanup_reconnect_accepts_fresh_controller_sequence():
+    value, resource = worker("e2b")
+    value.resource, value.attached = resource, True
+    value.output_sequence, value.buffer = 99, "partial old frame"
+    value._disconnect_output = AsyncMock()
+    value._open_control = AsyncMock()
+
+    async def reply(frame):
+        await value._output(json.dumps({
+            "type": "control_result", "sequence": 1, "id": frame["id"], "result": {},
+        }) + "\n")
+
+    value.send = reply
+    await asyncio.wait_for(value.stop(), 1)
+    assert value.parked and value.output_sequence == 1
+    await value.stop()
+    value._open_control.assert_awaited_once()

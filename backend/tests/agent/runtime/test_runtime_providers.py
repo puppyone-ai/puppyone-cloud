@@ -1,21 +1,21 @@
 """Provider selection and private-machine transport; no hosted resource creation."""
 
-from types import SimpleNamespace
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from src.platform.scope_sandbox.execution.providers.fly import FlyRuntimeProvider
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
 from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
+from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+from src.platform.scope_sandbox.execution.providers.fly import FlyRuntimeProvider
+from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
+from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
 from src.platform.scope_sandbox.workbench_service import WorkbenchAdmission
-from fastapi import HTTPException
 
 
 def test_interactive_chat_cannot_attach_an_automation_workspace():
@@ -49,7 +49,9 @@ def machine(binding, state="started"):
         state=state,
         config=dict(
             image=binding["image_id"],
-            mounts=[dict(volume="disk-one", path="/data")],
+            mounts=[
+                dict(volume="disk-one", path="/data", encrypted=True, size_gb=1, name="pw_disk")
+            ],
             metadata={
                 k: binding[k] for k in ("workbench_id", "workbench_generation", "project_id")
             },
@@ -137,6 +139,59 @@ async def test_fly_cleanup_keeps_disk_and_rejects_wrong_generation(monkeypatch):
         with pytest.raises(PermissionError):
             await provider.cleanup(binding)
         assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mounts",
+    [
+        [],
+        [{"volume": "other-disk", "path": "/data"}],
+        [{"volume": "disk-one", "path": "/other"}],
+        [{"volume": "disk-one", "path": "/data"}, {"volume": "extra", "path": "/extra"}],
+    ],
+)
+async def test_fly_rejects_changed_disk_binding_before_cleanup(monkeypatch, mounts):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding, requests = resource(), []
+    row = machine(binding)
+    row["config"]["mounts"] = mounts
+
+    def handle(request):
+        requests.append(request.method)
+        return httpx.Response(200, json=row)
+
+    async with httpx.AsyncClient(
+        base_url="https://api.machines.dev", transport=httpx.MockTransport(handle)
+    ) as client:
+        with pytest.raises(PermissionError, match="disk binding"):
+            await FlyRuntimeProvider(client=client).cleanup(binding)
+    assert requests == ["GET"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+async def test_fly_retries_only_reads_after_transport_loss(monkeypatch, method):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    requests = []
+
+    def handle(request):
+        requests.append(request.method)
+        if len(requests) == 1:
+            raise httpx.RemoteProtocolError("connection closed", request=request)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        base_url="https://api.machines.dev", transport=httpx.MockTransport(handle)
+    ) as client:
+        provider = FlyRuntimeProvider(client=client)
+        if method == "GET":
+            assert await provider._request(resource(), method, "/machines") == {"ok": True}
+            assert requests == ["GET", "GET"]
+        else:
+            with pytest.raises(httpx.RemoteProtocolError):
+                await provider._request(resource(), method, "/machines")
+            assert requests == [method]
 
 
 @pytest.mark.asyncio

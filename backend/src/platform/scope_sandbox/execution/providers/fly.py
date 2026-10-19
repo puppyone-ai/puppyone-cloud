@@ -7,17 +7,18 @@ A Fly volume is not an E2B memory snapshot: legacy snapshot recovery is rejected
 
 import asyncio
 import base64
-from uuid import UUID
 import os
 import re
 import shlex
 import shutil
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from src.config import settings
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
+
 from .port import RuntimeCapabilities, read_process
 
 
@@ -64,11 +65,23 @@ class FlyRuntimeProvider:
             **kwargs,
         }
         path = self._path(resource, suffix)
-        if self.client is not None:
-            response = await self.client.request(method, path, **options)
-        else:
-            async with httpx.AsyncClient(base_url="https://api.machines.dev", timeout=60) as client:
-                response = await client.request(method, path, **options)
+        attempts = 3 if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                if self.client is not None:
+                    response = await self.client.request(method, path, **options)
+                else:
+                    async with httpx.AsyncClient(
+                        base_url="https://api.machines.dev", timeout=60
+                    ) as client:
+                        response = await client.request(method, path, **options)
+                break
+            except httpx.TransportError:
+                # Retrying a read cannot allocate a second Machine or obscure
+                # an uncertain mutation. Allocation/start/stop keep reconciliation.
+                if attempt + 1 == attempts:
+                    raise
+                await asyncio.sleep(0.2 * 2**attempt)
         response.raise_for_status()
         return response.json() if response.content else None
 
@@ -202,10 +215,15 @@ class FlyRuntimeProvider:
             raise PermissionError("Fly workbench generation mismatch")
         if resource.get("image_id") and row.get("config", {}).get("image") != resource["image_id"]:
             raise PermissionError("Fly workbench artifact mismatch")
-        if resource.get("volume_id") and row.get("config", {}).get("mounts") != [
-            {"volume": resource["volume_id"], "path": "/data"}
-        ]:
-            raise PermissionError("Fly workbench disk binding mismatch")
+        if resource.get("volume_id"):
+            # Fly enriches mounts with name, encryption and size. Identity and
+            # mount location must match; provider response metadata is not ours.
+            mounts = row.get("config", {}).get("mounts") or []
+            if len(mounts) != 1 or (mounts[0].get("volume"), mounts[0].get("path")) != (
+                resource["volume_id"],
+                "/data",
+            ):
+                raise PermissionError("Fly workbench disk binding mismatch")
         return row
 
     async def attach(self, host):
@@ -248,6 +266,17 @@ class FlyRuntimeProvider:
 
     async def open_channel(self, host):
         await self.attach(host)
+        # Fly's started event is earlier than our firewall/mount initialization.
+        # Only this boot's root-written receipt admits a control process.
+        command = [
+            "sh",
+            "-c",
+            "boot=$(cat /proc/sys/kernel/random/boot_id); i=0; "
+            'until [ "$(cat /run/puppyone-fly-ready 2>/dev/null)" = "$boot" ]; do '
+            'i=$((i+1)); [ "$i" -lt 150 ] || exit 1; sleep 0.2; done; exec "$@"',
+            "fly-control",
+            *host.control_command(),
+        ]
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
@@ -265,7 +294,7 @@ class FlyRuntimeProvider:
             "--user",
             "root",
             "--command",
-            shlex.join(host.control_command()),
+            shlex.join(command),
             env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

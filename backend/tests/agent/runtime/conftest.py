@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -147,7 +148,9 @@ def services(control_api, object_endpoint, monkeypatch):
     from src.infra.supabase.client import SupabaseClient
     from src.version_engine.bootstrap.container import build_version_engine_container
 
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv(
+        "NO_PROXY", ",".join(filter(None, [os.environ.get("NO_PROXY"), "127.0.0.1,localhost"]))
+    )
     for key, value in {
         "S3_ENDPOINT_URL": object_endpoint,
         "S3_ACCESS_KEY_ID": "agent-fixture",
