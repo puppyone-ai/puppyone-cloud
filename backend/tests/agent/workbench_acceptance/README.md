@@ -106,12 +106,12 @@ CLOUD_AGENT_TEST_FLY=1 CLOUD_AGENT_FLY_TEST_RECEIPT=/tmp/fly-runtime.json \
   --junitxml=/tmp/fly-runtime.xml
 ```
 
-Result: **1 passed** on real Fly Machines/Volumes/SSH in `sin` (334.08 seconds,
-including fixture setup). The exact tested source diff maps to `520b5670`;
+Result: **1 passed** on real Fly Machines/Volumes/SSH in `lax` (200.15 seconds,
+including fixture setup), on clean source `77f94f29`;
 [the receipt](fly-runtime-receipt.json) records its hash, image digest, both Run
 IDs, Machine/Volume identities, native publication and cleanup. Model replies
 were deterministic; no paid inference was called. Full required backend
-regression on the same implementation: 3,232 passed, 885 skipped, 399 deselected.
+regression on the same implementation: 3,252 passed, 885 skipped, 399 deselected.
 
 The live run exposed and fixed enriched mount-response validation, unsupported
 iptables owner matching, boot-readiness admission, and heartbeat/cleanup races.
@@ -120,17 +120,62 @@ transport failures receive bounded retries; mutations retain their existing
 reconciliation contract. A fresh cleanup controller starts a fresh frame
 sequence, and an acknowledged park cannot race a later task heartbeat.
 
-Cold readiness measured 57.92 seconds. Successful file requests from this local
-test host took 16.17–25.90 seconds (median 19.36): per-request provider checks and
-SSH setup remain an interaction performance gap. Functional success does not
-establish an interactive latency target. Existing `NO_PROXY` exclusions are
-preserved by the local-service fixture; this run used a direct control API path
-after the workstation proxy reset a previous attempt.
+Cold readiness in this Chat chain measured 64.66 seconds. The previous `520b5670`
+run in `sin` took 16.17–25.90 seconds per file request (median 19.36). Bound
+connection handles and bounded channel/helper reuse now remove repeated setup
+from warm requests. The separate I/O measurement below also changes region and
+uses optional read compression; it is not a controlled, single-variable speedup
+comparison. First connection and cold startup remain slow.
 
 Machine absence and Volume deletion are asserted. Fly exposes soft-deleted
 Volumes as `pending_destroy`; these are no longer billed, per
 [Fly's billing contract](https://docs.fly.io/about/billing#volume-billing).
 This receipt is scoped runtime evidence, not complete A1–A6 or hosted activation.
+
+## Real provider file I/O
+
+`accept_io.py` exercises the production authenticated HTTP routes against owned
+PostgreSQL/PostgREST/MinIO and real provider resources. It measures allocation,
+first file-channel connection, then 50 write/read/list iterations on a 4,096-byte
+compressible ASCII text file (counter plus dot padding). It verifies live content,
+one reused channel, stale-save rejection, unauthenticated rejection, paused reads
+without wake, and file retention plus a new channel after explicit resume.
+The workload uses no model and disables metering. Resource cleanup is asserted.
+
+Use the owned service binaries and credentials described above. For E2B, provide
+`E2B_API_KEY` and `CLOUD_AGENT_E2B_TEMPLATE` built from the candidate worker. For
+Fly, provide the app, token, pinned image, CLI and region settings above. Create
+the receipt directory first. Opt in to one provider or both (`fly,e2b`):
+
+```sh
+CLOUD_AGENT_TEST_IO=fly CLOUD_AGENT_IO_RECEIPT_DIR=/tmp/provider-io \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_io.py
+```
+
+The [Fly I/O receipt](fly-io-receipt.json) records clean source `77f94f29`, pinned
+image, all 150 samples and cleanup. The API ran on the local test host, with a
+real `lax` Machine and an app-token tunnel isolated from cached user CLI state.
+After both runs, the disposable Fly app was deleted, its temporary deploy token
+revoked, and local copies of the temporary credentials removed.
+Each operation passed the p50 ≤300 ms / p95 ≤1,000 ms goal:
+
+| Warm operation | Samples | p50 | p95 | Max |
+| --- | ---: | ---: | ---: | ---: |
+| Write | 50 | 265.88 ms | 285.12 ms | 324.69 ms |
+| Read | 50 | 241.06 ms | 254.28 ms | 273.98 ms |
+| List | 50 | 242.82 ms | 277.09 ms | 485.00 ms |
+
+Allocation/open took **46.81 s**, the first read/channel connection **18.92 s**,
+and explicit resume **21.17 s**. Control-only round trips measured p50 239.89 ms.
+These warm results do not establish cold-start, large-file, incompressible-data,
+watch-delivery or other-region latency. The native Linux regression separately
+checks compressed/plain byte and revision equality, persistent helper reuse and
+helper failure without replay. No file content is cached.
+
+E2B uses the same executable workload, but **has no current same-workload receipt**.
+Building its candidate template requires uploading worker source to E2B;
+automatic approval review rejected that upload pending explicit user approval.
+Earlier E2B evidence does not establish these new I/O targets or a speed ranking.
 
 ## Executable private-file prerequisites (A2)
 
@@ -165,16 +210,22 @@ Candidate: `codex/agent-workspace-runtime`, based on local `qubits` `f4eccb9058f
 with the publication/lifecycle work from `codex/issue-118-completion` `a61435c5`.
 This is a source candidate, not a merged/deployed/accepted release.
 
-- Required backend regression after the live Fly fixes: 3,232 passed,
+- Required backend regression on `77f94f29`: 3,252 passed,
   885 skipped, 399 deselected. Provider-contract unit cases use mocks; the
   separate real Fly receipt above establishes the scoped hosted runtime chain.
-- Owned PostgreSQL/PostgREST combined lifecycle, authorization fencing, legacy
+- Final owned PostgreSQL/PostgREST/MinIO authorization, lifecycle and admission
+  suite: 34 passed. Final native Linux file suite: 3 passed. The separate Fly
+  runtime chain and I/O workload each passed on the same clean implementation.
+- Provider-only extension, resource-bound handles, channel lifecycle and bounded
+  file-transfer contracts are covered by the backend regression. Final Python
+  lint/format, Node syntax and strict OpenSpec validation passed.
+- Earlier owned PostgreSQL/PostgREST combined lifecycle, authorization fencing, legacy
   preservation, populated migration rollback/reapply: 88 passed. Auth stubs and
   omitted Supabase-only extensions are declared by `native_postgres.py`.
 - Earlier local ARM worker artifact: `sha256:499fdac5291718db41d9cb025fa0f9649cd4fee47ae53d3696ca2e243748e8b6`.
   Offline BuildKit: 6 process-stop, 12 Git/initialization and 3 native-file
   scenarios passed. Local Node protocol/Git regressions: 23 passed.
-- Frontend workspace: 351 passed; full frontend: 459 passed and one existing
+- Earlier frontend workspace: 351 passed; full frontend: 459 passed and one existing
   `login-page.test.tsx` email-sign-in initialization failure, reproduced on
   original `qubits`. TypeScript passed. Repository ESLint: no errors, 91 warnings.
   Dependency analysis adds no errors; the existing `apiClient.ts` to

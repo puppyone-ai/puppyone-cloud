@@ -28,5 +28,6 @@ application preview APIs are not delivered by the native file API.
 - [x] Normalize provider connection and preservation results; retain the existing Pi adaptation and keep new supplier branches inside providers.
 - [x] Reuse bounded file channels and provider HTTP connections; preserve authorization, idle pause, failure and write-result semantics.
 - [x] Add provider extension and channel lifecycle contract tests.
-- [ ] Measure real E2B and Fly file I/O, including native changes, conflicts and pause/reconnect.
-- [ ] Run relevant regressions and record source-bound performance evidence.
+- [x] Measure real Fly file I/O, including native changes, conflicts and pause/reconnect; record cold and warm timings separately.
+- [ ] Run the same I/O workload on E2B after explicit approval to upload the candidate worker template.
+- [x] Run relevant regressions and record source-bound Fly performance evidence.
