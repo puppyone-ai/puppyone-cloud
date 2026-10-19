@@ -11,6 +11,8 @@ import os
 import re
 import shlex
 import shutil
+import tempfile
+from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
 
@@ -19,15 +21,26 @@ import httpx
 from src.config import settings
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
 
-from .port import RuntimeCapabilities, read_process
+from .port import (
+    RuntimeCapabilities,
+    RuntimeConnection,
+    RuntimeTransition,
+    close_process,
+    read_process,
+    resource_identity,
+)
 
 
 class FlyRuntimeProvider:
     name = "fly"
-    capabilities = RuntimeCapabilities(recovery_backend=None)
+    capabilities = RuntimeCapabilities(
+        recovery_backend=None, file_retention="volume", preserves_processes=False
+    )
 
     def __init__(self, *, client=None):
         self.client = client
+        self._owned_client = None
+        self._channel_config = None
 
     def validate(self, artifact, resource=None):
         self._path(resource or {"app": settings.CLOUD_AGENT_FLY_APP})
@@ -71,10 +84,13 @@ class FlyRuntimeProvider:
                 if self.client is not None:
                     response = await self.client.request(method, path, **options)
                 else:
-                    async with httpx.AsyncClient(
-                        base_url="https://api.machines.dev", timeout=60
-                    ) as client:
-                        response = await client.request(method, path, **options)
+                    if self._owned_client is None:
+                        self._owned_client = httpx.AsyncClient(
+                            base_url="https://api.machines.dev",
+                            timeout=60,
+                            limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+                        )
+                    response = await self._owned_client.request(method, path, **options)
                 break
             except httpx.TransportError:
                 # Retrying a read cannot allocate a second Machine or obscure
@@ -257,15 +273,25 @@ class FlyRuntimeProvider:
         )
 
     async def connect_task(self, host, resource, connection):
+        if resource.get("image_id") != host.artifact:
+            raise PermissionError("Fly workbench artifact mismatch")
+        # A lifecycle-admitted handle avoids repeated management API lookups.
+        if connection is not None:
+            connection.validate(resource)
+            host.connection = connection
+            return
         # Read only: attachment must never start or replace a resource.
         row = await self.inspect(resource)
         if row["state"] != "started":
             raise WorkerDisconnected("Workbench lifecycle must wake the Fly Machine")
         if row["config"]["image"] != host.artifact:
             raise PermissionError("Fly workbench artifact mismatch")
+        host.connection = RuntimeConnection(resource_identity(resource))
 
     async def open_channel(self, host):
-        await self.attach(host)
+        if getattr(host, "connection", None) is None:
+            host.connection = await self.running_connection(host)
+        host.connection.validate(host.resource)
         # Fly's started event is earlier than our firewall/mount initialization.
         # Only this boot's root-written receipt admits a control process.
         command = [
@@ -277,7 +303,20 @@ class FlyRuntimeProvider:
             "fly-control",
             *host.control_command(),
         ]
+        if self._channel_config is not None:
+            await self.close_channel(host)
+        # Do not borrow a workstation's cached organization-wide WireGuard
+        # peer or daemon. This channel authenticates with its app-scoped token;
+        # its isolated agent exits with flyctl, including after backend failure.
+        self._channel_config = tempfile.TemporaryDirectory(prefix="puppy-fly-")
+        config = Path(self._channel_config.name, "config.yml")
+        config.write_text("{}\n")
+        config.chmod(0o600)
         env = {
+            "FLY_CONFIG_DIR": self._channel_config.name,
+            "FLY_AGENT_ISOLATED": "1",
+            "FLY_WIREGUARD_TOKEN_MODE": "1",
+            "FLY_NO_UPDATE_CHECK": "1",
             "PATH": os.environ.get("PATH", ""),
             "HOME": os.environ.get("HOME", ""),
             "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN,
@@ -310,6 +349,21 @@ class FlyRuntimeProvider:
         if host.process and host.process.stdin:
             host.process.stdin.close()
 
+    async def close_channel(self, host):
+        try:
+            await close_process(host)
+        finally:
+            host.connection = None
+            await self.aclose()
+            if self._channel_config is not None:
+                self._channel_config.cleanup()
+                self._channel_config = None
+
+    async def aclose(self):
+        if self._owned_client is not None:
+            await self._owned_client.aclose()
+            self._owned_client = None
+
     async def renew(self, host):
         return None  # Fly compute lifetime is controlled by our activity leases.
 
@@ -333,9 +387,13 @@ class FlyRuntimeProvider:
 
     async def running_connection(self, host):
         await self.attach(host)
-        return None
+        return RuntimeConnection(resource_identity(host.resource))
 
     async def pause_resource(self, host):
         row = await self.inspect(host.resource)
-        if row["state"] not in {"stopped", "suspended"}:
-            await self.pause(host)
+        try:
+            if row["state"] not in {"stopped", "suspended"}:
+                await self.pause(host)
+            return RuntimeTransition(resource_identity(host.resource), True, False)
+        finally:
+            await self.aclose()

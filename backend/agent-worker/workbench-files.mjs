@@ -1,5 +1,5 @@
 /** Backend-only native file channel. No Git publication and no VM lifecycle. */
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { watch } from 'node:fs';
 import { channel } from './protocol.mjs';
 import { ROOT } from './git.mjs';
@@ -11,16 +11,46 @@ const binding = {workbench, generation};
 await requireWorkspace(binding);
 const control = channel();
 let watcher, timer, pending = Promise.resolve();
+let helper, active, buffer = '', failed = false, closing = false;
+function helperFailed() {
+  failed = true;
+  active?.reject(new Error('Workspace file operation unavailable'));
+  active = undefined;
+  helper?.kill('SIGKILL');
+  if (!closing) { process.exitCode = 1; setImmediate(close); }
+}
 function files(value) {
-  return new Promise((resolve, reject) => {
-    const child = execFile('python3', ['/opt/puppyone-agent/workbench-files.py'], {
-      uid: 1000, gid: 1000, cwd: ROOT, timeout: 20000, maxBuffer: 16 * 1024 * 1024,
+  if (failed || closing) return Promise.reject(new Error('Workspace file channel unavailable'));
+  if (!helper) {
+    // One unprivileged helper per channel; requests still reopen the confined
+    // root and use native descriptors. No file bytes or revisions are cached.
+    helper = spawn('python3', ['-u', '/opt/puppyone-agent/workbench-files.py', '--stream'], {
+      uid: 1000, gid: 1000, cwd: ROOT, stdio: ['pipe', 'pipe', 'ignore'],
       env: {PATH: '/usr/local/bin:/usr/bin:/bin'},
-    }, (error, stdout) => {
-      if (error) reject(new Error('Workspace file operation unavailable'));
-      else { try { resolve(JSON.parse(stdout)); } catch (cause) { reject(cause); } }
     });
-    child.stdin.end(JSON.stringify(value));
+    helper.on('error', helperFailed);
+    helper.on('exit', () => { if (!closing) helperFailed(); });
+    helper.stdin.on('error', helperFailed);
+    helper.stdout.setEncoding('utf8');
+    helper.stdout.on('data', chunk => {
+      buffer += chunk;
+      if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) return helperFailed();
+      const end = buffer.indexOf('\n');
+      if (end < 0) return;
+      if (!active || end !== buffer.length - 1) return helperFailed();
+      try {
+        const result = JSON.parse(buffer.slice(0, end)); buffer = '';
+        const waiter = active; active = undefined; waiter.resolve(result);
+      } catch { helperFailed(); }
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(helperFailed, 20000);
+    active = {
+      resolve: value => { clearTimeout(timeout); resolve(value); },
+      reject: error => { clearTimeout(timeout); reject(error); },
+    };
+    helper.stdin.write(JSON.stringify(value) + '\n');
   });
 }
 control.dispatch(frame => {
@@ -51,5 +81,10 @@ control.dispatch(frame => {
     }
   });
 });
-function close() { watcher?.close(); clearTimeout(timer); control.close(); pending.finally(() => process.exit()); }
+function close() {
+  if (closing) return;
+  closing = true; watcher?.close(); clearTimeout(timer); helper?.kill('SIGKILL');
+  active?.reject(new Error('Workspace file channel closed')); active = undefined;
+  control.close(); pending.finally(() => process.exit());
+}
 process.stdin.on('end', close);

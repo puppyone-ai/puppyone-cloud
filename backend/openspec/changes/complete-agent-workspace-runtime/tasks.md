@@ -21,3 +21,12 @@
 Native PostgreSQL and BuildKit regressions are supplementary evidence, not the
 full Docker/Supabase upgrade or hosted provider acceptance. Public PTY and running
 application preview APIs are not delivered by the native file API.
+
+## Provider boundary and I/O closure
+
+- [x] Update the canonical architecture diagram and provider-only extension contract before implementation.
+- [x] Normalize provider connection and preservation results; retain the existing Pi adaptation and keep new supplier branches inside providers.
+- [x] Reuse bounded file channels and provider HTTP connections; preserve authorization, idle pause, failure and write-result semantics.
+- [x] Add provider extension and channel lifecycle contract tests.
+- [ ] Measure real E2B and Fly file I/O, including native changes, conflicts and pause/reconnect.
+- [ ] Run relevant regressions and record source-bound performance evidence.

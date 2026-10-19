@@ -13,3 +13,9 @@ Workspace tasks must share native file ownership (including mode 0600 and atomic
 ## Validation and rollout
 
 Exercise real native filesystem/process behavior, provider contract parity, authorization, persisted binding after default switches, reconnect, stale generations and dirty-editor conflicts. Run the repository regression gates and populated database upgrade rehearsal before target-branch merge. Report source, local integration, hosted activation and paid-provider acceptance separately.
+
+## Provider and I/O boundary
+
+The user approved the provider-only extension boundary and requested documentation first, implementation, and fast real-provider I/O verification. Preserve Pi and the existing module layout. Providers return bound connection handles and explicit retention/transition results; common runtime code does not inspect supplier names or SDK handles. File channels are bounded process-local caches keyed by immutable resource binding and compute epoch. Each operation reauthorizes and renews actual activity; watch keepalive does not. Disconnect, cancellation, replacement and suspend invalidate channels. Mutations are never replayed after an ambiguous reply. Provider HTTP clients use bounded connection pools.
+
+Measure cold start, first connection, and warm file operations separately on E2B and Fly. Small-file warm p50 <= 300 ms and p95 <= 1 s are acceptance targets, not assumed outcomes. Publish measured sample counts and network placement.

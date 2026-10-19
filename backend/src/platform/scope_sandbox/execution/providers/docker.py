@@ -4,12 +4,20 @@ import asyncio
 import json
 
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
-from .port import RuntimeCapabilities, read_process
+
+from .port import (
+    RuntimeCapabilities,
+    RuntimeConnection,
+    RuntimeTransition,
+    close_process,
+    read_process,
+    resource_identity,
+)
 
 
 class DockerRuntimeProvider:
     name = "docker"
-    capabilities = RuntimeCapabilities(recovery_backend="docker-volume")
+    capabilities = RuntimeCapabilities(recovery_backend="docker-volume", file_retention="volume")
 
     def validate(self, artifact, resource=None):
         if not artifact:
@@ -150,6 +158,13 @@ class DockerRuntimeProvider:
     async def disconnect(self, host):
         return None
 
+    async def close_channel(self, host):
+        await close_process(host)
+        host.connection = None
+
+    async def aclose(self):
+        return None
+
     async def renew(self, host):
         return None
 
@@ -174,7 +189,7 @@ class DockerRuntimeProvider:
 
     async def running_connection(self, host):
         await self.connect_task(host, host.resource, None)
-        return None
+        return RuntimeConnection(resource_identity(host.resource))
 
     async def pause_resource(self, host):
         state = json.loads(
@@ -182,6 +197,9 @@ class DockerRuntimeProvider:
         )[0]["State"]
         if state["Running"] and not state.get("Paused"):
             await host._docker("pause", host.resource["resource_id"])
+        if not state["Running"]:
+            raise WorkerLost("Workspace is not running; preservation requires reconciliation")
+        return RuntimeTransition(resource_identity(host.resource), True, True)
 
     async def cleanup(self, resource):
         proc = await asyncio.create_subprocess_exec(
@@ -209,6 +227,10 @@ class DockerRuntimeProvider:
         return recovery["id"] if recovery else None
 
     async def connect_task(self, host, resource, connection):
+        if connection is not None:
+            connection.validate(resource)
+            host.connection = connection
+            return
         try:
             found = json.loads(await host._docker("container", "inspect", resource["resource_id"]))[
                 0

@@ -203,11 +203,13 @@ async def test_product_owner_single_flight_native_files_and_revocation(
     import base64
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from fastapi import HTTPException
+
     from src.exceptions import NotFoundException
+    from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
     from src.platform.scope_sandbox.workbench_repository import WorkbenchRepository
     from src.platform.scope_sandbox.workbench_service import WorkbenchService
-    from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
 
     args, _ = submitted
     selected, allocations, initializations, channels = ["docker"], [], [], []
@@ -215,7 +217,7 @@ async def test_product_owner_single_flight_native_files_and_revocation(
 
     class Provider:
         name = "docker"
-        capabilities = SimpleNamespace(shared_workspace=True)
+        capabilities = SimpleNamespace(shared_workspace=True, native_files=True)
 
         def artifact(self, image):
             return "pinned-image"
@@ -225,6 +227,9 @@ async def test_product_owner_single_flight_native_files_and_revocation(
 
         async def running_connection(self, host):
             return None
+
+        async def aclose(self):
+            pass
 
     provider = Provider()
 
@@ -250,8 +255,11 @@ async def test_product_owner_single_flight_native_files_and_revocation(
         async def _open_control(self):
             pass
 
-        async def connect(self, connection):
+        async def connect(self, connection=None):
             pass
+
+        def healthy(self):
+            return True
 
         async def close(self):
             pass
@@ -355,3 +363,4 @@ async def test_product_owner_single_flight_native_files_and_revocation(
             {"action": "read", "path": "live.md"},
         )
     assert len(channels) == before
+    await service.close()

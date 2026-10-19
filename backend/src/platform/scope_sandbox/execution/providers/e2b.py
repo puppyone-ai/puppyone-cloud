@@ -6,8 +6,15 @@ import time
 from contextlib import suppress
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.worker_port import WorkerLost, WorkerDisconnected
-from .port import SEND_TIMEOUT, RuntimeCapabilities
+from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
+
+from .port import (
+    SEND_TIMEOUT,
+    RuntimeCapabilities,
+    RuntimeConnection,
+    RuntimeTransition,
+    resource_identity,
+)
 
 
 class E2BRuntimeProvider:
@@ -135,6 +142,16 @@ class E2BRuntimeProvider:
             async with asyncio.timeout(SEND_TIMEOUT):
                 await host.handle.disconnect()
 
+    async def close_channel(self, host):
+        if host.handle:
+            with suppress(Exception):
+                async with asyncio.timeout(SEND_TIMEOUT):
+                    await host.handle.kill()
+        host.connection = None
+
+    async def aclose(self):
+        return None
+
     async def renew(self, host):
         if host.sandbox and time.monotonic() >= host.timeout_renewal:
             await host.sandbox.set_timeout(settings.RUNTIME_AGENT_TIMEOUT_SECONDS)
@@ -191,12 +208,14 @@ class E2BRuntimeProvider:
         # SDK connect may wake a paused VM. Tasks may only borrow a connection.
         if connection is None:
             raise PermissionError("An E2B connection from the workbench lifecycle is required")
+        connection.validate(resource)
         if (
             not host.artifact
-            or connection.sandbox_id != resource["resource_id"]
+            or connection.handle.sandbox_id != resource["resource_id"]
             or resource.get("template") != host.artifact
         ):
             raise PermissionError("Shared workbench provider connection binding mismatch")
+        host.connection, host.sandbox = connection, connection.handle
 
     async def running_connection(self, host):
         from e2b import AsyncSandbox
@@ -210,7 +229,7 @@ class E2BRuntimeProvider:
         host.sandbox = await AsyncSandbox.connect(
             host.resource["resource_id"], api_key=settings.E2B_API_KEY
         )
-        return host.sandbox
+        return RuntimeConnection(resource_identity(host.resource), host.sandbox)
 
     async def pause_resource(self, host):
         from e2b import AsyncSandbox
@@ -220,3 +239,9 @@ class E2BRuntimeProvider:
         )
         if str(info.state) != "paused":
             await AsyncSandbox.pause(host.resource["resource_id"], api_key=settings.E2B_API_KEY)
+        info = await AsyncSandbox.get_info(
+            host.resource["resource_id"], api_key=settings.E2B_API_KEY
+        )
+        if str(info.state) != "paused":
+            raise WorkerDisconnected("Sandbox pause was not confirmed")
+        return RuntimeTransition(resource_identity(host.resource), True, True)

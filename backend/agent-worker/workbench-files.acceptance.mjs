@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { stat, rm } from 'node:fs/promises';
+import { stat, rm, readFile } from 'node:fs/promises';
 import { initializeWorkbench } from './workbench-initialize.mjs';
 import { CONTROL_ROOT } from './workbench-state.mjs';
 import { scriptedTask, poll } from './workbench-test-task.mjs';
@@ -84,12 +84,22 @@ test('native file channel watches Bash saves before publication and rejects stal
     const stale = await file({action:'write',path:'file.txt',expected_revision:read.result.revision,content_base64:Buffer.from('stale human').toString('base64')});
     assert.equal(stale.error,'file_conflict');
     assert.equal(Buffer.from((await file({action:'read',path:'file.txt'})).result.content_base64,'base64').toString(),'agent-newer');
+    // The same helper must reopen live content on every request. A batch also
+    // exercises ordered framing through one persistent process.
+    const repeated = await Promise.all(Array.from({length: 30}, () => file({action:'read',path:'file.txt'})));
+    assert.ok(repeated.every(value => Buffer.from(value.result.content_base64,'base64').toString() === 'agent-newer'));
     await exec('ln',['-s','/etc/passwd','outside'],{cwd:ROOT,uid:1000,gid:1000});
     for (const path of ['../etc/passwd','.git/config','outside']) assert.ok((await file({action:'read',path})).error);
     assert.ok((await file({action:'mkdir',path:'folder'})).result);
     assert.ok((await file({action:'move',path:'file.txt',destination:'folder/moved.txt'})).result);
     assert.ok((await file({action:'remove',path:'folder'})).result);
     assert.equal((await file({action:'read',path:'folder/moved.txt'})).error,'file_not_found');
+    const children = (await readFile(`/proc/${child.pid}/task/${child.pid}/children`, 'utf8')).trim().split(/\s+/);
+    assert.equal(children.length, 1, 'One persistent helper serves all file operations');
+    assert.match(await readFile(`/proc/${children[0]}/cmdline`, 'utf8'), /workbench-files.py/);
+    process.kill(Number(children[0]), 'SIGKILL');
+    await poll(() => child.exitCode !== null);
+    assert.equal(child.exitCode, 1, 'A lost helper closes its channel; it must not replay an operation');
   } finally {
     child?.stdin.end(); if (child) await poll(() => child.exitCode !== null);
     await rm(ROOT,{recursive:true,force:true}); await rm(CONTROL_ROOT,{recursive:true,force:true});

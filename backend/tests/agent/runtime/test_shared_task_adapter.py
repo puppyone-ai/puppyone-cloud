@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.platform.scope_sandbox.execution.providers.port import RuntimeConnection, resource_identity
 from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
 from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
@@ -23,20 +24,50 @@ def no_provider_requests(monkeypatch):
 
     monkeypatch.setattr(settings, "CLOUD_AGENT_E2B_TEMPLATE", "fixture-template")
     for name in ("connect", "create", "kill"):
-        monkeypatch.setattr(AsyncSandbox, name, AsyncMock(side_effect=AssertionError("task requested provider lifecycle")))
+        monkeypatch.setattr(
+            AsyncSandbox,
+            name,
+            AsyncMock(side_effect=AssertionError("task requested provider lifecycle")),
+        )
 
 
 def worker(provider="docker"):
-    value = WorkbenchTask(str(uuid4()), "project", workbench_id=str(uuid4()), generation=str(uuid4()),
-                          task_uid=20000, provider=provider, image="fixture", store=InMemoryExecutionSessionStore())
-    resource = {"provider": provider, "resource_id": "fixture-computer", "project_id": "project",
-                "session_id": str(uuid4()), "image_id": "sha256:fixture", "template": value.artifact,
-                "workbench_id": value.workbench_id, "workbench_generation": value.workbench_generation,
-                "task_execution_id": value.task_execution_id, "task_uid": value.task_uid}
+    value = WorkbenchTask(
+        str(uuid4()),
+        "project",
+        workbench_id=str(uuid4()),
+        generation=str(uuid4()),
+        task_uid=20000,
+        provider=provider,
+        image="fixture",
+        store=InMemoryExecutionSessionStore(),
+    )
+    resource = {
+        "provider": provider,
+        "resource_id": "fixture-computer",
+        "project_id": "project",
+        "session_id": str(uuid4()),
+        "image_id": "sha256:fixture",
+        "template": value.artifact,
+        "workbench_id": value.workbench_id,
+        "workbench_generation": value.workbench_generation,
+        "task_execution_id": value.task_execution_id,
+        "task_uid": value.task_uid,
+    }
     return value, resource
 
 
-@pytest.mark.parametrize("field", ["workbench_id", "workbench_generation", "project_id", "provider", "task_uid", "task_execution_id"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "workbench_id",
+        "workbench_generation",
+        "project_id",
+        "provider",
+        "task_uid",
+        "task_execution_id",
+    ],
+)
 async def test_wrong_or_missing_cleanup_binding_is_rejected_before_provider_access(field):
     value, resource = worker()
     value._docker = AsyncMock(side_effect=AssertionError("wrong resource binding reached provider"))
@@ -48,8 +79,15 @@ async def test_wrong_or_missing_cleanup_binding_is_rejected_before_provider_acce
 
 async def test_task_connection_cannot_unpause_a_docker_computer():
     value, resource = worker()
-    value._docker = AsyncMock(side_effect=lambda *args: json.dumps([{"Id": "sha256:fixture"}])
-        if args[0] == "image" else json.dumps([{"Image": "sha256:fixture", "State": {"Running": True, "Paused": True}}]))
+    value._docker = AsyncMock(
+        side_effect=lambda *args: (
+            json.dumps([{"Id": "sha256:fixture"}])
+            if args[0] == "image"
+            else json.dumps(
+                [{"Image": "sha256:fixture", "State": {"Running": True, "Paused": True}}]
+            )
+        )
+    )
     with pytest.raises(WorkerDisconnected, match="lifecycle"):
         await value.connect(resource)
     assert all(call.args[0] != "unpause" for call in value._docker.await_args_list)
@@ -57,8 +95,12 @@ async def test_task_connection_cannot_unpause_a_docker_computer():
 
 async def test_task_uses_its_execution_identity_not_the_resource_owner():
     value, resource = worker()
-    value._docker = AsyncMock(side_effect=[json.dumps([{"Image": "sha256:fixture", "State": {"Running": True, "Paused": False}}]),
-                                          json.dumps([{"Id": "sha256:fixture"}])])
+    value._docker = AsyncMock(
+        side_effect=[
+            json.dumps([{"Image": "sha256:fixture", "State": {"Running": True, "Paused": False}}]),
+            json.dumps([{"Id": "sha256:fixture"}]),
+        ]
+    )
     await value.connect(resource)
     assert value.execution_id == value.task_execution_id != resource["session_id"]
     assert value.resource == resource
@@ -70,10 +112,17 @@ async def test_e2b_task_requires_the_lifecycle_owners_existing_connection():
     with pytest.raises(PermissionError, match="lifecycle"):
         await value.connect(resource)
     connection = SimpleNamespace(sandbox_id=resource["resource_id"])
-    await value.connect(resource, sandbox=connection)
+    await value.connect(
+        resource, sandbox=RuntimeConnection(resource_identity(resource), connection)
+    )
     assert value.sandbox is connection
     with pytest.raises(PermissionError, match="binding"):
-        await value.connect(resource, sandbox=SimpleNamespace(sandbox_id="another-computer"))
+        await value.connect(
+            resource,
+            sandbox=RuntimeConnection(
+                resource_identity(resource), SimpleNamespace(sandbox_id="another-computer")
+            ),
+        )
 
 
 @pytest.mark.parametrize("protocol", [0, 1, 2, 3])
@@ -91,7 +140,9 @@ async def test_task_requires_attach_only_protocol_before_preparing_or_starting(p
     else:
         await value.start(config)
         assert value.control.await_args_list[1].args == (
-            "prepare", {"target_ref": "refs/heads/main", "project_id": "project"})
+            "prepare",
+            {"target_ref": "refs/heads/main", "project_id": "project"},
+        )
         value.send.assert_awaited_once_with({"type": "start", "config": config})
 
 
@@ -160,9 +211,17 @@ async def test_cleanup_reconnect_accepts_fresh_controller_sequence():
     value._open_control = AsyncMock()
 
     async def reply(frame):
-        await value._output(json.dumps({
-            "type": "control_result", "sequence": 1, "id": frame["id"], "result": {},
-        }) + "\n")
+        await value._output(
+            json.dumps(
+                {
+                    "type": "control_result",
+                    "sequence": 1,
+                    "id": frame["id"],
+                    "result": {},
+                }
+            )
+            + "\n"
+        )
 
     value.send = reply
     await asyncio.wait_for(value.stop(), 1)

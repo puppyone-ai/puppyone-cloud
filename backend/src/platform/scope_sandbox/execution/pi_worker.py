@@ -15,8 +15,8 @@ from src.infra.supabase.instrumentation import database_stage
 from src.platform.scope_sandbox.execution.store import ExecutionSession, durable_execution_store
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
 
-from .providers.registry import runtime_provider
 from .providers.port import SEND_TIMEOUT
+from .providers.registry import runtime_provider
 
 MAX_FRAME = 192 * 1024 * 1024
 
@@ -46,6 +46,7 @@ class PiWorker:
         self.buffer = ""
         self.process = None
         self.sandbox = None
+        self.connection = None
         self.handle = None
         self.reader = None
         self.stderr_reader = None
@@ -304,9 +305,7 @@ class PiWorker:
 
     async def touch(self):
         if self.resource.get("workspace_id"):
-            if self.provider == "e2b" and self.sandbox and time.monotonic() >= self.timeout_renewal:
-                await self.sandbox.set_timeout(settings.RUNTIME_AGENT_TIMEOUT_SECONDS)
-                self.timeout_renewal = time.monotonic() + settings.RUNTIME_AGENT_TIMEOUT_SECONDS / 2
+            await self.runtime.renew(self)
             return
         session = self.store.get(self.execution_id)
         if session:
@@ -345,10 +344,18 @@ class PiWorker:
 
     @staticmethod
     async def resolve_resources(resource):
-        return await runtime_provider(resource["provider"]).resolve(resource)
+        provider = runtime_provider(resource["provider"])
+        try:
+            return await provider.resolve(resource)
+        finally:
+            await provider.aclose()
 
     @staticmethod
     async def cleanup(resource, *, store=None):
         store = store if store is not None else durable_execution_store()
-        await runtime_provider(resource["provider"]).cleanup(resource)
+        provider = runtime_provider(resource["provider"])
+        try:
+            await provider.cleanup(resource)
+        finally:
+            await provider.aclose()
         store.delete(resource["session_id"])

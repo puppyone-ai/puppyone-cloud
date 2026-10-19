@@ -34,6 +34,7 @@ _DEFAULT_OWNER = object()
 async def serve(*, workbench_owner=_DEFAULT_OWNER):
     from src.config import settings
 
+    owns_workbench = workbench_owner is _DEFAULT_OWNER
     repository = RunRepository()
     admission = Admission(repository)
     engine = build_worker_version_engine_container(probe=True)
@@ -126,6 +127,8 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+        if owns_workbench:
+            await workbench_owner.close()
 
 
 if __name__ == "__main__":

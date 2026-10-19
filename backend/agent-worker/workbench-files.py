@@ -194,8 +194,7 @@ def execute(root, request):
         os.close(parent)
 
 
-def main():
-    request = json.loads(sys.stdin.buffer.read(MAX_BYTES * 2))
+def operation(request):
     root = os.open('/workspace/repo', DIRECTORY)
     try:
         try:
@@ -208,7 +207,7 @@ def main():
             result = {'error': 'file_conflict'}
         except (ValueError, OSError):
             result = {'error': 'file_operation_rejected'}
-        sys.stdout.write(json.dumps(result))
+        return result
     finally:
         os.close(root)
 
@@ -216,4 +215,10 @@ def main():
 if __name__ == '__main__':
     if os.getuid() != 1000:
         raise PermissionError('Native file operations require workspace ownership')
-    main()
+    if sys.argv[1:] == ['--stream']:
+        while raw := sys.stdin.buffer.readline(MAX_BYTES * 2):
+            if not raw.endswith(b'\n'):
+                raise ValueError('File request exceeds limit')
+            print(json.dumps(operation(json.loads(raw))), flush=True)
+    else:
+        sys.stdout.write(json.dumps(operation(json.loads(sys.stdin.buffer.read(MAX_BYTES * 2)))))

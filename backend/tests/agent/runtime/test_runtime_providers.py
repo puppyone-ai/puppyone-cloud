@@ -283,3 +283,66 @@ async def test_docker_session_keeps_binding_tag_and_uses_resolved_image_for_atta
     factory.assert_called_once_with(
         "execution", "project", provider="docker", image="sha256:original", artifact="old-tag"
     )
+
+
+@pytest.mark.asyncio
+async def test_fly_reuses_management_client_and_closes_owned_client(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    client = httpx.AsyncClient(
+        base_url="https://api.machines.dev",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True})),
+    )
+    create = Mock(return_value=client)
+    monkeypatch.setattr(httpx, "AsyncClient", create)
+    provider = FlyRuntimeProvider()
+    try:
+        await provider._request(resource(), "GET", "/machines")
+        await provider._request(resource(), "GET", "/volumes")
+        create.assert_called_once()
+    finally:
+        await provider.aclose()
+    assert client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypatch):
+    import asyncio
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from src.platform.scope_sandbox.execution.providers.port import (
+        RuntimeConnection,
+        resource_identity,
+    )
+
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = resource()
+    process = SimpleNamespace(
+        stdin=SimpleNamespace(close=Mock()),
+        wait=AsyncMock(return_value=0),
+        stdout=SimpleNamespace(read=AsyncMock(return_value=b"")),
+        stderr=SimpleNamespace(read=AsyncMock(return_value=b"")),
+    )
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    provider = FlyRuntimeProvider()
+    provider.inspect = AsyncMock(side_effect=AssertionError("repeated management lookup"))
+    host = SimpleNamespace(
+        resource=binding,
+        connection=RuntimeConnection(resource_identity(binding)),
+        control_command=lambda: ["node", "controller.mjs"],
+        _output=AsyncMock(),
+        _disconnected=AsyncMock(),
+        queue=asyncio.Queue(),
+    )
+    await provider.open_channel(host)
+    env = spawn.call_args.kwargs["env"]
+    assert env["FLY_API_TOKEN"] == "backend-only"
+    assert env["FLY_AGENT_ISOLATED"] == env["FLY_WIREGUARD_TOKEN_MODE"] == "1"
+    directory = Path(env["FLY_CONFIG_DIR"])
+    assert directory.exists() and directory != Path.home() / ".fly"
+    assert (directory / "config.yml").read_text() == "{}\n"
+    await provider.close_channel(host)
+    await asyncio.gather(host.reader, host.stderr_reader)
+    assert not directory.exists()
+    assert host.connection is None

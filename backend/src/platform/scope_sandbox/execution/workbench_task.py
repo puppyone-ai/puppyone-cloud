@@ -49,7 +49,7 @@ class WorkbenchTask(PiWorker):
         ):
             raise PermissionError("Shared workbench resource binding mismatch")
         await self.runtime.connect_task(self, resource, sandbox)
-        self.sandbox, self.resource = sandbox, dict(resource)
+        self.resource = dict(resource)
         self.execution_id, self.restore_point = self.task_execution_id, None
         self.attached, self.reused = True, True
 
@@ -101,12 +101,12 @@ class WorkbenchTask(PiWorker):
                     await self._open_control()
                 await self.control("park")
                 self.parked = True
-            if self.process:
-                self.process.stdin.close()
-                async with asyncio.timeout(15):
-                    await self.process.wait()
+            await self.runtime.close_channel(self)
         finally:
-            await self._disconnect_output()
+            try:
+                await self._disconnect_output()
+            finally:
+                await self.runtime.aclose()
             for pending in (*self.git_tasks, self.reader, self.stderr_reader):
                 if pending:
                     pending.cancel()

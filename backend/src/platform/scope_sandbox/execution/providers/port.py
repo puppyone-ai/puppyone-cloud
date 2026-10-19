@@ -7,7 +7,8 @@ Provider credentials stay in this layer and never enter the sandbox environment.
 
 import asyncio
 import codecs
-
+import json
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -19,6 +20,57 @@ class RuntimeCapabilities:
     recovery_backend: str | None
     shared_workspace: bool = True
     native_files: bool = True
+    file_retention: str = "provider-snapshot"
+    preserves_processes: bool = True
+    files_require_compute: bool = True
+
+
+def resource_identity(resource: dict) -> str:
+    # Task IDs and publication/control receipts are not compute identity.
+    return json.dumps(
+        {
+            key: resource.get(key)
+            for key in (
+                "provider",
+                "resource_id",
+                "project_id",
+                "workbench_id",
+                "workbench_generation",
+                "app",
+                "image_id",
+                "template",
+                "volume_id",
+            )
+        },
+        sort_keys=True,
+    )
+
+
+@dataclass(frozen=True)
+class RuntimeConnection:
+    """An inspected resource, never a sentinel asking the caller to reconnect."""
+
+    identity: str
+    handle: Any = None  # Opaque outside providers.
+
+    def validate(self, resource: dict) -> None:
+        if self.identity != resource_identity(resource):
+            raise PermissionError("Provider connection resource binding mismatch")
+
+
+@dataclass(frozen=True)
+class RuntimeTransition:
+    identity: str
+    files_retained: bool
+    processes_retained: bool
+
+    def receipt(self, resource: dict) -> dict:
+        if self.identity != resource_identity(resource) or not self.files_retained:
+            raise RuntimeError("Workspace preservation was not confirmed")
+        return {
+            "files_retained": self.files_retained,
+            "processes_retained": self.processes_retained,
+        }
 
 
 class RuntimeProvider(Protocol):
@@ -37,13 +89,38 @@ class RuntimeProvider(Protocol):
     async def open_channel(self, host: Any) -> None: ...
     async def send(self, host: Any, data: str, *, timeout: float) -> None: ...
     async def disconnect(self, host: Any) -> None: ...
+    async def close_channel(self, host: Any) -> None: ...
+    async def aclose(self) -> None: ...
     async def renew(self, host: Any) -> None: ...
     async def snapshot(self, host: Any) -> dict: ...
     async def resolve(self, resource: dict) -> list[dict]: ...
     async def cleanup(self, resource: dict) -> None: ...
-    async def connect_task(self, host: Any, resource: dict, connection: Any) -> None: ...
-    async def running_connection(self, host: Any) -> Any: ...
-    async def pause_resource(self, host: Any) -> None: ...
+    async def connect_task(
+        self, host: Any, resource: dict, connection: RuntimeConnection | None
+    ) -> None: ...
+    async def running_connection(self, host: Any) -> RuntimeConnection: ...
+    async def pause_resource(self, host: Any) -> RuntimeTransition: ...
+
+
+async def close_process(host):
+    """Close only a transport process; never mutate provider resources."""
+    process = host.process
+    if process:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            async with asyncio.timeout(5):
+                await process.wait()
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                async with asyncio.timeout(2):
+                    await process.wait()
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
 
 
 def read_process(host):

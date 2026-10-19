@@ -547,7 +547,11 @@ async def app_lifespan(app: FastAPI):
             await task
         except Exception as e:
             log_error(f"Storage reconciliation shutdown error: {e}")
-    await _shutdown_services()
+    try:
+        if service := getattr(app.state, "workbench_service", None):
+            await service.close()
+    finally:
+        await _shutdown_services()
 
 
 def create_app() -> FastAPI:
@@ -685,6 +689,7 @@ def create_app() -> FastAPI:
 
     app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
     from src.platform.scope_sandbox.workbench_router import router as workbench_router
+
     app.include_router(workbench_router)
     from src.platform.auth.router import router as auth_router
 

@@ -1,8 +1,8 @@
 """Human-authorized live workspace API. Published content routes stay Git-native."""
 
 import json
-from uuid import UUID
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -10,13 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.platform.auth.dependencies import get_current_user
 from src.version_engine.bootstrap.dependencies import get_version_engine_container
+
 from .workbench_service import build_workbench_service, public_workbench
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])
 
 
-def get_workbench_service(engine=Depends(get_version_engine_container)):
-    return build_workbench_service(engine=engine)
+async def get_workbench_service(request: Request, engine=Depends(get_version_engine_container)):
+    service = getattr(request.app.state, "workbench_service", None)
+    if service is None:
+        service = build_workbench_service(engine=engine)
+        request.app.state.workbench_service = service
+    return service
 
 
 class FileOperation(BaseModel):

@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from uuid import uuid4
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import HTTPException
 
@@ -12,8 +12,9 @@ from src.platform.access.adapters.agent.runtime.filesystem.port import Filesyste
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannel
+from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+
 from .workbench_repository import WorkbenchRepository
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class WorkbenchService(WorkbenchAdmission):
         super().__init__(repository, authorization)
         self.transport, self.filesystem, self.billing = transport, filesystem, billing
         self.channel_factory, self.providers = channel_factory, providers
+        self.channels = WorkbenchChannels(channel_factory)
 
     async def current(self, user, project):
         context, _ = await asyncio.to_thread(
@@ -120,7 +122,11 @@ class WorkbenchService(WorkbenchAdmission):
                     "provider": provider.name,
                     "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
                 }
-                if not binding.get("artifact") or not provider.capabilities.shared_workspace:
+                if (
+                    not binding.get("artifact")
+                    or not provider.capabilities.shared_workspace
+                    or not provider.capabilities.native_files
+                ):
                     raise HTTPException(503, {"code": "workbench_provider_not_configured"})
                 try:
                     provider.validate(binding["artifact"], row["resource"])
@@ -145,6 +151,12 @@ class WorkbenchService(WorkbenchAdmission):
 
     async def _start(self, row, grant):
         host = self.channel_factory(row)
+        try:
+            return await self._start_host(row, grant, host)
+        finally:
+            await host.close()
+
+    async def _start_host(self, row, grant, host):
         # One meter per compute epoch, shared by every Chat and file channel.
         await self.billing.ensure_session(
             audit_context={
@@ -209,17 +221,14 @@ class WorkbenchService(WorkbenchAdmission):
             )
 
         host.git_handler = exchange
-        try:
-            await host._open_control()
-            capability = await host.control("capabilities")
-            if capability.get("workbench_lifecycle") != 1:
-                raise RuntimeError("Workspace artifact does not implement lifecycle initialization")
-            if row["state"] == "allocating":
-                await host.control("initialize", host.resource["initialization"])
-            else:
-                await host.control("ready")
-        finally:
-            await host.close()
+        await host._open_control()
+        capability = await host.control("capabilities")
+        if capability.get("workbench_lifecycle") != 1:
+            raise RuntimeError("Workspace artifact does not implement lifecycle initialization")
+        if row["state"] == "allocating":
+            await host.control("initialize", host.resource["initialization"])
+        else:
+            await host.control("ready")
         # Recheck authority before accepting work after a potentially long clone.
         await asyncio.to_thread(
             self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
@@ -252,7 +261,10 @@ class WorkbenchService(WorkbenchAdmission):
         ):
             raise WorkerDisconnected("Workbench is not running")
         host = self.channel_factory(row)
-        return await host.runtime.running_connection(host)
+        try:
+            return await host.runtime.running_connection(host)
+        finally:
+            await host.runtime.aclose()
 
     async def bound(self, user, project, generation, *, write=False):
         action = ProjectAction.CONTENT_WRITE if write else ProjectAction.CONTENT_READ
@@ -267,21 +279,26 @@ class WorkbenchService(WorkbenchAdmission):
         return row, context
 
     @asynccontextmanager
-    async def files(self, user, project, generation, *, write=False):
+    async def files(self, user, project, generation, *, write=False, watch=False):
         row, context = await self.bound(user, project, generation, write=write)
-        # Opening a file channel is activity. Status polls and watch keepalive
-        # packets do not renew activity, and never wake a stopped workspace.
         row = await asyncio.to_thread(
             self.repository.activity, row, context["revision"], write=write
         )
         await self.billing.check_session(meter_id(row))
-        host = self.channel_factory(row, purpose="files")
-        try:
-            connection = await self.connection(row)
-            await host.connect(connection)
-            yield host
-        finally:
-            await host.close()
+        if watch:
+            # A subscriber must never monopolize a pooled request channel.
+            host = self.channel_factory(row, purpose="files")
+            try:
+                await host.connect()
+                yield host
+            finally:
+                await host.close()
+        else:
+            async with self.channels.borrow(row) as host:
+                yield host
+
+    async def close(self):
+        await self.channels.close()
 
     async def file_operation(self, user, project, generation, operation):
         write = operation["action"] in {"write", "mkdir", "move", "remove"}
@@ -326,7 +343,7 @@ class WorkbenchService(WorkbenchAdmission):
             return result
 
     async def events(self, user, project, generation):
-        async with self.files(user, project, generation) as channel:
+        async with self.files(user, project, generation, watch=True) as channel:
             await self.filesystem.watch(channel)
             yield {"generation": generation, "reset": True}
             while True:
@@ -342,36 +359,48 @@ class WorkbenchService(WorkbenchAdmission):
 
     async def _preserve_failed_start(self, row):
         host = self.channel_factory(row)
-        if row["resource"] is None:
-            # Intent is persisted before allocation, so no provider resource exists.
-            if settings.RUNTIME_METERING_MODE != "disabled":
-                await self.billing.cancel_session(meter_id(row))
-        else:
-            matches = await host.runtime.resolve(host.resource)
-            if len(matches) != 1:
-                # Keep reconciling a possibly late allocation. Absence after a
-                # timeout is not permission to create a second empty workspace.
-                raise WorkerDisconnected("Allocation outcome requires reconciliation")
-            host.resource = matches[0]
-            await host.runtime.pause_resource(host)
-            if settings.RUNTIME_METERING_MODE != "disabled":
-                if not await self.billing.finish_session(meter_id(row), retry=True):
+        try:
+            if row["resource"] is None:
+                # Intent is persisted before allocation, so no provider resource exists.
+                if settings.RUNTIME_METERING_MODE != "disabled":
+                    await self.billing.cancel_session(meter_id(row))
+            else:
+                matches = await host.runtime.resolve(host.resource)
+                if len(matches) != 1:
+                    # Keep reconciling a possibly late allocation. Absence after a
+                    # timeout is not permission to create a second empty workspace.
+                    raise WorkerDisconnected("Allocation outcome requires reconciliation")
+                host.resource = matches[0]
+                result = await host.runtime.pause_resource(host)
+                host.resource["preservation"] = result.receipt(host.resource)
+                if (
+                    settings.RUNTIME_METERING_MODE != "disabled"
+                    and not await self.billing.finish_session(meter_id(row), retry=True)
+                ):
                     raise WorkerDisconnected("Workspace settlement awaits confirmation")
-        if row["state"] != "retained":
-            await asyncio.to_thread(
-                self.repository.transition,
-                row,
-                "retained",
-                host.resource if row["resource"] is not None else None,
-            )
+            if row["state"] != "retained":
+                await asyncio.to_thread(
+                    self.repository.transition,
+                    row,
+                    "retained",
+                    host.resource if row["resource"] is not None else None,
+                )
+        finally:
+            await host.runtime.aclose()
 
     async def _pause(self, row):
+        await self.channels.invalidate(row["id"])
         host = self.channel_factory(row)
-        await host.runtime.pause_resource(host)
+        try:
+            result = await host.runtime.pause_resource(host)
+            host.resource["preservation"] = result.receipt(host.resource)
+        finally:
+            await host.runtime.aclose()
         # Settlement precedes paused ACK and the next compute epoch.
-        if settings.RUNTIME_METERING_MODE != "disabled":
-            if not await self.billing.finish_session(meter_id(row), retry=True):
-                raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
+            meter_id(row), retry=True
+        ):
+            raise WorkerDisconnected("Workspace settlement awaits confirmation")
         await asyncio.to_thread(self.repository.transition, row, "paused", host.resource)
 
     async def reap(self):
@@ -389,8 +418,12 @@ class WorkbenchService(WorkbenchAdmission):
                         )
                         await self.billing.detach_session(meter_id(row))
                         host = self.channel_factory(row)
-                        host.sandbox = await self.connection(row)
-                        await host.runtime.renew(host)
+                        connection = await self.connection(row)
+                        try:
+                            await host.runtime.connect_task(host, host.resource, connection)
+                            await host.runtime.renew(host)
+                        finally:
+                            await host.runtime.aclose()
                     except Exception:
                         claimed = await asyncio.to_thread(
                             self.repository.lifecycle_claim, row, suspend=True

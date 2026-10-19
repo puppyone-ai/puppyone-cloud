@@ -102,6 +102,8 @@ async def http_server(app, headers):
             ) as http:
                 yield http
         finally:
+            if service := getattr(app.state, "workbench_service", None):
+                await service.close()
             server.should_exit = True
             try:
                 async with asyncio.timeout(15):
@@ -462,6 +464,7 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
             if receipt.get("result") == "runtime_passed_cleanup_pending":
                 receipt["result"] = "passed"
         finally:
+            await provider.aclose()
             receipt["elapsed_seconds"] = round(time.monotonic() - start, 2)
             destination = os.environ.get("CLOUD_AGENT_FLY_TEST_RECEIPT")
             if destination:

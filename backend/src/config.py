@@ -384,7 +384,7 @@ class Settings(BaseSettings):
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
     # Only new Agent workspaces use this default. Existing bindings remain pinned.
-    CLOUD_AGENT_SANDBOX_PROVIDER: Literal["auto", "docker", "e2b", "fly"] = "auto"
+    CLOUD_AGENT_SANDBOX_PROVIDER: str = "auto"
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
