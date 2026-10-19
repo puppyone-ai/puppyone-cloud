@@ -140,6 +140,9 @@ first file-channel connection, then 50 write/read/list iterations on a 4,096-byt
 compressible ASCII text file (counter plus dot padding). It verifies live content,
 one reused channel, stale-save rejection, unauthenticated rejection, paused reads
 without wake, and file retention plus a new channel after explicit resume.
+The next run also records reopening an already-running workspace and the first
+file read after resume, checking that both retain the same resource identity.
+The existing Fly receipt predates these additional daily-use timing fields.
 The workload uses no model and disables metering. Resource cleanup is asserted.
 
 Use the owned service binaries and credentials described above. For E2B, provide

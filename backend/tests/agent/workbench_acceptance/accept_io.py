@@ -77,6 +77,18 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             receipt["first_read_ms"] = round((time.perf_counter() - start) * 1000, 2)
             service = entry.app.state.workbench_service
             cached = next(iter(service.channels.entries.values())).channel
+            resource_before = service.repository.get(workspace["id"])["resource"]["resource_id"]
+            start = time.perf_counter()
+            reopened = await http.post(root)
+            receipt["already_running_open_ms"] = round((time.perf_counter() - start) * 1000, 2)
+            assert reopened.status_code == 200, reopened.text
+            assert reopened.json()["id"] == workspace["id"]
+            assert reopened.json()["generation"] == workspace["generation"]
+            assert (
+                service.repository.get(workspace["id"])["resource"]["resource_id"]
+                == resource_before
+            )
+            assert next(iter(service.channels.entries.values())).channel is cached
             revision = None
             for iteration in range(50):
                 payload = (str(iteration).encode() + b"." * 4096)[:4096]
@@ -143,17 +155,25 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             assert resumed.status_code == 200, resumed.text
             assert resumed.json()["generation"] == workspace["generation"]
             receipt["resume_ms"] = round((time.perf_counter() - start) * 1000, 2)
+            read_start = time.perf_counter()
             persisted = await http.get(root + "/file", params={**params, "path": "io.txt"})
+            receipt["resume_first_read_ms"] = round((time.perf_counter() - read_start) * 1000, 2)
+            receipt["resume_to_file_ms"] = round((time.perf_counter() - start) * 1000, 2)
             assert persisted.status_code == 200, persisted.text
             assert base64.b64decode(persisted.json()["content_base64"]) == payload
+            assert (
+                service.repository.get(workspace["id"])["resource"]["resource_id"]
+                == resource_before
+            )
             assert next(iter(service.channels.entries.values())).channel is not cached
             receipt["functional_result"] = "passed"
             receipt["latency_goal"] = {"per_operation_p50_ms": 300, "per_operation_p95_ms": 1000}
             assert all(
                 v["p50_ms"] <= 300 and v["p95_ms"] <= 1000 for v in receipt["warm"].values()
             ), receipt["warm"]
-            receipt["result"] = "passed"
+            receipt["result"] = "runtime_passed_cleanup_pending"
     finally:
+        cleanup_succeeded = False
         try:
             if provider_name == "fly":
                 await cleanup_owned(entry, provider, receipt)
@@ -169,15 +189,20 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
                     if row["resource"]:
                         await provider.cleanup(row["resource"])
                 receipt["cleanup"] = "owned E2B sandboxes killed"
+            cleanup_succeeded = True
         finally:
-            await provider.aclose()
-            receipt["samples_ms"] = samples
-            destination = os.environ.get("CLOUD_AGENT_IO_RECEIPT_DIR")
-            if destination:
-                Path(destination, provider_name + "-io.json").write_text(
-                    json.dumps(receipt, indent=2) + "\n"
+            try:
+                await provider.aclose()
+                if cleanup_succeeded and receipt["result"] == "runtime_passed_cleanup_pending":
+                    receipt["result"] = "passed"
+            finally:
+                receipt["samples_ms"] = samples
+                destination = os.environ.get("CLOUD_AGENT_IO_RECEIPT_DIR")
+                if destination:
+                    Path(destination, provider_name + "-io.json").write_text(
+                        json.dumps(receipt, indent=2) + "\n"
+                    )
+                print(
+                    "PROVIDER_IO_RECEIPT "
+                    + json.dumps({k: v for k, v in receipt.items() if k != "samples_ms"})
                 )
-            print(
-                "PROVIDER_IO_RECEIPT "
-                + json.dumps({k: v for k, v in receipt.items() if k != "samples_ms"})
-            )
