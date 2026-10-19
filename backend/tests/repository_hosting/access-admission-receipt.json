@@ -1,0 +1,57 @@
+{
+  "recorded_at_utc": "2026-10-19T17:24:50.363599+00:00",
+  "result": "passed_project_root_apfs_and_channel_cache",
+  "source_base": "1fc87c6a6158db236ff911e0dce890ab9b4a0566",
+  "source_branch": "codex/server-access-fixes",
+  "dirty_source": true,
+  "changed_runtime_sources": {
+    "backend/src/platform/access/adapters/cli/write.py": "73342f7f604b5f376c5da98822be891c28cb3097093c41b9703cb084fa489f6a",
+    "backend/src/version_engine/admission/channel_pause.py": "2b0835758c75a25456350b21434525d72f1330beede24b39c22ca95b38830962",
+    "backend/src/version_engine/admission/connector_policy.py": "801fdd9c359d93a034f3c9520e02f68e365f61ce8de26ce1943d436942bb0782"
+  },
+  "runtime_diff_sha256": "8390be7714901a44833cedb371dbab98f749564c9dcaebee6efdffa76b891234",
+  "required_regression": {
+    "receipt": "puppyone-apfs-regression.xml",
+    "sha256": "13e948a3f7198364c819bf89baf24fc7be7be46abdbea71d7c9bf897d1e58d81",
+    "passed": 3292,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 885
+  },
+  "owned_web_git_cli": {
+    "receipt": "puppyone-apfs-acceptance-final.xml",
+    "sha256": "53ce411850abc6bcf0f74fc1e8767185dd32d1fffc672344358db63984d03236",
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "checked": [
+    "Web save/move and stock Git fetch/push",
+    "Project-root CLI cat/write share canonical refs",
+    "stale Web save conflicts",
+    "CLI pause/resume and policy changes invalidate warm admission cache",
+    "CLI pause does not pause Git",
+    "default CLI delete remains denied",
+    "read-only credential can read but cannot write",
+    "revoked credential rejected by Git and CLI",
+    "unauthenticated Web read rejected",
+    "Scope channel pause/resume invalidates the composite target key; cache isolation and management invalidation covered by 8 unit cases (Scope runtime remains disabled)",
+    "AP-FS mkdir/touch/cp/mv/ls/tree/stat/find/grep operate on native refs and objects",
+    "Binary upload and full/ranged download preserve bytes and are readable by stock Git",
+    "Path traversal rejected; stale write/upload/mkdir/touch/cp/mv/rm return 409 and leave HEAD unchanged",
+    "Explicitly allowed multi-file and recursive deletion; rmdir preserves tracked hidden .keep data"
+  ],
+  "environment": "owned PostgreSQL 17, PostgREST and MinIO on loopback; production routes and JWT validation with test identities; real CLI process; no hosted database/model/provider resources",
+  "regression_environment_note": "Uses repository default dummy Supabase URL localhost:54321. An earlier alternative dummy URL incorrectly selected pre-existing Supabase-dependent ETL tests; that run is not acceptance evidence.",
+  "limitations": [
+    "No native Scope or MCP runtime enablement",
+    "No public PTY or application-preview implementation",
+    "No fresh Fly/E2B performance result",
+    "No model/runtime metering acceptance",
+    "Acceptance recorded on the uncommitted source identified above; local merge commit is recorded in the architecture document",
+    "No remote push or deployment",
+    "Pause/policy invalidation is process-local; other workers observe the existing two-second TTL",
+    "Git-native mkdir writes a tracked .keep file; rmdir rejects that non-empty directory"
+  ]
+}

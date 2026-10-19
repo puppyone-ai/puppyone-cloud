@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from src.common_schemas import ApiResponse
 from src.file_operations.commands import VersionWriteCommandService
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.file_operations.upload_policy import (
     PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
+)
+from src.file_operations.upload_policy import (
     path_has_blocked_segment,
 )
 from src.platform.access.repository_schemas import (
@@ -25,7 +26,10 @@ from src.platform.access.repository_schemas import (
     WriteFileRequest,
 )
 from src.version_engine.bootstrap.dependencies import get_version_write_command_service
-from src.version_engine.write_engine.engine import ConcurrentMutationError
+from src.version_engine.write_engine.errors import (
+    ConcurrentMutationError,
+    NativeRevisionConflictError,
+)
 
 from .context import (
     _assert_not_excluded,
@@ -40,7 +44,6 @@ from .context import (
     _resolve_auth,
     _scope_payload,
 )
-
 
 router = APIRouter()
 
@@ -252,7 +255,7 @@ async def upload_file(
             source_channel="access_cli",
         )
         result = outcome.result
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return ApiResponse.success(
         data={
@@ -302,7 +305,7 @@ async def write_file(
             source_channel="access_cli",
         )
         result = outcome.result
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     full_path = _join_scope(scope["path"], outcome.path)
     return ApiResponse.success(
@@ -376,7 +379,7 @@ async def mkdir(
         result = outcome.result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return ApiResponse.success(
         data={
@@ -446,7 +449,7 @@ async def touch(
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        except ConcurrentMutationError as e:
+        except (ConcurrentMutationError, NativeRevisionConflictError) as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         for rel_path in existing_files:
             results_by_path[rel_path] = {
@@ -472,7 +475,7 @@ async def touch(
                 source_channel="access_cli",
             )
             result = outcome.result
-        except ConcurrentMutationError as e:
+        except (ConcurrentMutationError, NativeRevisionConflictError) as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         results_by_path[rel_path] = {
             "path": rel_path,
@@ -581,7 +584,7 @@ async def move(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return ApiResponse.success(
@@ -679,7 +682,7 @@ async def copy(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return ApiResponse.success(
@@ -751,7 +754,7 @@ async def rmdir(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     data = {
@@ -836,7 +839,7 @@ async def remove(
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except ConcurrentMutationError as e:
+    except (ConcurrentMutationError, NativeRevisionConflictError) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     data = {
