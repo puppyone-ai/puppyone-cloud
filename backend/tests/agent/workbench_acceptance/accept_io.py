@@ -57,7 +57,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
         source_diff_sha256=hashlib.sha256(
             subprocess.check_output(["git", "diff", "HEAD", "--binary"])
         ).hexdigest(),
-        workload="50 iterations of write/read/list; 4096-byte file; authenticated HTTP; local API+owned PG/S3",
+        workload="50 iterations of write/read/list; 4096-byte compressible ASCII text (counter plus dot padding); authenticated HTTP; local API+owned PG/S3",
         metering="disabled; not billing acceptance",
     )
     samples = {key: [] for key in ("write", "read", "list")}
@@ -147,6 +147,8 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             assert persisted.status_code == 200, persisted.text
             assert base64.b64decode(persisted.json()["content_base64"]) == payload
             assert next(iter(service.channels.entries.values())).channel is not cached
+            receipt["functional_result"] = "passed"
+            receipt["latency_goal"] = {"per_operation_p50_ms": 300, "per_operation_p95_ms": 1000}
             assert all(
                 v["p50_ms"] <= 300 and v["p95_ms"] <= 1000 for v in receipt["warm"].values()
             ), receipt["warm"]

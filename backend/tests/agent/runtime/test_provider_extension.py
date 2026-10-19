@@ -102,3 +102,47 @@ def test_preservation_receipt_distinguishes_files_from_processes():
         RuntimeTransition(resource_identity(resource), False, False).receipt(resource)
     with pytest.raises(RuntimeError):
         disk.receipt({**resource, "resource_id": "replacement"})
+
+
+@pytest.mark.asyncio
+async def test_incompatible_supplier_is_rejected_before_allocation():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from fastapi import HTTPException
+
+    from src.platform.scope_sandbox.workbench_service import WorkbenchService
+
+    row = dict(
+        id="workspace",
+        user_id="user",
+        project_id="project",
+        owner_deleted_at=None,
+        state="retired",
+        binding={},
+        resource=None,
+    )
+    provider = SimpleNamespace(
+        name="compute-only",
+        artifact=lambda image: "pinned",
+        capabilities=RuntimeCapabilities(recovery_backend=None, native_files=False),
+        validate=Mock(),
+    )
+    repository = Mock(get=Mock(return_value=row))
+    service = WorkbenchService(
+        None,
+        None,
+        None,
+        repository=repository,
+        authorization=Mock(),
+        providers=lambda name: provider,
+    )
+    service.context = Mock(return_value=({}, object()))
+    try:
+        with pytest.raises(HTTPException) as rejected:
+            await service.ensure_running({"user_id": "user", "project_id": "project"}, row)
+        assert rejected.value.status_code == 503
+        repository.acquire.assert_not_called()
+        provider.validate.assert_not_called()
+    finally:
+        await service.close()

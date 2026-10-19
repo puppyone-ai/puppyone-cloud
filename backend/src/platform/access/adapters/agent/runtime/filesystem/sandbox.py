@@ -1,5 +1,9 @@
 """Keep the existing native working-directory protocol and recovery material."""
 
+import base64
+import binascii
+import zlib
+
 from src.platform.access.adapters.agent.runtime.filesystem.port import (
     FilesystemChannel,
     FilesystemError,
@@ -29,11 +33,40 @@ class SandboxFilesystem:
         return await channel.control("push", {"candidate": candidate})
 
     async def operation(self, channel: FilesystemChannel, operation: Row) -> Row:
-        response = await channel.control("files", operation)
+        request = (
+            {**operation, "transfer_encoding": "deflate"}
+            if operation["action"] == "read"
+            else operation
+        )
+        response = await channel.control("files", request)
         error = response.get("error")
         if error:
             raise FilesystemError(error)
-        return response["result"]
+        result = dict(response["result"])
+        encoding = result.pop("content_encoding", None)
+        if encoding is not None:
+            try:
+                if (
+                    encoding != "deflate"
+                    or operation["action"] != "read"
+                    or len(result["content_base64"]) > 12 * 1024 * 1024
+                ):
+                    raise ValueError("Unsupported file transfer")
+                decoder = zlib.decompressobj()
+                data = decoder.decompress(
+                    base64.b64decode(result["content_base64"], validate=True), 8 * 1024 * 1024 + 1
+                )
+                if (
+                    len(data) > 8 * 1024 * 1024
+                    or not decoder.eof
+                    or decoder.unconsumed_tail
+                    or decoder.unused_data
+                ):
+                    raise ValueError("Invalid file transfer size or framing")
+                result["content_base64"] = base64.b64encode(data).decode()
+            except (ValueError, KeyError, binascii.Error, zlib.error) as exc:
+                raise FilesystemError("file_operation_rejected") from exc
+        return result
 
     async def watch(self, channel: FilesystemChannel) -> None:
         await channel.control("watch")

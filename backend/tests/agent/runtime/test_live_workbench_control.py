@@ -279,7 +279,7 @@ async def test_product_owner_single_flight_native_files_and_revocation(
                         == "intent"
                     )
                     return {"result": {"revision": revision}}
-                assert value == {"action": "read", "path": "live.md"}
+                assert value == {"action": "read", "path": "live.md", "transfer_encoding": "deflate"}
                 return {
                     "result": {
                         "content_base64": base64.b64encode(b"uncommitted agent edit").decode(),

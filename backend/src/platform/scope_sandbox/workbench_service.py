@@ -85,7 +85,11 @@ class WorkbenchService(WorkbenchAdmission):
         super().__init__(repository, authorization)
         self.transport, self.filesystem, self.billing = transport, filesystem, billing
         self.channel_factory, self.providers = channel_factory, providers
-        self.channels = WorkbenchChannels(channel_factory)
+        self.channels = WorkbenchChannels(
+            channel_factory,
+            idle_seconds=settings.CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS,
+            limit=settings.CLOUD_AGENT_FILE_CHANNEL_LIMIT,
+        )
 
     async def current(self, user, project):
         context, _ = await asyncio.to_thread(

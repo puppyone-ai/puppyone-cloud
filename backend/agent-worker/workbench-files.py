@@ -10,6 +10,7 @@ import os
 import stat
 import sys
 import uuid
+import zlib
 
 MAX_BYTES = 8 * 1024 * 1024
 MAX_ENTRIES = 10000
@@ -198,7 +199,16 @@ def operation(request):
     root = os.open('/workspace/repo', DIRECTORY)
     try:
         try:
-            result = {'result': execute(root, request)}
+            value = execute(root, request)
+            # Optional wire encoding, independent of native file semantics. Old
+            # callers and incompressible bytes retain the original response.
+            if request['action'] == 'read' and request.get('transfer_encoding') == 'deflate':
+                raw = base64.b64decode(value['content_base64'])
+                packed = zlib.compress(raw, level=1)
+                if len(packed) + 64 < len(raw):
+                    value = {**value, 'content_base64': base64.b64encode(packed).decode(),
+                             'content_encoding': 'deflate'}
+            result = {'result': value}
         except Conflict as error:
             result = {'error': 'file_conflict', 'message': str(error)}
         except FileNotFoundError:

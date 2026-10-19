@@ -385,6 +385,8 @@ class Settings(BaseSettings):
     E2B_API_KEY: str = ""
     # Only new Agent workspaces use this default. Existing bindings remain pinned.
     CLOUD_AGENT_SANDBOX_PROVIDER: str = "auto"
+    CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
+    CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"

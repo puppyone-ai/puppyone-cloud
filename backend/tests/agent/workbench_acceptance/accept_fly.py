@@ -223,6 +223,7 @@ async def test_fly_chat_live_files_publication_and_resume(entry, monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PROVIDER", "fly")
     receipt = {
         "provider": "fly",
+        "region": settings.CLOUD_AGENT_FLY_REGION,
         "result": "failed",
         "project_id": case.project,
         "image": settings.CLOUD_AGENT_FLY_IMAGE,
