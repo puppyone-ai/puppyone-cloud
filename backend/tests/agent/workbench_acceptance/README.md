@@ -78,6 +78,30 @@ share one private default binding, with different users isolated. This entry
 prerequisite passed against owned PostgreSQL/PostgREST/MinIO on 2026-10-19.
 It does not exercise Supabase login or token issuance.
 
+## MCP project-root acceptance prerequisite
+
+`accept_mcp.py` uses the same owned PostgreSQL/PostgREST/MinIO and verified
+test JWT fixture as the production-entry prerequisite. It creates an endpoint
+through the production API, then requires real tool discovery, reading the seeded
+file, read-only write rejection and revocation. It does not stub the resolver or
+replace a Runtime credential with its creator's Human grant. Run explicitly:
+
+```sh
+python -m pytest -q tests/agent/workbench_acceptance/accept_mcp.py
+```
+
+On 2026-10-21, backend `febb2d8f` **fails this gate**: endpoint creation succeeds,
+but `/internal/mcp-runtime/tools` returns `501 native_scope_not_available`, even
+for Project root. Dependent file/revocation assertions and external MCP transport
+are unverified. Endpoint cleanup still runs. This remains an executable failing
+acceptance gate, not an xfail or a regression asserting that `501` is success.
+
+Fixing this requires native Runtime admission and grant-bound file operations;
+the current SQL repository admission resolves Git credentials only. Removing the
+resolver guard alone cannot provide working MCP access. Folder Scope support
+remains a separate native repository gate. Issuing a key is not connection
+acceptance.
+
 ## Real Fly runtime scenario
 
 `accept_fly.py` uses authenticated HTTP, the default dispatcher/lifecycle owner,
