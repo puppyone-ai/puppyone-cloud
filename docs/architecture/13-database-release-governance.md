@@ -43,7 +43,7 @@ merge to qubits / main
   -> compatible schema -> data run + verify -> dependent Contract
   -> final schema history, product contracts, Data API containment, public drift
   -> deploy the exact source SHA to all declared application services
-  -> authenticated file write/read + real Agent reply on an owned test project
+  -> authenticated Git and live workspace file write/read + real Agent reply on an owned test project
   -> durable accepted receipt and GitHub deployment success
 ```
 
@@ -216,7 +216,13 @@ database and object volumes and never accept production credentials.
 
 Docker acceptance checks old file contents and sessions after upgrade, then
 performs new authenticated writes and checks Data API containment. The hosted
-bounded check also verifies a real Agent reads the stored file and replies.
+bounded check first verifies the published file, then follows Desktop's
+`GET/POST /projects/{id}/workbench` opening sequence. Initial allocation has a
+180-second request budget. The live file list/read/write APIs must preserve
+the edit's revision, leave the published Git content unchanged, and let the
+real Agent read that unpublished edit from the same workspace. A missing
+workbench route, mismatched checkout or stale worker blocks release acceptance;
+successful Git hosting alone does not prove Desktop Cloud readiness.
 Runtime suites separately cover sandbox reads/writes, publication, concurrency
 and database-request budgets. Those performance contracts remain part of the
 required Agent CI, not a repeated whole-customer-data release audit.

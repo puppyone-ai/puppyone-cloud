@@ -388,10 +388,24 @@ def test_backup_bucket_must_be_proven_private(public_acl, public_policy):
         target.verify_private_backup_bucket()
 
 
-@pytest.mark.parametrize("agent_state", ["succeeded", "failed", "wrong_reply", "approval"])
+@pytest.mark.parametrize(
+    "agent_state",
+    [
+        "succeeded",
+        "failed",
+        "wrong_reply",
+        "approval",
+        "missing_workbench_route",
+        "missing_live_file",
+        "wrong_live_save",
+        "published_changed",
+        "different_workspace",
+    ],
+)
 def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
     monkeypatch, agent_state
 ):
+    import base64
     import json
 
     from src.infra.data_migrations.release.acceptance import accept
@@ -411,16 +425,51 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
             saved["content"] = body["content"]
             result = {"commit_id": "git-commit"}
         elif path.endswith("/cat"):
-            result = {"content_text": saved["content"]}
+            result = {
+                "content_text": saved.get("live", saved["content"])
+                if agent_state == "published_changed"
+                else saved["content"]
+            }
+        elif path.endswith("/workbench"):
+            if agent_state == "missing_workbench_route":
+                return httpx.Response(404, json={"detail": "Not Found"})
+            workspace = {
+                "id": "workbench",
+                "generation": "generation",
+                "project_id": "owned",
+                "state": "running",
+            }
+            if agent_state == "different_workspace" and saved.get("agent_started"):
+                workspace["id"] = "different-workbench"
+            result = workspace if request.method == "POST" else {"workspace": workspace}
+        elif path.endswith("/workbench/files"):
+            result = {"entries": [{"name": "release-check.md"}]}
+        elif path.endswith("/workbench/file"):
+            if agent_state == "missing_live_file":
+                return httpx.Response(404, json={"detail": {"code": "file_not_found"}})
+            assert request.url.params["generation"] == "generation"
+            if request.method == "PUT":
+                assert body["expected_revision"] == "original"
+                saved["live"] = base64.b64decode(body["content_base64"]).decode()
+                result = {"revision": "edited"}
+            else:
+                content = saved.get("live", saved["content"])
+                if agent_state == "wrong_live_save" and "live" in saved:
+                    content = "stale content"
+                result = {
+                    "content_base64": base64.b64encode(content.encode()).decode(),
+                    "revision": "edited" if "live" in saved else "original",
+                }
         elif request.method == "POST" and path.endswith("/agents/runs"):
+            saved["agent_started"] = True
             result = {"id": "run"}
         elif request.method == "GET" and path.endswith("/agents/runs/run"):
             result = {
                 "state": "succeeded"
-                if agent_state in {"succeeded", "wrong_reply"}
+                if agent_state in {"succeeded", "wrong_reply", "different_workspace"}
                 else agent_state,
                 "snapshot": {
-                    "text": saved["content"] if agent_state != "wrong_reply" else "did not read it"
+                    "text": saved["live"] if agent_state != "wrong_reply" else saved["content"]
                 },
                 "tools": [{"call_id": "tool", "state": "waiting"}]
                 if agent_state == "approval"
@@ -443,7 +492,11 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
         "org_id": "owned",
     }
     if agent_state == "succeeded":
-        assert accept(config)["agent_reply"] is True
+        receipt = accept(config)
+        assert receipt["agent_reply"] is True
+        assert receipt["live_files_read_write"] is True
+        assert receipt["live_edit_unpublished"] is True
+        assert receipt["agent_reads_live_edit"] is True
         assert ("POST", "/api/v1/agents/runs/run/stop") not in calls
     else:
         with pytest.raises(RuntimeError):
