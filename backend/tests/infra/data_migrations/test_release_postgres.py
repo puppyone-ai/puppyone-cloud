@@ -214,7 +214,10 @@ def test_ordinary_schema_lane_applies_missing_older_sql_with_official_cli(
     # release rehearsal. CLI application, history, locks and probes are real.
     monkeypatch.setattr(target.schema_executor, "adopt", lambda: None)
     monkeypatch.setattr(target.schema_executor, "verify_drift", lambda: None)
-    plan = ReleasePlan((Phase("sql", "schema", "latest"),), "sum", frozenset(versions))
+    plan = ReleasePlan(
+        (Phase("unrelated-copy", "data", "historical-copy"), Phase("sql", "schema", "latest")),
+        "sum", frozenset(versions),
+    )
     try:
         assert deploy_schema(plan, target) == {"state": "deployed", "pending_versions": [versions[1]]}
         assert cluster.applied_schema_versions() == set(versions)

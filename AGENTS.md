@@ -24,9 +24,10 @@
 > relevant populated upgrade. `--include-all` is not dependency validation.
 > Keep unready cleanup in `contract.pending.sql`. Premerge CI proves the whole
 > populated upgrade in disposable Docker. After merge, the shared workflow applies and verifies compatible SQL with
-> Supabase credentials alone. Pending data/Contract upgrades route to the full
+> Supabase credentials alone. Pending Contract/dependent SQL routes to the full
 > coordinator, which establishes cutover prerequisites before Contract SQL.
-> Application configuration must not block ordinary SQL; database success must
+> Unrelated historical data artifacts and application configuration must not
+> block ordinary SQL; database success must
 > never be represented as accepted application deployment. Do not require production to apply the
 > candidate migrations before the candidate can merge.
 > Distinguish tested, merged, database-ready, deployed and accepted evidence.

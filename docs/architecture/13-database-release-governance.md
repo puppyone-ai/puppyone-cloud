@@ -12,7 +12,7 @@ successful schema verification with exact-source application deployment and
 acceptance. Without that configuration, the workflow explicitly reports
 **database migrated; application deployment not configured**. It never writes
 an accepted application deployment receipt for a database-only run. Pending
-data/Contract work always routes to the full coordinator and fails if its
+Contract SQL or SQL with declared data prerequisites always routes to the full coordinator and fails if its
 required infrastructure is unavailable; it cannot fall back to uncoordinated SQL.
 
 ## Migration merge admission
@@ -44,12 +44,12 @@ deployment is never a successful upgrade baseline.
 merge to qubits / main
   -> candidate CI, including populated Docker rehearsal
   -> protected Supabase environment + database-wide release lock
-  -> validate history, the complete pending plan and immutable data receipts
+  -> validate complete schema history and the checksum-bound upgrade plan
   -> ordinary SQL:
        apply every missing migration through the official Supabase CLI
        verify exact history, database contracts, Data API containment and drift
        publish database result independently of application configuration
-  -> pending data/Contract cutover (no candidate SQL applied by the ordinary lane):
+  -> pending Contract or SQL with declared data prerequisites (no candidate SQL applied by the ordinary lane):
        enter full coordinator; recheck actual prerequisites under the same lock
        stop producers -> drain work -> stop consumers and verify writer exit
        create and restore-test a private backup
@@ -59,6 +59,16 @@ merge to qubits / main
        authenticated Git, live workspace and real Agent acceptance
        durable accepted receipt and GitHub deployment success
 ```
+
+Historical data artifacts do not become prerequisites for every subsequent
+SQL deployment merely because they are listed in the full upgrade plan.
+The schema stage classifies pending SQL by the existing Contract naming and
+`requires-data-migration` declarations. It verifies an already-current schema
+even when old data jobs have no receipt. This never completes, skips or writes
+a receipt for those artifacts: the configured application coordinator still
+runs its complete ordered plan before accepting an application release.
+New SQL that depends on data transformation must declare that dependency;
+unready destructive cleanup stays outside active schema history.
 
 Ordinary additive releases keep the application online. Data migrations and
 Contract SQL use a maintenance window. Consumers must keep running until their
@@ -230,7 +240,7 @@ following infrastructure contract:
 
 Missing application configuration never blocks compatible SQL. The application
 stage is explicitly reported as not configured and does not deploy anything.
-When actual database receipts require a data/Contract cutover, missing
+When pending SQL declares a data prerequisite or Contract cutover, missing
 configuration fails the workflow before candidate SQL; no migration success
 is reported. A failed application stage after compatible SQL reports the
 database as ready and the application as failed. Repository implementation,

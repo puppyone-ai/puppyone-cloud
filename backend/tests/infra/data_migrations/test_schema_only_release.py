@@ -83,12 +83,20 @@ def test_missing_older_sql_is_applied_without_any_platform_client_and_retry_is_n
     assert not target.held
 
 
-def test_pending_data_hands_off_before_any_candidate_sql(target):
-    target.db.receipt = lambda _: None
+def test_unrelated_data_artifacts_do_not_block_compatible_sql(target):
+    def no_receipt_access(_):
+        pytest.fail("Ordinary SQL must not consult unrelated data artifact receipts")
+    target.db.receipt = no_receipt_access
     result = deploy_schema(PLAN, target)
-    assert result["state"] == "coordinated_release_required"
-    assert result["pending_data"] == ["copy"]
-    assert target.events == ["adopt"]
+    assert result["state"] == "deployed"
+    assert "20261002000000" in target.events
+
+
+def test_current_schema_is_verified_even_when_old_data_jobs_were_never_run(target):
+    target.applied.add("20261002000000")
+    target.db.receipt = lambda _: None
+    assert deploy_schema(PLAN, target) == {"state": "deployed", "pending_versions": []}
+    assert target.events == ["adopt", "credential-preflight", "verified"]
 
 
 @pytest.mark.parametrize("filename,body", [
@@ -104,9 +112,23 @@ def test_contract_hands_off_even_if_data_receipt_exists(target, filename, body):
 
 
 def test_tampered_data_receipt_is_not_treated_as_completed(target):
+    file = target.root / "supabase/migrations/20261002000000_contract_fixture.sql"
+    file.write_text("-- requires-data-migration: copy\nSELECT 1;")
+    target.schema_executor.files["20261002000000"] = file
     target.db.receipt = lambda _: {"verified": True, "artifact_checksum": "wrong"}
     with pytest.raises(ValueError, match="differs"):
         deploy_schema(PLAN, target)
+    assert target.events == ["adopt"]
+
+
+def test_pending_dependent_contract_still_requires_coordinated_data_release(target):
+    file = target.root / "supabase/migrations/20261002000000_contract_fixture.sql"
+    file.write_text("-- requires-data-migration: copy\nSELECT 1;")
+    target.schema_executor.files["20261002000000"] = file
+    target.db.receipt = lambda _: None
+    result = deploy_schema(PLAN, target)
+    assert result["state"] == "coordinated_release_required"
+    assert result["pending_data"] == ["copy"]
     assert target.events == ["adopt"]
 
 
