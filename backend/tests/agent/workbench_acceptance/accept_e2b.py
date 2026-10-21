@@ -1,6 +1,8 @@
 """Opt-in E2B acceptance of the same product scenario as Fly; no deployment switch."""
 
 import os
+import shlex
+from uuid import uuid4
 
 import pytest
 from e2b import AsyncSandbox
@@ -61,24 +63,30 @@ class E2BProbe:
         self.provider = E2BRuntimeProvider()
 
     egress_probe = """
-import os, socket
+import os, socket, ssl
 assert os.getuid() == 1000
 for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4700::1111')]:
-    with socket.socket(family, socket.SOCK_STREAM) as connection:
-        connection.settimeout(3)
-        try:
-            connection.connect((host, 443))
-        except OSError:
-            pass
-        else:
-            raise AssertionError('Unrestricted task egress: ' + host)
+    for port in [80, 443]:
+        with socket.socket(family, socket.SOCK_STREAM) as connection:
+            connection.settimeout(3)
+            try:
+                connection.connect((host, port))
+                if port == 443:
+                    connection = ssl.create_default_context().wrap_socket(connection, server_hostname='one.one.one.one')
+                connection.sendall(b'GET / HTTP/1.1\\r\\nHost: one.one.one.one\\r\\nConnection: close\\r\\n\\r\\n')
+                response = connection.recv(100)
+                assert not response, 'Unrestricted task egress: ' + host
+            except OSError:
+                pass
 """
 
     async def verify_egress(self, resource, receipt):
         info = await AsyncSandbox.get_info(resource["resource_id"], api_key=settings.E2B_API_KEY)
         assert info.allow_internet_access is False
         assert info.lifecycle["auto_resume"] is False
-        receipt["egress"] = "provider internet disabled; IPv4/IPv6 TCP probes denied"
+        receipt["egress"] = (
+            "provider internet disabled; IPv4/IPv6 HTTP/TLS probes cannot receive origin data"
+        )
 
     async def assert_single_resource(self, resource, project):
         assert [item.sandbox_id for item in await owned_sandboxes(project)] == [
@@ -95,3 +103,40 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
 
 async def test_e2b_chat_live_files_publication_and_resume(entry, monkeypatch):
     await accept_runtime(entry, monkeypatch, E2BProbe())
+
+
+async def test_e2b_network_proxy_denies_origin_data_with_positive_control():
+    # E2B's transparent proxy can accept TCP before enforcing egress. A
+    # successful connect() alone is neither access nor an isolation failure.
+    sandbox = await AsyncSandbox.create(
+        template=settings.CLOUD_AGENT_E2B_TEMPLATE,
+        timeout=120,
+        allow_internet_access=False,
+        lifecycle={"auto_resume": False},
+        metadata={"acceptance": "e2b-network-control", "project_id": str(uuid4())},
+        api_key=settings.E2B_API_KEY,
+    )
+    try:
+        await sandbox.commands.run(
+            "python3 -c " + shlex.quote(E2BProbe.egress_probe), user="node", timeout=30
+        )
+        await sandbox.update_network({"allow_out": ["1.1.1.1"], "deny_out": ["0.0.0.0/0"]})
+        positive = """
+import socket, ssl
+for port in [80,443]:
+    connection = socket.create_connection(('1.1.1.1', port), timeout=5)
+    if port == 443:
+        connection = ssl.create_default_context().wrap_socket(connection, server_hostname='one.one.one.one')
+    with connection:
+        connection.sendall(b'GET / HTTP/1.1\\r\\nHost: one.one.one.one\\r\\nConnection: close\\r\\n\\r\\n')
+        assert connection.recv(100).startswith(b'HTTP/1.1 ')
+"""
+        await sandbox.commands.run("python3 -c " + shlex.quote(positive), user="node", timeout=30)
+        await sandbox.update_network({"allow_out": [], "deny_out": ["0.0.0.0/0"]})
+        await sandbox.commands.run(
+            "python3 -c " + shlex.quote(E2BProbe.egress_probe), user="node", timeout=30
+        )
+    finally:
+        await sandbox.kill()
+        with pytest.raises(NotFoundException):
+            await AsyncSandbox.get_info(sandbox.sandbox_id, api_key=settings.E2B_API_KEY)
