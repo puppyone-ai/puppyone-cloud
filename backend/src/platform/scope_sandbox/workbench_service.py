@@ -285,24 +285,19 @@ class WorkbenchService(WorkbenchAdmission):
     @asynccontextmanager
     async def files(self, user, project, generation, *, write=False, watch=False):
         row, context = await self.bound(user, project, generation, write=write)
-        row = await asyncio.to_thread(
-            self.repository.activity, row, context["revision"], write=write
-        )
+        if not watch:
+            row = await asyncio.to_thread(
+                self.repository.activity, row, context["revision"], write=write
+            )
         await self.billing.check_session(meter_id(row))
-        if watch:
-            # A subscriber must never monopolize a pooled request channel.
-            host = self.channel_factory(row, purpose="files")
-            try:
-                await host.connect()
-                yield host
-            finally:
-                await host.close()
-        else:
-            async with self.channels.borrow(row) as host:
-                yield host
+        async with self.channels.borrow(row) as host:
+            yield host
 
     async def close(self):
+        from .execution.providers.registry import close_provider_transports
+
         await self.channels.close()
+        await close_provider_transports()
 
     async def file_operation(self, user, project, generation, operation):
         write = operation["action"] in {"write", "mkdir", "move", "remove"}
@@ -347,19 +342,25 @@ class WorkbenchService(WorkbenchAdmission):
             return result
 
     async def events(self, user, project, generation):
-        async with self.files(user, project, generation, watch=True) as channel:
-            await self.filesystem.watch(channel)
+        async with (
+            self.files(user, project, generation, watch=True) as channel,
+            self.filesystem.subscribe(channel) as events,
+        ):
+            await self.bound(user, project, generation)
             yield {"generation": generation, "reset": True}
             while True:
                 await self.bound(user, project, generation)
                 try:
-                    frame = await asyncio.wait_for(channel.receive(), timeout=10)
+                    frame = await asyncio.wait_for(events.get(), timeout=10)
                 except TimeoutError:
                     yield None
                     continue
                 if frame.get("type") != "workspace_changed":
                     raise WorkerDisconnected("Workspace watch disconnected")
-                yield {"generation": generation, "reset": True}
+                # Permission can change while waiting for a filesystem event.
+                await self.bound(user, project, generation)
+                # Preserve the public reset contract; path hints are additive.
+                yield {"generation": generation, "reset": True, "paths": frame.get("paths")}
 
     async def _preserve_failed_start(self, row):
         host = self.channel_factory(row)
@@ -453,9 +454,9 @@ class WorkbenchService(WorkbenchAdmission):
 
 
 def build_workbench_service(*, engine=None):
+    from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
     from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
     from src.platform.billing.runtime import get_runtime_metering_service
-    from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
     from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
     engine = engine or build_worker_version_engine_container()

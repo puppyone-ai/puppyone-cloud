@@ -9,6 +9,12 @@ scheduled execution; `POST /agents` and the old runtime DTO are removed.
 tools to `loop.mjs`; the current implementations use the same native working
 directory. Controllers retain resource, isolation and trusted Git responsibilities.
 
+Live workspace notifications watch native directory entries, including newly
+created subdirectories. Atomic editor saves replace file inodes, so watching
+individual file inodes can miss later Bash writes on Linux. Directory watches
+survive those saves; notifications invalidate live reads without Git publication.
+The file channel excludes `.git` and symlink targets from its watch tree.
+
 ## Run locally
 
 Build from the repository root:

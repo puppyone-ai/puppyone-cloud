@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { inflateSync } from 'node:zlib';
+import { inflateSync, deflateSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { stat, rm, readFile } from 'node:fs/promises';
 import { initializeWorkbench } from './workbench-initialize.mjs';
@@ -81,7 +81,16 @@ test('native file channel watches Bash saves before publication and rejects stal
     assert.equal(Buffer.from(read.result.content_base64,'base64').toString(),'agent-saving');
     // No finalize/commit/push was called: live access is independent of Git.
     await assert.rejects(exec('git',['rev-parse','--verify','HEAD'],{cwd:ROOT,uid:1000,gid:1000}));
+    // The editor saves by replacing the inode. Later Bash writes must still
+    // notify the open editor, not only newly created files in the tree.
+    const beforeSave = changes;
+    const saved = await file({action:'write',path:'file.txt',expected_revision:read.result.revision,
+      content_base64:Buffer.from('desktop-save').toString('base64')});
+    assert.ok(saved.result);
+    await poll(() => changes > beforeSave);
+    const afterSave = changes;
     await exec('sh',['-c', 'printf agent-newer > file.txt'],{cwd:ROOT,uid:1000,gid:1000});
+    await poll(() => changes > afterSave);
     const stale = await file({action:'write',path:'file.txt',expected_revision:read.result.revision,content_base64:Buffer.from('stale human').toString('base64')});
     assert.equal(stale.error,'file_conflict');
     assert.equal(Buffer.from((await file({action:'read',path:'file.txt'})).result.content_base64,'base64').toString(),'agent-newer');
@@ -91,8 +100,16 @@ test('native file channel watches Bash saves before publication and rejects stal
     assert.ok(repeated.every(value => Buffer.from(value.result.content_base64,'base64').toString() === 'agent-newer'));
     await exec('ln',['-s','/etc/passwd','outside'],{cwd:ROOT,uid:1000,gid:1000});
     for (const path of ['../etc/passwd','.git/config','outside']) assert.ok((await file({action:'read',path})).error);
+    const beforeFolder = changes;
     assert.ok((await file({action:'mkdir',path:'folder'})).result);
+    await poll(() => changes > beforeFolder);
+    const beforeMove = changes;
     assert.ok((await file({action:'move',path:'file.txt',destination:'folder/moved.txt'})).result);
+    await poll(() => changes > beforeMove);
+    const beforeNestedWrite = changes;
+    await exec('sh',['-c','printf nested-newer > folder/moved.txt'],{cwd:ROOT,uid:1000,gid:1000});
+    await poll(() => changes > beforeNestedWrite);
+    assert.equal(Buffer.from((await file({action:'read',path:'folder/moved.txt'})).result.content_base64,'base64').toString(),'nested-newer');
     assert.ok((await file({action:'remove',path:'folder'})).result);
     assert.equal((await file({action:'read',path:'folder/moved.txt'})).error,'file_not_found');
     const large = Buffer.from('native-file-content-'.repeat(1000));
@@ -103,6 +120,17 @@ test('native file channel watches Bash saves before publication and rejects stal
     const plain = (await file({action:'read',path:'transfer.txt'})).result;
     assert.equal(plain.content_encoding, undefined);
     assert.equal(packed.revision, plain.revision, 'Transfer encoding cannot change file identity');
+    const compressedSave = await file({action:'write',path:'transfer.txt',expected_revision:plain.revision,
+      content_encoding:'deflate',content_base64:deflateSync(large).toString('base64')});
+    assert.equal(compressedSave.result.revision, plain.revision);
+    assert.deepEqual(await readFile(`${ROOT}/transfer.txt`), large, 'Bash and editor see uncompressed native bytes');
+    for (const bytes of [Buffer.from('invalid'), deflateSync(large).subarray(0,-2),
+      Buffer.concat([deflateSync(large), Buffer.from('trailing')]), deflateSync(Buffer.alloc(8*1024*1024+1))]) {
+      const invalid = await file({action:'write',path:'transfer.txt',expected_revision:plain.revision,
+        content_encoding:'deflate',content_base64:bytes.toString('base64')});
+      assert.equal(invalid.error, 'file_operation_rejected');
+      assert.deepEqual(await readFile(`${ROOT}/transfer.txt`), large, 'Invalid transfer cannot change the file');
+    }
     const children = (await readFile(`/proc/${child.pid}/task/${child.pid}/children`, 'utf8')).trim().split(/\s+/);
     assert.equal(children.length, 1, 'One persistent helper serves all file operations');
     assert.match(await readFile(`/proc/${children[0]}/cmdline`, 'utf8'), /workbench-files.py/);
@@ -112,5 +140,82 @@ test('native file channel watches Bash saves before publication and rejects stal
   } finally {
     child?.stdin.end(); if (child) await poll(() => child.exitCode !== null);
     await rm(ROOT,{recursive:true,force:true}); await rm(CONTROL_ROOT,{recursive:true,force:true});
+  }
+});
+
+test('supervised service survives clients, fences epochs and restarts on the same native files', {timeout: 60000}, async () => {
+  const {spawn} = await import('node:child_process');
+  const {createInterface} = await import('node:readline');
+  const workbench = randomUUID(), generation = randomUUID(), clients = [];
+  let supervisor, stage = 'initial connection';
+  function connect(epoch) {
+    const child = spawn('node', ['/opt/puppyone-agent/workbench-file-client.mjs'], {stdio: ['pipe', 'pipe', 'inherit']});
+    const pending = new Map(), events = [];
+    createInterface({input: child.stdout}).on('line', line => {
+      const frame = JSON.parse(line);
+      if (frame.type === 'control_result') {
+        const request = pending.get(frame.id); pending.delete(frame.id);
+        if (request) frame.error ? request.reject(new Error(frame.error)) : request.resolve(frame.result);
+      } else events.push(frame);
+    });
+    child.on('exit', () => { for (const request of pending.values()) request.reject(new Error(`Disconnected during ${stage}`)); pending.clear(); });
+    const call = (action, value) => new Promise((resolve, reject) => {
+      const id = randomUUID(); pending.set(id, {resolve, reject}); child.stdin.write(JSON.stringify({type: 'control', id, action, value}) + '\n');
+    });
+    const client = {child, call, events, hello: () => call('hello', {protocol: 1, workbench, generation, compute_epoch: epoch})};
+    clients.push(client); return client;
+  }
+  async function servicePid() {
+    return Number((await readFile(`/proc/${supervisor.pid}/task/${supervisor.pid}/children`, 'utf8')).trim().split(/\s+/)[0]);
+  }
+  async function readyConnection(epoch) {
+    let client, receipt;
+    // A spawned PID or socket inode alone is not service readiness. During a
+    // restart, retry only this read-only handshake, never a file mutation.
+    await poll(async () => {
+      client = connect(epoch);
+      try { receipt = await client.hello(); return true; }
+      catch (error) {
+        client.child.stdin.end();
+        if (!/Disconnected/.test(error.message)) throw error;
+        return false;
+      }
+    });
+    return {client, receipt};
+  }
+  try {
+    await initializeWorkbench({workbench, generation}, {project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null}, () => {throw new Error('Unexpected Git');});
+    supervisor = spawn('node', ['/opt/puppyone-agent/workbench-files-supervisor.mjs'], {stdio: ['ignore', 'inherit', 'inherit']});
+    await poll(async () => { try { return (await stat(`${CONTROL_ROOT}/files.sock`)).isSocket(); } catch { return false; } });
+    const first = connect(1), second = connect(1);
+    const receipt = await first.hello(); assert.equal((await second.hello()).service_id, receipt.service_id);
+    await first.call('watch'); await second.call('watch');
+    const saved = await second.call('files', {action: 'write', path: 'persist.txt', expected_revision: null, content_base64: Buffer.from('persisted').toString('base64')});
+    assert.ok(saved.result); await poll(() => first.events.length > 0 && second.events.length > 0);
+    first.child.stdin.end(); await poll(() => first.child.exitCode !== null);
+    const remaining = connect(1); assert.equal((await remaining.hello()).service_id, receipt.service_id);
+    assert.equal(Buffer.from((await remaining.call('files', {action: 'read', path: 'persist.txt'})).result.content_base64, 'base64').toString(), 'persisted');
+    const count = second.events.length;
+    await exec('sh', ['-c', 'printf updated > .save; mv .save persist.txt'], {cwd: ROOT, uid: 1000, gid: 1000});
+    await poll(() => second.events.length > count);
+    // Elevated epoch disconnects existing connections; an old epoch cannot reattach.
+    stage = 'epoch fencing';
+    const newer = connect(2); await newer.hello();
+    await poll(() => second.child.exitCode !== null && remaining.child.exitCode !== null);
+    await assert.rejects(connect(1).hello(), /Stale/);
+    stage = 'service restart';
+    const oldPid = await servicePid(); process.kill(oldPid, 'SIGKILL');
+    await poll(async () => (await servicePid()) > 0 && (await servicePid()) !== oldPid);
+    await poll(async () => { try { return (await stat(`${CONTROL_ROOT}/files.sock`)).isSocket(); } catch { return false; } });
+    const {client: resumed, receipt: resumedReceipt} = await readyConnection(2);
+    assert.notEqual(resumedReceipt.service_id, receipt.service_id);
+    assert.equal(resumedReceipt.boot_id, receipt.boot_id);
+    assert.equal(Buffer.from((await resumed.call('files', {action: 'read', path: 'persist.txt'})).result.content_base64, 'base64').toString(), 'updated');
+    await assert.rejects(connect(1).hello(), /Stale/);
+    await assert.rejects(exec('node', ['/opt/puppyone-agent/workbench-file-client.mjs'], {uid: 1000, gid: 1000, timeout: 5000}), /platform control/);
+  } finally {
+    for (const client of clients) { client.child.stdin.end(); await poll(() => client.child.exitCode !== null); }
+    supervisor?.kill('SIGTERM'); if (supervisor) await poll(() => supervisor.exitCode !== null || supervisor.signalCode !== null);
+    await rm(ROOT, {recursive: true, force: true}); await rm(CONTROL_ROOT, {recursive: true, force: true});
   }
 });

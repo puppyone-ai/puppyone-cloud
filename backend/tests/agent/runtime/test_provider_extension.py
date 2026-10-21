@@ -1,6 +1,7 @@
 """A supplier registered only in providers works through unchanged workspace code."""
 
 import asyncio
+import json
 import sys
 from types import ModuleType
 from uuid import uuid4
@@ -40,9 +41,29 @@ async def test_new_supplier_only_needs_provider_registration(monkeypatch):
             connection.validate(resource)
             host.connection = connection
 
-        async def open_channel(self, host):
+        async def open_service(self, host, service):
+            assert service == "files"
             calls.append("open")
             host.reader = asyncio.create_task(asyncio.Event().wait())
+
+        async def send(self, host, data, *, timeout):
+            frame = json.loads(data)
+            assert frame["action"] == "hello"
+            await host._output(
+                json.dumps(
+                    {
+                        "sequence": 1,
+                        "type": "control_result",
+                        "id": frame["id"],
+                        "result": {
+                            **frame["value"],
+                            "boot_id": str(uuid4()),
+                            "service_id": str(uuid4()),
+                        },
+                    }
+                )
+                + "\n"
+            )
 
         async def disconnect(self, host):
             pass

@@ -124,8 +124,10 @@ async def events(
                     if value is None
                     else "event: change\ndata: " + json.dumps(value) + "\n\n"
                 )
-        except (HTTPException, ConnectionError):
+        except HTTPException:
             yield "event: unavailable\ndata: {}\n\n"
+        except ConnectionError:
+            yield 'event: unavailable\ndata: {"retryable":true}\n\n'
 
     return StreamingResponse(
         stream(),

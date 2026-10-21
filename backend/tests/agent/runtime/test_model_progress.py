@@ -138,7 +138,7 @@ async def test_model_end_delivery_is_not_silenced_or_skipped(monkeypatch, cleanu
 
 @pytest.mark.asyncio
 async def test_sandbox_send_deadline_includes_lock_contention(monkeypatch):
-    import src.platform.scope_sandbox.execution.pi_worker as module
+    import src.platform.scope_sandbox.execution.control_channel as module
 
     monkeypatch.setattr(module, "SEND_TIMEOUT", 0.01)
     value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())
@@ -150,7 +150,7 @@ async def test_sandbox_send_deadline_includes_lock_contention(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sandbox_send_has_bounded_provider_timeout(monkeypatch):
-    import src.platform.scope_sandbox.execution.pi_worker as module
+    import src.platform.scope_sandbox.execution.control_channel as module
 
     monkeypatch.setattr(module, "SEND_TIMEOUT", 0.01)
     value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())

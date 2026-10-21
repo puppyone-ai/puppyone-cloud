@@ -3,8 +3,11 @@
 import base64
 import binascii
 import zlib
+from asyncio import Queue
+from contextlib import AbstractAsyncContextManager
 
 from src.platform.access.adapters.agent.runtime.filesystem.port import (
+    FileServiceChannel,
     FilesystemChannel,
     FilesystemError,
     Row,
@@ -32,12 +35,31 @@ class SandboxFilesystem:
     async def push(self, channel: FilesystemChannel, candidate: str) -> Row:
         return await channel.control("push", {"candidate": candidate})
 
-    async def operation(self, channel: FilesystemChannel, operation: Row) -> Row:
+    async def operation(self, channel: FileServiceChannel, operation: Row) -> Row:
         request = (
             {**operation, "transfer_encoding": "deflate"}
             if operation["action"] == "read"
             else operation
         )
+        # Negotiate before encoding writes: an older worker must never mistake
+        # compressed bytes for native file content. Reads already negotiate in
+        # the request; writes need the service's explicit capability receipt.
+        if operation["action"] == "write" and "deflate" in getattr(
+            channel, "service_receipt", {}
+        ).get("write_encodings", []):
+            try:
+                raw = base64.b64decode(operation["content_base64"], validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise FilesystemError("file_operation_rejected") from exc
+            if len(raw) > 8 * 1024 * 1024:
+                raise FilesystemError("file_operation_rejected")
+            packed = zlib.compress(raw, level=1)
+            if len(packed) + 64 < len(raw):
+                request = {
+                    **operation,
+                    "content_base64": base64.b64encode(packed).decode(),
+                    "content_encoding": "deflate",
+                }
         response = await channel.control("files", request)
         error = response.get("error")
         if error:
@@ -68,5 +90,8 @@ class SandboxFilesystem:
                 raise FilesystemError("file_operation_rejected") from exc
         return result
 
-    async def watch(self, channel: FilesystemChannel) -> None:
+    async def watch(self, channel: FileServiceChannel) -> None:
         await channel.control("watch")
+
+    def subscribe(self, channel: FileServiceChannel) -> AbstractAsyncContextManager[Queue[Row]]:
+        return channel.subscribe()

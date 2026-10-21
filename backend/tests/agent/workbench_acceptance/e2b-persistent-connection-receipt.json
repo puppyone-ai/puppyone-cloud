@@ -1,0 +1,406 @@
+{
+  "date": "2026-10-22",
+  "result": "accepted_inactive",
+  "scope": "E2B adapter for the shared persistent workspace file service",
+  "implementation_commit": "33f2415c515ab4ca8b08acf0bdd7b157e8df81ef",
+  "sdk": "e2b==2.53.1",
+  "product_activation": false,
+  "product_provider_configuration": "fly",
+  "product_e2b_key_configured": false,
+  "product_e2b_template_configured": false,
+  "template": {
+    "source_sha": "33f2415c515ab4ca8b08acf0bdd7b157e8df81ef",
+    "alias": "puppy-persistent-files-71fa3478",
+    "template_id": "s0j1x3ic6m3xmaslhsee",
+    "build_id": "fedec056-551c-4c62-877c-af22bf1788a6",
+    "build_log_sha256": "01ab312c2b461b959d53cf60aa51516e87fd04f75fb9adf68eeeaf13c4c754b5",
+    "status": "retained validated candidate; product does not reference it"
+  },
+  "local": {
+    "agent_regressions": {
+      "tests": 215,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 215,
+      "seconds": 3.522,
+      "junit_sha256": "a2d94236b8d53e054f92e450d7c3b4e677af532e2a5d76528be2b21d839c188b"
+    },
+    "owned_database_and_product_entry": {
+      "passed": 58,
+      "hosted_cases_skipped": 2,
+      "scope": "prior E2B adapter prerequisite; product entry rerun in final hosted chain"
+    },
+    "native_linux": {
+      "platform": "linux/arm64",
+      "passed": 4,
+      "source_commit": "33f2415c515ab4ca8b08acf0bdd7b157e8df81ef",
+      "log_sha256": "fa7ab49dffd1be040fc6b6b5ebebfa243c70d66b94f00a2edd35498c63aaf5d1",
+      "coverage": "private atomic save, watch/CAS/confinement, helper reuse, negotiated write encoding and invalid/oversized decode, supervised service restart/epoch fencing"
+    },
+    "ruff": {
+      "result": "passed",
+      "changed_python_files": 29,
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "openspec_strict": "passed",
+    "documentation_validation": {
+      "result": "passed",
+      "preexisting_cross_repository_link_warnings": 25,
+      "log_sha256": "220d5039645f2c6479dd3fc6fb308924f2d84746c65e7ef0aea586bf390656a4"
+    },
+    "backend_regression": {
+      "tests": 4239,
+      "failures": 23,
+      "errors": 12,
+      "skipped": 882,
+      "passed": 3322,
+      "seconds": 82.327,
+      "junit_sha256": "421f5abb8d503061ebff0eb3aeeac1a6e3dcd25c0c7f8285e442ffc69f09689d",
+      "result": "baseline_failures_only",
+      "baseline_commit": "b54cfd53",
+      "baseline_subset": {
+        "tests": 36,
+        "failures": 23,
+        "errors": 12,
+        "skipped": 0,
+        "passed": 1,
+        "seconds": 1.779,
+        "junit_sha256": "abeeaa49f5294aa702db98a652cb1d79eca90e39679cf1d5dfd6dfa4b005a903"
+      },
+      "failure_and_error_cases_identical": true,
+      "cases": [
+        "tests.etl.test_queue_persistence.test_completed_task_updates_db",
+        "tests.etl.test_queue_persistence.test_failed_task_persists_error",
+        "tests.etl.test_queue_persistence.test_get_task_from_memory_and_db",
+        "tests.etl.test_queue_persistence.test_intermediate_status_not_persisted",
+        "tests.etl.test_queue_persistence.test_list_tasks_uses_memory_cache",
+        "tests.etl.test_queue_persistence.test_multiple_tasks_persistence",
+        "tests.etl.test_queue_persistence.test_queue_task_count",
+        "tests.etl.test_queue_persistence.test_submit_task_creates_db_record",
+        "tests.etl.test_repository_supabase.TestRuleRepositoryIntegration.test_full_crud_workflow",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_admin_mode",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_count_rules",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_create_rule",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_delete_rule",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_delete_rule_not_found",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_get_rule",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_get_rule_invalid_id",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_get_rule_not_found",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_list_rules",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_list_rules_pagination",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_update_rule",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_update_rule_not_found",
+        "tests.etl.test_repository_supabase.TestRuleRepositorySupabase.test_user_isolation",
+        "tests.etl.test_task_repository.test_count_tasks",
+        "tests.etl.test_task_repository.test_create_task",
+        "tests.etl.test_task_repository.test_delete_nonexistent_task",
+        "tests.etl.test_task_repository.test_delete_task",
+        "tests.etl.test_task_repository.test_get_task",
+        "tests.etl.test_task_repository.test_list_tasks_filter_by_project",
+        "tests.etl.test_task_repository.test_list_tasks_filter_by_status",
+        "tests.etl.test_task_repository.test_list_tasks_no_filter",
+        "tests.etl.test_task_repository.test_task_to_dict_from_dict",
+        "tests.etl.test_task_repository.test_task_with_result_serialization",
+        "tests.etl.test_task_repository.test_update_task_status",
+        "tests.etl.test_task_repository.test_update_task_with_error",
+        "tests.etl.test_task_repository.test_update_task_with_result"
+      ],
+      "reason": "pre-existing ETL tests require an external Supabase fixture and contain two stale task serialization assertions; not changed by this task"
+    }
+  },
+  "hosted": {
+    "product_chain": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 2,
+      "seconds": 57.641,
+      "junit_sha256": "6f671bb03f337464350ff141d12825ef6db1c3c015e8c5894de2c1fdd691208e",
+      "receipt": "e2b-runtime-receipt.json",
+      "log_sha256": "cf303590c1cb3fe2e3decdcad245c03d67ed8014b5ac3a55b533795019920214",
+      "coverage": [
+        "authenticated Chat/default dispatcher/real Pi",
+        "same native directory read/write/watch before Git publication",
+        "native PG refs/S3 Git objects",
+        "two Chats reuse resource",
+        "pause/no-wake/reopen retains memory/files",
+        "anonymous workload port denied; authenticated port allowed",
+        "IPv4/IPv6 HTTP/TLS egress denied with allowed positive control"
+      ]
+    },
+    "same_workload_io": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 1,
+      "seconds": 76.603,
+      "junit_sha256": "960537f59b61e400e5712e3bf8b087c39e6a3616a0da2de47e7586d657f4bea7",
+      "receipt": "e2b-io-receipt.json",
+      "log_sha256": "36e7fa792d226e21d58edb081c35e9fc86943febd2a4d1b15be7c45cf3c46b24",
+      "gate_unchanged": {
+        "per_operation_p50_ms": 300,
+        "per_operation_p95_ms": 1000
+      },
+      "warm": {
+        "write": {
+          "count": 50,
+          "p50_ms": 273.84,
+          "p95_ms": 297.22,
+          "max_ms": 629.64
+        },
+        "read": {
+          "count": 50,
+          "p50_ms": 269.92,
+          "p95_ms": 302.72,
+          "max_ms": 594.04
+        },
+        "list": {
+          "count": 50,
+          "p50_ms": 269.69,
+          "p95_ms": 616.84,
+          "max_ms": 901.66
+        }
+      },
+      "phases_ms": {
+        "open_ms": 6967.38,
+        "first_read_ms": 4066.0,
+        "already_running_open_ms": 9.27,
+        "transport_reconnect_read_ms": 1755.3,
+        "resume_ms": 1866.87,
+        "resume_first_read_ms": 2540.52,
+        "resume_to_file_ms": 4407.39
+      }
+    },
+    "legacy_snapshots": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 3,
+      "seconds": 150.974,
+      "junit_sha256": "14a98f4b2aefd452a577def766a1698beb9f3cae8dfab2b94a8966dc1d90697c",
+      "log_sha256": "39654c5d215589a14dd7574fb4e53a8f17a3c91544231e6b27071cb01b97b293",
+      "cleanup": [
+        {
+          "test": "test_e2b_fragmented_reply_after_snapshot_reaches_git_finalization",
+          "resources": [
+            "ienf3cqxku6hru14q2gwf"
+          ],
+          "snapshots": [
+            "ll0na9o533kwio8yxzkw:default",
+            "v16r3is58x21e2hamq9v:default"
+          ],
+          "cleanup": "absence verified by GET and lists"
+        },
+        {
+          "test": "test_e2b_snapshot_survives_source_deletion_and_rebinds_controller",
+          "resources": [
+            "i22rt9pf9r4h16h5r5vlq",
+            "imcepyyflq2a5h9at0gwu"
+          ],
+          "snapshots": [
+            "x09tfsoohzw7hk4bke4e:default",
+            "xztc02th1v5mbac7hs1p:default"
+          ],
+          "cleanup": "absence verified by GET and lists"
+        },
+        {
+          "test": "test_e2b_stock_git_fetch_commit_push_and_clean_next_turn",
+          "resources": [
+            "i3gkmmeq967fw48zd2g2j",
+            "ierpfa2hbhhyqo7ac0kxr"
+          ],
+          "snapshots": [
+            "90c8qr0qf0leipdexyya:default",
+            "91941hqyuo0tjkrlopj7:default",
+            "fiybyuhap694idab5njt:default",
+            "p95l15gn2kjdhj2fleka:default",
+            "wr8n8lcyiha6vpdwlz0k:default",
+            "x8lfpcsoi9uikdi218kz:default",
+            "yh392kwhkk4oyzhhzagi:default"
+          ],
+          "cleanup": "absence verified by GET and lists"
+        }
+      ]
+    },
+    "environment": "developer Mac API plus disposable local PostgreSQL/PostgREST/MinIO; real remote E2B; deterministic external model; provider region not measured",
+    "metering": "disabled; not billing acceptance"
+  },
+  "performance_diagnosis": {
+    "before_write_encoding": {
+      "source_commit": "c1c7441820ceb1430fb2f232370a9ef5850bfcf2",
+      "result": "failed",
+      "functional_result": "passed",
+      "warm": {
+        "write": {
+          "count": 50,
+          "p50_ms": 407.78,
+          "p95_ms": 997.2,
+          "max_ms": 1053.86
+        },
+        "read": {
+          "count": 50,
+          "p50_ms": 282.27,
+          "p95_ms": 602.89,
+          "max_ms": 625.49
+        },
+        "list": {
+          "count": 50,
+          "p50_ms": 280.87,
+          "p95_ms": 607.69,
+          "max_ms": 628.29
+        }
+      }
+    },
+    "transport_probe": {
+      "resource_id": "i26ta0fyycw89j2n761eq",
+      "cleanup": "absent",
+      "raw_receipt_sha256": "0de685d1af0a437de42848f46c7dd8ce4c8e302ec68b4ff53f27fec9eae177cc",
+      "variants": {
+        "gateway-http2": {
+          "p50_ack_ms": 310.34,
+          "p50_echo_ms": 310.37,
+          "samples": 15
+        },
+        "direct-http2": {
+          "p50_ack_ms": 306.16,
+          "p50_echo_ms": 306.21,
+          "samples": 15
+        },
+        "gateway-http1.1": {
+          "p50_ack_ms": 255.71,
+          "p50_echo_ms": 255.74,
+          "samples": 15
+        },
+        "direct-http1.1": {
+          "p50_ack_ms": 267.43,
+          "p50_echo_ms": 267.82,
+          "samples": 15
+        }
+      }
+    },
+    "write_payload_probe": {
+      "resource_id": "iwqjp4sjfsw2gds1v4ja2",
+      "cleanup": "absent",
+      "raw_receipt_sha256": "548eca936b505e200ee43d429c852d1e2da239bfac0aca82001fda1440e874e0",
+      "transport": {
+        "100-0": {
+          "p50_ms": 257.08500000000004,
+          "samples": 10
+        },
+        "1024-1": {
+          "p50_ms": 257.44500000000005,
+          "samples": 10
+        },
+        "2048-2": {
+          "p50_ms": 256.065,
+          "samples": 10
+        },
+        "6000-3": {
+          "p50_ms": 374.26,
+          "samples": 10
+        },
+        "16384-4": {
+          "p50_ms": 367.32,
+          "samples": 10
+        },
+        "6000-5": {
+          "p50_ms": 379.71000000000004,
+          "samples": 10
+        },
+        "100-6": {
+          "p50_ms": 256.73,
+          "samples": 10
+        }
+      },
+      "native": {
+        "p50_ms": {
+          "write_ms": 0.016535999996847295,
+          "fsync_ms": 0.44386949999974945,
+          "rename_ms": 0.02350049999932935,
+          "dirsync_ms": 0.2851909999961322,
+          "total_ms": 0.77993599999715
+        },
+        "samples": 30
+      }
+    },
+    "changes": "E2B pooled HTTP/1.1; shared explicitly negotiated and bounded write encoding; no removal of fsync, audit, authorization or conflict checks"
+  },
+  "cleanup": {
+    "result": "passed",
+    "absent_resources": [
+      "i1ouu1yj5bqkvjnwdm02s",
+      "i22rt9pf9r4h16h5r5vlq",
+      "i26ta0fyycw89j2n761eq",
+      "i3gkmmeq967fw48zd2g2j",
+      "i3z4ip0b4oawibgjf9ztn",
+      "iarli0213w35dnbpdacaq",
+      "ich4sj6l324ju4ozvg3lk",
+      "idafnp92e19pwcpmathhy",
+      "idiei04uqy1zh7b5ueops",
+      "ienf3cqxku6hru14q2gwf",
+      "ierpfa2hbhhyqo7ac0kxr",
+      "iev9glpmod53kjlpmfecf",
+      "ii999e6r9uqvr2ytg33zy",
+      "ikths523zq2hw52c8kdhm",
+      "imcepyyflq2a5h9at0gwu",
+      "inup20loutr9mduw4yl5q",
+      "ip1dlnpx4xavxss0jnhhc",
+      "iq3bheeelohd9b3mpqyyt",
+      "iwqjp4sjfsw2gds1v4ja2",
+      "iyc5hzwrlchbp02p3vqmw",
+      "iyfisiv49qg1c12j21r55",
+      "iyn3v4gbjn0jyxirnzief"
+    ],
+    "empty_metadata_queries": [
+      {
+        "project_id": "444b8a93-2d3a-42a5-911b-222c9f0a9fe7"
+      },
+      {
+        "project_id": "69d30cb1-24bf-4a02-94a8-649ffd00df96"
+      },
+      {
+        "project_id": "6e921c5e-41e9-4fd7-857f-495530ad4526"
+      },
+      {
+        "project_id": "8bf783dc-095a-42c7-9440-4a83db1d5705"
+      },
+      {
+        "project_id": "b3ac13c4-aadb-4b8a-ba12-d356e377d78d"
+      },
+      {
+        "project_id": "d611d1f0-1c5b-4b7c-934e-27f98fe2ab8d"
+      },
+      {
+        "project_id": "f0ebfd77-d4d3-4ae9-9615-8d5ac141b9f0"
+      },
+      {
+        "acceptance": "e2b-network-control"
+      },
+      {
+        "acceptance": "e2b-transport-profile"
+      },
+      {
+        "acceptance": "e2b-write-profile"
+      }
+    ],
+    "scope": "read-only audit of this acceptance run, prior attempts and diagnostic probes",
+    "retained_template": {
+      "source_sha": "33f2415c515ab4ca8b08acf0bdd7b157e8df81ef",
+      "alias": "puppy-persistent-files-71fa3478",
+      "template_id": "s0j1x3ic6m3xmaslhsee",
+      "build_id": "fedec056-551c-4c62-877c-af22bf1788a6"
+    },
+    "template_status": "validated candidate only; not configured in product"
+  },
+  "limits": [
+    "E2B acceptance only; product remains Fly and no fallback was enabled",
+    "No branch merge or product deployment; independent Fly candidate upload/acceptance gate remains open",
+    "Not complete ISSUE-118 A1-A6, billing, browser UI, PTY or external model acceptance",
+    "Latency applies to the recorded 4 KiB compressible-text workload and test network, not all regions, large/incompressible files or throughput",
+    "Full backend suite is not green: exact 35 existing failure/error cases reproduced on untouched baseline"
+  ]
+}

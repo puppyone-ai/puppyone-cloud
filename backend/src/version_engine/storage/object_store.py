@@ -10,6 +10,8 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from src.version_engine.domain.errors import ObjectNotFoundError
+from src.version_engine.storage.io_strategy import IOStorageStrategy
+from src.version_engine.storage.object_stream import object_batches
 from src.version_engine.write_engine.git_object_format import (
     EMPTY_TREE_CONTENT,
     decode_object,
@@ -44,6 +46,20 @@ class StorageBackend(abc.ABC):
         """Bounded write-through batch; network backends override with bulk I/O."""
         for oid, data in objects.items():
             self.put_durable(oid, data)
+
+    def put_stream_durable(self, objects) -> None:
+        """Consume a lazy encoded-object stream before returning to publication.
+
+        Backends may pipeline bounded batches but must drain all started writes
+        on failure. The fallback supports local backends without changing their
+        durability semantics or collecting the whole stream in memory.
+        """
+        for batch in object_batches(objects, IOStorageStrategy()):
+            self.put_many_durable(batch.objects)
+
+    def put_prepared_stream_durable(self, objects, facts) -> None:
+        """Known incoming object facts permit operation-wide admission on S3."""
+        self.put_stream_durable(objects)
 
     @abc.abstractmethod
     def get(self, h: str) -> bytes:

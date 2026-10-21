@@ -30,3 +30,15 @@ def runtime_provider(name: str | None = None) -> RuntimeProvider:
         raise ValueError(f"Unsupported Agent sandbox provider: {selected}")
     module, factory = PROVIDERS[selected]
     return getattr(import_module(module, package=__package__), factory)()
+
+
+async def close_provider_transports():
+    """Application shutdown releases shared connections, never provider compute."""
+    import sys
+
+    for module, factory in PROVIDERS.values():
+        loaded = sys.modules.get(__package__ + module if module.startswith(".") else module)
+        if loaded is not None:
+            close = getattr(getattr(loaded, factory), "shutdown_transports", None)
+            if close is not None:
+                await close()

@@ -325,6 +325,14 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     )
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    from src.platform.scope_sandbox.execution.providers.fly_transport import FlyTransport
+
+    transport = FlyTransport("backend-only", "fly")
+    transport.users = 1
+    monkeypatch.setattr(
+        "src.platform.scope_sandbox.execution.providers.fly.acquire_transport",
+        AsyncMock(return_value=transport),
+    )
     provider = FlyRuntimeProvider()
     provider.inspect = AsyncMock(side_effect=AssertionError("repeated management lookup"))
     host = SimpleNamespace(
@@ -344,5 +352,7 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     assert (directory / "config.yml").read_text() == "{}\n"
     await provider.close_channel(host)
     await asyncio.gather(host.reader, host.stderr_reader)
-    assert not directory.exists()
+    assert transport.users == 0 and directory.exists()
+    transport.idle_task.cancel()
+    transport.directory.cleanup()
     assert host.connection is None

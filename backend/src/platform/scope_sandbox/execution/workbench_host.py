@@ -1,7 +1,7 @@
 """Lifecycle and file channels borrow one persisted provider resource.
 
-They share framing with Pi but never launch a Loop. Disconnecting an API request
-only closes its process/channel; it never pauses or deletes the workspace.
+They share framing with Pi but never launch a Loop. Requests and subscriptions
+borrow one service connection; releasing a borrower never pauses compute.
 """
 
 import asyncio
@@ -11,11 +11,11 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from .pi_worker import PiWorker
+from .control_channel import ControlChannel
 from .worker_port import WorkerDisconnected
 
 
-class WorkbenchChannel(PiWorker):
+class WorkbenchChannel(ControlChannel):
     def __init__(self, row, *, purpose="lifecycle", store=None):
         resource = row["resource"] or {}
         binding = row["binding"]
@@ -37,9 +37,24 @@ class WorkbenchChannel(PiWorker):
             workspace_id=self.workbench_id,
         )
         self.resource.update(resource)
+        self.compute_epoch = row.get("compute_epoch")
         self.attached = True
+        self.subscribers = set()
+        self.watch_lock = asyncio.Lock()
+        self.watch_started = False
+        self.service_receipt = None
+
+    async def create(self):
+        await self.runtime.allocate(self)
+        self.resource["allocation_pending"] = False
+        return dict(self.resource)
+
+    async def _open_control(self):
+        await self.runtime.open_channel(self)
 
     def control_command(self):
+        if self.purpose == "files":
+            return ["node", "/opt/puppyone-agent/workbench-file-client.mjs"]
         return [
             "node",
             f"/opt/puppyone-agent/workbench-{self.purpose}.mjs",
@@ -53,13 +68,79 @@ class WorkbenchChannel(PiWorker):
     async def connect(self, connection=None):
         connection = connection or await self.runtime.running_connection(self)
         await self.runtime.connect_task(self, self.resource, connection)
-        await self._open_control()
+        if self.purpose == "files":
+            await self.runtime.open_service(self, "files")
+            receipt = await self.control(
+                "hello",
+                {
+                    "protocol": 1,
+                    "workbench": self.workbench_id,
+                    "generation": self.generation,
+                    "compute_epoch": self.compute_epoch,
+                },
+            )
+            expected = {
+                "protocol": 1,
+                "workbench": self.workbench_id,
+                "generation": self.generation,
+                "compute_epoch": self.compute_epoch,
+            }
+            if any(receipt.get(key) != value for key, value in expected.items()):
+                raise WorkerDisconnected("Workspace service binding mismatch")
+            try:
+                for key in ("boot_id", "service_id"):
+                    UUID(receipt[key])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise WorkerDisconnected("Invalid workspace service receipt") from exc
+            self.service_receipt = receipt
+        else:
+            await self._open_control()
         return self
+
+    async def _event(self, frame):
+        if self.purpose != "files":
+            return await super()._event(frame)
+        for queue in tuple(self.subscribers):
+            if queue.full():
+                while not queue.empty():
+                    queue.get_nowait()
+                event = (
+                    frame
+                    if frame.get("type") == "disconnected"
+                    else {
+                        "type": "workspace_changed",
+                        "generation": self.generation,
+                        "reset": True,
+                    }
+                )
+            else:
+                event = frame
+            queue.put_nowait(event)
+
+    @asynccontextmanager
+    async def subscribe(self):
+        queue = asyncio.Queue(maxsize=32)
+        self.subscribers.add(queue)
+        try:
+            async with self.watch_lock:
+                if not self.watch_started:
+                    await self.control("watch")
+                    self.watch_started = True
+            yield queue
+        finally:
+            self.subscribers.discard(queue)
+            async with self.watch_lock:
+                if not self.subscribers and self.watch_started and self.healthy():
+                    with suppress(Exception):
+                        async with asyncio.timeout(5):
+                            await self.control("unwatch")
+                    self.watch_started = False
 
     def healthy(self):
         return bool(self.reader and not self.reader.done() and not self.reconnecting)
 
     async def close(self):
+        await self._disconnected()
         self.reconnecting = True
         try:
             await self._disconnect_output()
@@ -87,8 +168,8 @@ class _FileChannel:
 class WorkbenchChannels:
     """Bounded local transport cache. DB admission remains authoritative.
 
-    Operations on a single channel serialize; watcher streams own separate
-    channels. A failed mutation is never replayed. Cached sockets are neither
+    Only connection establishment serializes; requests and watchers share the
+    framed transport. A failed mutation is never replayed. Cached sockets are neither
     workspace ownership nor activity and never create/resume compute.
     """
 
@@ -168,15 +249,16 @@ class WorkbenchChannels:
                     except BaseException:
                         await self._discard(entry)
                         raise
-                try:
-                    yield entry.channel
-                except (asyncio.CancelledError, TimeoutError, ConnectionError, OSError):
-                    # The remote operation may have succeeded. Evict, but never
-                    # execute it again automatically on a fresh connection.
-                    await self._discard(entry)
-                    raise
-                finally:
-                    entry.used = time.monotonic()
+                channel = entry.channel
+            try:
+                yield channel
+            except (ConnectionError, OSError):
+                async with entry.lock:
+                    if entry.channel is channel:
+                        await self._discard(entry)
+                raise
+            finally:
+                entry.used = time.monotonic()
         finally:
             entry.borrowers -= 1
             if entry.retired and not entry.borrowers:

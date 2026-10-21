@@ -25,7 +25,7 @@ import struct
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cachetools
 
@@ -33,6 +33,7 @@ from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
 from src.utils.logger import log_error, log_warning
 from src.version_engine.domain.errors import ObjectNotFoundError, StorageWriteError
+from src.version_engine.infrastructure.owned_work import checkpoint, current_execution
 from src.version_engine.infrastructure.supabase import safe_data
 from src.version_engine.infrastructure.supabase.db_names import OBJECT_LOCATIONS_TABLE
 from src.version_engine.storage.chunk_manifest import (
@@ -40,9 +41,14 @@ from src.version_engine.storage.chunk_manifest import (
     chunk_upload_plan,
     validate_chunk_manifest,
 )
+from src.version_engine.storage.io_budget import operation_io_budget, physical_io_credit
 from src.version_engine.storage.io_strategy import IOStorageStrategy, ObjectWriteLayout
+from src.version_engine.storage.metadata_pages import metadata_pages
 from src.version_engine.storage.mutation_context import collection_context, publication_context
 from src.version_engine.storage.object_store import StorageBackend
+from src.version_engine.storage.object_stream import call_owned, object_batches, write_object_stream
+from src.version_engine.storage.prepared_ingestion import write_prepared_stream
+from src.version_engine.storage.readback_receipts import PreparedReadback
 from src.version_engine.write_engine.git_object_format import decode_object, hash_object
 from src.version_engine.write_engine.trace import trace_mark, trace_phase
 
@@ -57,12 +63,7 @@ _BUNDLE_MAGIC = b"POB1"
 _BUNDLE_HEADER_LEN_BYTES = 8
 _CANONICAL_STORAGE_NAMESPACE = "version"
 _CHUNKED_PACK_PREFIX = "chunked:"
-# Keep each physical S3 object below S3Service's multipart threshold. Supabase
-# Storage's S3-compatible multipart path is materially slower and can fail on
-# large Git pushes; small immutable bundle/chunk objects are more predictable.
-_OBJECT_BUNDLE_TARGET_BYTES = 8 * 1024 * 1024
-_OBJECT_CHUNK_BYTES = 8 * 1024 * 1024
-_OBJECT_UPLOAD_CONCURRENCY = 8
+_OBJECT_READ_CONCURRENCY = 8
 _OBJECT_LOCATION_UPSERT_BATCH_SIZE = 200
 
 _BRIDGE_LOOP: asyncio.AbstractEventLoop | None = None
@@ -90,7 +91,20 @@ def _run_async(coro):
     """Execute an async coroutine from a synchronous context via a persistent loop."""
     loop = _get_bridge_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result(timeout=_ASYNC_BRIDGE_TIMEOUT_SECS)
+    try:
+        return future.result(timeout=_ASYNC_BRIDGE_TIMEOUT_SECS)
+    except TimeoutError:
+        # The bridge deadline is not proof that physical I/O has stopped. Keep
+        # the caller's publication pin/spool alive while the pipeline drains.
+        # Native producers observe this flag before admitting another window.
+        execution = current_execution.get()
+        if execution is not None:
+            execution.cancelled.set()
+        try:
+            future.result()
+        except BaseException:
+            pass  # Retain the original uncertain timeout, after retrieving I/O errors.
+        raise
 
 
 # ═══════════════════════════════════════════════
@@ -230,6 +244,14 @@ class CachedStorageBackend(StorageBackend):
         self._inner.put_many_durable(objects)
         for oid, data in objects.items():
             self._remember_cached(oid, data)
+
+    def put_stream_durable(self, objects) -> None:
+        # Large imports must not collect a second copy in the shared cache.
+        # Durable closure verification uses the inner readback capability.
+        self._inner.put_stream_durable(objects)
+
+    def put_prepared_stream_durable(self, objects, facts) -> None:
+        self._inner.put_prepared_stream_durable(objects, facts)
 
     def _cache_key(self, h: str):
         return (self._cache_namespace, h)
@@ -501,8 +523,6 @@ class S3StorageBackend(StorageBackend):
         self._prefix = self._layout.object_prefix
         self._bundle_prefix = self._layout.bundle_prefix
         self._io_strategy = io_strategy or IOStorageStrategy(
-            bundle_target_bytes=_OBJECT_BUNDLE_TARGET_BYTES,
-            chunk_bytes=_OBJECT_CHUNK_BYTES,
             location_index_enabled=self._supabase is not None,
         )
         self._location_cache: dict[str, ObjectLocation] = {}
@@ -673,6 +693,12 @@ class S3StorageBackend(StorageBackend):
         # every physical/index write. Do not stage, bypass admission or skip proof.
         if objects:
             _run_async(self.async_put_many(objects, concurrency=8))
+
+    def put_stream_durable(self, objects) -> None:
+        _run_async(self.async_put_stream(objects))
+
+    def put_prepared_stream_durable(self, objects, facts) -> None:
+        _run_async(self.async_put_prepared_stream(objects, facts))
 
     def exists(self, h: str) -> bool:
         if self._lookup_object_location(h) is not None:
@@ -1219,15 +1245,70 @@ class S3StorageBackend(StorageBackend):
     async def async_put_many(
         self, objects: dict[str, bytes], concurrency: int = 20, skip_exists: bool = False
     ) -> None:
-        """Upload multiple objects in parallel.
+        """Existing mapping API delegates to the same bounded ingestion path."""
+        await self.async_put_stream(objects.items(), concurrency=concurrency, skip_exists=skip_exists)
 
-        Args:
-            skip_exists: If True, skip the HEAD existence check before PUT.
-                Use when the caller already knows these objects don't exist
-                (e.g. negotiate confirmed them as missing).
-        """
-        import asyncio
+    async def async_put_prepared_stream(self, objects, facts) -> None:
+        self._check_publication_context()
+        context = publication_context.get()
+        strategy = self._active_io_strategy()
+        if context is None or not context.require_capacity:
+            raise StorageWriteError("prepared ingestion requires capacity admission")
+        if not strategy.location_index_enabled:
+            raise StorageWriteError("prepared ingestion requires location indexing")
 
+        evidence = PreparedReadback(max_bytes=max(
+            0, context.readbacks.MAX_BYTES - context.readbacks.bytes,
+        )) if context.readbacks is not None else None
+
+        async def write(batch, *, register):
+            rows = await self._async_put_bundled_or_chunked(batch, register=register)
+            if evidence is not None:
+                evidence.placements(rows)
+            return rows
+
+        def progress():
+            checkpoint()
+            if context.progress is not None:
+                context.progress()
+
+        with operation_io_budget(strategy.write_concurrency):
+            await write_prepared_stream(
+                objects,
+                facts,
+                strategy,
+                reserve=self._async_reserve_capacity,
+                write=write,
+                register=self._async_upsert_object_locations,
+                settle=self._async_settle_capacity,
+                verify=evidence.verify if evidence is not None else _verify_loose_hash,
+                progress=progress,
+            )
+        if evidence is not None:
+            context.readbacks.promote(evidence.finish())
+
+    async def async_put_stream(self, objects, *, concurrency: int | None = None, skip_exists=False) -> None:
+        self._check_publication_context()
+        strategy = self._active_io_strategy()
+        if concurrency is not None:
+            if type(concurrency) is not int or concurrency <= 0:
+                raise ValueError("write concurrency must be a positive integer")
+            strategy = replace(strategy, write_concurrency=min(concurrency, strategy.write_concurrency))
+        context = publication_context.get()
+
+        def progress():
+            checkpoint()
+            if context is not None and context.progress is not None:
+                context.progress()
+
+        async def write_batch(batch):
+            with trace_phase("storage.stream.batch", objects=len(batch), bytes=sum(map(len, batch.values()))):
+                await self._async_put_batch(batch, strategy.write_concurrency, skip_exists)
+
+        with operation_io_budget(strategy.write_concurrency):
+            await write_object_stream(objects, strategy, write_batch, progress=progress)
+
+    async def _async_put_batch(self, objects, concurrency, skip_exists) -> None:
         self._check_publication_context()
         facts = []
         for object_id, data in objects.items():
@@ -1252,9 +1333,10 @@ class S3StorageBackend(StorageBackend):
                     return
                 key = self._key_for(h)
                 if skip_exists:
-                    await self._physical_s3().upload_file(
-                        key, data, content_type="application/octet-stream"
-                    )
+                    async with physical_io_credit():
+                        await self._physical_s3().upload_file(
+                            key, data, content_type="application/octet-stream"
+                        )
                 else:
                     await self._do_put(key, data, expected_hash=h)
 
@@ -1273,23 +1355,30 @@ class S3StorageBackend(StorageBackend):
             raise errors[0]
         await self._async_settle_capacity(io_id)
 
-    async def _async_reserve_capacity(self, facts: list[dict]) -> str | None:
+    async def _async_reserve_capacity(self, facts, *, io_id=None, paged=False) -> str | None:
         import uuid
 
         context = publication_context.get()
         if context is None or not facts:
             return None
-        io_id, claimed = str(uuid.uuid4()), False
+        io_id, claimed = io_id or str(uuid.uuid4()), False
         if self._supabase is None:
             raise StorageWriteError("native capacity admission unavailable")
         # Before ANY loose, bundle, part or manifest PUT. Encoded bytes and
         # compression/chunk boundaries never define logical object identity.
-        for offset in range(0, len(facts), 200):
-            batch = facts[offset : offset + 200]
+        pages = metadata_pages(facts) if paged else (
+            facts[n:n + 200] for n in range(0, len(facts), 200)
+        )
+        for batch in pages:
+            if paged:
+                checkpoint()
+                if context.progress is not None:
+                    await call_owned(context.progress)
             try:
-                response = await asyncio.to_thread(
+                response = await call_owned(
                     lambda batch=batch: self._supabase.client.rpc(
-                        "reserve_version_object_capacity",
+                        "reserve_version_object_capacity_page"
+                        if paged else "reserve_version_object_capacity",
                         {
                             "p_project_id": self._project_id,
                             "p_actor": context.actor,
@@ -1323,7 +1412,7 @@ class S3StorageBackend(StorageBackend):
         # cleanup on cancellation/timeout: remote I/O may still be outstanding.
         # Another invocation (even on this same pin) cannot settle this identity.
         try:
-            response = await asyncio.to_thread(
+            response = await call_owned(
                 lambda: self._supabase.client.rpc(
                     "settle_version_object_capacity_io",
                     {
@@ -1441,7 +1530,7 @@ class S3StorageBackend(StorageBackend):
                     bundle_prefixes=prefixes,
                     require_immutable=self._require_immutable_chunks,
                 )
-                sem = asyncio.Semaphore(_OBJECT_UPLOAD_CONCURRENCY)
+                sem = asyncio.Semaphore(_OBJECT_READ_CONCURRENCY)
 
                 async def download_one(chunk: dict) -> tuple[int, bytes]:
                     key = str(chunk.get("key") or "")
@@ -1550,35 +1639,22 @@ class S3StorageBackend(StorageBackend):
         await self._async_verify_physical_uploads(uploads)
         await self._async_upsert_object_locations(rows)
 
-    async def _async_put_bundled_or_chunked(self, objects: dict[str, bytes]) -> None:
+    async def _async_put_bundled_or_chunked(
+        self, objects: dict[str, bytes], *, register=True
+    ) -> list[dict]:
         strategy = self._active_io_strategy()
-        pending: dict[str, bytes] = {}
-        pending_size = 0
         uploads: list[tuple[str, bytes, str]] = []
         rows: list[dict] = []
-
-        async def flush_pending() -> None:
-            nonlocal pending, pending_size
-            if not pending:
-                return
-            bundle_uploads, bundle_rows = self._bundle_upload_plan(pending)
-            uploads.extend(bundle_uploads)
-            rows.extend(bundle_rows)
-            pending = {}
-            pending_size = 0
-
-        for object_id, data in sorted(objects.items()):
-            if len(data) > strategy.bundle_target_bytes:
-                await flush_pending()
+        for batch in object_batches(sorted(objects.items()), strategy):
+            if batch.size_bytes > strategy.bundle_target_bytes:
+                (object_id, data), = batch.objects.items()
                 chunk_uploads, chunk_row = self._chunked_object_upload_plan(object_id, data)
                 uploads.extend(chunk_uploads)
                 rows.append(chunk_row)
-                continue
-            if pending and pending_size + len(data) > strategy.bundle_target_bytes:
-                await flush_pending()
-            pending[object_id] = data
-            pending_size += len(data)
-        await flush_pending()
+            else:
+                bundle_uploads, bundle_rows = self._bundle_upload_plan(batch.objects)
+                uploads.extend(bundle_uploads)
+                rows.extend(bundle_rows)
 
         with trace_phase(
             "s3.pack.batch_put",
@@ -1588,7 +1664,9 @@ class S3StorageBackend(StorageBackend):
         ):
             await self._async_upload_physical_objects(uploads)
         await self._async_verify_physical_uploads(uploads)
-        await self._async_upsert_object_locations(rows)
+        if register:
+            await self._async_upsert_object_locations(rows)
+        return rows
 
     async def _async_put_chunked_object(self, h: str, data: bytes) -> None:
         uploads, row = self._chunked_object_upload_plan(h, data)
@@ -1644,10 +1722,10 @@ class S3StorageBackend(StorageBackend):
         self,
         uploads: list[tuple[str, bytes, str]],
     ) -> None:
-        sem = asyncio.Semaphore(_OBJECT_UPLOAD_CONCURRENCY)
+        sem = asyncio.Semaphore(self._active_io_strategy().write_concurrency)
 
         async def upload_one(key: str, data: bytes, content_type: str) -> None:
-            async with sem:
+            async with sem, physical_io_credit():
                 await self._physical_s3().upload_file(
                     key,
                     data,
@@ -1670,11 +1748,11 @@ class S3StorageBackend(StorageBackend):
         bundle/part once, not once per member. Publication/GC epoch fencing is
         additionally required to order delayed index requests against deletion.
         """
-        sem = asyncio.Semaphore(_OBJECT_UPLOAD_CONCURRENCY)
+        sem = asyncio.Semaphore(self._active_io_strategy().write_concurrency)
 
         async def verify(key: str, expected: bytes) -> None:
             try:
-                async with sem:
+                async with sem, physical_io_credit():
                     actual = await self._s3.download_file(key)
             except Exception as exc:
                 raise StorageWriteError(f"physical upload verification failed: {key}") from exc
@@ -1682,22 +1760,32 @@ class S3StorageBackend(StorageBackend):
                 raise StorageWriteError(f"physical upload verification failed: {key}")
 
         with trace_phase("s3.verify_uploads", count=len(uploads)):
-            await asyncio.gather(*(verify(key, data) for key, data, _content_type in uploads))
+            results = await asyncio.gather(
+                *(verify(key, data) for key, data, _content_type in uploads),
+                return_exceptions=True,
+            )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
-    async def _async_upsert_object_locations(self, rows: list[dict]) -> None:
+    async def _async_upsert_object_locations(self, rows: list[dict], *, paged=False) -> None:
         if not rows:
             return
         with trace_phase("db.object_location.upsert", count=len(rows)):
-            for offset in range(0, len(rows), _OBJECT_LOCATION_UPSERT_BATCH_SIZE):
-                chunk = rows[offset : offset + _OBJECT_LOCATION_UPSERT_BATCH_SIZE]
+            pages = metadata_pages(rows) if paged else (
+                rows[n:n + _OBJECT_LOCATION_UPSERT_BATCH_SIZE]
+                for n in range(0, len(rows), _OBJECT_LOCATION_UPSERT_BATCH_SIZE)
+            )
+            for chunk in pages:
                 context = publication_context.get()
                 if context is not None:
                     if context.project_id != self._project_id:
                         raise StorageWriteError("publication context belongs to another Project")
                     try:
-                        await asyncio.to_thread(
+                        response = await call_owned(
                             lambda batch=chunk, context=context: self._supabase.client.rpc(
-                                "register_version_object_locations",
+                                "register_version_object_location_page"
+                                if paged else "register_version_object_locations",
                                 {
                                     "p_project_id": self._project_id,
                                     "p_actor": context.actor,
@@ -1706,6 +1794,8 @@ class S3StorageBackend(StorageBackend):
                                 },
                             ).execute()
                         )
+                        if paged and response.data != {"registered": len(chunk)}:
+                            raise RuntimeError("incomplete location registration acknowledgement")
                     except Exception as exc:
                         # Never fall back to an unfenced table upsert, including
                         # missing schema capability and late/expired pins.
@@ -1801,7 +1891,8 @@ class S3StorageBackend(StorageBackend):
                         f"[VersionS3] hash-on-write: could not verify resident "
                         f"bytes at {key} ({exc}); overwriting",
                     )
-        await self._physical_s3().upload_file(key, data, content_type="application/octet-stream")
+        async with physical_io_credit():
+            await self._physical_s3().upload_file(key, data, content_type="application/octet-stream")
 
     async def async_scan_primary_loose_integrity(
         self,

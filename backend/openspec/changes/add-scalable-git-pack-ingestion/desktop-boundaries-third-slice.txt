@@ -1,0 +1,57 @@
+
+> @puppyone/desktop@0.3.27 check:boundaries
+> npm run check:interface-styles && npm run check:sub-themes && node scripts/check-repository-layout.mjs && npm run check:test-layout && node scripts/check-puppy-brand-assets.mjs && node scripts/check-renderer-asset-architecture.mjs && node scripts/check-test-fixture-privacy.mjs && node scripts/check-product-reference-hygiene.mjs && node scripts/check-local-workspace-architecture.mjs && node scripts/check-cloud-frontend-architecture.mjs && node scripts/check-project-reach-gate.mjs && node scripts/check-repository-target-architecture.mjs && node scripts/check-desktop-platform-architecture.mjs && node scripts/check-local-agent-installation-architecture.mjs && node scripts/check-desktop-build-identity-architecture.mjs && node scripts/check-desktop-telemetry-architecture.mjs && node scripts/check-git-auto-commit-architecture.mjs && node scripts/check-macos-release-config.mjs && node scripts/check-localization.mjs && npm run check:project-templates && node scripts/check-renderer-style-architecture.mjs && node scripts/check-window-layout-architecture.mjs && node scripts/check-native-surface-layering.mjs && node scripts/check-data-ui-boundaries.mjs && node scripts/check-markdown-architecture.mjs && node scripts/check-viewer-contract.mjs && node scripts/check-editor-document-session.mjs && node scripts/check-sidebar-architecture.mjs && node scripts/check-workbench-architecture.mjs && node scripts/check-agent-architecture.mjs && node scripts/check-agent-activity-architecture.mjs && node scripts/check-pi-kernel-provenance.mjs && node scripts/check-claude-agent-sdk-provenance.mjs && node scripts/check-agent-ui-provenance.mjs && node scripts/check-automation-plugin-boundaries.mjs && node scripts/check-user-vocabulary.mjs
+
+
+> @puppyone/desktop@0.3.27 check:interface-styles
+> node scripts/generate-interface-styles.mjs --check
+
+Interface style manifest and generated files are in sync.
+
+> @puppyone/desktop@0.3.27 check:sub-themes
+> node scripts/generate-builtin-sub-themes.mjs --check
+
+Built-in Sub Theme packages are valid (6 packages).
+Repository layout check passed.
+
+> @puppyone/desktop@0.3.27 check:test-layout
+> node scripts/check-test-layout.mjs
+
+Test layout and package exclusions verified.
+Puppy brand asset check passed: two native App Images and two renderer marks.
+Renderer asset architecture check passed (47 cataloged images).
+Test fixture privacy check passed.
+Product reference hygiene check passed.
+Local Workspace architecture check passed.
+Cloud frontend architecture check passed.
+Project reach experiment gate OK: 3 flag owners, 3 declared render entries, 4 registered new-path homes, 7 shared data owners.
+Repository target architecture check passed.
+Desktop platform architecture check passed for macOS, Windows, and Linux targets.
+Local Agent installation ownership, refresh, and consumer boundaries verified.
+Desktop Build Identity architecture check passed.
+Desktop telemetry architecture check passed.
+Git Auto Commit architecture check passed.
+macOS release configuration check passed.
+Localization architecture OK: 8 locales, 3626 renderer messages, 94 native messages.
+
+> @puppyone/desktop@0.3.27 check:project-templates
+> node scripts/sync-project-template-digests.mjs --check
+
+Verified getting-started.manifest.json (8 locales).
+Renderer style architecture check passed.
+Window layout architecture check passed (640x520px minimum).
+Native surface layering check passed.
+shared UI boundary check passed.
+Markdown architecture boundary check passed.
+viewer contract boundary check passed.
+Document Session architecture boundary check passed.
+Sidebar architecture check passed.
+DOM session UI and isolated execution boundaries verified.
+Shared Workbench chrome and brand dependency check passed.
+Desktop Agent architecture boundary check passed.
+Agent activity architecture OK: neutral broker, six edge adapters, public Renderer boundary.
+PuppyOne Pi SDK kernel provenance and isolation check passed.
+Claude Agent SDK provenance and product-policy check passed.
+Agent source provenance check passed.
+Automation/Plugin domain boundary check passed.
+User-facing vocabulary check passed: 34 prohibited terms from puppy-issues@d1618f5:document/product-philosophy.md#vocabulary, verified against the working copy of document/product-philosophy.md; 996 exempt legacy string(s), 0 removed.

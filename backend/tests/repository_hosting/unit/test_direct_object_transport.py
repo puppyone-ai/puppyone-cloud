@@ -79,9 +79,10 @@ def storage(git):
     )
     backend = SimpleNamespace(publication_project_id="p", get_durable=get)
     backend.pinned_reader = lambda _snapshot: backend
-    backend.put_many_durable = lambda batch: [
-        backend.put_durable(oid, data) for oid, data in batch.items()
+    backend.put_stream_durable = lambda objects: [
+        backend.put_durable(oid, data) for oid, data in objects
     ]
+    backend.put_prepared_stream_durable = lambda objects, facts: backend.put_stream_durable(objects)
     return (
         SimpleNamespace(
             control=control,

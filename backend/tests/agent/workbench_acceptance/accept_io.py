@@ -5,6 +5,7 @@ Reports allocation, first connection, and warm I/O separately. Uses disposable
 owned PostgreSQL/S3 and provider resources; no model or billing acceptance.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -18,7 +19,8 @@ import pytest
 
 from src.config import settings
 from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from tests.agent.workbench_acceptance.accept_fly import cleanup_owned, http_server
+from tests.agent.workbench_acceptance.accept_e2b import cleanup_owned as cleanup_e2b
+from tests.agent.workbench_acceptance.accept_fly import cleanup_owned
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
 )
@@ -28,6 +30,7 @@ from tests.agent.workbench_acceptance.accept_production_entry import (
 )
 from tests.agent.workbench_acceptance.accept_production_entry import postgres as postgres
 from tests.agent.workbench_acceptance.accept_production_entry import services as services
+from tests.agent.workbench_acceptance.provider_scenario import http_server
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -77,6 +80,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             receipt["first_read_ms"] = round((time.perf_counter() - start) * 1000, 2)
             service = entry.app.state.workbench_service
             cached = next(iter(service.channels.entries.values())).channel
+            receipt["write_encodings"] = cached.service_receipt.get("write_encodings", [])
             resource_before = service.repository.get(workspace["id"])["resource"]["resource_id"]
             start = time.perf_counter()
             reopened = await http.post(root)
@@ -119,6 +123,13 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
                 assert next(iter(service.channels.entries.values())).channel is cached
             receipt["warm"] = {key: summary(values) for key, values in samples.items()}
             receipt["warm_channel_count"] = len(service.channels.entries)
+            start = time.perf_counter()
+            concurrent = await asyncio.gather(
+                *(http.get(root + "/file", params={**params, "path": "io.txt"}) for _ in range(3))
+            )
+            receipt["three_concurrent_reads_ms"] = round((time.perf_counter() - start) * 1000, 2)
+            assert all(response.status_code == 200 for response in concurrent)
+            assert next(iter(service.channels.entries.values())).channel is cached
             # Repeated subscription ACK has the same transport but no Python
             # file helper, separating network/control overhead from filesystem I/O.
             controls = []
@@ -127,6 +138,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
                 await cached.control("watch")
                 controls.append((time.perf_counter() - start) * 1000)
             receipt["control_roundtrip"] = summary(controls)
+            await cached.control("unwatch")
             stale = await http.put(
                 root + "/file",
                 params=params,
@@ -141,6 +153,18 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
                 root + "/file", params={**params, "path": "io.txt"}, headers={"Authorization": ""}
             )
             assert denied.status_code == 401
+            # Closing SSH must not stop the VM-owned service or its native files.
+            service_receipt = dict(cached.service_receipt)
+            await service.channels.invalidate(workspace["id"])
+            start = time.perf_counter()
+            reconnected = await http.get(root + "/file", params={**params, "path": "io.txt"})
+            receipt["transport_reconnect_read_ms"] = round((time.perf_counter() - start) * 1000, 2)
+            assert reconnected.status_code == 200, reconnected.text
+            assert base64.b64decode(reconnected.json()["content_base64"]) == payload
+            replacement = next(iter(service.channels.entries.values())).channel
+            assert replacement is not cached
+            assert replacement.service_receipt == service_receipt
+            receipt["service_survived_transport_disconnect"] = True
             row = service.repository.get(workspace["id"])
             receipt["resource_id"] = row["resource"]["resource_id"]
             receipt["artifact"] = row["binding"]["artifact"]
@@ -166,6 +190,12 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
                 == resource_before
             )
             assert next(iter(service.channels.entries.values())).channel is not cached
+            resumed_channel = next(iter(service.channels.entries.values())).channel
+            assert (
+                resumed_channel.service_receipt["compute_epoch"] > service_receipt["compute_epoch"]
+            )
+            if provider_name == "fly":
+                assert resumed_channel.service_receipt["boot_id"] != service_receipt["boot_id"]
             receipt["functional_result"] = "passed"
             receipt["latency_goal"] = {"per_operation_p50_ms": 300, "per_operation_p95_ms": 1000}
             assert all(
@@ -178,17 +208,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             if provider_name == "fly":
                 await cleanup_owned(entry, provider, receipt)
             else:
-                rows = (
-                    entry.client.table("cloud_workbenches")
-                    .select("resource")
-                    .eq("project_id", entry.project)
-                    .execute()
-                    .data
-                )
-                for row in rows:
-                    if row["resource"]:
-                        await provider.cleanup(row["resource"])
-                receipt["cleanup"] = "owned E2B sandboxes killed"
+                await cleanup_e2b(entry, provider, receipt)
             cleanup_succeeded = True
         finally:
             try:

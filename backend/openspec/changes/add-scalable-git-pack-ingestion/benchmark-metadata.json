@@ -1,0 +1,58 @@
+{
+  "conditions": "Local S3/PG doubles; 2ms artificial PUT yield; no network or final publication; timings are component-only.",
+  "pack_bytes": 19999605,
+  "pack_sha256": "d1b728576f4884a2048e11b91d85463ead789f927ea7c2ae33ba5f773e4644be",
+  "pack_objects": 6013,
+  "parse_seconds": 0.6759,
+  "legacy_100_object_windows": {
+    "component_seconds": 1.8532,
+    "write_windows": 61,
+    "io_operations": 61,
+    "settled_operations": 61,
+    "s3_puts": 61,
+    "s3_readbacks": 61,
+    "s3_put_bytes": 34094227,
+    "db_calls": {
+      "reserve_version_object_capacity": 61,
+      "register_version_object_locations": 61,
+      "settle_version_object_capacity_io": 61
+    },
+    "peak_simultaneous_puts": 1,
+    "peak_inflight_encoded_bytes": 1847748,
+    "cold_read_objects_verified": 6014
+  },
+  "byte_windows": {
+    "component_seconds": 1.5301,
+    "write_windows": 5,
+    "io_operations": 5,
+    "settled_operations": 5,
+    "s3_puts": 5,
+    "s3_readbacks": 5,
+    "s3_put_bytes": 34099548,
+    "db_calls": {
+      "reserve_version_object_capacity": 32,
+      "register_version_object_locations": 32,
+      "settle_version_object_capacity_io": 5
+    },
+    "peak_simultaneous_puts": 1,
+    "peak_inflight_encoded_bytes": 8386454,
+    "cold_read_objects_verified": 6014
+  },
+  "prepared_operation": {
+    "component_seconds": 1.6713,
+    "write_windows": 5,
+    "io_operations": 1,
+    "settled_operations": 1,
+    "s3_puts": 5,
+    "s3_readbacks": 5,
+    "s3_put_bytes": 34099548,
+    "db_calls": {
+      "reserve_version_object_capacity_page": 1,
+      "register_version_object_location_page": 1,
+      "settle_version_object_capacity_io": 1
+    },
+    "peak_simultaneous_puts": 1,
+    "peak_inflight_encoded_bytes": 8386454,
+    "cold_read_objects_verified": 6014
+  }
+}

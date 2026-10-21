@@ -7,10 +7,10 @@ continues to see only ObjectStore operations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import ceil
-from typing import Mapping
 
 
 class ObjectWriteLayout(StrEnum):
@@ -60,15 +60,31 @@ class IOStorageStrategy:
     remain loose.
     """
 
-    bundle_target_bytes: int
-    chunk_bytes: int
+    bundle_target_bytes: int = 8 * 1024**2
+    chunk_bytes: int = 8 * 1024**2
     location_index_enabled: bool = True
+    # Object-count limits bound metadata, not ordinary upload boundaries. These
+    # are admission windows over the existing POB representation, not Git pack
+    # segments. A single larger object is isolated and uses the chunked route.
+    max_batch_objects: int = 16_384
+    write_concurrency: int = 4
+    max_inflight_bytes: int = 32 * 1024**2
+    max_stream_object_bytes: int = 128 * 1024**2
 
     def __post_init__(self) -> None:
-        if self.bundle_target_bytes <= 0:
-            raise ValueError("bundle_target_bytes must be positive")
-        if self.chunk_bytes <= 0:
-            raise ValueError("chunk_bytes must be positive")
+        for name in (
+            "bundle_target_bytes",
+            "chunk_bytes",
+            "max_batch_objects",
+            "write_concurrency",
+            "max_inflight_bytes",
+            "max_stream_object_bytes",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.bundle_target_bytes > self.max_inflight_bytes:
+            raise ValueError("bundle target exceeds the in-flight byte budget")
 
     def plan_single(self, object_id: str, size_bytes: int) -> ObjectWriteRoute:
         if self.location_index_enabled and size_bytes > self.bundle_target_bytes:
@@ -82,13 +98,8 @@ class IOStorageStrategy:
         )
 
     def plan_batch(self, object_sizes: Mapping[str, int]) -> ObjectWritePlan:
-        if len(object_sizes) <= 1:
-            routes = {
-                object_id: self.plan_single(object_id, size_bytes)
-                for object_id, size_bytes in object_sizes.items()
-            }
-            return ObjectWritePlan(routes=routes, chunk_bytes=self.chunk_bytes)
-
+        # A stream's one-object tail uses the same indexed, verified layout as
+        # every other batch. Only the explicit single-write API selects LOOSE.
         routes: dict[str, ObjectWriteRoute] = {}
         for object_id, size_bytes in object_sizes.items():
             if not self.location_index_enabled:
@@ -104,11 +115,7 @@ class IOStorageStrategy:
             )
         return ObjectWritePlan(routes=routes, chunk_bytes=self.chunk_bytes)
 
-    def without_location_index(self) -> "IOStorageStrategy":
+    def without_location_index(self) -> IOStorageStrategy:
         if not self.location_index_enabled:
             return self
-        return IOStorageStrategy(
-            bundle_target_bytes=self.bundle_target_bytes,
-            chunk_bytes=self.chunk_bytes,
-            location_index_enabled=False,
-        )
+        return replace(self, location_index_enabled=False)

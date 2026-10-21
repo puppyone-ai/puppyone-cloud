@@ -717,13 +717,13 @@ async def test_writing_run_uses_one_push_and_bounded_object_reservations(
     report = supervisor.metrics.report()
     # Empty tree shares the incoming batch; closure reconciliation is in seal.
     assert report["operations"].get("POST rpc/reserve_version_object_capacity") == 1, report
-    assert report["operations"].get("POST rpc/seal_version_capacity_batch") == 1, report
+    assert report["operations"].get("POST rpc/seal_version_capacity_page") == 1, report
     # Fixed lifecycle persistence (6) plus bounded proof lookups/registration
     # (4). The same budget covers one file and sixty files in one batch.
     assert report["operations"].get("POST rpc/agent_run_workspace_acquire") == 1
     assert report["operations"].get("POST rpc/agent_run_workspace_transition") == 4
     assert report["operations"].get("POST rpc/get_version_object_proofs") == 3
-    assert report["operations"].get("POST rpc/register_version_object_proofs") == 1
+    assert report["operations"].get("POST rpc/register_version_object_proof_page") == 1
     assert_run_budget(supervisor, report, 45)
     assert report["operations"].get("GET version_object_locations", 0) <= 3, report
     assert report["max_inflight"] <= 10, report

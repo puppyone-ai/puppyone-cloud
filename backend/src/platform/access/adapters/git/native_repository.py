@@ -7,6 +7,18 @@ from pathlib import Path
 
 from fastapi.responses import Response
 
+from src.platform.access.adapters.git.execution import ObjectGitResponse, checkpoint
+from src.platform.access.adapters.git.native_fetch import FetchRequest, fetch_chunks
+from src.platform.access.adapters.git.native_wire import (
+    advertisement,
+    ls_refs,
+    receive_commands,
+    upload_packets,
+    version,
+)
+from src.platform.access.adapters.git.object_pack import IncomingPack
+from src.platform.access.adapters.git.object_reader import PublishedObjectReader
+from src.platform.access.adapters.git.protocol import flush_pkt, pkt_line
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.storage.mutation_context import publication_context
 from src.version_engine.write_engine.git_object_format import encode_object
@@ -16,13 +28,6 @@ from src.version_engine.write_engine.ref_transaction import (
     RefTransactionService,
     admitted_actor,
 )
-
-from src.platform.access.adapters.git.execution import ObjectGitResponse, checkpoint
-from src.platform.access.adapters.git.native_fetch import FetchRequest, fetch_chunks
-from src.platform.access.adapters.git.native_wire import advertisement, ls_refs, receive_commands, upload_packets, version
-from src.platform.access.adapters.git.object_pack import IncomingPack
-from src.platform.access.adapters.git.object_reader import PublishedObjectReader
-from src.platform.access.adapters.git.protocol import flush_pkt, pkt_line
 
 
 class PublicationIndeterminateError(RuntimeError):
@@ -100,11 +105,19 @@ class NativeGitRepository:
         with request_path.open("rb") as handle:
             return receive_commands(handle, self.format)
 
-    def receive(self, grant, request_path: Path, *, publication=None):
+    def receive(self, grant, request_path: Path, *, publication=None, initial_attempt=None):
         admitted_actor(grant, self.project_id, write=True)
         outcomes = {}
         with request_path.open("rb") as handle:
             edits, capabilities = receive_commands(handle, self.format)
+            if initial_attempt is not None:
+                initial_attempt = str(uuid.UUID(initial_attempt))
+                # The extension identifies one immutable initial-main attempt.
+                # Ordinary Git and multi-ref pushes retain their existing path.
+                if (publication is not None or len(edits) != 1
+                        or edits[0].name != b"refs/heads/main"
+                        or edits[0].expected != RefState() or edits[0].new.oid is None):
+                    raise ValueError("initial attempt requires creation of main")
             if publication is not None:
                 publication.validate(edits)
             with repository_snapshot(
@@ -210,31 +223,38 @@ class NativeGitRepository:
                             empty_oid, empty_loose = encode_object(
                                 "tree", b"", object_format=self.format
                             )
-                            batch, size = {empty_oid: empty_loose}, len(empty_loose)
-                            for oid in pending:
-                                checkpoint()
-                                snapshot.check_live()
-                                context = publication_context.get()
-                                if context is not None and context.progress is not None:
-                                    context.progress()
-                                kind, body = incoming.get(oid)
-                                actual, loose = encode_object(kind, body, object_format=self.format)
-                                if actual != oid:
-                                    raise ValueError("incoming object hash mismatch")
-                                if batch and (len(batch) >= 100 or size + len(loose) > 8 * 1024**2):
-                                    self.service.backend.put_many_durable(batch)
-                                    uploaded.update(batch)
-                                    batch, size = {}, 0
-                                batch[oid] = loose
-                                size += len(loose)
-                            if batch:
-                                self.service.backend.put_many_durable(batch)
-                                uploaded.update(batch)
+
+                            def objects():
+                                yield empty_oid, empty_loose
+                                for oid in pending:
+                                    checkpoint()
+                                    snapshot.check_live()
+                                    context = publication_context.get()
+                                    if context is not None and context.progress is not None:
+                                        context.progress()
+                                    if oid == empty_oid:
+                                        continue
+                                    kind, body = incoming.get(oid)
+                                    actual, loose = encode_object(kind, body, object_format=self.format)
+                                    if actual != oid:
+                                        raise ValueError("incoming object hash mismatch")
+                                    yield oid, loose
+
+                            # Storage owns byte windows, concurrency and layout.
+                            # Returning here proves all started I/O has joined.
+                            facts = {
+                                oid: (incoming.objects[oid][0], incoming.objects[oid][2])
+                                for oid in pending
+                            }
+                            facts[empty_oid] = ("tree", 0)
+                            self.service.backend.put_prepared_stream_durable(objects(), facts)
+                            uploaded.update(pending)
+                            uploaded.add(empty_oid)
 
                         request_key = (
                             publication.request_key
                             if publication is not None
-                            else str(uuid.uuid4())
+                            else initial_attempt or str(uuid.uuid4())
                         )
                         try:
                             result = self.service.submit(

@@ -33,8 +33,12 @@ async def test_e2b_creation_pauses_on_timeout_and_explicit_resume_keeps_identity
     first = worker()
     resource = await first.create()
     assert "recovery_volume" not in resource
-    assert create.call_args.kwargs["lifecycle"] == {"on_timeout": "pause", "auto_resume": False}
+    assert create.call_args.kwargs["lifecycle"] == {
+        "on_timeout": {"action": "pause", "keep_memory": True},
+        "auto_resume": False,
+    }
     assert create.call_args.kwargs["allow_internet_access"] is False
+    assert create.call_args.kwargs["network"] == {"allow_public_traffic": False}
     first.control = AsyncMock(return_value={})
     await first.pause()
     first.control.assert_awaited_once_with("park")
@@ -65,7 +69,9 @@ async def test_pause_response_loss_retries_provider_without_restarting_control(m
 async def test_confirmed_missing_resource_restores_fresh_allocation_identity(monkeypatch):
     value = worker("docker")
     fresh = dict(value.resource)
-    value._docker = AsyncMock(side_effect=RuntimeError("No such container: old-provider-id"))
+    value.runtime._docker = AsyncMock(
+        side_effect=RuntimeError("No such container: old-provider-id")
+    )
     old = {**fresh, "resource_id": "old-provider-id", "session_id": "old-execution"}
     with pytest.raises(WorkerLost):
         await value.resume(old)
@@ -148,10 +154,10 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
     if fails:
         snapshot.side_effect = RuntimeError("provider snapshot unavailable")
     value.sandbox = SimpleNamespace(
-        create_snapshot=snapshot, commands=SimpleNamespace(
+        create_snapshot=snapshot,
+        commands=SimpleNamespace(
             connect=AsyncMock(return_value=handle), list=AsyncMock(return_value=[])
-        )
-
+        ),
     )
     try:
         if fails:
@@ -182,3 +188,43 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
         value.reader.cancel()
         with suppress(asyncio.CancelledError):
             await value.reader
+
+
+@pytest.mark.asyncio
+async def test_e2b_snapshot_and_timeout_renewal_do_not_overlap():
+    value = worker()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked(*_):
+        entered.set()
+        await release.wait()
+
+    value.sandbox = SimpleNamespace(set_timeout=AsyncMock(side_effect=blocked))
+    value.timeout_renewal = 0
+    value.runtime._snapshot = AsyncMock(return_value={"id": "snapshot"})
+    renewal = asyncio.create_task(value.runtime.renew(value))
+    await asyncio.wait_for(entered.wait(), 1)
+    snapshot = asyncio.create_task(value.runtime.snapshot(value))
+    await asyncio.sleep(0)
+    value.runtime._snapshot.assert_not_awaited()
+    release.set()
+    await renewal
+    await snapshot
+
+    entered.clear()
+    release.clear()
+    value.runtime._snapshot = AsyncMock(side_effect=blocked)
+    value.sandbox.set_timeout.reset_mock()
+    value.timeout_renewal = 0
+    snapshot = asyncio.create_task(value.runtime.snapshot(value))
+    await asyncio.wait_for(entered.wait(), 1)
+    try:
+        # Renewal returns promptly so the caller can continue DB lease checks.
+        await asyncio.wait_for(value.runtime.renew(value), 1)
+        value.sandbox.set_timeout.assert_not_awaited()
+    finally:
+        release.set()
+        await snapshot
+    value.parked = True
+    await value.runtime.renew(value)
+    value.sandbox.set_timeout.assert_not_awaited()

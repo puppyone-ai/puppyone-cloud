@@ -21,6 +21,95 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
    The user authorized disposable Fly resources for this test; opt-in remains
    mandatory so routine regression jobs cannot incur provider charges.
 
+## Persistent connection candidate (2026-10-22)
+
+[`persistent-connection-receipt.json`](persistent-connection-receipt.json) records
+backend `7ca7d7ff`, Desktop `be263e2e`, the local linux/amd64 candidate image,
+verification scope and outstanding gates. This supersedes no historical Fly receipt.
+Local checks pass: 197 Agent cases, 58 owned database/product-entry cases,
+50 native Linux Worker cases, four native-file scenarios and 265 Desktop cases.
+The native-file scenarios passed three final runs after replacing socket/PID-only
+restart readiness with a read-only handshake. Real flyctl private-agent startup,
+reuse and cleanup also passed; no workspace was woken for that check.
+
+The implementation separates the VM-owned service, shared request/watch channel,
+and provider-private transport. `accept_fly.py` now asserts file/watch connection
+reuse. `accept_io.py` additionally measures concurrent reads and transport-only
+reconnection, and checks service identity survives SSH loss while a real Fly
+stop/start advances boot and compute identities. These two candidate Fly tests
+**have not run**: automatic approval review rejected candidate artifact upload
+pending explicit registry-destination approval. Do not reuse the older performance
+numbers below as evidence for this implementation.
+
+The candidate requires a paired Worker/backend rollout. Changing the default
+image does not upgrade existing persisted artifact bindings. Keep their Volume
+and files; upgrading them requires explicit lifecycle admission and binding
+updates. Do not point new file clients at old images or silently fall back to
+published Git files. The E2B adapter now uses the shared supervised file service;
+its isolated E2B acceptance is recorded below. Product deployment remains explicitly Fly with no E2B fallback. Routine
+tests must not enable either hosted provider.
+
+The full regular-Docker runtime suite is still blocked by local container startup;
+native BuildKit is component evidence only. Native Linux process tests passed;
+emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end timing
+and hosted activation remain open. Backend source was fast-forwarded into local
+`qubits` at `df46de61` on 2026-10-22 after explicit user authorization; post-merge
+Agent regression passed 215 cases and unrelated working changes were preserved.
+No push or deployment was performed. The Desktop companion remains on its
+candidate branch. JSON receipts retain their original pre-merge evidence scope.
+
+## E2B persistent-service acceptance
+
+The isolated E2B adapter gate is accepted on clean source `33f2415c`; product
+configuration remains explicitly Fly with no E2B key, template or fallback.
+[`e2b-persistent-connection-receipt.json`](e2b-persistent-connection-receipt.json)
+records the template build, final test results, diagnostics and cleanup. This
+closes the E2B follow-up, not the independent Fly rollout or ISSUE-118 A1–A6.
+
+Both providers use `provider_scenario.py`, the same supervised file service,
+connection cache, framing, native operations and notifications. E2B-specific
+GET-only attachment, SDK transport, private workload ports and memory retention
+stay in `providers/e2b.py`. GET validates resource ownership and disabled
+`auto_resume`; file attachment cannot implicitly resume or extend compute.
+Snapshot and timeout-renewal mutations are serialized while DB heartbeats
+continue. The file transport uses pooled HTTP/1.1, measured faster than the
+SDK default for this output-subscription/stdin workload.
+
+Write compression extends the shared Filesystem wire contract. Only a service
+advertising `write_encodings` receives compressed writes; old workers receive
+ordinary bytes. Decode is bounded, corrupt/truncated/trailing/oversized input
+fails before mutation, and native contents, revisions, sync and conflict checks
+are preserved. This is not an E2B-specific file implementation or file cache.
+
+To repeat acceptance, build the committed worker using
+`agent-worker/build_e2b_template.py` in an explicitly authorized E2B account.
+Supply the template ID and key only to the isolated test process using the
+owned PostgreSQL/PostgREST/MinIO infrastructure below. Run:
+
+```sh
+CLOUD_AGENT_TEST_E2B=1 CLOUD_AGENT_E2B_TEST_RECEIPT=/tmp/e2b-runtime.json \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_e2b.py
+CLOUD_AGENT_TEST_IO=e2b CLOUD_AGENT_IO_RECEIPT_DIR=/tmp \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_io.py
+CLOUD_AGENT_TEST_E2B=1 CLOUD_AGENT_E2B_LEGACY_RECEIPT=/tmp/e2b-legacy.jsonl \
+  python -m pytest -q tests/agent/runtime/test_e2b_workspace.py
+```
+
+The product chain covers actual Pi/Bash saves visible before Git publication,
+SSE, editor CAS conflicts, real Git publication into native PG/S3, two independent
+Chats on one resource, transport reconnect, pause/no-wake/resume and cleanup.
+Legacy tests additionally cover fragmented replies after snapshots and recovery
+after deleting the source sandbox. E2B's transparent network proxy can accept
+TCP before rejecting origin traffic: isolation checks actual IPv4/IPv6 HTTP/TLS,
+with an explicitly allowed positive control. Workload ingress returns 403 to
+anonymous requests and 200 with its access token.
+
+Teardown polls eventual deletion and verifies GET plus metadata listings; legacy
+snapshot listings are also checked. The validated template is retained as an
+inactive candidate. Metering, external model quality, browser UI and PTY are
+outside this gate. The full backend regression retains baseline ETL failures;
+the aggregate receipt identifies their comparison against untouched `b54cfd53`.
+
 ## Required continuous scenario (all still required)
 
 | Phase | Required executable assertions / evidence |
@@ -199,10 +288,29 @@ watch-delivery or other-region latency. The native Linux regression separately
 checks compressed/plain byte and revision equality, persistent helper reuse and
 helper failure without replay. No file content is cached.
 
-E2B uses the same executable workload, but **has no current same-workload receipt**.
-Building its candidate template requires uploading worker source to E2B;
-automatic approval review rejected that upload pending explicit user approval.
-Earlier E2B evidence does not establish these new I/O targets or a speed ranking.
+The [E2B I/O receipt](e2b-io-receipt.json) records clean source `33f2415c`
+and the final candidate template, using the same 50 × 4 KiB compressible-text
+workload through authenticated product HTTP endpoints on the local test host.
+No provider-region claim or general speed ranking is inferred from this run.
+
+| Warm operation | Samples | p50 | p95 | Max |
+| --- | ---: | ---: | ---: | ---: |
+| Write | 50 | 273.84 ms | 297.22 ms | 629.64 ms |
+| Read | 50 | 269.92 ms | 302.72 ms | 594.04 ms |
+| List | 50 | 269.69 ms | 616.84 ms | 901.66 ms |
+
+Initial allocation/Git preparation took 6.97 s; first file connection/read 4.07 s.
+Opening the already-running workspace reused its resource/channel in 9.27 ms.
+Transport-only reconnect/read took 1.76 s; explicit resume plus first read 4.41 s.
+Control-only p50 was 257.51 ms; three simultaneous reads completed in 800.07 ms.
+These are distinct phases, not a claim that every open or file operation is 9 ms.
+
+The pre-optimization run failed the unchanged 300 ms p50 gate (write 407.78 ms).
+An isolated probe measured native durable writes below 1 ms but 6 KiB stdin
+requests near 375 ms versus 257 ms for small requests. Negotiated shared write
+encoding brought the final complete API measurement within the original gate.
+Large/incompressible payloads, other network locations and broader concurrency
+remain outside this workload's performance claim.
 
 ## Executable private-file prerequisites (A2)
 
