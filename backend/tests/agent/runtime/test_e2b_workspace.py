@@ -1,7 +1,9 @@
 """Opt-in real E2B snapshot contract; does not use any hosted application database."""
 
 import asyncio
+import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -22,6 +24,70 @@ pytestmark = [
         reason="Explicit E2B test template and credentials required",
     ),
 ]
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_receipt(monkeypatch, request):
+    """Observe real provider calls, then prove each test released its resources."""
+    from e2b import AsyncSandbox
+    from e2b.sandbox.sandbox_api import SandboxQuery
+
+    from tests.agent.workbench_acceptance.accept_e2b import assert_absent
+    from tests.agent.workbench_acceptance.provider_scenario import eventually
+
+    workers, snapshots = [], set()
+    create, snapshot = PiWorker.create, PiWorker.snapshot
+
+    async def tracked_create(worker):
+        workers.append(worker)
+        return await create(worker)
+
+    async def tracked_snapshot(worker):
+        point = await snapshot(worker)
+        snapshots.add(point["id"])
+        return point
+
+    monkeypatch.setattr(PiWorker, "create", tracked_create)
+    monkeypatch.setattr(PiWorker, "snapshot", tracked_snapshot)
+    yield
+    resources = {worker.resource["resource_id"] for worker in workers}
+    for identity in resources:
+        await assert_absent(identity)
+    for project in {worker.project_id for worker in workers}:
+
+        async def remaining(project=project):
+            pager = AsyncSandbox.list(
+                query=SandboxQuery(metadata={"project_id": project}), api_key=settings.E2B_API_KEY
+            )
+            result = []
+            while pager.has_next:
+                result.extend(await pager.next_items())
+            return result
+
+        await eventually(remaining, lambda items: not items, timeout=30)
+
+    async def retained_snapshots():
+        retained = set()
+        for identity in resources:
+            pager = AsyncSandbox.list_snapshots(identity, api_key=settings.E2B_API_KEY)
+            while pager.has_next:
+                retained.update(item.snapshot_id for item in await pager.next_items())
+        return retained & snapshots
+
+    await eventually(retained_snapshots, lambda items: not items, timeout=30)
+    if destination := os.environ.get("CLOUD_AGENT_E2B_LEGACY_RECEIPT"):
+        with Path(destination).open("a") as file:
+            file.write(
+                json.dumps(
+                    {
+                        "test": request.node.name,
+                        "resources": sorted(resources),
+                        "snapshots": sorted(snapshots),
+                        "cleanup": "absence verified by GET and lists",
+                    }
+                )
+                + "\n"
+            )
 
 
 async def test_e2b_fragmented_reply_after_snapshot_reaches_git_finalization():
