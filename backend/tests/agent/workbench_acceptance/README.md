@@ -46,8 +46,7 @@ image does not upgrade existing persisted artifact bindings. Keep their Volume
 and files; upgrading them requires explicit lifecycle admission and binding
 updates. Do not point new file clients at old images or silently fall back to
 published Git files. The E2B adapter now uses the shared supervised file service;
-its template and actual provider chain still require the isolated acceptance
-below. Product deployment remains explicitly Fly with no E2B fallback. Routine
+its isolated E2B acceptance is recorded below. Product deployment remains explicitly Fly with no E2B fallback. Routine
 tests must not enable either hosted provider.
 
 The full regular-Docker runtime suite is still blocked by local container startup;
@@ -56,44 +55,57 @@ emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end tim
 release integration and hosted activation remain open. The candidate branches are
 intentionally retained pending these gates.
 
-## E2B persistent-service candidate
+## E2B persistent-service acceptance
 
-`71fa3478` adapts template startup, file-service attachment and memory-preserving
-pause. `d01110a5` extracts `provider_scenario.py`, used by both `accept_fly.py`
-and `accept_e2b.py`; no runtime/Filesystem business logic is copied into a provider.
-E2B reads use GET connection details rather than SDK `connect()`, which can
-resume compute and extend its timeout. Binding and disabled auto-resume policy
-are checked before constructing the SDK transport.
+The isolated E2B adapter gate is accepted on clean source `33f2415c`; product
+configuration remains explicitly Fly with no E2B key, template or fallback.
+[`e2b-persistent-connection-receipt.json`](e2b-persistent-connection-receipt.json)
+records the template build, final test results, diagnostics and cleanup. This
+closes the E2B follow-up, not the independent Fly rollout or ISSUE-118 A1–A6.
 
-Local checks: 206 Agent cases and 58 owned database/entry cases passed. Four
-native Linux file scenarios and the template start/readiness commands passed
-in local arm64 BuildKit. Two real-provider cases were intentionally skipped.
-These are component results, not E2B hosted or latency acceptance. See
-[`e2b-persistent-connection-receipt.json`](e2b-persistent-connection-receipt.json).
+Both providers use `provider_scenario.py`, the same supervised file service,
+connection cache, framing, native operations and notifications. E2B-specific
+GET-only attachment, SDK transport, private workload ports and memory retention
+stay in `providers/e2b.py`. GET validates resource ownership and disabled
+`auto_resume`; file attachment cannot implicitly resume or extend compute.
+Snapshot and timeout-renewal mutations are serialized while DB heartbeats
+continue. The file transport uses pooled HTTP/1.1, measured faster than the
+SDK default for this output-subscription/stdin workload.
 
-Automatic approval review rejected uploading the worker to the configured E2B
-account without explicit destination authorization. No template or sandbox was
-created. The independent template alias prepared for approval is
-`puppy-persistent-files-71fa3478`; deployment configuration remains unchanged.
+Write compression extends the shared Filesystem wire contract. Only a service
+advertising `write_encodings` receives compressed writes; old workers receive
+ordinary bytes. Decode is bounded, corrupt/truncated/trailing/oversized input
+fails before mutation, and native contents, revisions, sync and conflict checks
+are preserved. This is not an E2B-specific file implementation or file cache.
 
-After upload is authorized, build that committed worker with
-`agent-worker/build_e2b_template.py`. Supply its receipt's template ID and the
-authorized key only to an isolated test process, using the owned infrastructure
-described below. Run the product chain and same-workload I/O gate:
+To repeat acceptance, build the committed worker using
+`agent-worker/build_e2b_template.py` in an explicitly authorized E2B account.
+Supply the template ID and key only to the isolated test process using the
+owned PostgreSQL/PostgREST/MinIO infrastructure below. Run:
 
 ```sh
 CLOUD_AGENT_TEST_E2B=1 CLOUD_AGENT_E2B_TEST_RECEIPT=/tmp/e2b-runtime.json \
   python -m pytest -q -s tests/agent/workbench_acceptance/accept_e2b.py
 CLOUD_AGENT_TEST_IO=e2b CLOUD_AGENT_IO_RECEIPT_DIR=/tmp \
   python -m pytest -q -s tests/agent/workbench_acceptance/accept_io.py
+CLOUD_AGENT_TEST_E2B=1 CLOUD_AGENT_E2B_LEGACY_RECEIPT=/tmp/e2b-legacy.jsonl \
+  python -m pytest -q tests/agent/runtime/test_e2b_workspace.py
 ```
 
-The shared scenario verifies live edits before publication, SSE, editor conflict
-handling, native Git publication, independent Chats sharing one resource,
-pause/no-wake/resume and owned resource cleanup. E2B teardown verifies absence
-through both GET and metadata listing. The I/O test additionally verifies service
-survival after transport loss and records latency. Legacy E2B snapshot tests in
-`tests/agent/runtime/test_e2b_workspace.py` remain a separate required regression.
+The product chain covers actual Pi/Bash saves visible before Git publication,
+SSE, editor CAS conflicts, real Git publication into native PG/S3, two independent
+Chats on one resource, transport reconnect, pause/no-wake/resume and cleanup.
+Legacy tests additionally cover fragmented replies after snapshots and recovery
+after deleting the source sandbox. E2B's transparent network proxy can accept
+TCP before rejecting origin traffic: isolation checks actual IPv4/IPv6 HTTP/TLS,
+with an explicitly allowed positive control. Workload ingress returns 403 to
+anonymous requests and 200 with its access token.
+
+Teardown polls eventual deletion and verifies GET plus metadata listings; legacy
+snapshot listings are also checked. The validated template is retained as an
+inactive candidate. Metering, external model quality, browser UI and PTY are
+outside this gate. The full backend regression retains baseline ETL failures;
+the aggregate receipt identifies their comparison against untouched `b54cfd53`.
 
 ## Required continuous scenario (all still required)
 
@@ -273,10 +285,29 @@ watch-delivery or other-region latency. The native Linux regression separately
 checks compressed/plain byte and revision equality, persistent helper reuse and
 helper failure without replay. No file content is cached.
 
-E2B uses the same executable workload, but **has no current same-workload receipt**.
-Building its candidate template requires uploading worker source to E2B;
-automatic approval review rejected that upload pending explicit user approval.
-Earlier E2B evidence does not establish these new I/O targets or a speed ranking.
+The [E2B I/O receipt](e2b-io-receipt.json) records clean source `33f2415c`
+and the final candidate template, using the same 50 × 4 KiB compressible-text
+workload through authenticated product HTTP endpoints on the local test host.
+No provider-region claim or general speed ranking is inferred from this run.
+
+| Warm operation | Samples | p50 | p95 | Max |
+| --- | ---: | ---: | ---: | ---: |
+| Write | 50 | 273.84 ms | 297.22 ms | 629.64 ms |
+| Read | 50 | 269.92 ms | 302.72 ms | 594.04 ms |
+| List | 50 | 269.69 ms | 616.84 ms | 901.66 ms |
+
+Initial allocation/Git preparation took 6.97 s; first file connection/read 4.07 s.
+Opening the already-running workspace reused its resource/channel in 9.27 ms.
+Transport-only reconnect/read took 1.76 s; explicit resume plus first read 4.41 s.
+Control-only p50 was 257.51 ms; three simultaneous reads completed in 800.07 ms.
+These are distinct phases, not a claim that every open or file operation is 9 ms.
+
+The pre-optimization run failed the unchanged 300 ms p50 gate (write 407.78 ms).
+An isolated probe measured native durable writes below 1 ms but 6 KiB stdin
+requests near 375 ms versus 257 ms for small requests. Negotiated shared write
+encoding brought the final complete API measurement within the original gate.
+Large/incompressible payloads, other network locations and broader concurrency
+remain outside this workload's performance claim.
 
 ## Executable private-file prerequisites (A2)
 

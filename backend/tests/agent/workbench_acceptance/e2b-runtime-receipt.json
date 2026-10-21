@@ -1,0 +1,64 @@
+{
+  "provider": "e2b",
+  "result": "passed",
+  "project_id": "69d30cb1-24bf-4a02-94a8-649ffd00df96",
+  "artifact": "s0j1x3ic6m3xmaslhsee",
+  "stages": [
+    "authenticated Chat -> default dispatcher -> real e2b/Pi",
+    "native file reads and SSE watch share one admitted service connection",
+    "task IPv4/IPv6 egress denied -> Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit",
+    "real stock Git publication -> native refs and S3 objects",
+    "independent Chat sessions reuse one resource and directory",
+    "lifecycle pause -> reads do not wake -> explicit reopen preserves resource/files"
+  ],
+  "metering": "disabled (not billing acceptance)",
+  "source_commit": "33f2415c515ab4ca8b08acf0bdd7b157e8df81ef",
+  "dirty_source": false,
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run_ids": [
+    "365e85ff-c2e7-40f6-8dcf-f87af6a9dc16",
+    "e5c385e7-24ff-4dee-8198-cd4734217d2a"
+  ],
+  "workbench_id": "1692f9d5-3f67-4e5c-9277-1b8f9cbf341f",
+  "generation": "519f491f-25eb-4a52-ad02-0c30aeec56f7",
+  "resource_id": "idiei04uqy1zh7b5ueops",
+  "ready_seconds": 14.0,
+  "stage_seconds": [
+    14.0,
+    18.44,
+    19.26,
+    24.25,
+    31.64,
+    38.29
+  ],
+  "egress": "provider internet disabled; IPv4/IPv6 HTTP/TLS probes cannot receive origin data",
+  "publication": {
+    "refs": [
+      {
+        "new": {
+          "oid": "603b403f2c757cb18c16529bc1ff5796b5328ffd",
+          "kind": "oid"
+        },
+        "changed": true,
+        "name_b64": "cmVmcy9oZWFkcy93b3Jrc3BhY2VzLzMwNzhlZDg3LWI5NTktNDA2OC1hNWRkLTgwOTU5ZDg1N2FiMQ==",
+        "observed": {
+          "kind": "absent"
+        }
+      }
+    ],
+    "reason": null,
+    "status": "committed",
+    "commit_id": "603b403f2c757cb18c16529bc1ff5796b5328ffd",
+    "generation": 1,
+    "project_id": "69d30cb1-24bf-4a02-94a8-649ffd00df96",
+    "receipt_id": "655bd9b5-076f-595d-a6f7-932094dcf5ba",
+    "target_ref": "refs/heads/workspaces/3078ed87-b959-4068-a5dd-80959d857ab1",
+    "ref_sequence": 2,
+    "transaction_id": "b307a9f7-3a53-4c21-9bf0-6ea16ac3ecf3"
+  },
+  "deleted_sandboxes": [
+    "idiei04uqy1zh7b5ueops"
+  ],
+  "cleanup": "owned E2B sandboxes absent (GET and metadata listing verified)",
+  "elapsed_seconds": 40.15
+}

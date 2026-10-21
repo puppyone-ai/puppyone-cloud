@@ -7,7 +7,7 @@
 - [ ] Pass real Fly product API/Pi/Git/files/watch/retention tests; record performance and cleanup.
 - [x] Update canonical docs and verification receipts.
 - [x] Adapt E2B template startup and service transport; prevent read attachment from resuming compute.
-- [ ] Accept E2B native files, Agent/Git, shared connections, notifications, pause/resume and cleanup using an isolated template; keep deployment inactive.
+- [x] Accept E2B native files, Agent/Git, shared connections, notifications, pause/resume and cleanup using an isolated template; keep deployment inactive.
 - [ ] Integrate the accepted candidate into qubits, preserving unrelated work.
 
 The candidate image is built locally. Automatic approval review rejected upload
@@ -16,11 +16,18 @@ question is pending. No candidate artifact was uploaded and no existing Machine
 was upgraded. Local evidence is not real Fly end-to-end or deployment evidence.
 
 Local evidence: `backend/tests/agent/workbench_acceptance/persistent-connection-receipt.json`.
-Canonical architecture: `puppy-issues@df29648:document/agent-runtime.md`.
+Canonical architecture: `puppy-issues@4c21f2a:document/agent-runtime.md`.
 
-E2B follow-up: adapter and shared acceptance scenario committed as `71fa3478`
-and `d01110a5`. Local regressions pass. Automatic approval review separately
-rejected E2B template upload pending explicit destination authorization; no E2B
-template/sandbox was created and product configuration remains Fly. Hosted E2B
-and latency results are unverified. Evidence:
+E2B follow-up is closed on `33f2415c`: the user authorized its isolated
+candidate template, all six real-provider cases passed, and the original I/O
+gate passed (50 writes/reads/lists; every p50 <=300 ms and p95 <=1,000 ms).
+Final local checks: 215 Agent tests and four native Linux file scenarios passed.
+The full backend regression has exactly the same 35 ETL failure/error cases as
+untouched `b54cfd53`; no new failure set was introduced. Resource and legacy
+snapshot absence are verified. Product configuration remains Fly, with no E2B
+key/template activation and no fallback. Evidence:
 `backend/tests/agent/workbench_acceptance/e2b-persistent-connection-receipt.json`.
+
+This closes only the E2B adapter/acceptance item. The independent Fly artifact
+upload/acceptance and qubits integration items above remain open; this is not
+full ISSUE-118 A1–A6, billing, browser or PTY acceptance.
