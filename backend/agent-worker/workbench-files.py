@@ -135,6 +135,14 @@ def execute(root, request):
             if expected is not None and (not isinstance(expected, str) or len(expected) != 64):
                 raise ValueError('Invalid expected file revision')
             data = base64.b64decode(request['content_base64'], validate=True)
+            encoding = request.get('content_encoding')
+            if encoding is not None:
+                if encoding != 'deflate':
+                    raise ValueError('Unsupported file transfer encoding')
+                decoder = zlib.decompressobj()
+                data = decoder.decompress(data, MAX_BYTES + 1)
+                if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+                    raise ValueError('Invalid file transfer framing')
             if len(data) > MAX_BYTES:
                 raise ValueError('File exceeds live editor limit')
             try:
@@ -215,7 +223,7 @@ def operation(request):
             result = {'error': 'file_not_found'}
         except FileExistsError:
             result = {'error': 'file_conflict'}
-        except (ValueError, OSError):
+        except (ValueError, OSError, zlib.error):
             result = {'error': 'file_operation_rejected'}
         return result
     finally:

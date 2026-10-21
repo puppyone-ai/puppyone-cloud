@@ -80,6 +80,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             receipt["first_read_ms"] = round((time.perf_counter() - start) * 1000, 2)
             service = entry.app.state.workbench_service
             cached = next(iter(service.channels.entries.values())).channel
+            receipt["write_encodings"] = cached.service_receipt.get("write_encodings", [])
             resource_before = service.repository.get(workspace["id"])["resource"]["resource_id"]
             start = time.perf_counter()
             reopened = await http.post(root)

@@ -166,7 +166,7 @@ function attach(input, output, disconnect, initialBinding) {
         let result;
         if (frame.action === 'hello') {
           client.binding = await admit(frame.value, client);
-          result = {protocol: 1, ...client.binding, boot_id: bootId, service_id: serviceId};
+          result = {protocol: 1, ...client.binding, boot_id: bootId, service_id: serviceId, write_encodings: ['deflate']};
         } else {
           if (!client.binding) throw new Error('File service handshake required');
           await requireWorkspace(client.binding);

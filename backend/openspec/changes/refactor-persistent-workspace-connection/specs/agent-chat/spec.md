@@ -18,6 +18,11 @@ The system SHALL expose native files through a VM-owned service independent of a
 - **WHEN** Bash or an editor saves a file through atomic replacement
 - **THEN** other admitted readers receive invalidation before Git publication while unsaved editor drafts remain intact.
 
+#### Scenario: Bounded file transfer encoding
+- **WHEN** a file service explicitly advertises write compression support
+- **THEN** clients may encode compressible writes on the wire, native bytes and revisions remain unchanged, and invalid or oversized decoded data is rejected before mutation.
+- **AND** clients send ordinary bytes to services without that capability; durable saves retain their sync and conflict checks.
+
 #### Scenario: Provider extension
 - **WHEN** another sandbox implements the existing service-connection contract
 - **THEN** shared runtime and Desktop file behavior remain provider-independent and unsupported service capabilities fail explicitly.

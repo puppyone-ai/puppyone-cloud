@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { inflateSync } from 'node:zlib';
+import { inflateSync, deflateSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { stat, rm, readFile } from 'node:fs/promises';
 import { initializeWorkbench } from './workbench-initialize.mjs';
@@ -120,6 +120,17 @@ test('native file channel watches Bash saves before publication and rejects stal
     const plain = (await file({action:'read',path:'transfer.txt'})).result;
     assert.equal(plain.content_encoding, undefined);
     assert.equal(packed.revision, plain.revision, 'Transfer encoding cannot change file identity');
+    const compressedSave = await file({action:'write',path:'transfer.txt',expected_revision:plain.revision,
+      content_encoding:'deflate',content_base64:deflateSync(large).toString('base64')});
+    assert.equal(compressedSave.result.revision, plain.revision);
+    assert.deepEqual(await readFile(`${ROOT}/transfer.txt`), large, 'Bash and editor see uncompressed native bytes');
+    for (const bytes of [Buffer.from('invalid'), deflateSync(large).subarray(0,-2),
+      Buffer.concat([deflateSync(large), Buffer.from('trailing')]), deflateSync(Buffer.alloc(8*1024*1024+1))]) {
+      const invalid = await file({action:'write',path:'transfer.txt',expected_revision:plain.revision,
+        content_encoding:'deflate',content_base64:bytes.toString('base64')});
+      assert.equal(invalid.error, 'file_operation_rejected');
+      assert.deepEqual(await readFile(`${ROOT}/transfer.txt`), large, 'Invalid transfer cannot change the file');
+    }
     const children = (await readFile(`/proc/${child.pid}/task/${child.pid}/children`, 'utf8')).trim().split(/\s+/);
     assert.equal(children.length, 1, 'One persistent helper serves all file operations');
     assert.match(await readFile(`/proc/${children[0]}/cmdline`, 'utf8'), /workbench-files.py/);

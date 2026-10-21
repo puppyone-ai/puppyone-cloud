@@ -41,6 +41,25 @@ class SandboxFilesystem:
             if operation["action"] == "read"
             else operation
         )
+        # Negotiate before encoding writes: an older worker must never mistake
+        # compressed bytes for native file content. Reads already negotiate in
+        # the request; writes need the service's explicit capability receipt.
+        if operation["action"] == "write" and "deflate" in getattr(
+            channel, "service_receipt", {}
+        ).get("write_encodings", []):
+            try:
+                raw = base64.b64decode(operation["content_base64"], validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise FilesystemError("file_operation_rejected") from exc
+            if len(raw) > 8 * 1024 * 1024:
+                raise FilesystemError("file_operation_rejected")
+            packed = zlib.compress(raw, level=1)
+            if len(packed) + 64 < len(raw):
+                request = {
+                    **operation,
+                    "content_base64": base64.b64encode(packed).decode(),
+                    "content_encoding": "deflate",
+                }
         response = await channel.control("files", request)
         error = response.get("error")
         if error:

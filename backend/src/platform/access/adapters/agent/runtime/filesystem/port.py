@@ -28,6 +28,8 @@ class FilesystemChannel(Protocol):
 class FileServiceChannel(Protocol):
     """Live file requests and subscriptions, independent of Pi task lifecycle."""
 
+    service_receipt: Row
+
     async def control(self, action: str, value: Row | None = None) -> Row: ...
     def subscribe(self) -> AbstractAsyncContextManager[Queue[Row]]: ...
 

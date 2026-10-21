@@ -300,8 +300,8 @@ class E2BRuntimeProvider:
             connection_config=ConnectionConfig(
                 api_key=settings.E2B_API_KEY,
                 # Keep the output subscription and pooled stdin RPCs on
-                # separate HTTP/1.1 connections. This avoids the measured
-                # HTTP/2 stream contention while preserving one file channel.
+                # separate HTTP/1.1 connections, measured faster for this
+                # subscription/RPC workload while preserving one file channel.
                 http_version="1.1",
                 extra_sandbox_headers={
                     "E2b-Sandbox-Id": info.sandbox_id,
