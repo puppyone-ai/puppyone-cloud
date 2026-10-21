@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createAuthServerClient } from '@/features/auth/supabase/server-client';
-import { safeNext } from '@/features/auth/login-intent';
+import { safeNext } from '@/lib/safeNext';
 import { isWorkspaceResourcePath } from '@puppyone/cloud-core';
 
 const LOCALES = new Set(['en', 'zh-CN']);

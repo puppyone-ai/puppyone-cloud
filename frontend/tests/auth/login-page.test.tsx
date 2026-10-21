@@ -135,7 +135,8 @@ it('Web email sign-in preserves invite destination and uses common initializatio
     fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/initialize'))
   ).toHaveLength(1);
   expect(mocks.desktop).not.toHaveBeenCalled();
-  expect(fetcher.mock.calls.some(([url]) => String(url).includes("check-email"))).toBe(true);
+  expect(auth.signInWithPassword).toHaveBeenCalledWith({ email: 'user@example.test', password: 'password123' });
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('check-email'))).toBe(false);
 });
 
 it('Desktop uses the exact existing email-first UI and never reads Web cookies', async () => {

@@ -1,7 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { createRequestScope, withAbort } from './requestScope';
 import { API_BASE_URL } from '@/config/api';
-import { safeNext } from '@/features/auth/login-intent';
+import { safeNext } from '@/lib/safeNext';
 import { scopedResponseBody } from './responseStream';
 import {
   REPOSITORY_TARGET_CONTRACT_HEADER,
