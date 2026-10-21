@@ -16,14 +16,20 @@ from .target import DatabaseTarget
 def deploy_schema(plan: ReleasePlan, target: DatabaseTarget) -> dict:
     """Classify the entire pending upgrade under the shared database lock.
 
-    Data/Contract upgrades hand off without applying candidate SQL. The full
-    coordinator rechecks receipts and owns drain, backup and dependent SQL.
+    Dependent Contract upgrades hand off without applying candidate SQL. The
+    full coordinator owns data artifacts, drain, backup and dependent SQL.
     Ordinary SQL never constructs a Railway, Redis or object-store client.
     """
     with target.lock() as guard:
         guard.assert_held()
         target.schema_executor.adopt()
-        pending = [phase for phase in plan.phases if target.pending(phase)]
+        # Unrelated historical data artifacts are not SQL prerequisites. They
+        # remain pending for the application coordinator; this stage neither
+        # executes them nor fabricates their completion receipts.
+        pending = [
+            phase for phase in plan.phases
+            if phase.kind == "schema" and target.pending(phase)
+        ]
         files = target.schema_executor.pending("latest")
         result = {"pending_versions": [path.name[:14] for path in files]}
         if target.requires_quiescence(pending) or any(
@@ -32,7 +38,10 @@ def deploy_schema(plan: ReleasePlan, target: DatabaseTarget) -> dict:
             return {
                 **result,
                 "state": "coordinated_release_required",
-                "pending_data": [phase.value for phase in pending if phase.kind == "data"],
+                "pending_data": [
+                    phase.value for phase in plan.phases
+                    if phase.kind == "data" and target.pending(phase)
+                ],
             }
         guard.assert_held()
         target.db.command(
