@@ -299,6 +299,10 @@ class E2BRuntimeProvider:
             envd_access_token=token,
             connection_config=ConnectionConfig(
                 api_key=settings.E2B_API_KEY,
+                # Keep the output subscription and pooled stdin RPCs on
+                # separate HTTP/1.1 connections. This avoids the measured
+                # HTTP/2 stream contention while preserving one file channel.
+                http_version="1.1",
                 extra_sandbox_headers={
                     "E2b-Sandbox-Id": info.sandbox_id,
                     "E2b-Sandbox-Port": str(ConnectionConfig.envd_port),

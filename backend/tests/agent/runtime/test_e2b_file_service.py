@@ -62,6 +62,7 @@ async def test_file_attachment_constructs_sdk_transport_without_resume_or_timeou
     connection.validate(host.resource)
     assert isinstance(connection.handle, AsyncSandbox)
     assert connection.handle.sandbox_id == detail.sandbox_id
+    assert connection.handle.connection_config.http_version == "1.1"
     assert connection.handle._envd_access_token == detail.envd_access_token
     get.assert_awaited_once()
 
