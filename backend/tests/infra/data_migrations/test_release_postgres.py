@@ -11,7 +11,10 @@ import pytest
 from src.infra.data_migrations.database import PsqlClient
 from src.infra.data_migrations.errors import ExecutionError, MigrationBusyError
 from src.infra.data_migrations.release.journal import Journal
+from src.infra.data_migrations.release.plan import Phase, ReleasePlan
 from src.infra.data_migrations.release.schema import Schema
+from src.infra.data_migrations.release.schema_only import deploy_schema
+from src.infra.data_migrations.release.target import DatabaseTarget
 
 ROOT = Path(__file__).resolve().parents[4]
 pytestmark = pytest.mark.integration
@@ -178,3 +181,44 @@ def test_release_contract_probes_can_write_but_leave_no_rows(cluster, tmp_path, 
     monkeypatch.setattr(schema, "verify_drift", lambda: None)
     schema.verify()
     assert cluster.scalar("SELECT to_regclass('public.release_probe') IS NULL") == "t"
+
+
+def test_ordinary_schema_lane_applies_missing_older_sql_with_official_cli(
+    cluster, tmp_path, monkeypatch
+):
+    assert shutil.which("supabase"), "The pinned Supabase CLI is required"
+    migrations = tmp_path / "supabase/migrations"
+    migrations.mkdir(parents=True)
+    shutil.copyfile(ROOT / "supabase/config.toml", tmp_path / "supabase/config.toml")
+    support = tmp_path / "supabase/tests/_support"
+    support.mkdir(parents=True)
+    for name in ("schema_contracts.inc", "data_api_containment.inc", "cloud_agent_contracts.inc"):
+        (support / name).write_text("BEGIN READ ONLY; SELECT id FROM public.schema_lane_probe; ROLLBACK;")
+    releases = tmp_path / "supabase/releases"
+    releases.mkdir()
+    (releases / "legacy_credential_preflight.sql").write_text("BEGIN READ ONLY; SELECT 1; ROLLBACK;")
+    versions = ["20260101000000", "20260102000000", "20260103000000"]
+    for version in versions:
+        (migrations / f"{version}_expand_probe.sql").write_text(
+            "CREATE TABLE public.schema_lane_probe(id integer);" if version == versions[1] else "SELECT 1;"
+        )
+    cluster.scalar(
+        "CREATE SCHEMA IF NOT EXISTS supabase_migrations; "
+        "CREATE TABLE supabase_migrations.schema_migrations(version text PRIMARY KEY, statements text[], name text); "
+        "INSERT INTO supabase_migrations.schema_migrations(version) VALUES('20260101000000'),('20260103000000');"
+    )
+    target = object.__new__(DatabaseTarget)
+    target.root, target.db = tmp_path, cluster
+    target.schema_executor = Schema(tmp_path, cluster)
+    # History is already normalized; Docker-backed drift is covered by the
+    # release rehearsal. CLI application, history, locks and probes are real.
+    monkeypatch.setattr(target.schema_executor, "adopt", lambda: None)
+    monkeypatch.setattr(target.schema_executor, "verify_drift", lambda: None)
+    plan = ReleasePlan((Phase("sql", "schema", "latest"),), "sum", frozenset(versions))
+    try:
+        assert deploy_schema(plan, target) == {"state": "deployed", "pending_versions": [versions[1]]}
+        assert cluster.applied_schema_versions() == set(versions)
+        assert deploy_schema(plan, target) == {"state": "deployed", "pending_versions": []}
+        assert cluster.scalar("SELECT count(*) FROM public.schema_lane_probe") == "0"
+    finally:
+        cluster.scalar("DROP TABLE IF EXISTS public.schema_lane_probe; DROP SCHEMA supabase_migrations CASCADE;")

@@ -20,5 +20,6 @@ jobs:
   release:
     if: github.repository == 'puppyone-ai/puppyone-cloud' && github.ref == 'refs/heads/qubits'
     uses: ./.github/workflows/_environment-release.yml
+    secrets: inherit
     with:
       environment: staging

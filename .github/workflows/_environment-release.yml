@@ -14,35 +14,19 @@ permissions:
 
 jobs:
   admission:
-    name: Check release runner configuration
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: Check protected release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
     steps:
-      - name: Require the restricted release runner group
+      - name: Require the protected environment branch
         env:
-          RUNNER_GROUP: ${{ vars.PUPPYONE_RELEASE_RUNNER_GROUP }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          test -n "$RUNNER_GROUP" || { echo '::error::Release runner group has not been configured'; exit 1; }
+          test "$GITHUB_REPOSITORY" = puppyone-ai/puppyone-cloud || exit 1
           case "$RELEASE_ENVIRONMENT:$GITHUB_REF:$GITHUB_EVENT_NAME" in
             staging:refs/heads/qubits:push|staging:refs/heads/qubits:workflow_dispatch|production:refs/heads/main:push|production:refs/heads/main:workflow_dispatch) ;;
             *) echo '::error::Release source is not the protected target branch'; exit 1;;
           esac
-  release:
-    name: Upgrade and accept ${{ inputs.environment }}
-    # Dedicated ephemeral runners accept protected push jobs only. PR tests
-    # run on GitHub-hosted machines without target credentials or private data.
-    needs: admission
-    runs-on:
-      group: ${{ vars.PUPPYONE_RELEASE_RUNNER_GROUP }}
-      labels: [self-hosted, puppyone-release, '${{ inputs.environment }}']
-    environment: ${{ inputs.environment }}
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
       - name: Wait for candidate CI before changing the environment
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
@@ -65,6 +49,131 @@ jobs:
               await new Promise(resolve => setTimeout(resolve, 30000));
             }
             throw new Error('Candidate CI did not complete');
+  database:
+    name: Migrate and verify Supabase
+    needs: admission
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 45
+    outputs:
+      schema_state: ${{ steps.schema.outputs.schema_state }}
+      application_configured: ${{ steps.application.outputs.configured }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
+        with:
+          version: '2.107.0'
+      - name: Install schema tools
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python -m pip install 'uv==0.5.11'
+          echo SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io >> "$GITHUB_ENV"
+          docker info > /dev/null
+      - name: Install locked migration runtime
+        working-directory: backend
+        run: uv sync --locked
+      - name: Bind protected database credentials
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 supabase/releases/connection.py
+      - name: Apply compatible SQL or identify a coordinated cutover
+        id: schema
+        working-directory: backend
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          uv run python -m src.infra.data_migrations.release.schema_only \
+            --environment "$RELEASE_ENVIRONMENT" --source "$GITHUB_SHA" \
+            --report "$RUNNER_TEMP/database-release.json"
+      - name: Detect separately configured application release
+        id: application
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: |
+          if [ -n "$RELEASE_CONFIG_JSON" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain database migration result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: database-release-${{ inputs.environment }}-${{ github.sha }}
+          path: ${{ runner.temp }}/database-release.json
+          if-no-files-found: ignore
+          retention-days: 14
+  release:
+    name: Upgrade and accept ${{ inputs.environment }}
+    # Release credentials belong to the protected environment. PR workflows
+    # never invoke this job; GitHub supplies a fresh VM for each release.
+    needs: database
+    if: >-
+      needs.database.outputs.schema_state == 'coordinated_release_required' ||
+      needs.database.outputs.application_configured == 'true'
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
+        with:
+          version: '2.107.0'
+      - name: Install release tools
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq postgresql-17 postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          echo SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io >> "$GITHUB_ENV"
+          python -m pip install 'uv==0.5.11'
+          docker info > /dev/null
+      - name: Require environment deployment configuration
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: |
+          test -n "$RELEASE_CONFIG_JSON" || { echo '::error::Configure PUPPYONE_RELEASE_CONFIG in this GitHub environment'; exit 1; }
+      - name: Bind protected database credentials
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 supabase/releases/connection.py
+      - name: Prepare private release configuration
+        id: configuration
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: python3 supabase/releases/github_actions.py
       - name: Record an environment release attempt
         id: attempt
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
@@ -88,7 +197,7 @@ jobs:
         run: |
           uv run python -m src.infra.data_migrations.release \
             --environment "$RELEASE_ENVIRONMENT" --source "$GITHUB_SHA" \
-            --configuration "/etc/puppyone/releases/$RELEASE_ENVIRONMENT.json" \
+            --configuration "$RUNNER_TEMP/puppyone-release-private/configuration.json" \
             --report "$RUNNER_TEMP/environment-release.json"
       - name: Publish accepted deployment status
         if: always() && steps.attempt.outputs.deployment_id != ''
@@ -102,3 +211,51 @@ jobs:
               ...context.repo, deployment_id: Number(process.env.DEPLOYMENT_ID),
               state: process.env.RELEASE_JOB_STATUS === 'success' ? 'success' : 'failure'
             });
+      - name: Retain sanitized release result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: environment-release-${{ inputs.environment }}-${{ github.sha }}
+          path: ${{ runner.temp }}/environment-release.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove private temporary files
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'puppyone-release-private'
+          if directory.exists():
+              shutil.rmtree(directory)
+          PY
+  result:
+    name: Database migration result
+    if: always()
+    needs: [admission, database, release]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report database and application outcomes separately
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          DATABASE_RESULT: ${{ needs.database.result }}
+          SCHEMA_STATE: ${{ needs.database.outputs.schema_state }}
+          APPLICATION_CONFIGURED: ${{ needs.database.outputs.application_configured }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+        with:
+          script: |
+            const e = process.env;
+            const coordinated = e.SCHEMA_STATE === 'coordinated_release_required';
+            const required = coordinated || e.APPLICATION_CONFIGURED === 'true';
+            const databaseReady = e.ADMISSION_RESULT === 'success' && e.DATABASE_RESULT === 'success' &&
+              (e.SCHEMA_STATE === 'deployed' || (coordinated && e.RELEASE_RESULT === 'success'));
+            await core.summary.addHeading('Database migration result')
+              .addTable([
+                ['Database', databaseReady ? 'Migrated and verified' : 'Not completed'],
+                ['Application', required ? e.RELEASE_RESULT : 'Not configured; no application deployment performed'],
+                ['Source', context.sha]
+              ]).write();
+            if (!databaseReady) core.setFailed('Database migration did not complete; inspect the failed prerequisite or migration job.');
+            else if (required && e.RELEASE_RESULT !== 'success') core.setFailed('Database is ready, but application release failed.');

@@ -231,7 +231,7 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 
 - `synchronize_bindings` / `synchronize_runs.synchronize_binding_id` 是持续绑定/执行事实；GitHub 使用独立的 `synchronize_github_bindings` / `synchronize_github_logs`。
 - Database Import 只读写 `import_database_sources`，不按 provider 从绑定表猜测或过滤来源。迁移需逐行明确分类、密文/历史保留与租户校验。
-- 存量升级由同一个发布程序依次执行 Expand、停写/数据转换、验证、Contract 和最终应用部署。Docker 在合入前演练完整升级；目标环境在合入后执行，无需先迁正式库再合代码。历史 migration/artifact/checksum 不改，缺分类/receipt/退出证明时运行时拒绝继续。
+- 普通兼容 SQL 在合并后由 GitHub Actions 使用 Supabase 凭据自动迁移并校验，不依赖 Redis、Railway 或应用发布配置。数据库成功与应用部署验收分开报告。涉及数据转换/Contract 的存量升级仍由同一个发布程序依次执行 Expand、停写/数据转换、验证、Contract 和最终应用部署。Docker 在合入前演练完整升级；目标环境在合入后执行，无需先迁正式库再合代码。历史 migration/artifact/checksum 不改，缺分类/receipt/退出证明时运行时拒绝继续。
 - 已复核的历史绑定只读且不可执行；后台状态更新不能覆盖用户并发暂停。恢复同样必须通过最终 ACL/RLS verifier 后才重启消费者。
 - 本地真实环境、源码/安装产物和目标环境发布证据分开记录；没有远程授权不得查询、DDL、push 或部署。
 

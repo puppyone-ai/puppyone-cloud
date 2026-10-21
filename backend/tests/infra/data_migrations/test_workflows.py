@@ -238,14 +238,18 @@ def test_production_data_work_cannot_run_from_untrusted_ref() -> None:
     assert "Use the environment release coordinator for writes" in dispatcher
 
 
-def test_release_credentials_remain_on_restricted_private_runners():
+def test_release_credentials_use_protected_environment_and_private_temporary_files():
     shared = yaml.safe_load((WORKFLOWS / "_environment-release.yml").read_text())
     release = shared["jobs"]["release"]
     assert release["environment"] == "${{ inputs.environment }}"
-    assert "self-hosted" in str(release["runs-on"])
+    assert release["runs-on"] == "ubuntu-24.04"
+    assert release["needs"] == "database"
     command = next(s["run"] for s in release["steps"] if s.get("name") == "Run the shared upgrade and acceptance program")
     assert "src.infra.data_migrations.release" in command
-    assert "/etc/puppyone/releases/" in command
+    assert "$RUNNER_TEMP/puppyone-release-private/configuration.json" in command
+    configuration = next(s for s in release["steps"] if s.get("id") == "configuration")
+    assert configuration["env"]["RELEASE_CONFIG_JSON"] == "${{ secrets.PUPPYONE_RELEASE_CONFIG }}"
+    assert release["steps"][-1]["if"] == "always()"
     assert "secrets.S3" not in str(shared)
 
 
@@ -259,6 +263,7 @@ def test_both_environments_use_one_automatic_release_program(file, branch, envir
     assert trigger["push"] == {"branches": [branch]}
     job = workflow["jobs"]["release"]
     assert job["uses"] == "./.github/workflows/_environment-release.yml"
+    assert job["secrets"] == "inherit"
     assert job["with"] == {"environment": environment}
     assert "refs/heads/" + branch in job["if"]
     assert "puppyone-ai/puppyone-cloud" in job["if"]

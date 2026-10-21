@@ -1,4 +1,4 @@
-"""Protected release entrypoint. Configuration is private runner-local state."""
+"""Protected release entrypoint. Configuration is a private temporary file."""
 
 from __future__ import annotations
 
