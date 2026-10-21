@@ -38,6 +38,7 @@ async def test_e2b_creation_pauses_on_timeout_and_explicit_resume_keeps_identity
         "auto_resume": False,
     }
     assert create.call_args.kwargs["allow_internet_access"] is False
+    assert create.call_args.kwargs["network"] == {"allow_public_traffic": False}
     first.control = AsyncMock(return_value={})
     await first.pause()
     first.control.assert_awaited_once_with("park")

@@ -40,6 +40,7 @@ class E2BRuntimeProvider:
                 "auto_resume": False,
             },
             allow_internet_access=False,
+            network={"allow_public_traffic": False},
             metadata={
                 "agent_execution_id": host.execution_id,
                 "project_id": host.project_id,

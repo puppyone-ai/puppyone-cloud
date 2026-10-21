@@ -4,6 +4,7 @@ import os
 import shlex
 from uuid import uuid4
 
+import httpx
 import pytest
 from e2b import AsyncSandbox
 from e2b.exceptions import NotFoundException
@@ -18,7 +19,7 @@ from tests.agent.workbench_acceptance.accept_production_entry import (
 )
 from tests.agent.workbench_acceptance.accept_production_entry import postgres as postgres
 from tests.agent.workbench_acceptance.accept_production_entry import services as services
-from tests.agent.workbench_acceptance.provider_scenario import accept_runtime
+from tests.agent.workbench_acceptance.provider_scenario import accept_runtime, eventually
 
 pytestmark = [
     pytest.mark.integration,
@@ -84,6 +85,7 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
         info = await AsyncSandbox.get_info(resource["resource_id"], api_key=settings.E2B_API_KEY)
         assert info.allow_internet_access is False
         assert info.lifecycle["auto_resume"] is False
+        assert info.network["allow_public_traffic"] is False
         receipt["egress"] = (
             "provider internet disabled; IPv4/IPv6 HTTP/TLS probes cannot receive origin data"
         )
@@ -112,11 +114,30 @@ async def test_e2b_network_proxy_denies_origin_data_with_positive_control():
         template=settings.CLOUD_AGENT_E2B_TEMPLATE,
         timeout=120,
         allow_internet_access=False,
+        network={"allow_public_traffic": False},
         lifecycle={"auto_resume": False},
         metadata={"acceptance": "e2b-network-control", "project_id": str(uuid4())},
         api_key=settings.E2B_API_KEY,
     )
     try:
+        # An Agent-started server must not become an anonymous public preview.
+        await sandbox.commands.run(
+            "python3 -m http.server 32123 --bind 0.0.0.0 --directory /tmp",
+            user="node",
+            background=True,
+            timeout=0,
+        )
+        async with httpx.AsyncClient(timeout=10) as http:
+            url = "https://" + sandbox.get_host(32123)
+            assert (await http.get(url)).status_code == 403
+            response = await eventually(
+                lambda: http.get(
+                    url, headers={"e2b-traffic-access-token": sandbox.traffic_access_token}
+                ),
+                lambda response: response.status_code == 200,
+                timeout=20,
+            )
+            assert response.status_code == 200
         await sandbox.commands.run(
             "python3 -c " + shlex.quote(E2BProbe.egress_probe), user="node", timeout=30
         )
