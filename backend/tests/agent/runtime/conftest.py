@@ -101,8 +101,13 @@ def submitted(postgres):
         timeout=600,
     )
     yield arguments, postgres.rpc("submit", **arguments)
-    # Stop remaining active rows so claims in later cases cannot select them.
-    postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE project_id='{project}';")
+    # Failed runs with retained resources remain claimable for cleanup after
+    # lease expiry. Retire both selectors in this owned fixture so later tests
+    # cannot take over a previous case's intentionally uncertain recovery.
+    postgres.sql(f"""
+        UPDATE agent_runs SET state='failed',snapshot=snapshot-'resource_retained'
+        WHERE project_id='{project}';
+    """)
 
 
 @pytest.fixture(scope="session")
