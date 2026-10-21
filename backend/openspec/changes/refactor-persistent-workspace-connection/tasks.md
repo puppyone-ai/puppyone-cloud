@@ -6,6 +6,8 @@
 - [x] Pass focused Python, owned database/product-entry, native Linux, Desktop and provider contract regressions.
 - [ ] Pass real Fly product API/Pi/Git/files/watch/retention tests; record performance and cleanup.
 - [x] Update canonical docs and verification receipts.
+- [x] Adapt E2B template startup and service transport; prevent read attachment from resuming compute.
+- [ ] Accept E2B native files, Agent/Git, shared connections, notifications, pause/resume and cleanup using an isolated template; keep deployment inactive.
 - [ ] Integrate the accepted candidate into qubits, preserving unrelated work.
 
 The candidate image is built locally. Automatic approval review rejected upload

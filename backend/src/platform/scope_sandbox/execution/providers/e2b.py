@@ -19,9 +19,7 @@ from .port import (
 
 class E2BRuntimeProvider:
     name = "e2b"
-    # Legacy Pi sessions remain readable/recoverable; the supervised workspace
-    # service has not been enabled for E2B. Reject new workbenches before allocation.
-    capabilities = RuntimeCapabilities(recovery_backend="provider-snapshot", native_files=False)
+    capabilities = RuntimeCapabilities(recovery_backend="provider-snapshot")
 
     def validate(self, artifact, resource=None):
         if not artifact or not settings.E2B_API_KEY:
@@ -37,9 +35,20 @@ class E2BRuntimeProvider:
         host.sandbox = await AsyncSandbox.create(
             template=host.restore_point["id"] if host.restore_point else host.artifact,
             timeout=settings.RUNTIME_AGENT_TIMEOUT_SECONDS,
-            lifecycle={"on_timeout": "pause", "auto_resume": False},
+            lifecycle={
+                "on_timeout": {"action": "pause", "keep_memory": True},
+                "auto_resume": False,
+            },
             allow_internet_access=False,
-            metadata={"agent_execution_id": host.execution_id, "project_id": host.project_id},
+            metadata={
+                "agent_execution_id": host.execution_id,
+                "project_id": host.project_id,
+                **{
+                    key: host.resource[key]
+                    for key in ("workbench_id", "workbench_generation")
+                    if host.resource.get(key)
+                },
+            },
             api_key=settings.E2B_API_KEY,
         )
         if host.restore_point:
@@ -84,10 +93,14 @@ class E2BRuntimeProvider:
 
     async def pause(self, host):
         await host._disconnect_output()
-        await host.sandbox.pause()
+        await host.sandbox.pause(keep_memory=True)
 
     async def open_service(self, host, service):
-        raise ValueError("E2B persistent workspace services are not enabled")
+        if service != "files":
+            raise ValueError(f"Unknown workspace service: {service}")
+        # The template owns the supervisor. This command only bridges to its
+        # socket; closing a backend connection cannot stop the file service.
+        await self.open_channel(host)
 
     async def open_channel(self, host):
         host.handle = await host.sandbox.commands.run(
@@ -224,15 +237,59 @@ class E2BRuntimeProvider:
 
     async def running_connection(self, host):
         from e2b import AsyncSandbox
+        from e2b.api import handle_api_exception
+        from e2b.api.client.api.sandboxes import get_sandboxes_sandbox_id
+        from e2b.api.client.models import SandboxDetail
+        from e2b.api.client_async import get_api_client
+        from e2b.connection_config import ConnectionConfig
+        from packaging.version import Version
 
-        info = await AsyncSandbox.get_info(
-            host.resource["resource_id"], api_key=settings.E2B_API_KEY
+        # SDK connect() implicitly resumes and extends the timeout. Its GET
+        # wrapper discards envd credentials, so use the pinned SDK's raw GET
+        # and construct a transport without any lifecycle mutation. If pause
+        # races this read, envd fails closed because auto_resume is disabled.
+        config = ConnectionConfig(api_key=settings.E2B_API_KEY)
+        response = await get_sandboxes_sandbox_id.asyncio_detailed(
+            host.resource["resource_id"], client=get_api_client(config)
         )
+        if response.status_code >= 300:
+            raise handle_api_exception(response)
+        info = response.parsed
+        if not isinstance(info, SandboxDetail):
+            raise WorkerDisconnected("E2B returned no sandbox connection details")
         if str(info.state) != "running":
             raise WorkerDisconnected("Workbench lifecycle must resume E2B")
-        # Caller holds durable task occupancy or a fresh activity admission.
-        host.sandbox = await AsyncSandbox.connect(
-            host.resource["resource_id"], api_key=settings.E2B_API_KEY
+        expected = {
+            "agent_execution_id": host.resource["session_id"],
+            "project_id": host.resource["project_id"],
+            **{
+                key: host.resource[key]
+                for key in ("workbench_id", "workbench_generation")
+                if host.resource.get(key)
+            },
+        }
+        if (
+            info.sandbox_id != host.resource["resource_id"]
+            or not isinstance(info.metadata, dict)
+            or any(info.metadata.get(key) != value for key, value in expected.items())
+        ):
+            raise PermissionError("E2B workspace binding mismatch")
+        if getattr(info.lifecycle, "auto_resume", None) is not False:
+            raise PermissionError("E2B workspace must disable automatic resume")
+        token = info.envd_access_token if isinstance(info.envd_access_token, str) else None
+        host.sandbox = AsyncSandbox(
+            sandbox_id=info.sandbox_id,
+            sandbox_domain=info.domain if isinstance(info.domain, str) else None,
+            envd_version=Version(info.envd_version),
+            envd_access_token=token,
+            connection_config=ConnectionConfig(
+                api_key=settings.E2B_API_KEY,
+                extra_sandbox_headers={
+                    "E2b-Sandbox-Id": info.sandbox_id,
+                    "E2b-Sandbox-Port": str(ConnectionConfig.envd_port),
+                    **({"X-Access-Token": token} if token else {}),
+                },
+            ),
         )
         return RuntimeConnection(resource_identity(host.resource), host.sandbox)
 
@@ -243,7 +300,9 @@ class E2BRuntimeProvider:
             host.resource["resource_id"], api_key=settings.E2B_API_KEY
         )
         if str(info.state) != "paused":
-            await AsyncSandbox.pause(host.resource["resource_id"], api_key=settings.E2B_API_KEY)
+            await AsyncSandbox.pause(
+                host.resource["resource_id"], keep_memory=True, api_key=settings.E2B_API_KEY
+            )
         info = await AsyncSandbox.get_info(
             host.resource["resource_id"], api_key=settings.E2B_API_KEY
         )

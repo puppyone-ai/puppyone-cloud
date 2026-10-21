@@ -22,14 +22,18 @@ def main():
     )
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=context, text=True).strip()
     dockerfile = (context / "Dockerfile").read_text()
-    # Docker keeps PID 1 alive across control connections. E2B owns that VM
-    # lifetime itself; commands.run opens each admitted controller explicitly.
+    # E2B snapshots this VM-owned supervisor into the template. Individual
+    # commands.run bridges attach to it; they never own the file service.
     lines = [line for line in dockerfile.splitlines() if not line.startswith("ENTRYPOINT ")]
     template = (
         Template(file_context_path=context)
         .from_dockerfile("\n".join(lines))
-        .set_ready_cmd(
-            "test -r /opt/puppyone-agent/worker.mjs && test -w /workspace && test ! -e /recovery"
+        .set_start_cmd(
+            "node /opt/puppyone-agent/workbench-files-supervisor.mjs",
+            "test -r /opt/puppyone-agent/worker.mjs && test -w /workspace && test ! -e /recovery && "
+            'node -e \'const s=require("net").connect("/run/puppyone-workbench/files.sock");'
+            's.once("connect",()=>s.end());s.once("error",()=>process.exit(1));'
+            "setTimeout(()=>process.exit(1),2000).unref();'",
         )
     )
     result = Template.build(

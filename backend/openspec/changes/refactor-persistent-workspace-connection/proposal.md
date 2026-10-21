@@ -8,6 +8,7 @@ File watches currently start independent SSH transports and file processes exit 
 - Share framed requests and watcher subscriptions without holding the connection lock during authorization/audit I/O.
 - Preserve workspace ownership, epoch fencing, unknown write outcomes, idle pause, Git publication and Fly-only deployment.
 - Recover Desktop event subscriptions with bounded retries and explicit reset.
+- Complete the E2B adapter and isolated provider acceptance using the same file service and connection manager. Keep product deployment on Fly with no E2B fallback (user-approved follow-up on 2026-10-22).
 
 ## Impact
 - Affected specs: agent-chat.

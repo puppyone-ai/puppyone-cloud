@@ -33,7 +33,10 @@ async def test_e2b_creation_pauses_on_timeout_and_explicit_resume_keeps_identity
     first = worker()
     resource = await first.create()
     assert "recovery_volume" not in resource
-    assert create.call_args.kwargs["lifecycle"] == {"on_timeout": "pause", "auto_resume": False}
+    assert create.call_args.kwargs["lifecycle"] == {
+        "on_timeout": {"action": "pause", "keep_memory": True},
+        "auto_resume": False,
+    }
     assert create.call_args.kwargs["allow_internet_access"] is False
     first.control = AsyncMock(return_value={})
     await first.pause()
