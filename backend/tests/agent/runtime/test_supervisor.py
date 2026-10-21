@@ -1432,7 +1432,10 @@ async def test_declined_tool_continues_without_executing_or_losing_decision(prep
     case = prepared
     model = RecoveringToolModel(
         [
-            ("write", {"path": "declined.txt", "content": "never"}, "declined"),
+            # Ordinary writes are automatic; a destructive action exercises
+            # explicit rejection and must never reach its observable write.
+            ("bash", {"command": "git reset --hard HEAD 2>/dev/null || true; "
+                      "printf never > declined.txt"}, "declined"),
             ("read", {"path": "/etc/os-release"}, "Debian"),
         ]
     )
