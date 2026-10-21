@@ -1,9 +1,9 @@
 import {beforeEach, expect, it, vi} from 'vitest';
-import {apiRequest} from '@/lib/apiClient';
+import {apiRawRequest} from '@/lib/apiClient';
 import {createWorkspaceFiles} from '@/lib/workspaceFiles';
 import {dataDirectoryCacheKeys} from '@/lib/dataTreeCache';
-vi.mock('@/lib/apiClient', () => ({apiRequest: vi.fn()}));
-const request = vi.mocked(apiRequest);
+vi.mock('@/lib/apiClient', () => ({apiRawRequest: vi.fn()}));
+const request = vi.mocked(apiRawRequest);
 const workspace = {id: 'workspace', generation: 'generation-one', project_id: 'p', state: 'running', target_ref: 'refs/heads/workspaces/me'};
 beforeEach(() => request.mockReset());
 

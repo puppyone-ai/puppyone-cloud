@@ -251,10 +251,19 @@ interface ApiResponse<T> {
  * Authenticated API request.
  */
 export async function apiRequest<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  return requestJson<T>(endpoint, options, 'json');
+}
+
+/** JSON endpoints without the Product API's {code, data} envelope. */
+export async function apiRawRequest<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  return requestJson<T>(endpoint, options, 'raw');
+}
+
+async function requestJson<T>(endpoint: string, options: ApiRequestOptions | undefined, mode: 'json' | 'raw'): Promise<T> {
   const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
   const scope = createRequestScope(fetchOptions.signal, timeoutMs);
   try {
-    return await performRequest<T>(endpoint, { ...fetchOptions, timeoutMs, signal: scope.signal });
+    return await performRequest<T>(endpoint, { ...fetchOptions, timeoutMs, signal: scope.signal }, false, mode);
   } finally {
     scope.dispose();
   }
@@ -279,7 +288,7 @@ async function performRequest<T>(
   endpoint: string,
   options: ApiRequestOptions & { signal: AbortSignal },
   _isRetry = false,
-  responseMode: 'json' | 'stream' = 'json',
+  responseMode: 'json' | 'raw' | 'stream' = 'json',
 ): Promise<T> {
   const token = await withAbort(getAuthToken(), options.signal);
   const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
@@ -335,7 +344,9 @@ async function performRequest<T>(
 
   if (responseMode === 'stream') return response as T;
 
-  const data: ApiResponse<T> = await withAbort(response.json(), options.signal);
+  const body = await withAbort(response.json(), options.signal);
+  if (responseMode === 'raw') return body as T;
+  const data: ApiResponse<T> = body;
 
   if (data.code !== 0) {
     const error: any = new Error(data.message || 'API request failed');

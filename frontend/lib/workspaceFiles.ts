@@ -1,4 +1,4 @@
-import { apiRequest } from '@/lib/apiClient';
+import { apiRawRequest } from '@/lib/apiClient';
 import * as published from '@/lib/contentTreeApi';
 import { resolveFormat } from '@/lib/fileFormats';
 
@@ -9,7 +9,7 @@ interface NativeEntry { name: string; kind: string; size: number; modified_ns: s
 interface NativeFile extends NativeEntry { content_base64: string; revision: string }
 export const workspaceEndpoint = (project: string) => `/api/v1/projects/${encodeURIComponent(project)}/workbench`;
 export const workspaceStatus = (project: string, signal?: AbortSignal) =>
-  apiRequest<{workspace: LiveWorkspace | null}>(workspaceEndpoint(project), {signal});
+  apiRawRequest<{workspace: LiveWorkspace | null}>(workspaceEndpoint(project), {signal});
 
 const decode = (data: string) => Uint8Array.from(atob(data), c => c.charCodeAt(0));
 const encode = (data: Uint8Array) => {
@@ -39,11 +39,11 @@ export function createWorkspaceFiles(workspace: LiveWorkspace) {
     return new URLSearchParams({generation: workspace.generation, path});
   }
   async function nativeRead(project: string, path: string, signal?: AbortSignal) {
-    const file = await apiRequest<NativeFile>(`${endpoint}/file?${query(project, path)}`, {signal});
+    const file = await apiRawRequest<NativeFile>(`${endpoint}/file?${query(project, path)}`, {signal});
     return file;
   }
   const listDir: typeof published.listDir = async (project, path = '', options) => {
-    const value = await apiRequest<{entries: NativeEntry[]}>(`${endpoint}/files?${query(project, path)}`, options);
+    const value = await apiRawRequest<{entries: NativeEntry[]}>(`${endpoint}/files?${query(project, path)}`, options);
     const nodes = value.entries.map(entry => published.entryToNodeInfo(treeEntry(entry, path ? `${path}/${entry.name}` : entry.name), project));
     return {nodes, total: nodes.length};
   };
@@ -70,7 +70,7 @@ export function createWorkspaceFiles(workspace: LiveWorkspace) {
   const writeFile: typeof published.writeFile = async (...args) => {
     const [project, path, content, , , expectedRevision] = args;
     const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-    const result = await apiRequest<{revision: string}>(`${endpoint}/file?${query(project, path)}`, {
+    const result = await apiRawRequest<{revision: string}>(`${endpoint}/file?${query(project, path)}`, {
       method: 'PUT', body: JSON.stringify({path, content_base64: encode(new TextEncoder().encode(text ?? 'null')),
         expected_revision: expectedRevision ?? revisions.get(path) ?? null}),
     });
@@ -79,7 +79,7 @@ export function createWorkspaceFiles(workspace: LiveWorkspace) {
     return {path, commit_id: '', merged: false, conflicts: []};
   };
   async function operation(project: string, action: string, path: string, destination?: string) {
-    return apiRequest(`${endpoint}/files?${query(project, path)}`, {
+    return apiRawRequest(`${endpoint}/files?${query(project, path)}`, {
       method: 'POST', body: JSON.stringify({action, path, destination}),
     });
   }

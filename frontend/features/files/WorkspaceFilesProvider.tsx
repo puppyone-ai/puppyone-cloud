@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import useSWR, {mutate} from 'swr';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
-import { apiRequest, apiStreamRequest } from '@/lib/apiClient';
+import { apiRawRequest, apiStreamRequest } from '@/lib/apiClient';
 import { createWorkspaceFiles, publishedFiles, workspaceEndpoint, workspaceStatus } from '@/lib/workspaceFiles';
 import { WorkspaceFilesContext as Context } from '@/lib/hooks/useWorkspaceFiles';
 
@@ -76,7 +76,7 @@ export function WorkspaceFilesProvider({projectId, children}: {projectId: string
 
   async function resume() {
     setOpening(true); setOpenError(undefined);
-    try { await apiRequest(workspaceEndpoint(projectId), {method: 'POST', timeoutMs: 180000}); await refresh(); }
+    try { await apiRawRequest(workspaceEndpoint(projectId), {method: 'POST', timeoutMs: 180000}); await refresh(); }
     catch (error) { setOpenError(error instanceof Error ? error.message : String(error)); }
     finally { setOpening(false); }
   }
