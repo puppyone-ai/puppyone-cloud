@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-22",
+  "result": "local_passed_hosted_acceptance_blocked",
+  "implementation_commit": "71fa3478",
+  "acceptance_commit": "d01110a5",
+  "sdk": "e2b==2.53.1",
+  "product_activation": false,
+  "product_provider_configuration": "fly",
+  "product_e2b_key_configured": false,
+  "product_e2b_template_configured": false,
+  "candidate_template_alias": "puppy-persistent-files-71fa3478",
+  "uploaded_template_id": null,
+  "created_sandbox_ids": [],
+  "local": {
+    "agent_regressions": {
+      "passed": 206,
+      "deselected": 250,
+      "junit_sha256": "3d4559c3bd077daf9c988d93b582ca088a9abd8bde5019a978ce7122c6fa4e41"
+    },
+    "owned_database_and_product_entry": {
+      "passed": 58,
+      "hosted_cases_skipped": 2
+    },
+    "template_plan": "pinned SDK construction checked locally; build replaced by inspection only",
+    "native_linux": {
+      "platform": "linux/arm64",
+      "passed": 4,
+      "template_start_and_ready_commands": "passed",
+      "build_log_sha256": "5fbf6e0aeda72481e8b7c12a83a8a6de16a150d7991c3490996d08d71437cb72",
+      "image_manifest": "sha256:3133c5cf4cd4acbfdf7dd1c1057cdab2b5d92494385490ab385bf7942b0ef804"
+    },
+    "ruff": "passed",
+    "openspec_strict": "passed"
+  },
+  "hosted": {
+    "product_chain": "not_run",
+    "same_workload_io": "not_run",
+    "legacy_snapshots": "not_run",
+    "latency": null,
+    "blocker": "Automatic approval review rejected internal worker upload to the configured E2B account pending explicit destination authorization. User question pending."
+  },
+  "limits": [
+    "No hosted E2B acceptance or speed claim",
+    "No merge or deployment",
+    "Local Linux tests do not prove E2B VM startup, memory restore or networking",
+    "No metering, external model, browser or PTY acceptance"
+  ]
+}

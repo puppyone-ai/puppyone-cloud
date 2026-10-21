@@ -17,3 +17,10 @@ was upgraded. Local evidence is not real Fly end-to-end or deployment evidence.
 
 Local evidence: `backend/tests/agent/workbench_acceptance/persistent-connection-receipt.json`.
 Canonical architecture: `puppy-issues@df29648:document/agent-runtime.md`.
+
+E2B follow-up: adapter and shared acceptance scenario committed as `71fa3478`
+and `d01110a5`. Local regressions pass. Automatic approval review separately
+rejected E2B template upload pending explicit destination authorization; no E2B
+template/sandbox was created and product configuration remains Fly. Hosted E2B
+and latency results are unverified. Evidence:
+`backend/tests/agent/workbench_acceptance/e2b-persistent-connection-receipt.json`.

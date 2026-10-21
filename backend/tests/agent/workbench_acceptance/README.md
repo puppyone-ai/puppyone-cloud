@@ -45,14 +45,55 @@ The candidate requires a paired Worker/backend rollout. Changing the default
 image does not upgrade existing persisted artifact bindings. Keep their Volume
 and files; upgrading them requires explicit lifecycle admission and binding
 updates. Do not point new file clients at old images or silently fall back to
-published Git files. E2B workspace-file capability is disabled before allocation;
-legacy Pi recovery remains available. Routine tests must not enable E2B.
+published Git files. The E2B adapter now uses the shared supervised file service;
+its template and actual provider chain still require the isolated acceptance
+below. Product deployment remains explicitly Fly with no E2B fallback. Routine
+tests must not enable either hosted provider.
 
 The full regular-Docker runtime suite is still blocked by local container startup;
 native BuildKit is component evidence only. Native Linux process tests passed;
 emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end timing,
 release integration and hosted activation remain open. The candidate branches are
 intentionally retained pending these gates.
+
+## E2B persistent-service candidate
+
+`71fa3478` adapts template startup, file-service attachment and memory-preserving
+pause. `d01110a5` extracts `provider_scenario.py`, used by both `accept_fly.py`
+and `accept_e2b.py`; no runtime/Filesystem business logic is copied into a provider.
+E2B reads use GET connection details rather than SDK `connect()`, which can
+resume compute and extend its timeout. Binding and disabled auto-resume policy
+are checked before constructing the SDK transport.
+
+Local checks: 206 Agent cases and 58 owned database/entry cases passed. Four
+native Linux file scenarios and the template start/readiness commands passed
+in local arm64 BuildKit. Two real-provider cases were intentionally skipped.
+These are component results, not E2B hosted or latency acceptance. See
+[`e2b-persistent-connection-receipt.json`](e2b-persistent-connection-receipt.json).
+
+Automatic approval review rejected uploading the worker to the configured E2B
+account without explicit destination authorization. No template or sandbox was
+created. The independent template alias prepared for approval is
+`puppy-persistent-files-71fa3478`; deployment configuration remains unchanged.
+
+After upload is authorized, build that committed worker with
+`agent-worker/build_e2b_template.py`. Supply its receipt's template ID and the
+authorized key only to an isolated test process, using the owned infrastructure
+described below. Run the product chain and same-workload I/O gate:
+
+```sh
+CLOUD_AGENT_TEST_E2B=1 CLOUD_AGENT_E2B_TEST_RECEIPT=/tmp/e2b-runtime.json \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_e2b.py
+CLOUD_AGENT_TEST_IO=e2b CLOUD_AGENT_IO_RECEIPT_DIR=/tmp \
+  python -m pytest -q -s tests/agent/workbench_acceptance/accept_io.py
+```
+
+The shared scenario verifies live edits before publication, SSE, editor conflict
+handling, native Git publication, independent Chats sharing one resource,
+pause/no-wake/resume and owned resource cleanup. E2B teardown verifies absence
+through both GET and metadata listing. The I/O test additionally verifies service
+survival after transport loss and records latency. Legacy E2B snapshot tests in
+`tests/agent/runtime/test_e2b_workspace.py` remain a separate required regression.
 
 ## Required continuous scenario (all still required)
 
