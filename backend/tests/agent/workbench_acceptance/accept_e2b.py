@@ -52,11 +52,21 @@ async def cleanup_owned(case, provider, receipt):
     sandboxes = await owned_sandboxes(case.project)
     for sandbox in sandboxes:
         await AsyncSandbox.kill(sandbox.sandbox_id, api_key=settings.E2B_API_KEY)
-        with pytest.raises(NotFoundException):
-            await AsyncSandbox.get_info(sandbox.sandbox_id, api_key=settings.E2B_API_KEY)
-    assert await owned_sandboxes(case.project) == []
+        await assert_absent(sandbox.sandbox_id)
+    await eventually(lambda: owned_sandboxes(case.project), lambda items: not items, timeout=30)
     receipt["deleted_sandboxes"] = [item.sandbox_id for item in sandboxes]
     receipt["cleanup"] = "owned E2B sandboxes absent (GET and metadata listing verified)"
+
+
+async def assert_absent(sandbox_id):
+    async def missing():
+        try:
+            await AsyncSandbox.get_info(sandbox_id, api_key=settings.E2B_API_KEY)
+        except NotFoundException:
+            return True
+        return False
+
+    await eventually(missing, bool, timeout=30)
 
 
 class E2BProbe:
@@ -159,5 +169,4 @@ for port in [80,443]:
         )
     finally:
         await sandbox.kill()
-        with pytest.raises(NotFoundException):
-            await AsyncSandbox.get_info(sandbox.sandbox_id, api_key=settings.E2B_API_KEY)
+        await assert_absent(sandbox.sandbox_id)

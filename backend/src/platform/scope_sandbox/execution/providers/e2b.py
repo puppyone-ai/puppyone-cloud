@@ -21,6 +21,12 @@ class E2BRuntimeProvider:
     name = "e2b"
     capabilities = RuntimeCapabilities(recovery_backend="provider-snapshot")
 
+    def __init__(self):
+        # A legacy session's snapshot and timeout update are incompatible E2B
+        # mutations. Heartbeats must keep renewing the DB lease while the
+        # provider snapshots, rather than block behind this lock or fail 409.
+        self._lifecycle_lock = asyncio.Lock()
+
     def validate(self, artifact, resource=None):
         if not artifact or not settings.E2B_API_KEY:
             raise ValueError("E2B requires its API key and pinned worker template")
@@ -93,8 +99,9 @@ class E2BRuntimeProvider:
             raise WorkerLost("Workspace was reclaimed") from exc
 
     async def pause(self, host):
-        await host._disconnect_output()
-        await host.sandbox.pause(keep_memory=True)
+        async with self._lifecycle_lock:
+            await host._disconnect_output()
+            await host.sandbox.pause(keep_memory=True)
 
     async def open_service(self, host, service):
         if service != "files":
@@ -123,6 +130,10 @@ class E2BRuntimeProvider:
         host.reader = asyncio.create_task(wait())
 
     async def snapshot(self, host):
+        async with self._lifecycle_lock:
+            return await self._snapshot(host)
+
+    async def _snapshot(self, host):
         await host.control("freeze")
         host.reconnecting = True
         try:
@@ -172,9 +183,12 @@ class E2BRuntimeProvider:
         return None
 
     async def renew(self, host):
-        if host.sandbox and time.monotonic() >= host.timeout_renewal:
-            await host.sandbox.set_timeout(settings.RUNTIME_AGENT_TIMEOUT_SECONDS)
-            host.timeout_renewal = time.monotonic() + settings.RUNTIME_AGENT_TIMEOUT_SECONDS / 2
+        if self._lifecycle_lock.locked() or host.parked:
+            return
+        async with self._lifecycle_lock:
+            if host.sandbox and time.monotonic() >= host.timeout_renewal:
+                await host.sandbox.set_timeout(settings.RUNTIME_AGENT_TIMEOUT_SECONDS)
+                host.timeout_renewal = time.monotonic() + settings.RUNTIME_AGENT_TIMEOUT_SECONDS / 2
 
     async def resolve(self, resource):
         if resource["provider"] != "e2b" or not resource.get("allocation_pending"):

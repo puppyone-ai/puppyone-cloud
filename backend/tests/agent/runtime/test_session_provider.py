@@ -188,3 +188,43 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
         value.reader.cancel()
         with suppress(asyncio.CancelledError):
             await value.reader
+
+
+@pytest.mark.asyncio
+async def test_e2b_snapshot_and_timeout_renewal_do_not_overlap():
+    value = worker()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked(*_):
+        entered.set()
+        await release.wait()
+
+    value.sandbox = SimpleNamespace(set_timeout=AsyncMock(side_effect=blocked))
+    value.timeout_renewal = 0
+    value.runtime._snapshot = AsyncMock(return_value={"id": "snapshot"})
+    renewal = asyncio.create_task(value.runtime.renew(value))
+    await asyncio.wait_for(entered.wait(), 1)
+    snapshot = asyncio.create_task(value.runtime.snapshot(value))
+    await asyncio.sleep(0)
+    value.runtime._snapshot.assert_not_awaited()
+    release.set()
+    await renewal
+    await snapshot
+
+    entered.clear()
+    release.clear()
+    value.runtime._snapshot = AsyncMock(side_effect=blocked)
+    value.sandbox.set_timeout.reset_mock()
+    value.timeout_renewal = 0
+    snapshot = asyncio.create_task(value.runtime.snapshot(value))
+    await asyncio.wait_for(entered.wait(), 1)
+    try:
+        # Renewal returns promptly so the caller can continue DB lease checks.
+        await asyncio.wait_for(value.runtime.renew(value), 1)
+        value.sandbox.set_timeout.assert_not_awaited()
+    finally:
+        release.set()
+        await snapshot
+    value.parked = True
+    await value.runtime.renew(value)
+    value.sandbox.set_timeout.assert_not_awaited()
