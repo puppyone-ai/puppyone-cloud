@@ -18,7 +18,7 @@ from src.infra.s3.service import get_s3_service_instance
 from src.platform.workspace.cache import CacheManager
 from src.platform.workspace.paths import content_child
 from src.utils.logger import log_error, log_info
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 
 
 def _extract_file_ref(data: bytes) -> str | None:

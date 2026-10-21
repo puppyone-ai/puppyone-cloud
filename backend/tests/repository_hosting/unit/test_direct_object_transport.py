@@ -14,10 +14,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, Request
 
-from src.version_engine.adapters.git.native_repository import NativeGitRepository
-from src.version_engine.adapters.git.object_pack import IncomingPack, bounded_delta
-from src.version_engine.adapters.git.object_reader import PublishedObjectReader
-from src.version_engine.adapters.git.protocol import pkt_line, read_pkt_lines
+from src.platform.access.adapters.git.native_repository import NativeGitRepository
+from src.platform.access.adapters.git.object_pack import IncomingPack, bounded_delta
+from src.platform.access.adapters.git.object_reader import PublishedObjectReader
+from src.platform.access.adapters.git.protocol import pkt_line, read_pkt_lines
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.write_engine.git_object_format import decode_object, encode_object
 from tests.repository_hosting.harness.git import Git

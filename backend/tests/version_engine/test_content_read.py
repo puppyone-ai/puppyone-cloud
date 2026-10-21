@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from src.platform.auth.models import CurrentUser
 from src.version_engine.domain.errors import PathNotFoundError, VersionReadError
-from src.version_engine.entrypoints.http import content_read
+from src.platform.access.adapters.api import read as content_read
 from src.version_engine.read.tree_reader import VersionEntry
 from tests.authorization_fakes import authorization_for
 

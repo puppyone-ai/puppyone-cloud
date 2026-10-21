@@ -28,7 +28,7 @@ from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.dependencies import resolve_org_ids
 from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
 from src.platform.repository_target.schemas import repository_target_schema
-from src.repo.access_credentials import AccessCredentialRepository
+from src.platform.access.credential_repository import AccessCredentialRepository
 
 # ── Helpers ─────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ def _enrich(rows: list[dict], sb_client) -> list[contracts.AccessSurface]:
     models; callers cannot opt this serializer into returning a bearer token.
     """
     scopes = AccessSurfaceRepository(sb_client).scope_rows_for(rows)
-    from src.repo.access_credentials import AccessCredentialRepository
+    from src.platform.access.credential_repository import AccessCredentialRepository
 
     credentials = AccessCredentialRepository(sb_client).list_active_by_surface(
         [row["id"] for row in rows]
@@ -596,7 +596,9 @@ def _create_mcp(
 
 
 def _create_sandbox(payload: contracts.AccessSurfaceConfigure) -> contracts.AccessSurfaceCreated:
-    from src.platform.access.adapters.sandbox_endpoint.repository import SandboxEndpointRepository
+    from src.platform.access.adapters.sandbox_endpoint.repository import (
+        SandboxEndpointRepository,
+    )
     from src.platform.access.adapters.sandbox_endpoint.schemas import (
         SandboxMountItem,
         SandboxResourceLimits,

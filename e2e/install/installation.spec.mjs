@@ -107,12 +107,12 @@ test('fresh installation and restart preserve real authenticated file operations
   // Also exercise fresh sign-in against the upgraded frontend.
   await page.goto(`${web}/login?next=${encodeURIComponent(destination)}`);
   await page.getByPlaceholder('Your email address').fill(state.email);
-  const checkedEmail = page.waitForResponse(response =>
-    new URL(response.url()).pathname.endsWith('/auth/check-email') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await success(await checkedEmail);
   await page.getByPlaceholder('Enter your password').fill(state.password);
+  const signedIn = page.waitForResponse(response =>
+    new URL(response.url()).pathname.endsWith('/auth/v1/token') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+  await success(await signedIn);
   await expect(page).toHaveURL(`${web}${destination}`, { timeout: 60_000 });
   await expect(page.getByText('install-check.md', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   await page.reload();

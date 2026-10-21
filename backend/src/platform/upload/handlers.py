@@ -55,13 +55,13 @@ from src.platform.entitlements.service import EntitlementService
 
 # Import underlying services for file processing
 from src.platform.upload.dependencies import get_etl_service
-from src.platform.upload.policy import (
+from src.file_operations.upload_policy import (
     PER_BATCH_MAX_BYTES as POLICY_PER_BATCH_MAX_BYTES,
 )
-from src.platform.upload.policy import (
+from src.file_operations.upload_policy import (
     PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
 )
-from src.platform.upload.policy import (
+from src.file_operations.upload_policy import (
     evaluate_batch_limits,
     path_has_blocked_segment,
 )
@@ -705,7 +705,7 @@ async def init_multipart_upload(
     # Defense-in-depth (Q8): the client also enforces these but a
     # third-party tool / future SDK / curl request could bypass the
     # client. The numbers come from the policy module
-    # (``src.platform.upload.policy``); see
+    # (``src.file_operations.upload_policy``); see
     # ``docs/proposals/PUP-3-folder-upload-policy.md`` Q4.
     for violation in evaluate_batch_limits(
         (f.size for f in request.files),

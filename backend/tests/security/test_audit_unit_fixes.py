@@ -138,7 +138,7 @@ class TestViewCachePrune:
 
     def test_prunes_oldest_beyond_max_views(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "projA", "v_old", mtime=1_000)
@@ -157,7 +157,7 @@ class TestViewCachePrune:
 
     def test_keep_dir_never_evicted_even_if_oldest(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         keep_old = self._make_view(root, "projA", "v_keep", mtime=1_000)  # oldest
@@ -174,7 +174,7 @@ class TestViewCachePrune:
 
     def test_zero_caps_disable_pruning(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         v1 = self._make_view(root, "projA", "v1", mtime=1_000)
@@ -189,7 +189,7 @@ class TestViewCachePrune:
 
     def test_byte_cap_evicts_until_actual_size_is_bounded(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "proj", "old", mtime=1, size_bytes=900)
@@ -204,8 +204,8 @@ class TestViewCachePrune:
 
     def test_prune_skips_active_view_and_continues(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
-        from src.version_engine.adapters.git._filelock import file_exclusive_lock
+        from src.version_engine.infrastructure import git_view_cache as view_cache
+        from src.version_engine.infrastructure.file_lock import file_exclusive_lock
 
         root = tmp_path / "cache"
         active = self._make_view(root, "proj", "active", mtime=1)
@@ -221,7 +221,7 @@ class TestViewCachePrune:
 
     def test_failed_delete_is_not_counted_as_freed(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "proj", "old", mtime=1)
@@ -247,7 +247,7 @@ class TestViewCachePrune:
 
 class TestGitViewCacheInvalidation:
     def _key(self):
-        from src.version_engine.adapters.git.view_cache import GitViewCacheKey
+        from src.version_engine.infrastructure.git_view_cache import GitViewCacheKey
 
         return GitViewCacheKey(
             project_id="project-1",
@@ -261,7 +261,7 @@ class TestGitViewCacheInvalidation:
 
     def test_missing_cache_is_a_valid_first_rebuild_state(self, tmp_path, monkeypatch):
         """A first rebuild must not fail merely because there is no cache yet."""
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         monkeypatch.setattr(view_cache, "git_view_cache_root", lambda: root)
@@ -271,7 +271,7 @@ class TestGitViewCacheInvalidation:
         assert not self._key().cache_dir().exists()
 
     def test_existing_cache_is_removed(self, tmp_path, monkeypatch):
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         monkeypatch.setattr(view_cache, "git_view_cache_root", lambda: root)

@@ -9,7 +9,7 @@ import pytest
 
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.git.native_repository import NativeGitRepository
+from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling
 from src.version_engine.infrastructure.supabase.file_policy_repository import RepositoryFilePolicy
 from src.version_engine.storage.backends.s3 import S3StorageBackend

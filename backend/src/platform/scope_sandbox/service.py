@@ -29,7 +29,7 @@ from src.platform.scope_sandbox.manager import AcquireResult, ScopeSandboxManage
 from src.platform.scope_sandbox.provider import SandboxProvider, SandboxSpec
 from src.platform.scope_sandbox.registry import SandboxSessionStore
 from src.utils.logger import log_info, log_warning
-from src.version_engine.entrypoints.git.locator import canonical_git_url
+from src.platform.access.adapters.git.locator import canonical_git_url
 
 # The URL is non-secret. The token stays in server-only SandboxSpec metadata
 # until the provider writes it through its sensitive file channel.
@@ -60,7 +60,7 @@ class ConnectInfo:
 
 
 def _scope_service():
-    from src.repo.scope_service import ScopeService
+    from src.platform.repository_target.scope_service import ScopeService
     return ScopeService()
 
 

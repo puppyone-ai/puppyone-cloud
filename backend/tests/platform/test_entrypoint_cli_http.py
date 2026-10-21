@@ -36,7 +36,7 @@ from tests.authorization_fakes import authorization_for, install_authorization
 from tests.platform.test_entrypoint_admission import Adapter, catalog
 
 pytestmark = pytest.mark.integration
-CLI = Path(__file__).resolve().parents[3] / "cli/bin/puppyone.js"
+from tests.support.cli_binary import cli_command, cli_entry_point
 
 
 class ImportStore:
@@ -184,8 +184,7 @@ class SurfaceStore:
 
 @pytest.fixture
 def server(monkeypatch, tmp_path):
-    if not (CLI.parent.parent / "node_modules/commander").exists():
-        pytest.fail("Install CLI dependencies with npm ci before running the HTTP contract gate")
+    cli_entry_point()
     state = SimpleNamespace(imports=ImportStore(), bindings=BindingStore(), runs=RunStore(),
                             surfaces=SurfaceStore(), queue=Queue())
     registry = catalog(Adapter())
@@ -234,7 +233,7 @@ def server(monkeypatch, tmp_path):
     monkeypatch.setattr(access, "resolve_org_ids", lambda *a, **kw: ["org-1"])
     monkeypatch.setattr(access, "_get_user_project_ids", lambda sb, org, auth, user:
                         auth.accessible_project_ids(["project-1", "project-2"], user))
-    monkeypatch.setattr("src.repo.access_credentials.AccessCredentialRepository", lambda *a: SimpleNamespace(
+    monkeypatch.setattr("src.platform.access.credential_repository.AccessCredentialRepository", lambda *a: SimpleNamespace(
         list_active_by_surface=lambda ids: {key: {"key_last4": "TEST"} for key in ids if key in state.surfaces.issued},
     ))
 
@@ -262,8 +261,8 @@ def server(monkeypatch, tmp_path):
         assert http.started, "loopback test server did not start"
 
         def cli(*args, ok=True):
-            result = subprocess.run(["node", str(CLI), "--json", "--api-url", f"http://127.0.0.1:{port}",
-                                     "--api-key", "test-token", "--project", "project-1", *args],
+            result = subprocess.run(cli_command("--json", "--api-url", f"http://127.0.0.1:{port}",
+                                     "--api-key", "test-token", "--project", "project-1", *args),
                                     capture_output=True, text=True, timeout=15,
                                     env={**os.environ, "HOME": str(tmp_path)})
             assert result.returncode == (0 if ok else 1), result.stdout + result.stderr

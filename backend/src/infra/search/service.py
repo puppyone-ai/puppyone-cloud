@@ -20,7 +20,7 @@ from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseFactory
 from src.utils.logger import log_error, log_info
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.read.tree_reader import VersionEntry
 
 

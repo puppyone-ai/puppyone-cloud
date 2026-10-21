@@ -49,6 +49,7 @@ nixPkgs = ["python312"]
 # install reuse the venv's setuptools/wheel and removes that PyPI fetch.
 cmds = [
     "python -m venv --copies /opt/venv",
+    "python scripts/install_flyctl.py /opt/venv/bin/fly",
     # Don't `pip install --upgrade pip` here. Stock venv ships pip 24.2 which
     # is plenty for installing uv, and skipping the upgrade avoids two
     # separate failure modes:

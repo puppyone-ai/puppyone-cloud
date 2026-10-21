@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.heartbeat import EndRun
-from src.platform.access.adapters.agent.runtime.model_progress import ModelProgress
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun
+from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.managed_ai.contracts import InferenceRun, ModelChunk
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
 from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
@@ -18,7 +21,18 @@ from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
 
 
 def supervisor():
-    return RunSupervisor(None, None, None, None, None, worker_factory=None, worker_lifecycle=None)
+    return RunSupervisor(
+        None,
+        None,
+        None,
+        None,
+        None,
+        loop=PiLoop(),
+        execution=SandboxExecution(),
+        filesystem=SandboxFilesystem(),
+        worker_factory=None,
+        worker_lifecycle=None,
+    )
 
 
 def test_model_completion_requires_sandbox_acknowledgement():

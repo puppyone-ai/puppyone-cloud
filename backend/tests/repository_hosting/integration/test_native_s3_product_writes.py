@@ -9,7 +9,7 @@ import pytest
 
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.product.tree_patch import splice_batch
+from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling
 from src.version_engine.infrastructure.supabase.file_policy_repository import RepositoryFilePolicy
 from src.version_engine.read.native_tree_reader import NativeTreeReader

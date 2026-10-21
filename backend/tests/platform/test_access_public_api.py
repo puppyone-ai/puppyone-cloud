@@ -213,7 +213,7 @@ def environment(monkeypatch):
     )
     monkeypatch.setattr(legacy_global, "AccessSurfaceRepository", RawSurfaces)
     monkeypatch.setattr(legacy_global, "AccessCredentialRepository", Credentials)
-    monkeypatch.setattr("src.repo.access_credentials.AccessCredentialRepository", Credentials)
+    monkeypatch.setattr("src.platform.access.credential_repository.AccessCredentialRepository", Credentials)
     monkeypatch.setattr(legacy_global, "_get_client", object)
     monkeypatch.setattr(legacy_global, "resolve_org_ids", lambda *a, **k: ["org-1"])
     # Only inventory discovery is faked; actual ProjectGrant policy still filters it.

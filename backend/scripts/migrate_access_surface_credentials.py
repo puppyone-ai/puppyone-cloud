@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.infra.supabase.dependencies import get_supabase_client
-from src.repo.access_credentials import access_token_hash, access_token_metadata, HASH_ALG
+from src.platform.access.credential_repository import access_token_hash, access_token_metadata, HASH_ALG
 
 
 CREDENTIALS_TABLE = "access_surface_credentials"

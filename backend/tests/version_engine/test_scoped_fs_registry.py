@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.version_engine.scoped_fs.registry import build_mcp_tool_definitions
+from src.platform.access.filesystem.registry import build_mcp_tool_definitions
 
 
 def _tools(writable: bool) -> dict[str, dict]:

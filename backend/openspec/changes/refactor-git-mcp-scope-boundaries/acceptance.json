@@ -1,0 +1,53 @@
+{
+  "recorded_at_utc": "2026-10-19T15:48:48.469519+00:00",
+  "result": "not_accepted",
+  "source_base": "1df9d000dd55626ef2aeacbaf38608b97bd69917",
+  "source_manifest_sha256": "83667e5b3b2f9627cd28be60508bbc7140dbf8619da50d717165a2186f26c30f",
+  "source_file_count": 918,
+  "source_manifest_algorithm": "Sorted present tracked and untracked nonignored files under backend/src, backend/agent-worker, backend/mcp_service, supabase/migrations and supabase/data_migrations; SHA256 over path + NUL + file SHA256 + newline. Includes moved/untracked source, excludes docs/tests.",
+  "suites": [
+    {
+      "receipt": "puppyone-refactor-accept-native.xml",
+      "sha256": "e8f4395eb3062b6af6207ab245412fc52fb76ca503356a6ece8f9365c6135e1e",
+      "passed": 53,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "failures": []
+    },
+    {
+      "receipt": "puppyone-refactor-accept-access-final.xml",
+      "sha256": "8e1a55120f8643c3b2b79554d3e75edf03e613dbcabc272e9d5eeea802d067cf",
+      "passed": 8,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "failures": [
+        "test_web_git_cli_share_native_refs_and_credential_revocation[web-git-cli]"
+      ]
+    }
+  ],
+  "known_failure": "Project-root Git credential resolves; unchanged legacy CLI policy rejects fs cat with HTTP 403 because it requires a Scope. Native Scope remains unavailable.",
+  "fly": {
+    "runtime_test": "not_started",
+    "image_digest": "sha256:7aaf99f7cd590239ab87f8039e3010465e2c6bc9f8b881f48613471fa37ddf56",
+    "upload_timeouts_seconds": [
+      300,
+      180
+    ],
+    "cleanup": {
+      "app": "puppy-refactor-accept-8361b763",
+      "machines": 0,
+      "volumes": 0,
+      "app_destroyed": true,
+      "token_revoked": true
+    }
+  },
+  "e2b": {
+    "inventory_checked": true,
+    "candidate_template_available": false,
+    "same_workload_io": "not_executed; template upload authorization pending"
+  },
+  "docker_full_upgrade": "not_executed; owned new busybox start remained Created, probe removed",
+  "delivery": "User requested local source commit and qubits integration before outstanding acceptance; no deployment or full product-chain acceptance claimed"
+}

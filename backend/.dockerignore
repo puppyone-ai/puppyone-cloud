@@ -9,4 +9,5 @@ __pycache__
 !.env.example
 tests
 docs
-scripts
+scripts/*
+!scripts/install_flyctl.py

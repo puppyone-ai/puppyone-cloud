@@ -1,6 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { createRequestScope, withAbort } from './requestScope';
 import { API_BASE_URL } from '@/config/api';
+import { safeNext } from '@/lib/safeNext';
 import { scopedResponseBody } from './responseStream';
 import {
   REPOSITORY_TARGET_CONTRACT_HEADER,
@@ -222,9 +223,16 @@ function handleAuthFailure(): void {
   if (typeof window === 'undefined' || _redirectingToLogin) return;
   if (window.location.pathname.startsWith('/login')) return;
   _redirectingToLogin = true;
+  // Carry the current location through the bounce. Without this a stale
+  // cookie silently destroys single-use entry points: a recipient opening
+  // /share/{token} or /invite/{token} was dumped on /login and, after
+  // signing in, landed on /home with the link consumed and never applied.
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  const target = new URL('/login', window.location.origin);
+  target.searchParams.set('session', 'expired');
+  if (safeNext(returnTo)) target.searchParams.set('redirect', returnTo);
   const go = () => {
-    const query = new URLSearchParams({ session: 'expired', redirect: window.location.pathname + window.location.search });
-    window.location.href = `/login?${query}`;
+    window.location.href = target.pathname + target.search;
   };
   try {
     Promise.resolve(getSupabase().auth.signOut({ scope: 'local' })).finally(go);
@@ -243,10 +251,19 @@ interface ApiResponse<T> {
  * Authenticated API request.
  */
 export async function apiRequest<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  return requestJson<T>(endpoint, options, 'json');
+}
+
+/** JSON endpoints without the Product API's {code, data} envelope. */
+export async function apiRawRequest<T>(endpoint: string, options?: ApiRequestOptions): Promise<T> {
+  return requestJson<T>(endpoint, options, 'raw');
+}
+
+async function requestJson<T>(endpoint: string, options: ApiRequestOptions | undefined, mode: 'json' | 'raw'): Promise<T> {
   const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
   const scope = createRequestScope(fetchOptions.signal, timeoutMs);
   try {
-    return await performRequest<T>(endpoint, { ...fetchOptions, timeoutMs, signal: scope.signal });
+    return await performRequest<T>(endpoint, { ...fetchOptions, timeoutMs, signal: scope.signal }, false, mode);
   } finally {
     scope.dispose();
   }
@@ -271,7 +288,7 @@ async function performRequest<T>(
   endpoint: string,
   options: ApiRequestOptions & { signal: AbortSignal },
   _isRetry = false,
-  responseMode: 'json' | 'stream' = 'json',
+  responseMode: 'json' | 'raw' | 'stream' = 'json',
 ): Promise<T> {
   const token = await withAbort(getAuthToken(), options.signal);
   const { timeoutMs = DEFAULT_API_TIMEOUT_MS, ...fetchOptions } = options ?? {};
@@ -327,7 +344,9 @@ async function performRequest<T>(
 
   if (responseMode === 'stream') return response as T;
 
-  const data: ApiResponse<T> = await withAbort(response.json(), options.signal);
+  const body = await withAbort(response.json(), options.signal);
+  if (responseMode === 'raw') return body as T;
+  const data: ApiResponse<T> = body;
 
   if (data.code !== 0) {
     const error: any = new Error(data.message || 'API request failed');

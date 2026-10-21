@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useMemo } from 'react';
-import { writeFile, type NodeType } from '@/lib/contentTreeApi';
+import { nativeTextRevision } from '@/lib/workspaceFiles';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
+import { type NodeType } from '@/lib/contentTreeApi';
 import {
   useManualSave,
   type SaveStatus,
@@ -55,9 +57,10 @@ export function useEditorSaveSession({
   skipDraftRestore = false,
   isContentReady = true,
 }: UseEditorSaveSessionOptions): EditorSaveSession {
+  const {files, identity} = useWorkspaceFiles();
   const fileKey = useMemo(
-    () => `${nodeType}:${projectId}:${filePath || '(none)'}`,
-    [nodeType, projectId, filePath],
+    () => `${identity === 'published' ? '' : identity + ':'}${nodeType}:${projectId}:${filePath || '(none)'}`,
+    [identity, nodeType, projectId, filePath],
   );
 
   const stringIdentity = useCallback((value: string) => value, []);
@@ -74,9 +77,10 @@ export function useEditorSaveSession({
         await saveContent(snapshot);
         return;
       }
-      await writeFile(projectId, filePath, snapshot, nodeType);
+      const expected = identity === 'published' ? undefined : await nativeTextRevision(serverContent);
+      await files.writeFile(projectId, filePath, snapshot, nodeType, undefined, expected);
     },
-    [filePath, nodeType, projectId, saveContent, isContentReady],
+    [filePath, nodeType, projectId, saveContent, isContentReady, files, identity, serverContent],
   );
 
   const inner = useManualSave<string>({

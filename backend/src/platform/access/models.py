@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
-from src.platform.repository_target.models import RepositoryTarget, repository_target_scope_id
+from src.platform.repository_target.models import RepositoryScope, RepositoryTarget, repository_target_scope_id
 # Explicit protocol kinds, not the shared external-source Provider catalog.
 ACCESS_KINDS = frozenset({"git_remote", "cli", "agent", "mcp", "mcp_endpoint", "sandbox", "sandbox_endpoint"})
 
@@ -58,3 +58,33 @@ class AccessSurface:
         default.
         """
         return self.kind in ACCESS_KINDS and (self.trigger or {}).get("type") != "import_once"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAccessSurfaceCredential:
+    """An authenticated CLI Access Surface before Scope geometry is loaded."""
+
+    credential_id: str
+    credential_type: str
+    access_surface_id: str
+    project_id: str
+    scope_id: str
+    mode_ceiling: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedScopeCredential:
+    """A machine credential and its exact, capability-clamped Scope target."""
+
+    credential_id: str
+    credential_type: str
+    access_surface_id: str
+    scope: RepositoryScope
+
+    @property
+    def project_id(self) -> str:
+        return self.scope.project_id
+
+    @property
+    def scope_id(self) -> str:
+        return self.scope.id

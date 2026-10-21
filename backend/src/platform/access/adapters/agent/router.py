@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from src.platform.access.adapters.agent.dependencies import get_agent_service
-from src.platform.access.adapters.agent.runtime.models import Approval, SubmitRun
+from src.platform.access.adapters.agent.runtime.control.models import Approval, SubmitRun
 from src.platform.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/agents", tags=["agents"])

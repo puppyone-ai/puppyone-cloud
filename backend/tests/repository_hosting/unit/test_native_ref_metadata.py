@@ -81,7 +81,7 @@ def test_explicit_ref_selection_reaches_one_snapshot_and_rejects_legacy():
 
     from fastapi import HTTPException
 
-    from src.version_engine.entrypoints.http.content_read import _product_read
+    from src.platform.access.adapters.api.read import _product_read
 
     calls = []
     @contextmanager
@@ -112,7 +112,7 @@ def test_full_application_metadata_routes_never_enter_transport_lease(monkeypatc
     from src.main import create_app
     from src.platform.project import write_lease
     from src.version_engine.bootstrap.dependencies import get_repo_manager
-    from src.version_engine.entrypoints.git import auth, operations
+    from src.platform.access.adapters.git import auth, operations
     from tests.repository_hosting.unit.test_native_operation_status import runtime_grant
 
     def forbidden(*_args, **_kwargs):

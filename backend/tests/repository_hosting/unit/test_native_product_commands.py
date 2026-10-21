@@ -4,14 +4,25 @@ from unittest.mock import Mock
 
 import pytest
 
+from src.file_operations.commands import VersionWriteCommandService
+from src.file_operations.native_commands import compile_native_command
 from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
-from src.version_engine.adapters.product.native_commands import compile_native_command
 from src.version_engine.storage.object_store import ObjectStore
 from src.version_engine.write_engine.git_object_format import encode_object
 from src.version_engine.write_engine.native_operation_writer import NativeWriteBase
 
 pytestmark = pytest.mark.hosting_component
+
+
+def test_assembly_uses_canonical_file_operations_implementations():
+    from src.file_operations import commands, operation_adapter
+    from src.version_engine.bootstrap.container import VersionEngineContainer
+    from src.platform.access.adapters.api import write as content_write
+
+    container = VersionEngineContainer(repo_manager=Mock(), history_graph_service=Mock())
+    assert type(container.product_operations()) is operation_adapter.ProductOperationAdapter
+    assert type(container.write_commands()) is commands.VersionWriteCommandService
+    assert content_write.VersionWriteCommandService is commands.VersionWriteCommandService
 
 
 @pytest.mark.parametrize("prefix,excludes", [("docs", ()), ("", ("private/**",))])
@@ -70,7 +81,7 @@ def test_native_product_preserves_modes_and_ordered_overwrite_audit(tmp_path, fo
 
 @pytest.mark.parametrize("format", ["sha1", "sha256"])
 def test_native_product_byte_path_normalization_and_roundtrip(tmp_path, format):
-    from src.version_engine.adapters.product.native_commands import apply_byte_paths, response_paths
+    from src.file_operations.native_commands import apply_byte_paths, response_paths
     from src.version_engine.write_engine.tree import read_tree_entries
     raw = b"raw-\xff\\name"
     arguments = apply_byte_paths({"path": "", "content": "bytes", "node_type": "file"},
@@ -87,13 +98,13 @@ def test_native_product_byte_path_normalization_and_roundtrip(tmp_path, format):
 
 @pytest.mark.parametrize("raw", [b"", b"/absolute", b"a/../b", b"a//b", b"a/", b"bad\0"])
 def test_native_product_byte_paths_reject_noncanonical_paths(raw):
-    from src.version_engine.adapters.product.native_commands import apply_byte_paths
+    from src.file_operations.native_commands import apply_byte_paths
     with pytest.raises(ValueError, match="byte path"):
         apply_byte_paths({"path": ""}, {"path": base64.b64encode(raw).decode()})
 
 
 def test_native_product_byte_paths_cannot_replace_a_second_identity():
-    from src.version_engine.adapters.product.native_commands import apply_byte_paths
+    from src.file_operations.native_commands import apply_byte_paths
     with pytest.raises(ValueError, match="not both"):
         apply_byte_paths({"path": "existing"}, {"path": "bmV3"})
     for slot in ("files/-1/path", "files/01/path", "paths/0", "content", "native"):

@@ -13,6 +13,19 @@ OLD_MODULES = (
     "src.repo.connector_service", "src.repo.connector_repository",
     "src.repo.connector_router", "src.repo.access_surface_repository",
     "src.ingest.file", "src.ingest.upload_jobs", "src.ingest.policy.upload_policy",
+    "src.version_engine.adapters.product", "src.platform.upload.policy",
+    "src.repo.access_credentials",
+    "src.repo", "src.version_engine.entrypoints.git",
+    "src.version_engine.adapters.git", "src.version_engine.scoped_fs",
+    "src.internal.mcp_runtime",
+) + tuple(
+    f"src.version_engine.entrypoints.http.{name}"
+    for name in (
+        "content", "content_read", "content_write", "content_resource",
+        "content_history", "content_operations", "repository_management",
+        "content_helpers", "content_read_context", "download_token", "audit",
+        "websocket", "schemas", "access_point", "access_point_fs",
+    )
 )
 
 
@@ -47,6 +60,61 @@ def test_entrypoints_never_import_sibling_lifecycle_implementations():
     assert not violations
 
 
+def test_repository_api_dependencies_remain_one_way():
+    boundaries = (
+        ("version_engine", ("src.platform.access.adapters", "src.platform.access.filesystem")),
+        ("platform/repository_target", (
+            "src.platform.access.adapters", "src.platform.access.credentials",
+            "src.platform.access.credential_repository", "src.platform.access.filesystem",
+        )),
+        ("platform/repository_target/models.py", ("src.platform.access",)),
+        ("platform/repository_target/schemas.py", ("src.platform.access",)),
+        ("platform/repository_target/scope_repository.py", ("src.platform.access",)),
+        ("platform/repository_target/scope_service.py", ("src.platform.access",)),
+        ("platform/access/filesystem", ("src.platform.access.adapters",)),
+        ("platform/access/adapters/cli", ("src.platform.access.adapters.mcp_endpoint",)),
+        ("platform/access/adapters/mcp_endpoint", ("src.platform.access.adapters.cli",)),
+        ("platform/access/adapters/git", ("src.platform.access.adapters.agent",)),
+        ("file_operations", ("src.platform.access.adapters",)),
+        ("version_engine/read", ("src.file_operations",)),
+        ("version_engine/write_engine", ("src.file_operations",)),
+        ("version_engine/storage", ("src.file_operations",)),
+        ("platform/access/adapters/api", ("src.version_engine.entrypoints",)),
+        ("platform/access/adapters/cli", ("src.version_engine.entrypoints",)),
+        ("platform/access/credential_repository.py", (
+            "src.platform.access.adapters", "src.version_engine",
+        )),
+        ("platform/access/repository_schemas.py", (
+            "fastapi", "src.platform.access.adapters", "src.version_engine",
+            "src.file_operations",
+        )),
+    )
+    violations = []
+    for relative, forbidden in boundaries:
+        root = SRC / relative
+        paths = [root] if root.is_file() else root.rglob("*.py")
+        for path in paths:
+            violations.extend(
+                (str(path.relative_to(SRC)), module)
+                for module in imports(path)
+                if any(module == name or module.startswith(name + ".") for name in forbidden)
+            )
+    assert not violations
+
+
+def test_version_notification_route_is_mounted_from_access():
+    # OpenAPI fingerprints cover HTTP, but do not include WebSocket routes.
+    from fastapi.routing import APIWebSocketRoute
+    from src.main import app
+    from src.platform.access.adapters.api.websocket import version_ws
+
+    routes = [route for route in app.routes
+              if isinstance(route, APIWebSocketRoute)
+              and route.path == "/api/v1/version/{project_id}/ws"]
+    assert len(routes) == 1
+    assert routes[0].endpoint is version_ws
+
+
 def test_provider_does_not_import_entrypoint_lifecycle_or_version_engine():
     forbidden = tuple("src.platform." + name for name in ("upload", "imports", "synchronize", "access")) + (
         "src.version_engine", "src.repo", "src.ingest",
@@ -76,12 +144,13 @@ def test_shared_dtos_contain_no_entrypoint_lifecycle_or_workspace_state():
 
 
 def test_moved_upload_contracts_repository_and_policy_are_domain_owned():
-    from src.platform.upload import schemas, repository, policy, jobs
+    from src.platform.upload import schemas, repository, jobs
+    from src.file_operations import upload_policy as policy
     from src.ingest import schemas as legacy
 
     assert schemas.UploadInitRequest.__module__ == "src.platform.upload.schemas"
     assert repository.UploadJobRepository.__module__ == "src.platform.upload.repository"
-    assert policy.evaluate_batch_limits.__module__ == "src.platform.upload.policy"
+    assert policy.evaluate_batch_limits.__module__ == "src.file_operations.upload_policy"
     assert jobs.finalize_upload_to_version.__module__ == "src.platform.upload.jobs"
     assert not hasattr(legacy, "UploadInitRequest")
     from src.platform.upload.service import ETLService

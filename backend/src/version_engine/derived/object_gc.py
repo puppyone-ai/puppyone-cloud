@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from src.version_engine.adapters.git.protocol import ZERO_ID
+from src.version_engine.write_engine.git_object_format import ZERO_ID
 from src.version_engine.write_engine.git_object_format import decode_object, hash_object
 from src.version_engine.write_engine.git_object_graph import object_edges
 

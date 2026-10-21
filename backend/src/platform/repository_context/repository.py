@@ -9,7 +9,7 @@ from src.platform.repository_target.models import (
     RepositoryTarget,
     repository_target_scope_id,
 )
-from src.repo.access_credentials import (
+from src.platform.access.credential_repository import (
     HASH_ALG,
     access_token_hash,
     access_token_metadata,

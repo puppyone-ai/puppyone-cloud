@@ -10,6 +10,9 @@ from src.common_schemas import ApiResponse
 
 router = APIRouter()
 _cached: tuple[str, float, list[str]] | None = None
+_DISCOVERY_CACHE_SECONDS = 60
+_DEGRADED_CACHE_SECONDS = 15
+_DEGRADED_PROVIDERS = ["email"]
 
 
 @router.get("/methods")
@@ -30,9 +33,12 @@ async def methods(response: Response):
         if not isinstance(external, dict):
             raise ValueError("Invalid provider capabilities")
         providers = [name for name in ("email", "google", "github") if external.get(name) is True]
-    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=503, detail="Sign-in methods are temporarily unavailable"
-        ) from exc
-    _cached = (url, time.monotonic() + 60, providers)
+    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        # Provider discovery controls optional OAuth buttons; it is not an
+        # authentication boundary. A transient Supabase settings outage must
+        # not disable the product's baseline email flow.
+        providers = _DEGRADED_PROVIDERS.copy()
+        _cached = (url, time.monotonic() + _DEGRADED_CACHE_SECONDS, providers)
+        return ApiResponse.success(data={"providers": providers})
+    _cached = (url, time.monotonic() + _DISCOVERY_CACHE_SECONDS, providers)
     return ApiResponse.success(data={"providers": providers})

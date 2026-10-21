@@ -4,34 +4,53 @@ import asyncio
 import logging
 from uuid import uuid4
 
-from src.platform.access.adapters.agent.runtime.admission import Admission
-from src.platform.access.adapters.agent.runtime.publication import Publication
-from src.platform.access.adapters.agent.runtime.repository import RunRepository
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.tools import BoundTools
-from src.platform.access.adapters.agent.runtime.workspace import SessionWorkspace, reap_workspaces
+from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.publication import Publication
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
+from src.platform.access.adapters.agent.runtime.control.workspace import (
+    SessionWorkspace,
+    reap_workspaces,
+)
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.execution.tools import BoundTools
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
+from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.version_engine.adapters.git.run_transport import RunGitTransport
+from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 logger = logging.getLogger(__name__)
 
 
-async def serve():
+_DEFAULT_OWNER = object()
+
+
+async def serve(*, workbench_owner=_DEFAULT_OWNER):
     from src.config import settings
 
+    owns_workbench = workbench_owner is _DEFAULT_OWNER
     repository = RunRepository()
     admission = Admission(repository)
     engine = build_worker_version_engine_container(probe=True)
-    publication = Publication(RunGitTransport(engine.repo_manager))
+    if workbench_owner is _DEFAULT_OWNER:
+        from src.platform.scope_sandbox.workbench_service import build_workbench_service
+
+        workbench_owner = build_workbench_service(engine=engine)
+    filesystem = SandboxFilesystem()
+    publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
     billing = get_runtime_metering_service()
     bound_tools = BoundTools(admission)
     worker_id = str(uuid4())
     active = set()
+    shared_first = False
+    task_repository = SharedTaskRepository(repository.client) if workbench_owner else None
 
     async def supervise(run):
         try:
@@ -42,9 +61,19 @@ async def serve():
                 inference,
                 billing,
                 bound_tools=bound_tools,
+                loop=PiLoop(),
+                execution=SandboxExecution(),
+                filesystem=filesystem,
                 worker_factory=PiWorker,
                 worker_lifecycle=PiWorker,
-                workspace=SessionWorkspace(repository),
+                workspace=None
+                if run.get("workbench_id")
+                else SessionWorkspace(repository, filesystem),
+                shared_tasks=(
+                    SharedTasks(task_repository, workbench_owner)
+                    if run.get("workbench_id")
+                    else None
+                ),
             ).run_claim(run)
         except asyncio.CancelledError:
             raise
@@ -56,6 +85,8 @@ async def serve():
         while True:
             try:
                 await reap_workspaces(repository, PiWorker)
+                if workbench_owner:
+                    await workbench_owner.reap()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -69,7 +100,17 @@ async def serve():
                 await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
                 continue
             try:
-                run = await asyncio.to_thread(repository.claim_run, worker=worker_id)
+                claims = [repository.claim_run]
+                if workbench_owner:
+                    claims.append(repository.claim_workbench_run)
+                    if shared_first:
+                        claims.reverse()
+                    shared_first = not shared_first
+                run = None
+                for claim in claims:
+                    run = await asyncio.to_thread(claim, worker=worker_id)
+                    if run is not None:
+                        break
                 if run is None:
                     await asyncio.sleep(1)
                     continue
@@ -86,6 +127,8 @@ async def serve():
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
+        if owns_workbench:
+            await workbench_owner.close()
 
 
 if __name__ == "__main__":

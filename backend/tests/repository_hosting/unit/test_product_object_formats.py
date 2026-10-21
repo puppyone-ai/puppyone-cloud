@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-from src.version_engine.adapters.product.tree_patch import (
+from src.version_engine.write_engine.tree_patch import (
     splice_copy,
     splice_move,
     splice_multi_put_refs,

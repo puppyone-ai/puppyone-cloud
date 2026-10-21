@@ -12,7 +12,7 @@ from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.repository import AuthorizationRepository
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.write_lease import ProjectWriteLease
-from src.version_engine.entrypoints.http import content_read, content_resource
+from src.platform.access.adapters.api import read as content_read, resource as content_resource
 from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.write_engine.git_object_format import encode_object
 from tests.agent.runtime import conftest as owned

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { fetchRawBlob, getInlinePreviewUrl } from '@/lib/contentTreeApi';
+import { getInlinePreviewUrl } from '@/lib/contentTreeApi';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 
 /** One lifecycle for native file previews in Workspace and resource links.
@@ -10,7 +11,9 @@ import { useAuth } from '@/contexts/SupabaseAuthProvider';
  */
 export function useFilePreviewUrl(projectId: string, path: string, kind: 'blob' | 'inline', pathBytes?: string): { url?: string; error?: string } {
   const { userId } = useAuth();
-  const key = JSON.stringify([userId, projectId, pathBytes ?? path, kind]);
+  const {files, identity, revision, workspace, ready} = useWorkspaceFiles();
+  const live = Boolean(workspace);
+  const key = JSON.stringify([userId, projectId, pathBytes ?? path, kind, identity, revision]);
   const [state, setState] = useState<{ key: string; url?: string; error?: string }>();
   useEffect(() => {
     const controller = new AbortController();
@@ -18,8 +21,9 @@ export function useFilePreviewUrl(projectId: string, path: string, kind: 'blob' 
     const options = { pathBytes, signal: controller.signal };
     const load = async () => {
       try {
-        const value = kind === 'blob'
-          ? await fetchRawBlob(projectId, path, options)
+        if (!ready) return;
+        const value = kind === 'blob' || live
+          ? await files.fetchRawBlob(projectId, path, options)
           : await getInlinePreviewUrl(projectId, path, options);
         if (controller.signal.aborted) return;
         const url = typeof value === 'string' ? value : (objectUrl = URL.createObjectURL(value));
@@ -33,6 +37,6 @@ export function useFilePreviewUrl(projectId: string, path: string, kind: 'blob' 
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [key, projectId, path, pathBytes, kind]);
+  }, [key, projectId, path, pathBytes, kind, files, live, ready]);
   return state?.key === key ? state : {};
 }

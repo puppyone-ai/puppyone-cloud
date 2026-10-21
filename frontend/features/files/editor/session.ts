@@ -13,6 +13,7 @@ export function createEditorSession<T>(initial: UseManualSaveOptions<T>, storage
   let baseline = initial.serverContent;
   let lastServer = initial.serverContent;
   let restored = false;
+  let conflict = false;
   let subscribers = 0;
   let state: Snapshot<T> = { draft: baseline, status: 'clean', error: null, hasRestoredDraft: false, lastEditedAt: null, lastSavedAt: null };
   let flash: ReturnType<typeof setTimeout> | undefined;
@@ -41,13 +42,20 @@ export function createEditorSession<T>(initial: UseManualSaveOptions<T>, storage
     },
     async save() {
       if (state.status !== 'dirty' && state.status !== 'error') return;
+      if (conflict) { publish({status: 'error', error: 'This file changed in the workspace. Copy your draft, reload the file, and merge your changes before saving.'}); return; }
       clearTimeout(flash);
       const snapshot = state.draft;
+      const serverAtSave = lastServer;
       const save = options.save;
       writer.flush();
       publish({ status: 'saving', error: null });
       try {
         await save(snapshot);
+        if (!equal(lastServer, serverAtSave) && !equal(lastServer, snapshot)) {
+          baseline = lastServer; conflict = !equal(state.draft, baseline);
+          publish({status: conflict ? 'error' : 'clean', error: conflict ? 'This file changed while saving. Your draft has been preserved.' : null});
+          return;
+        }
         baseline = snapshot;
         const current = equal(state.draft, snapshot);
         if (current) {
@@ -65,7 +73,7 @@ export function createEditorSession<T>(initial: UseManualSaveOptions<T>, storage
       }
     },
     discard() {
-      clearTimeout(flash); clear();
+      clearTimeout(flash); clear(); conflict = false;
       publish({ draft: baseline, status: 'clean', error: null, hasRestoredDraft: false, lastEditedAt: null });
     },
     acknowledgeRestoredDraft() { publish({ hasRestoredDraft: false }); },
@@ -89,7 +97,10 @@ export function createEditorSession<T>(initial: UseManualSaveOptions<T>, storage
             const normalizedSave = state.status === 'saved' && normalize(serialize(state.draft)) === normalize(serialize(next.serverContent));
             if (!normalizedSave) publish({ draft: next.serverContent });
           } else if (equal(state.draft, next.serverContent)) {
-            clear(); publish({ status: 'clean', error: null, hasRestoredDraft: false });
+            conflict = false; clear(); publish({ status: 'clean', error: null, hasRestoredDraft: false });
+          } else {
+            conflict = true;
+            publish({status: 'error', error: 'This file changed in the workspace. Your draft has been preserved.'});
           }
         }
       }

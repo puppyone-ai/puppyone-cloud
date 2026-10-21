@@ -20,10 +20,10 @@ class VersionAdminService:
         return await VersionWriteEngine(self._repos).initialize_project_tree(project_id)
 
     def _read(self, project_id, callback):
-        from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+        from src.version_engine.read.native_tree_reader import open_tree_read
         from src.version_engine.read.native_history import NativeHistory
 
-        with ProductOperationAdapter(self._repos).open_read(project_id, self._grant) as reader:
+        with open_tree_read(self._repos, project_id, self._grant) as reader:
             return callback(NativeHistory(reader.snapshot))
 
     async def get_history_view(self, project_id, path=None, limit=50, since_commit_id=""):

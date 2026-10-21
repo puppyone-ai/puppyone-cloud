@@ -126,6 +126,7 @@ it('Web email sign-in preserves invite destination and uses common initializatio
   await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
   fireEvent.change(input, { target: { value: 'user@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/auth/check-email'))).toBe(false);
   const password = await screen.findByPlaceholderText('Enter your password');
   fireEvent.change(password, { target: { value: 'password123' } });
   fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
@@ -134,7 +135,8 @@ it('Web email sign-in preserves invite destination and uses common initializatio
     fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/initialize'))
   ).toHaveLength(1);
   expect(mocks.desktop).not.toHaveBeenCalled();
-  expect(fetcher.mock.calls.some(([url]) => String(url).includes("check-email"))).toBe(true);
+  expect(auth.signInWithPassword).toHaveBeenCalledWith({ email: 'user@example.test', password: 'password123' });
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('check-email'))).toBe(false);
 });
 
 it('Desktop uses the exact existing email-first UI and never reads Web cookies', async () => {
@@ -181,6 +183,7 @@ it('email signup and OTP converge on the same Web completion', async () => {
   await waitFor(() => expect((email as HTMLInputElement).disabled).toBe(false));
   fireEvent.change(email, { target: { value: 'new@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'New to PuppyOne? Create an account' }));
   fireEvent.change(await screen.findByPlaceholderText('Create a password'), {
     target: { value: 'password123' },
   });

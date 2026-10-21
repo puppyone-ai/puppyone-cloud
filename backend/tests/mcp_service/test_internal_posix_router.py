@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.internal.router import router as internal_router
-from src.internal.router import verify_internal_secret
+from src.internal.dependencies import verify_internal_secret
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from tests.authorization_fakes import authorization_for
 

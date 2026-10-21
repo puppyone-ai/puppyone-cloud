@@ -34,3 +34,33 @@ it('migrates a legacy draft once and isolates it from another account', () => {
   expect(screen.getByText('server')).toBeTruthy();
   expect(localStorage.getItem('puppyone:editor-draft:account:first:p:a')).toContain('legacy edit');
 });
+
+it('keeps a dirty draft when the Agent saves and requires resolving the conflict', async () => {
+  const {createEditorSession} = await import('@/features/files/editor/session');
+  let writes = 0;
+  const options = {fileKey: 'live:gen:a', serverContent: 'base', serialize: identity, deserialize: identity, save: async () => { writes++; }};
+  const session = createEditorSession(options, 'conflict-fixture');
+  session.configure(options); session.actions.setDraft('human draft');
+  session.configure({...options, serverContent: 'agent saved'});
+  expect(session.getSnapshot().draft).toBe('human draft');
+  expect(session.getSnapshot().status).toBe('error');
+  await session.actions.save(); expect(writes).toBe(0);
+  session.actions.discard(); expect(session.getSnapshot().draft).toBe('agent saved');
+  session.dispose();
+});
+
+it('does not lose a remote change arriving during a pending save', async () => {
+  const {createEditorSession} = await import('@/features/files/editor/session');
+  let finish!: () => void;
+  const options = {fileKey: 'live:gen:a', serverContent: 'base', serialize: identity, deserialize: identity,
+    save: () => new Promise<void>(resolve => {finish = resolve;})};
+  const session = createEditorSession(options, 'pending-conflict-fixture');
+  session.configure(options); session.actions.setDraft('human draft');
+  const pending = session.actions.save();
+  session.configure({...options, serverContent: 'agent after save'});
+  finish(); await pending;
+  expect(session.getSnapshot().draft).toBe('human draft');
+  expect(session.getSnapshot().status).toBe('error');
+  session.actions.discard(); expect(session.getSnapshot().draft).toBe('agent after save');
+  session.dispose();
+});

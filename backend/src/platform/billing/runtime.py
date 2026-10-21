@@ -287,6 +287,20 @@ class RuntimeMeteringService:
                 # row and PuppyPay reservation lease are recovered later.
                 logger.exception("runtime_settlement_unexpected_failure", extra={"run_id": run_id})
 
+    async def ensure_session(self, *, audit_context: dict[str, Any]) -> str | None:
+        """Idempotently reserve or reattach one durable workspace compute epoch."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return None
+        identity = str(audit_context["run_id"])
+        existing = await asyncio.to_thread(self._repo.get, identity)
+        if existing is not None and existing.status == "running":
+            if existing.org_id != audit_context["org_id"]:
+                raise ValueError("Runtime organization binding changed")
+            return await self.resume_session(
+                identity, project_id=audit_context["project_id"], actor_id=audit_context["user_id"]
+            )
+        return await self.start_session(audit_context=audit_context)
+
     async def start_session(self, *, audit_context: dict[str, Any]) -> str | None:
         """Reserve before creating a provider resource and meter its full lifetime."""
 
@@ -381,28 +395,34 @@ class RuntimeMeteringService:
         if settings.RUNTIME_METERING_MODE == "disabled":
             return
         run = await asyncio.to_thread(self._repo.get, run_id)
-        if (run is None or run.status != "running" or not run.expires_at
-                or run.expires_at <= datetime.now(UTC)):
+        if (
+            run is None
+            or run.status != "running"
+            or not run.expires_at
+            or run.expires_at <= datetime.now(UTC)
+        ):
             raise ValueError("Runtime reservation expired or was exhausted")
 
     async def detach_session(self, run_id: str) -> None:
         """A fenced owner stops its local heartbeat without settling the run."""
         await self._stop_heartbeat(run_id)
 
-    async def finish_session(self, run_id: str) -> None:
+    async def finish_session(self, run_id: str, *, retry: bool = False) -> bool:
         """Settle a successfully started provider resource exactly once."""
 
         await self._stop_heartbeat(run_id)
         run = await asyncio.to_thread(self._repo.get, run_id)
         if run is None or run.status in {"settled", "canceled"}:
-            return
+            return True
         runtime_seconds = 0
         if run.started_at:
             started = run.started_at
             if started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             runtime_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
-        await self._settle(run_id, runtime_seconds)
+        await self._settle(run_id, runtime_seconds, allow_retry=retry)
+        current = await asyncio.to_thread(self._repo.get, run_id)
+        return current is not None and current.status in {"settled", "canceled"}
 
     async def cancel_session(self, run_id: str) -> None:
         """Compensate a reservation when the provider never started."""

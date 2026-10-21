@@ -5,6 +5,10 @@ Agent IDs, model/prompt/view configuration, tool bindings and scheduler triggers
 remain the configuration source. There is one durable run path for chat and
 scheduled execution; `POST /agents` and the old runtime DTO are removed.
 
+`worker.mjs` owns transport and composition. It supplies filesystem and execution
+tools to `loop.mjs`; the current implementations use the same native working
+directory. Controllers retain resource, isolation and trusted Git responsibilities.
+
 ## Run locally
 
 Build from the repository root:
@@ -23,7 +27,7 @@ uv run python -m src.platform.access.adapters.agent.runtime.worker
 
 `SERVICE_ROLE=agent_worker` selects that command on Railway. The repository's
 service manifest includes this role; a service must still be provisioned and its
-Wait for CI database gate verified at deployment. This change does not provision
+environment release coordinator verified at deployment. This change does not provision
 or deploy it. `CLOUD_AGENT_CONCURRENCY` defaults to 4; additional supervisor
 processes coordinate through database leases.
 
@@ -71,11 +75,30 @@ Unchanged runs create no commit or push. Original operation receipts reconcile
 lost replies; conflicts retain the candidate without force pushing.
 
 Docker recovery uses a root-private named volume with immutable snapshot
-directories; unchanged files share hardlinks. It survives container deletion,
+directories; checksum comparisons preserve same-size/same-mtime edits while
+unchanged files share hardlinks. This reads local bytes and must be included in
+Docker's recovery budget. It survives container deletion,
 not loss of the Docker data disk. E2B uses native durable snapshots and reconnects
 the command stream with sequence deduplication. Recovery restarts the controller
 and model under a new execution fence after faults. Normal successive turns
 preserve the sandbox, `.git`, index and worktree without snapshot restoration.
+
+The Git working tree is `/workspace/repo`, containing `.git` and the original
+project hierarchy. Pi starts there. `/opt/puppyone-agent` holds the runtime;
+`/tmp/puppyone-agent` and other `/tmp` paths are disposable scratch, excluded
+from automatic Git publication and the portable workspace recovery guarantee.
+Provider snapshots may also capture scratch, but applications cannot rely on it.
+
+Only the Docker launcher passes `--docker-recovery` to the controller. That
+activates `providers/docker-recovery.mjs` and its root-private `/recovery`
+volume. The E2B controller neither creates that directory nor permits local
+snapshot/restore commands. E2B recovery uses `create_snapshot()` and creates a
+replacement sandbox from its snapshot ID; the backend persists only the ID and
+owner/artifact binding, with no Docker volume field. Provider snapshot failures
+retain the existing recovery point and never fall back to sandbox-local copies
+or `/tmp`. The startup capability probe checks the recovery backend/version
+before project preparation or model execution. Deploy a matching worker artifact
+with the backend; incompatible artifacts fail before taking new work.
 
 Session ownership is durable in `agent_session_workspaces`, separate from the
 Run execution lease. After confirmed publication/no changes, the controller

@@ -53,12 +53,12 @@ class TableService:
     def _get_ops(self, project_id):
         if not self._user_id:
             raise PermissionError("table content requires an explicit principal")
-        from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+        from src.file_operations.operation_adapter import ProductOperationAdapter
 
         return ProductOperationAdapter(self._repos).for_user(project_id, self._user_id)
 
     def _get_write_commands(self, project_id):
-        from src.version_engine.adapters.product.commands import VersionWriteCommandService
+        from src.file_operations.commands import VersionWriteCommandService
 
         return VersionWriteCommandService(self._get_ops(project_id))
 

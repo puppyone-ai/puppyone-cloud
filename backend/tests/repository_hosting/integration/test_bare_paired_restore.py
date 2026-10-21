@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import pytest
 from fastapi import FastAPI, Request
 
-from src.version_engine.adapters.git.native_repository import NativeGitRepository
+from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     RefAuthorityRepository,
 )

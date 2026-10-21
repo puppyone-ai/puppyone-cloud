@@ -5,19 +5,29 @@ import asyncio
 from fastapi import HTTPException
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.admission import Admission, digest
-from src.platform.access.adapters.agent.runtime.models import public_run
-from src.platform.access.adapters.agent.runtime.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.admission import Admission, digest
+from src.platform.access.adapters.agent.runtime.control.models import public_run
+from src.platform.access.adapters.agent.runtime.control.ports import RunStore
 from src.platform.authorization.models import ProjectAction
 
 
+def submission_digest(request):
+    value = request.model_dump(mode="json")
+    # Adding a default-null field must not invalidate already accepted legacy
+    # receipts. Preserve all original defaults; omit only this new selector.
+    if value.get("workbench_id") is None:
+        value.pop("workbench_id", None)
+    return digest(value)
+
+
 class AgentService:
-    def __init__(self, repository: RunStore, admission=None):
+    def __init__(self, repository: RunStore, admission=None, *, workbenches=None):
         self.repository = repository
         self.admission = admission or Admission(self.repository)
+        self.workbenches = workbenches
 
-    def submit(self, user_id, request):
-        identity = digest(request.model_dump(mode="json"))
+    def submit(self, user_id, request, *, interactive=True):
+        identity = submission_digest(request)
         context = self.admission.load(
             user_id, request.project_id, request.agent_id, request.scope_id, str(request.request_id)
         )
@@ -26,9 +36,24 @@ class AgentService:
             if old["input_sha256"] != identity:
                 raise HTTPException(409, "Request identity was reused with different input")
             return public_run(old)
+        policy = context.policy
+        if self.workbenches is not None:
+            row = (
+                self.workbenches.admit(
+                    context, str(request.workbench_id) if request.workbench_id else None
+                )
+                if interactive
+                else self.workbenches.automation(context, str(request.request_id))
+            )
+            policy = {
+                **policy,
+                "workbench_id": row["id"],
+                "workbench_target_ref": row["target_ref"],
+            }
+        elif request.workbench_id is not None:
+            raise HTTPException(503, {"code": "cloud_workbench_unavailable"})
         if not settings.MANAGED_AI_ENABLED:
             raise HTTPException(503, {"code": "managed_agent_inference_disabled"})
-        policy = context.policy
         if not policy["model"]:
             raise HTTPException(409, "Configure an Agent model before submitting")
         run = self.repository.submit_run(
@@ -99,7 +124,7 @@ class AgentService:
         )
 
     async def events(self, user_id, run_id, after):
-        from src.platform.access.adapters.agent.runtime.models import TERMINAL
+        from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 
         while True:
             value = await asyncio.to_thread(self.view, user_id, run_id, after)

@@ -2,40 +2,42 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
 
+from src.platform.access.model_repository import AccessModelRepository
 from src.platform.repository_target.auth_context import repository_target_from_auth
 from src.platform.repository_target.models import repository_target_scope_id
-from src.platform.access.model_repository import AccessModelRepository
 from src.utils.logger import log_error, log_warning
-from src.version_engine.admission.channel_pause import enforce_channel_pause
 
-
-CLI_FS_READ_COMMANDS = frozenset({
-    "semantics",
-    "ls",
-    "tree",
-    "find",
-    "grep",
-    "stat",
-    "cat",
-    "head",
-    "tail",
-    "download",
-})
-CLI_FS_WRITE_COMMANDS = frozenset({
-    "write",
-    "mkdir",
-    "touch",
-    "upload",
-    "cp",
-    "mv",
-})
+CLI_FS_READ_COMMANDS = frozenset(
+    {
+        "semantics",
+        "ls",
+        "tree",
+        "find",
+        "grep",
+        "stat",
+        "cat",
+        "head",
+        "tail",
+        "download",
+    }
+)
+CLI_FS_WRITE_COMMANDS = frozenset(
+    {
+        "write",
+        "mkdir",
+        "touch",
+        "upload",
+        "cp",
+        "mv",
+    }
+)
 CLI_FS_DELETE_COMMANDS = frozenset({"rm", "rmdir"})
 CLI_FS_KNOWN_COMMANDS = CLI_FS_READ_COMMANDS | CLI_FS_WRITE_COMMANDS | CLI_FS_DELETE_COMMANDS
 CLI_FS_DEFAULT_ALLOWED_COMMANDS = CLI_FS_READ_COMMANDS | CLI_FS_WRITE_COMMANDS
@@ -51,7 +53,7 @@ class ConnectorPolicySnapshot:
     allowed_commands: frozenset[str]
 
 
-_policy_cache: dict[tuple[str, str, str], tuple[float, ConnectorPolicySnapshot]] = {}
+_policy_cache: dict[tuple[str, str | None, str], tuple[float, ConnectorPolicySnapshot]] = {}
 _policy_cache_lock = threading.Lock()
 
 
@@ -108,7 +110,7 @@ def effective_cli_fs_allowed_commands(policy: dict[str, Any] | None) -> frozense
 
 def _get_cached_policy(
     project_id: str,
-    scope_id: str,
+    scope_id: str | None,
     provider: str,
 ) -> ConnectorPolicySnapshot | None:
     now = time.monotonic()
@@ -126,7 +128,7 @@ def _get_cached_policy(
 
 def _set_cached_policy(
     project_id: str,
-    scope_id: str,
+    scope_id: str | None,
     provider: str,
     snapshot: ConnectorPolicySnapshot,
 ) -> None:
@@ -140,7 +142,7 @@ def _set_cached_policy(
 
 def get_connector_policy_snapshot(
     project_id: str,
-    scope_id: str,
+    scope_id: str | None,
     provider: str,
 ) -> ConnectorPolicySnapshot:
     cached = _get_cached_policy(project_id, scope_id, provider)
@@ -166,7 +168,7 @@ def get_connector_policy_snapshot(
     if connector is None:
         raise HTTPException(
             status_code=403,
-            detail=f"'{provider}' connector is not configured for this scope",
+            detail=f"'{provider}' connector is not configured for this repository target",
         )
 
     snapshot = ConnectorPolicySnapshot(
@@ -190,9 +192,11 @@ def admit_cli_fs_command(
     *,
     log_prefix: str = "[AP-FS]",
 ) -> None:
-    """Enforce connector policy for one AP-FS command.
+    """Enforce the exact repository target's CLI policy for one AP-FS command.
 
-    Access-key auth already resolved the scope. This gate only answers:
+    Access-key auth already resolved the Project-root or Scope target.
+    A Project-root target uses its own CLI Surface (scope_id=NULL); it never
+    borrows a Scope policy or bypasses a missing/paused Surface. This gate answers:
     "is this CLI connector allowed to run this FS CLI command?"
     """
 
@@ -212,12 +216,6 @@ def admit_cli_fs_command(
 
     target = repository_target_from_auth(auth)
     scope_id = repository_target_scope_id(target)
-    if scope_id is None:
-        raise HTTPException(
-            status_code=403,
-            detail="This legacy CLI surface requires an exact repository Scope",
-        )
-
     snapshot = get_connector_policy_snapshot(target.project_id, scope_id, "cli")
     if snapshot.status == "paused":
         log_warning(

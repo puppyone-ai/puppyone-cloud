@@ -1,214 +1,446 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import {
   joinProjectViaShareToken,
   type ProjectShareJoinResult,
 } from '@/lib/projectsApi';
-import { PulseGrid, Dots } from '@/components/loading';
+import { Dots } from '@/components/loading';
 
 /**
- * Share-link acceptance page.
+ * Share-link landing page — `/share/{token}`.
  *
- * Counterpart of ``/invite/[token]`` (org invitations) but for the
- * per-project share-link MVP. Flow:
- *   1. User arrives at ``/share/{token}``.
- *   2. If signed out → bounce to ``/login?redirect=/share/{token}``.
- *      The login page already honors ``redirect``; after auth the
- *      user lands back here with a session.
- *   3. POST ``/api/v1/projects/share/{token}/join``. The endpoint
- *      adds them as ``viewer`` and is idempotent for existing
- *      members.
- *   4. Brief "Joined {name}" confirmation, then redirect into the
- *      project's data page.
+ * This is one of only two surfaces a person can meet *before* they have
+ * an account with us (the other is `/invite/{token}`), so it is held to
+ * a stricter contract than an in-app screen:
  *
- * Mirrors the invite page's structure deliberately so future plugin
- * authors / new join flows can pattern-match.
+ *   1. **It must never spin forever.** Every asynchronous dependency —
+ *      auth bootstrap and the join request — is behind a watchdog that
+ *      resolves into a readable, retryable state. The previous version
+ *      rendered a bare "Loading share link…" whenever `status` was
+ *      `pending`, which was also the state it sat in while signed out;
+ *      if `isAuthReady` never flipped (auth bootstrap failure sets
+ *      `authError` and leaves `isAuthReady === false` forever) the page
+ *      had no exit at all.
+ *   2. **It must say what it is before asking for anything.** A signed
+ *      out visitor sees the invitation card and clicks through to sign
+ *      in. We deliberately do not auto-bounce to `/login`: a redirect
+ *      with nothing on screen is indistinguishable from a broken link,
+ *      and it is the behaviour that made this page feel hung.
+ *   3. **Every failure is attributable.** Invalid/rotated token, wrong
+ *      organization, expired session and transport failure each get
+ *      their own copy and their own recovery action.
+ *
+ * Visual contract: `docs/frontend/product-visual-system.md`. The card
+ * mirrors `/login` (380px column, centred on `--po-inset`, logo above
+ * the heading) so arriving here and continuing to sign-in reads as one
+ * surface rather than two.
  */
+
+/** Auth bootstrap is local work plus, at most, one token refresh. */
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 12_000;
+/** Matches the API client's own request timeout, plus headroom. */
+const JOIN_TIMEOUT_MS = 35_000;
+/** Long enough to read "Joined X", short enough not to feel stalled. */
+const SUCCESS_DWELL_MS = 900;
+
 export default function ShareAcceptPage() {
   return (
-    <Suspense fallback={<ShareFallback />}>
+    <Suspense fallback={<ShareShell>{null}</ShareShell>}>
       <ShareAcceptInner />
     </Suspense>
   );
 }
 
-function ShareFallback() {
-  return (
-    <div style={containerStyle}>
-      <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} style={{ opacity: 0.5 }} />
-      <Dots size="sm" />
-    </div>
-  );
-}
+type Failure = {
+  /** Short, human headline. */
+  title: string;
+  /** One sentence of plain explanation. */
+  detail: string;
+  /** Offer a retry only when retrying can plausibly change the result. */
+  retryable: boolean;
+};
 
 type Status =
-  | { kind: 'pending' }
+  | { kind: 'booting' }
+  | { kind: 'signed-out' }
   | { kind: 'joining' }
-  | { kind: 'success'; result: ProjectShareJoinResult }
-  | { kind: 'error'; message: string };
+  | { kind: 'joined'; result: ProjectShareJoinResult }
+  | { kind: 'failed'; failure: Failure };
 
 function ShareAcceptInner() {
   const router = useRouter();
   const params = useParams<{ token: string }>();
-  const token = typeof params?.token === 'string'
-    ? params.token
-    : Array.isArray(params?.token)
-      ? params.token[0]
-      : '';
-  const { session, isAuthReady, signOut } = useAuth();
+  const token =
+    typeof params?.token === 'string'
+      ? params.token
+      : Array.isArray(params?.token)
+        ? params.token[0]
+        : '';
 
-  const [status, setStatus] = useState<Status>({ kind: 'pending' });
-  const sharePath = typeof window !== 'undefined' ? window.location.pathname : '';
+  const { session, isAuthReady, authError, signOut } = useAuth();
 
-  // Auth gate: bounce to /login?redirect=... when signed out.
+  const [status, setStatus] = useState<Status>({ kind: 'booting' });
+  const [attempt, setAttempt] = useState(0);
+
+  // Read the router through a ref inside the join effect. Keeping it in
+  // the dependency array makes the effect re-subscribe on every render
+  // if the router object identity is ever unstable, and because the
+  // handlers below publish a freshly built status object each time,
+  // that degenerates into a render loop.
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  // The path is stable for the lifetime of this page; `/share/{token}`
+  // has no query string we need to carry.
+  const sharePath = token ? `/share/${encodeURIComponent(token)}` : '';
+  const loginHref = `/login?redirect=${encodeURIComponent(sharePath)}`;
+
+  // ── Watchdog: auth bootstrap ──────────────────────────────────────
+  // `SupabaseAuthProvider` reports an unrecoverable bootstrap failure by
+  // setting `authError` and *leaving* `isAuthReady` false. Nothing else
+  // ever resolves that, so the page has to own the deadline.
   useEffect(() => {
-    if (!isAuthReady) return;
-    if (!session && sharePath) {
-      router.replace(`/login?redirect=${encodeURIComponent(sharePath)}`);
+    if (isAuthReady) return;
+    const timer = setTimeout(() => {
+      setStatus(current =>
+        current.kind === 'booting'
+          ? {
+              kind: 'failed',
+              failure: {
+                title: "Couldn't start the session",
+                detail:
+                  'We could not reach the sign-in service. Check your connection and try again.',
+                retryable: true,
+              },
+            }
+          : current
+      );
+    }, AUTH_BOOTSTRAP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [isAuthReady, attempt]);
+
+  // Surface a *reported* bootstrap failure immediately rather than
+  // making the visitor wait out the watchdog.
+  useEffect(() => {
+    if (!authError) return;
+    setStatus(current =>
+      current.kind === 'booting'
+        ? {
+            kind: 'failed',
+            failure: {
+              title: "Couldn't start the session",
+              detail: authError,
+              retryable: true,
+            },
+          }
+        : current
+    );
+  }, [authError]);
+
+  // ── Resolve the signed-out state explicitly ───────────────────────
+  useEffect(() => {
+    if (!isAuthReady || session) return;
+    setStatus(current => (current.kind === 'booting' ? { kind: 'signed-out' } : current));
+  }, [isAuthReady, session]);
+
+  // ── Join ──────────────────────────────────────────────────────────
+  //
+  // The request is owned by a ref, not by the effect. An effect that
+  // both starts a POST and aborts it from its cleanup is wrong here:
+  // Strict Mode's mount/unmount/mount replay — and any re-render that
+  // changes the `session` object identity, such as a token refresh —
+  // would cancel the only in-flight attempt and, with a once-only
+  // guard in place, never start another. That is precisely how a page
+  // ends up spinning forever.
+  //
+  // Instead the effect *adopts* the current attempt's promise and only
+  // owns its own subscription. The POST fires once per `attempt`; the
+  // handlers can be attached as many times as React re-runs the effect.
+  const inflightRef = useRef<{ attempt: number; promise: Promise<ProjectShareJoinResult> } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!isAuthReady || !session) return;
+    if (!token) {
+      setStatus({ kind: 'failed', failure: INVALID_LINK });
+      return;
     }
-  }, [isAuthReady, session, sharePath, router]);
 
-  // Join once we have a session + token. Guarded by a ref so the
-  // bounce-back render doesn't double-fire.
-  const joinedRef = React.useRef(false);
-  useEffect(() => {
-    if (!isAuthReady || !session || !token) return;
-    if (joinedRef.current) return;
-    joinedRef.current = true;
-    setStatus({ kind: 'joining' });
-    joinProjectViaShareToken(token)
+    if (inflightRef.current?.attempt !== attempt) {
+      setStatus({ kind: 'joining' });
+      inflightRef.current = { attempt, promise: joinProjectViaShareToken(token) };
+    }
+    const { promise } = inflightRef.current;
+
+    let cancelled = false;
+    let dwell: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = setTimeout(() => {
+      if (cancelled) return;
+      setStatus(current =>
+        current.kind === 'joining'
+          ? {
+              kind: 'failed',
+              failure: {
+                title: 'This is taking too long',
+                detail: 'The workspace did not respond. Try again in a moment.',
+                retryable: true,
+              },
+            }
+          : current
+      );
+    }, JOIN_TIMEOUT_MS);
+
+    promise
       .then(result => {
-        setStatus({ kind: 'success', result });
-        // Land the user inside the project they just joined. We
-        // redirect to the data page rather than /home so the visible
-        // outcome is "now I see this project" rather than the
-        // dashboard.
-        setTimeout(() => {
-          router.replace(`/projects/${result.project_id}/data`);
-        }, 1200);
+        if (cancelled) return;
+        setStatus({ kind: 'joined', result });
+        // Land inside the project rather than on /home: the visible
+        // outcome should be "I can see this project now".
+        dwell = setTimeout(
+          () => routerRef.current.replace(`/projects/${result.project_id}/data`),
+          SUCCESS_DWELL_MS
+        );
       })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : 'Share link could not be used';
-        setStatus({ kind: 'error', message });
-      });
-  }, [isAuthReady, session, token, router]);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setStatus({ kind: 'failed', failure: describeJoinFailure(error) });
+      })
+      .finally(() => clearTimeout(watchdog));
 
-  const handleUseDifferentAccount = useCallback(async () => {
-    try {
-      await signOut();
-    } catch {
-      /* signOut already redirects via window.location */
-    }
+    return () => {
+      cancelled = true;
+      clearTimeout(watchdog);
+      clearTimeout(dwell);
+    };
+  }, [isAuthReady, session, token, attempt]);
+
+  const retry = useCallback(() => {
+    setStatus({ kind: 'booting' });
+    setAttempt(n => n + 1);
+  }, []);
+
+  const useDifferentAccount = useCallback(() => {
+    // signOut hard-navigates to /login; it never resolves here.
+    void signOut().catch(() => undefined);
   }, [signOut]);
 
-  if (!isAuthReady || status.kind === 'pending') {
+  // ── Render ────────────────────────────────────────────────────────
+
+  if (status.kind === 'booting') {
     return (
-      <div style={containerStyle}>
-        <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} style={{ opacity: 0.5 }} />
-        <PulseGrid />
-        <div style={mutedTextStyle}>Loading share link…</div>
-      </div>
+      <ShareShell>
+        <Heading title="Opening shared project" />
+        <Progress label="Preparing your session" />
+      </ShareShell>
     );
   }
 
-  if (!session) {
+  if (status.kind === 'signed-out') {
     return (
-      <div style={containerStyle}>
-        <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} style={{ opacity: 0.5 }} />
-        <Dots size="sm" />
-        <div style={mutedTextStyle}>Sign in to use this share link…</div>
-      </div>
+      <ShareShell>
+        <Heading
+          title="You've been invited to a project"
+          subtitle="Sign in to PuppyOne to open it. If you don't have an account yet you can create one with the same link."
+        />
+        <PrimaryLink href={loginHref}>Sign in to continue</PrimaryLink>
+        <Footnote>{`You'll join as a viewer. The project owner controls access.`}</Footnote>
+      </ShareShell>
     );
   }
 
   if (status.kind === 'joining') {
     return (
-      <div style={containerStyle}>
-        <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} />
-        <Dots size="sm" />
-        <div style={mutedTextStyle}>Joining the project…</div>
-      </div>
+      <ShareShell>
+        <Heading title="Opening shared project" />
+        <Progress label="Adding you to the project" />
+      </ShareShell>
     );
   }
 
-  if (status.kind === 'success') {
+  if (status.kind === 'joined') {
+    const { newly_joined, project_name } = status.result;
     return (
-      <div style={containerStyle}>
-        <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} />
-        <div style={{ ...mutedTextStyle, color: 'var(--po-text)' }}>
-          {status.result.newly_joined ? 'Joined' : 'Already a member of'}{' '}
-          <strong>{status.result.project_name}</strong>
-        </div>
-        <div style={mutedTextStyle}>Taking you in…</div>
-      </div>
+      <ShareShell>
+        <Heading
+          title={newly_joined ? `Joined ${project_name}` : `You're already in ${project_name}`}
+        />
+        <Progress label="Taking you in" />
+      </ShareShell>
     );
   }
 
+  const { failure } = status;
   return (
-    <div style={containerStyle}>
-      <img src="/puppyone-logo.svg" alt="Puppyone" width={48} height={48} style={{ opacity: 0.6 }} />
-      <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--po-text)' }}>
-        Share link could not be used
+    <ShareShell>
+      <Heading title={failure.title} subtitle={failure.detail} />
+      <div className="flex flex-col gap-2">
+        {failure.retryable && <PrimaryButton onClick={retry}>Try again</PrimaryButton>}
+        {session ? (
+          <>
+            <SecondaryButton onClick={() => router.replace('/home')}>
+              Go to my workspace
+            </SecondaryButton>
+            <SecondaryButton onClick={useDifferentAccount}>
+              Use a different account
+            </SecondaryButton>
+          </>
+        ) : (
+          <SecondaryLink href={loginHref}>Sign in</SecondaryLink>
+        )}
       </div>
-      <div style={{ ...mutedTextStyle, maxWidth: 340, textAlign: 'center' }}>
-        {status.message}
+      {session?.user?.email && <Footnote>Signed in as {session.user.email}</Footnote>}
+    </ShareShell>
+  );
+}
+
+// ── Failure classification ──────────────────────────────────────────
+//
+// `apiRequest` throws an Error carrying `status` (HTTP) plus the
+// backend's own message. Map the ones this endpoint can actually
+// produce; fall back to the server's message rather than inventing one.
+
+const INVALID_LINK: Failure = {
+  title: 'This share link no longer works',
+  detail:
+    'It was either revoked by the project owner or replaced by a newer link. Ask them to send you a fresh one.',
+  retryable: false,
+};
+
+function describeJoinFailure(error: unknown): Failure {
+  const status = (error as { status?: number } | null)?.status;
+  const message = error instanceof Error ? error.message : '';
+
+  if (status === 404) return INVALID_LINK;
+
+  if (status === 403) {
+    return {
+      title: 'This link is for another organization',
+      detail:
+        message ||
+        "Share links widen access inside one organization. Ask an owner to invite you to the organization first, then open this link again.",
+      retryable: false,
+    };
+  }
+
+  if (status === 401) {
+    return {
+      title: 'Your session expired',
+      detail: 'Sign in again and reopen this link.',
+      retryable: false,
+    };
+  }
+
+  if ((error as { isNetworkError?: boolean } | null)?.isNetworkError) {
+    return {
+      title: "Couldn't reach PuppyOne",
+      detail: 'The request did not get through. Check your connection and try again.',
+      retryable: true,
+    };
+  }
+
+  return {
+    title: "Couldn't open this project",
+    detail: message || 'Something went wrong on our side. Try again in a moment.',
+    retryable: true,
+  };
+}
+
+// ── Presentation ────────────────────────────────────────────────────
+//
+// Deliberately plain: one centred column on the app's inset surface,
+// the product mark, a heading, and at most two actions. It borrows
+// `/login`'s geometry so the sign-in hand-off is visually continuous.
+
+function ShareShell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-[var(--po-inset)] text-[var(--po-text)] p-6 font-sans">
+      <div className="w-[380px] flex flex-col items-center gap-6">
+        <img
+          src="/puppyone-logo.svg"
+          alt="PuppyOne"
+          width={44}
+          height={44}
+          className="opacity-95"
+        />
+        {children}
       </div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <button onClick={() => router.replace('/home')} style={primaryButtonStyle}>
-          Go to home
-        </button>
-        <button onClick={handleUseDifferentAccount} style={secondaryButtonStyle}>
-          Use a different account
-        </button>
-      </div>
-      <div style={{ ...mutedTextStyle, fontSize: 11 }}>
-        Signed in as {session.user?.email ?? 'your account'}.
-      </div>
+    </main>
+  );
+}
+
+function Heading({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="text-center">
+      <h1 className="text-xl font-semibold leading-7 text-[var(--po-text)]">{title}</h1>
+      {subtitle && (
+        <p className="mt-2 text-sm leading-5 text-[var(--po-text-muted)]">{subtitle}</p>
+      )}
     </div>
   );
 }
 
-// ── styling (mirrors the /invite page) ────────────────────────────
+function Progress({ label }: { label: string }) {
+  return (
+    <div
+      className="flex items-center gap-2 text-sm text-[var(--po-text-muted)]"
+      role="status"
+      aria-live="polite"
+    >
+      <Dots size="xs" />
+      <span>{label}</span>
+    </div>
+  );
+}
 
-const containerStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 20,
-  background: 'var(--po-inset)',
-  padding: 24,
-};
+const PRIMARY_CLASS =
+  'w-full h-10 px-4 rounded-md border-none bg-[var(--po-text)] text-[var(--po-text-inverse)] text-sm font-semibold cursor-pointer inline-flex items-center justify-center transition-opacity hover:opacity-90';
 
-const mutedTextStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: 'var(--po-text-muted)',
-};
+const SECONDARY_CLASS =
+  'w-full h-10 px-4 rounded-md border border-[var(--po-border)] bg-[var(--po-control)] text-[var(--po-text)] text-sm font-medium cursor-pointer inline-flex items-center justify-center transition-colors hover:bg-[var(--po-control-hover)] hover:border-[var(--po-border-strong)]';
 
-const primaryButtonStyle: React.CSSProperties = {
-  height: 40,
-  padding: '0 16px',
-  borderRadius: 6,
-  border: 'none',
-  background: 'var(--po-text)',
-  color: 'var(--po-text-inverse)',
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: 'pointer',
-};
+function PrimaryLink({ href, children }: { href: string; children: React.ReactNode }) {
+  // A real anchor, not a router push: this is the one action a visitor
+  // with broken client-side routing still needs to work.
+  return (
+    <a href={href} className={PRIMARY_CLASS}>
+      {children}
+    </a>
+  );
+}
 
-const secondaryButtonStyle: React.CSSProperties = {
-  height: 40,
-  padding: '0 16px',
-  borderRadius: 6,
-  border: '1px solid var(--po-border)',
-  background: 'var(--po-control)',
-  color: 'var(--po-text)',
-  fontSize: 14,
-  fontWeight: 500,
-  cursor: 'pointer',
-};
+function SecondaryLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} className={SECONDARY_CLASS}>
+      {children}
+    </a>
+  );
+}
+
+function PrimaryButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={PRIMARY_CLASS}>
+      {children}
+    </button>
+  );
+}
+
+function SecondaryButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button type="button" onClick={onClick} className={SECONDARY_CLASS}>
+      {children}
+    </button>
+  );
+}
+
+function Footnote({ children }: { children: React.ReactNode }) {
+  return <p className="text-xs text-[var(--po-text-subtle)] text-center">{children}</p>;
+}

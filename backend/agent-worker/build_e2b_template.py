@@ -28,7 +28,9 @@ def main():
     template = (
         Template(file_context_path=context)
         .from_dockerfile("\n".join(lines))
-        .set_ready_cmd("test -r /opt/puppyone-agent/worker.mjs && test -w /workspace")
+        .set_ready_cmd(
+            "test -r /opt/puppyone-agent/worker.mjs && test -w /workspace && test ! -e /recovery"
+        )
     )
     result = Template.build(
         template,

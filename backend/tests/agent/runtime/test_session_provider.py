@@ -1,5 +1,7 @@
 """Provider boundary contracts; no hosted service or credentials are used."""
 
+import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -30,6 +32,7 @@ async def test_e2b_creation_pauses_on_timeout_and_explicit_resume_keeps_identity
     monkeypatch.setattr(AsyncSandbox, "connect", connect)
     first = worker()
     resource = await first.create()
+    assert "recovery_volume" not in resource
     assert create.call_args.kwargs["lifecycle"] == {"on_timeout": "pause", "auto_resume": False}
     assert create.call_args.kwargs["allow_internet_access"] is False
     first.control = AsyncMock(return_value={})
@@ -86,3 +89,96 @@ async def test_e2b_timeout_does_not_turn_into_cold_allocation(monkeypatch):
     with pytest.raises(TimeoutError):
         await value.resume(old)
     assert value.resource == old  # Cleanup/recovery still owns the uncertain resource.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["e2b", "docker"])
+@pytest.mark.parametrize(
+    "capability",
+    [{}, {"recovery_version": 0}, {"recovery_version": 1, "recovery_backend": "other"}],
+)
+async def test_incompatible_recovery_backend_rejects_before_prepare_or_model(provider, capability):
+    value = worker(provider)
+    value._open_control = AsyncMock()
+    value.control = AsyncMock(return_value={"workspace_lifecycle": 1, **capability})
+    value.send = AsyncMock()
+    value.snapshot = AsyncMock()
+    with pytest.raises(RuntimeError, match="recovery backend mismatch"):
+        await value.start({"workspace": {}})
+    value.control.assert_awaited_once_with("capabilities")
+    value.send.assert_not_awaited()
+    value.snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_e2b_restore_never_sends_native_snapshot_id_as_a_local_directory():
+    value = worker()
+    value.restore_point = {"provider": "e2b", "id": "native-snapshot", "project_id": "project"}
+    value._open_control = AsyncMock()
+    value.control = AsyncMock(
+        return_value={
+            "workspace_lifecycle": 1,
+            "recovery_version": 1,
+            "recovery_backend": "provider-snapshot",
+        }
+    )
+    value.send = AsyncMock()
+    value.snapshot = AsyncMock()
+    await value.start({"workspace": {}, "resume_workspace": True})
+    assert value.control.call_args.args[0] == "prepare"
+    assert value.control.call_args.args[1]["restore"] is None
+    assert value.recovery == value.restore_point
+    value.snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local_copy(fails):
+    value = worker()
+    value.resource["template"] = "fixed-template"
+    previous = {"provider": "e2b", "id": "previous"}
+    value.recovery = previous
+    value.control = AsyncMock()
+    disconnect = AsyncMock()
+    value.handle = SimpleNamespace(pid=42, disconnect=disconnect)
+
+    value.reader = asyncio.create_task(asyncio.Event().wait())
+    handle = SimpleNamespace(pid=42, wait=AsyncMock(side_effect=asyncio.Event().wait))
+    snapshot = AsyncMock(return_value=SimpleNamespace(snapshot_id="native-snapshot"))
+    if fails:
+        snapshot.side_effect = RuntimeError("provider snapshot unavailable")
+    value.sandbox = SimpleNamespace(
+        create_snapshot=snapshot, commands=SimpleNamespace(
+            connect=AsyncMock(return_value=handle), list=AsyncMock(return_value=[])
+        )
+
+    )
+    try:
+        if fails:
+            with pytest.raises(RuntimeError, match="provider snapshot unavailable"):
+                await value.snapshot()
+            assert value.recovery == previous
+            value.sandbox.commands.connect.assert_not_awaited()
+        else:
+            point = await value.snapshot()
+            assert point == {
+                "provider": "e2b",
+                "id": "native-snapshot",
+                "project_id": "project",
+                "artifact": "fixed-template",
+            }
+            assert value.recovery == point
+            value.sandbox.commands.connect.assert_awaited_once_with(
+                42, timeout=0, on_stdout=value._output
+            )
+        disconnect.assert_awaited_once()
+        value.sandbox.commands.list.assert_awaited_once_with(request_timeout=15)
+        snapshot.assert_awaited_once()
+        assert [call.args[0] for call in value.control.call_args_list] == ["freeze", "thaw"]
+        assert not value.reconnecting
+        assert "recovery_volume" not in value.resource
+    finally:
+        value.reconnecting = True
+        value.reader.cancel()
+        with suppress(asyncio.CancelledError):
+            await value.reader

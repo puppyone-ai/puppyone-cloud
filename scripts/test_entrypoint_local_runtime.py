@@ -179,8 +179,29 @@ class Stack:
             return body["data"]
         return body
 
+    def cli_bin(self) -> str:
+        """Locate the puppyone CLI, which ships from puppyone-ai/puppyone-cli.
+
+        Mirrors backend/tests/support/cli_binary.py: explicit path, then an
+        installed npm package, then a sibling checkout. This script is not a
+        pytest run, so an unresolved CLI is a hard error rather than a skip.
+        """
+        explicit = os.environ.get("PUPPYONE_CLI_BIN", "").strip()
+        candidates = [Path(explicit)] if explicit else []
+        candidates.append(self.source_root/"node_modules/puppyone/bin/puppyone.js")
+        candidates.append(self.source_root.parent/"puppyone-cli/bin/puppyone.js")
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        searched = "\n".join(f"  - {path}" for path in candidates)
+        raise RuntimeError(
+            "puppyone CLI not found. Install it (`npm install puppyone`), check "
+            "out puppyone-cli beside this repository, or set PUPPYONE_CLI_BIN. "
+            f"Searched:\n{searched}"
+        )
+
     def cli(self, *args):
-        result = self.run("last-cli", "node", str(self.source_root/"cli/bin/puppyone.js"), "--json",
+        result = self.run("last-cli", "node", self.cli_bin(), "--json",
             "--api-url", self.base, "--api-key", self.token, "--project", self.project, *args, timeout=90)
         body = json.loads(result)
         assert body["success"], body

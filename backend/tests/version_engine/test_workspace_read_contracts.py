@@ -9,7 +9,7 @@ from src.exceptions import NotFoundException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.authorization.models import ProjectAction
 from src.version_engine.bootstrap.dependencies import get_version_admin_service
-from src.version_engine.entrypoints.http.content_history import get_project_head, history_router
+from src.platform.access.adapters.api.history import get_project_head, history_router
 from src.version_engine.read.history_facts import read_commit_parent_ids
 from src.version_engine.storage.object_store import ObjectStore
 from src.version_engine.write_engine.git_object_format import EMPTY_TREE_SHA1

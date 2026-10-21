@@ -12,7 +12,7 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
+from src.file_operations.commands import VersionWriteCommandService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 from .service import TemplateRegistryService

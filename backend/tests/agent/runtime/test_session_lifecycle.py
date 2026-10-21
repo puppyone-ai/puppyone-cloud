@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.workspace import reap_workspaces
+from src.platform.access.adapters.agent.runtime.control.workspace import reap_workspaces
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
 from tests.agent.runtime.test_supervisor import (
     BashModel,

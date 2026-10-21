@@ -20,7 +20,37 @@ BEGIN
             RAISE EXCEPTION 'CLOUD_AGENT_BACKEND_ACCESS_MISSING: %', relation;
         END IF;
     END LOOP;
+    FOREACH relation IN ARRAY ARRAY['cloud_workbenches','cloud_workbench_tasks'] LOOP
+        IF to_regclass('public.' || relation) IS NULL THEN
+            RAISE EXCEPTION 'CLOUD_AGENT_SCHEMA_MISSING: %', relation;
+        END IF;
+        IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid=to_regclass('public.' || relation)) THEN
+            RAISE EXCEPTION 'CLOUD_AGENT_RLS_MISSING: %', relation;
+        END IF;
+        FOREACH role_name IN ARRAY ARRAY['anon','authenticated','service_role'] LOOP
+            IF has_table_privilege(role_name,'public.' || relation,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                OR (role_name<>'service_role' AND has_table_privilege(role_name,'public.' || relation,'SELECT')) THEN
+                RAISE EXCEPTION 'CLOUD_AGENT_CLIENT_ACCESS: % %', role_name, relation;
+            END IF;
+        END LOOP;
+        IF NOT has_table_privilege('service_role','public.' || relation,'SELECT') THEN
+            RAISE EXCEPTION 'CLOUD_AGENT_BACKEND_ACCESS_MISSING: %', relation;
+        END IF;
+    END LOOP;
     FOREACH signature IN ARRAY ARRAY[
+        'public.cloud_workbench_context(uuid,text)',
+        'public.cloud_workbench_default(uuid,text,jsonb)',
+        'public.cloud_workbench_automation(uuid,text,uuid,jsonb)',
+        'public.cloud_workbench_activity(uuid,uuid,uuid,text,jsonb,boolean)',
+        'public.cloud_workbench_maintenance(integer)',
+        'public.cloud_workbench_acquire(uuid,uuid,text,jsonb)',
+        'public.cloud_workbench_transition(uuid,uuid,bigint,uuid,text,jsonb)',
+        'public.cloud_workbench_reconcile_claim(uuid,uuid,bigint)',
+        'public.cloud_workbench_suspend(uuid,uuid,bigint)',
+        'public.cloud_workbench_idle_claim(uuid,uuid,bigint,text)',
+        'public.cloud_workbench_task_acquire(uuid,uuid,bigint,uuid)',
+        'public.cloud_workbench_task_released(uuid,uuid,bigint,uuid,uuid)',
+        'public.agent_run_claim_workbench_execution(text)',
         'public.agent_run_submit(uuid,text,text,text,uuid,text,text,jsonb,integer)',
         'public.agent_run_claim(text,integer)',
         'public.agent_run_builtin(text,text,uuid,jsonb)',
@@ -64,6 +94,12 @@ BEGIN
     END LOOP;
     IF (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'D'
         AND (tgrelid,tgname) IN (
+            ('public.cloud_workbenches'::regclass,'cloud_workbench_occupancy_guard'),
+            ('public.cloud_workbenches'::regclass,'cloud_workbench_delete_guard'),
+            ('public.agent_runs'::regclass,'cloud_workbench_run_binding'),
+            ('public.agent_runs'::regclass,'cloud_workbench_target_ref_guard'),
+            ('public.cloud_workbench_tasks'::regclass,'cloud_workbench_task_delete_guard'),
+            ('public.agent_runs'::regclass,'cloud_workbench_run_delete_guard'),
             ('public.agent_runs'::regclass,'agent_run_delete_guard'),
             ('public.version_transactions'::regclass,'agent_run_legacy_receipt'),
             ('public.version_ref_transactions'::regclass,'agent_run_native_receipt'),
@@ -74,7 +110,7 @@ BEGIN
             ('public.version_ref_transactions'::regclass,'version_publish_object_proofs'),
             ('public.version_ref_transactions'::regclass,'version_transaction_incremental_fence'),
             ('public.version_publication_receipts'::regclass,'version_receipt_incremental_fence')
-        )) <> 10 THEN
+        )) <> 16 THEN
         RAISE EXCEPTION 'CLOUD_AGENT_PUBLICATION_GUARD_MISSING';
     END IF;
     -- Proof facts are written only by the checked commands, including for the

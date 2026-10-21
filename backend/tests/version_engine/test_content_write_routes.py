@@ -6,8 +6,8 @@ import pytest
 from fastapi import HTTPException
 
 from src.platform.auth.models import CurrentUser
-from src.version_engine.entrypoints.http import content_write
-from src.version_engine.entrypoints.http.schemas import MoveRequest
+from src.platform.access.adapters.api import write as content_write
+from src.platform.access.repository_schemas import MoveRequest
 from tests.authorization_fakes import authorization_for
 
 

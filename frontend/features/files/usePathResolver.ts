@@ -2,7 +2,8 @@
 
 import type { MarkdownViewMode } from '@/components/editors/markdown';
 import { useCommitUpdates } from '@/contexts/VersionWebSocketContext';
-import { readFile, stat } from '@/lib/contentTreeApi';
+import { readFile } from '@/lib/contentTreeApi';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 import { isTextLikeCategory, resolveFormat, UNKNOWN_FORMAT } from '@/lib/fileFormats';
 import { isFolderType } from '@/lib/nodeTypeConfig';
 import { useSearchParams } from 'next/navigation';
@@ -83,6 +84,7 @@ export function usePathResolver(
   typeHintOverride?: string,
   onResolved?: () => void,
 ) {
+  const {files, identity: workspaceIdentity, revision: fileRevision, ready} = useWorkspaceFiles();
   const path = rawPath.map(safeDecode);
   const searchParams = useSearchParams();
   const [currentFolderPath, setCurrentFolderPath] = useState<string | null>(null);
@@ -106,7 +108,7 @@ export function usePathResolver(
   const pathKey = path.join('/');
   const typeHint = typeHintOverride ?? searchParams?.get('type') ?? '';
   const [revision, setRevision] = useState(0);
-  const identity = JSON.stringify([projectId, pathKey, typeHint]);
+  const identity = JSON.stringify([projectId, pathKey, typeHint, workspaceIdentity]);
   const [readIdentity, setReadIdentity] = useState<string | null>(null);
   const [readError, setReadError] = useState<Error | null>(null);
   const retryRead = useCallback(() => setRevision(value => value + 1), []);
@@ -132,6 +134,7 @@ export function usePathResolver(
     };
 
     async function resolve() {
+      if (!ready) return;
       if (path.length === 0) {
         setIsResolvingPath(false);
         setIsLoadingText(false);
@@ -187,10 +190,10 @@ export function usePathResolver(
         setIsLoadingText(false);
       }
 
-      const statPromise = stat(projectId, fullPath, controller.signal);
+      const statPromise = files.stat(projectId, fullPath, controller.signal);
       let bodyError: unknown;
       const readFilePromise = shouldReadFile
-        ? readFile(projectId, fullPath, controller.signal).catch(error => { bodyError = error; return null; })
+        ? files.readFile(projectId, fullPath, controller.signal).catch(error => { bodyError = error; return null; })
         : Promise.resolve(null);
 
       const statResult = await statPromise;
@@ -256,7 +259,7 @@ export function usePathResolver(
           // text/* via stat).
           setIsLoadingText(true);
           try {
-            const content = await readFile(projectId, fullPath, controller.signal);
+            const content = await files.readFile(projectId, fullPath, controller.signal);
             if (cancelled) return;
             setTextContent(treeContentToEditorText(content));
           } catch (readErr) {
@@ -288,13 +291,13 @@ export function usePathResolver(
 
     return () => { cancelled = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, pathKey, typeHint, onResolved, revision]);
+  }, [projectId, pathKey, typeHint, onResolved, revision, workspaceIdentity, fileRevision, ready, files]);
 
   return {
     currentFolderId: currentFolderPath,
     setCurrentFolderId: setCurrentFolderPath,
     folderBreadcrumbs,
-    isResolvingPath: readIdentity !== identity || isResolvingPath,
+    isResolvingPath: !ready || readIdentity !== identity || isResolvingPath,
     readError: readIdentity === identity ? readError : null,
     retryRead,
     activeNodeId,
@@ -303,7 +306,7 @@ export function usePathResolver(
     activeMimeType,
     textContent,
     setTextContent,
-    isLoadingText: readIdentity !== identity || isLoadingText,
+    isLoadingText: !ready || readIdentity !== identity || isLoadingText,
     markdownViewMode,
     setMarkdownViewMode,
   };

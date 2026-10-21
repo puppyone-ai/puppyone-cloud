@@ -27,7 +27,7 @@ from src.platform.workspace.provider import (
     WorkspaceProvider,
     get_active_workspace_provider,
 )
-from src.version_engine.adapters.git._filelock import try_file_exclusive_lock
+from src.version_engine.infrastructure.file_lock import try_file_exclusive_lock
 
 _VIEW_ID = re.compile(r"[0-9a-f]{64}")
 _VIEW_LOCK = re.compile(r"\.[0-9a-f]{64}\.lock")

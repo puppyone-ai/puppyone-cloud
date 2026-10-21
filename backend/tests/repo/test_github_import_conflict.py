@@ -8,7 +8,7 @@ import pytest
 
 from src.platform.synchronize.github import importer
 from src.provider.github.client import TreeEntry
-from src.version_engine.adapters.product.operation_adapter import (
+from src.file_operations.operation_adapter import (
     ProductOperationAdapter,
     WriteResult,
 )

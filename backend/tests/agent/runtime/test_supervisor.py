@@ -8,20 +8,23 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.admission import Admission
-from src.platform.access.adapters.agent.runtime.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
-from src.platform.access.adapters.agent.runtime.publication import Publication
-from src.platform.access.adapters.agent.runtime.repository import RunRepository
-from src.platform.access.adapters.agent.runtime.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.workspace import SessionWorkspace
+from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.publication import Publication
+from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
+from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.service import AgentService
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, ModelChunk
 from src.platform.project.write_lease import ProjectWriteLease
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
 from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.version_engine.adapters.git.run_transport import RunGitTransport
+from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from tests.agent.runtime.workspace_assertions import recovery_file, recovery_git
 
 pytestmark = pytest.mark.integration
@@ -142,8 +145,57 @@ def read_case(case, path):
         return reader.read_file(case.project, path)
 
 
-def worker_factory(execution, project):
-    return PiWorker(execution, project, provider="docker", store=InMemoryExecutionSessionStore())
+def worker_factory(execution, project, *, provider="docker", image=None, artifact=None):
+    return PiWorker(execution, project, provider=provider, image=image, artifact=artifact,
+                    store=InMemoryExecutionSessionStore())
+
+
+class RecoveringToolModel(ModelFixture):
+    """Real Pi must deliver every tool outcome back to the next model turn."""
+
+    def __init__(self, steps):
+        super().__init__()
+        self.steps = steps
+
+    async def completion(self, user, request, body):
+        index = self.calls
+        if index:
+            tools = [m for m in body.model_dump()["messages"] if m["role"] == "tool"]
+            assert self.steps[index - 1][2] in json.dumps(tools[-1]), tools[-1]
+        result = await super().completion(user, request, body)
+        has_tool = index < len(self.steps)
+
+        async def events():
+            async for event in result.events:
+                if isinstance(event, ModelChunk):
+                    for choice in event.frame["choices"]:
+                        if choice["finish_reason"] is not None:
+                            choice["finish_reason"] = "tool_calls" if has_tool else "stop"
+                        else:
+                            name, arguments, _expected = (
+                                self.steps[index] if has_tool else (None, None, None)
+                            )
+                            choice["delta"] = (
+                                {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": f"recover-{index}",
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": json.dumps(arguments),
+                                            },
+                                        }
+                                    ],
+                                }
+                                if has_tool
+                                else {"role": "assistant", "content": "Recovered and completed."}
+                            )
+                yield event
+
+        return InferenceRun(str(uuid4()), events(), result.aclose)
 
 
 @pytest.mark.asyncio
@@ -236,7 +288,7 @@ async def prepared(services, postgres, submitted, request):
         admission=admission,
         service=service,
         run=run,
-        publication=Publication(RunGitTransport(container.repo_manager)),
+        publication=Publication(RunGitTransport(container.repo_manager), SandboxFilesystem()),
         checkpoints=Checkpoints(),
         ops=ops,
         user=user,
@@ -253,9 +305,12 @@ async def prepared(services, postgres, submitted, request):
             model or ModelFixture(),
             get_runtime_metering_service(),
             checkpoints=value.checkpoints,
+            loop=PiLoop(),
+            execution=SandboxExecution(),
+            filesystem=SandboxFilesystem(),
             worker_factory=worker_factory,
             worker_lifecycle=PiWorker,
-            workspace=SessionWorkspace(repo),
+            workspace=SessionWorkspace(repo, SandboxFilesystem()),
         )
 
     value.supervisor = supervisor
@@ -483,7 +538,12 @@ async def test_failed_provider_allocation_resolves_before_recovery(prepared, mon
         return []
 
     monkeypatch.setattr(PiWorker, "create", rejected)
-    monkeypatch.setattr(PiWorker, "resolve_resources", staticmethod(absent))
+    from src.platform.scope_sandbox.execution.providers.e2b import E2BRuntimeProvider
+
+    async def resolve(_provider, resource):
+        return await absent(resource)
+
+    monkeypatch.setattr(E2BRuntimeProvider, "resolve", resolve)
     await supervisor.run_claim(case.run)
     result = case.repo.get(case.run["id"])
     assert result["state"] == "failed"
@@ -610,7 +670,7 @@ async def test_native_canonical_publication_and_receipt(prepared):
 
 
 async def native_write(case, name, content):
-    from src.version_engine.adapters.product.tree_patch import splice_batch
+    from src.version_engine.write_engine.tree_patch import splice_batch
 
     grant = case.admission.authorization.resolve_project_grant(case.project, case.user)
     with case.ops.open_read(case.project, grant) as reader:
@@ -1305,3 +1365,222 @@ async def test_detached_writers_cannot_cross_confirmed_tool_boundary(prepared):
     assert read_case(case, "note.md") == b"saved"
     with pytest.raises(FileNotFoundError):
         read_case(case, "late.txt")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first",
+    [
+        ("write", {"path": "/recovery/forbidden.txt", "content": "no"}, "EACCES"),
+        ("bash", {"command": "printf partial > partial.txt; exit 7"}, "7"),
+    ],
+)
+async def test_tool_failure_returns_to_model_and_next_write_is_published(prepared, first):
+    case = prepared
+    model = RecoveringToolModel(
+        [
+            first,
+            ("write", {"path": "recovered.txt", "content": "recovered"}, "recovered.txt"),
+        ]
+    )
+    result = await approve_to_completion(
+        case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    )
+    assert result["state"] == "succeeded", result
+    tools = case.repo.tools(case.run["id"])
+    assert tools[0]["result"]["pi_result"]["isError"] is True
+    assert tools[0]["result"]["pi_result"]["details"]["recoverable"] is True
+    assert tools[1]["result"]["pi_result"].get("isError") is not True
+    assert model.calls == 3
+    assert read_case(case, "recovered.txt") == b"recovered"
+    if first[0] == "bash":
+        assert read_case(case, "partial.txt") == b"partial"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_scratch_paths_and_normal_bash_are_available(prepared):
+    case = prepared
+    scratch = "/tmp/agent-" + uuid4().hex
+    model = RecoveringToolModel(
+        [
+            ("write", {"path": scratch, "content": "scratch-file"}, scratch),
+            ("read", {"path": scratch}, "scratch-file"),
+            ("read", {"path": "/etc/os-release"}, "Debian"),
+            (
+                "bash",
+                {
+                    "command": "ls /proc/self >/dev/null; cat /etc/os-release | head -1; printf WORKSPACE_OPERATION_OK"
+                },
+                "WORKSPACE_OPERATION_OK",
+            ),
+            ("write", {"path": "project.txt", "content": "project-file"}, "project.txt"),
+        ]
+    )
+    result = await approve_to_completion(
+        case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    )
+    assert result["state"] == "succeeded", result
+    assert model.calls == 6
+    assert read_case(case, "project.txt") == b"project-file"
+    assert all(not t["result"]["pi_result"].get("isError") for t in case.repo.tools(case.run["id"]))
+    with pytest.raises(FileNotFoundError):
+        read_case(case, scratch.lstrip("/"))
+
+
+@pytest.mark.asyncio
+async def test_declined_tool_continues_without_executing_or_losing_decision(prepared):
+    case = prepared
+    model = RecoveringToolModel(
+        [
+            # Ordinary writes are automatic; a destructive action exercises
+            # explicit rejection and must never reach its observable write.
+            ("bash", {"command": "git reset --hard HEAD 2>/dev/null || true; "
+                      "printf never > declined.txt"}, "declined"),
+            ("read", {"path": "/etc/os-release"}, "Debian"),
+        ]
+    )
+    task = asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
+    tool = await wait_for_approval(case, task)
+    decision = str(uuid4())
+    for _ in range(2):
+        await asyncio.to_thread(
+            case.service.command,
+            case.user,
+            case.run["id"],
+            "approve",
+            call=tool["call_id"],
+            decision=decision,
+            allow=False,
+        )
+    result = await approve_to_completion(case, task)
+    assert result["state"] == "succeeded", result
+    receipt = case.repo.tools(case.run["id"])[0]
+    assert receipt["state"] == "rejected"
+    assert receipt["decision_id"] == decision
+    assert model.calls == 3
+    with pytest.raises(FileNotFoundError):
+        read_case(case, "declined.txt")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,readonly,code",
+    [
+        ("write", True, "tool_permission_denied"),
+        ("browser", False, "tool_unavailable"),
+        ("write", False, "tool_invalid_input"),
+    ],
+)
+async def test_denial_is_durable_before_reply_and_replays_with_bounded_queries(
+    prepared, name, readonly, code
+):
+    from unittest.mock import AsyncMock
+
+    from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
+
+    case = prepared
+    case.postgres.sql(
+        f"UPDATE agent_runs SET policy=jsonb_set(policy,'{{readonly}}','{json.dumps(readonly)}') WHERE id='{case.run['id']}'"
+    )
+    supervisor = case.supervisor()
+    supervisor.run = case.repo.get(case.run["id"])
+    supervisor.value = {}
+    supervisor.worker = AsyncMock()
+    frame = {
+        "id": "request",
+        "call_id": "denied",
+        "name": name,
+        "input": {"path": "no.txt"},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    if code == "tool_invalid_input":
+        frame["error_result"] = {
+            "isError": True,
+            "content": [{"type": "text", "text": "Invalid path argument"}],
+        }
+    trace = DatabaseTrace("denial")
+    with database_trace(trace):
+        await supervisor.tool_start(frame)
+    assert trace.report()["operations"] == {
+        "POST rpc/agent_run_begin_tool": 1,
+        "POST rpc/agent_run_complete_tool": 1,
+    }
+    receipt = case.repo.tools(case.run["id"])[0]
+    result = supervisor.worker.send.await_args.args[0]["result"]
+    assert result == receipt["result"]["pi_result"]
+    assert result["details"]["code"] == code
+    assert result["isError"] is True
+    assert case.repo.get(case.run["id"])["state"] == "running"
+    replay = DatabaseTrace("replay")
+    with database_trace(replay):
+        await supervisor.tool_start({**frame, "id": "retry"})
+    assert supervisor.worker.send.await_args.args[0]["result"] == result
+    assert replay.report()["operations"] == {"POST rpc/agent_run_begin_tool": 1}
+    assert len(case.repo.tools(case.run["id"])) == 1
+
+
+@pytest.mark.asyncio
+async def test_declined_continuation_is_idempotent_and_uses_bounded_database_commands(prepared):
+    from unittest.mock import AsyncMock
+
+    from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
+
+    case = prepared
+    frame = {
+        "id": "request",
+        "call_id": "declined",
+        "name": "write",
+        "input": {"path": "no.txt"},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    case.repo.begin_tool(case.run, frame, checkpoint={}, approval_required=True)
+    decision = str(uuid4())
+    await asyncio.to_thread(
+        case.service.command,
+        case.user,
+        case.run["id"],
+        "approve",
+        call="declined",
+        decision=decision,
+        allow=False,
+    )
+    supervisor = case.supervisor()
+    supervisor.run, supervisor.value, supervisor.worker = case.run, {}, AsyncMock()
+    sequence = None
+    for _ in range(2):
+        trace = DatabaseTrace("declined-continuation")
+        with database_trace(trace):
+            await supervisor.tool_start(frame)
+        assert trace.report()["operations"] == {
+            "POST rpc/agent_run_begin_tool": 1,
+            "POST rpc/agent_run_append_batch": 1,
+        }
+        assert supervisor.run["state"] == "running"
+        if sequence is not None:
+            assert supervisor.run["sequence"] == sequence
+        sequence = supervisor.run["sequence"]
+        result = supervisor.worker.send.await_args.args[0]["result"]
+        assert result["details"]["code"] == "tool_approval_denied"
+    receipt = case.repo.tools(case.run["id"])[0]
+    assert receipt["state"] == "rejected" and receipt["decision_id"] == decision
+
+
+@pytest.mark.asyncio
+async def test_unbound_tool_returns_durable_denial_instead_of_run_failure(prepared):
+    from unittest.mock import AsyncMock
+
+    case = prepared
+    supervisor = case.supervisor()
+    supervisor.run, supervisor.value, supervisor.worker = case.run, {}, AsyncMock()
+    frame = {
+        "id": "request",
+        "call_id": "unbound",
+        "name": "search_unknown",
+        "input": {},
+        "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
+    }
+    await supervisor.bound_tool(frame)
+    result = supervisor.worker.send.await_args.args[0]["result"]
+    assert result["details"]["code"] == "tool_permission_denied"
+    assert case.repo.tools(case.run["id"])[0]["result"]["pi_result"] == result
+    assert case.repo.get(case.run["id"])["state"] == "running"

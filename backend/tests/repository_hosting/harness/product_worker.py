@@ -21,7 +21,7 @@ from src.infra.s3.service import S3Service
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
 from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
-from src.version_engine.adapters.product.tree_patch import splice_batch
+from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 from tests.repository_hosting.harness.s3_service import validate_s3_environment

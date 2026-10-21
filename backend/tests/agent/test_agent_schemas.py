@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 
 
 def test_agent_request_requires_prompt_and_durable_identity():

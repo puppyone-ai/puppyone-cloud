@@ -6,9 +6,9 @@ from fastapi import HTTPException
 
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
-from src.version_engine.entrypoints.git import auth as git_auth
-from src.version_engine.entrypoints.git import router as git_router
-from src.version_engine.entrypoints.http import access_point
+from src.platform.access.adapters.git import auth as git_auth
+from src.platform.access.adapters.git import router as git_router
+from src.platform.access import credentials as access_point
 
 
 def _request(headers: dict[str, str] | None = None):
@@ -38,7 +38,7 @@ def _scope_auth() -> dict:
 
 def test_access_point_root_credential_is_current_and_scope_is_not_widened(monkeypatch):
     from src.infra.supabase.client import SupabaseClient
-    from src.repo.access_credentials import AccessCredentialRepository
+    from src.platform.access.credential_repository import AccessCredentialRepository
 
     row = dict(
         credential_id="credential-1",
@@ -66,7 +66,7 @@ def test_access_point_root_credential_is_current_and_scope_is_not_widened(monkey
 
 def test_access_point_storage_failure_is_retryable_not_invalid_credential(monkeypatch):
     from src.infra.supabase.client import SupabaseClient
-    from src.repo.access_credentials import AccessCredentialRepository
+    from src.platform.access.credential_repository import AccessCredentialRepository
 
     monkeypatch.setattr(SupabaseClient, "__new__", lambda cls: SimpleNamespace(client=object()))
 

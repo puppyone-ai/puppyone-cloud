@@ -13,7 +13,7 @@ import pytest
 from botocore.exceptions import ReadTimeoutError
 
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.version_engine.adapters.product.tree_patch import splice_batch
+from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.native_tree_reader import NativeTreeReader

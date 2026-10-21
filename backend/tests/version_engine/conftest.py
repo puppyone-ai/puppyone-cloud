@@ -23,7 +23,7 @@ def isolate_git_entitlement_lookup(monkeypatch):
     in this package exercise Git protocol behavior and must not depend on a
     live project/organization database.
     """
-    from src.version_engine.entrypoints.git import router as git_router
+    from src.platform.access.adapters.git import router as git_router
 
     monkeypatch.setattr(
         git_router,

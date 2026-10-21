@@ -299,6 +299,25 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, change in parity[category].items():
             assert expected["contract"][category][name] == change["before"]
             expected["contract"][category][name] = change["after"]
+    workbench = json.loads(
+        Path(__file__).with_name("workbench_selection_contract_delta.json").read_text()
+    )
+    assert workbench["paths"] == {}
+    assert set(workbench["schemas"]) == {"SubmitRun"}
+    for name, change in workbench["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
+    workbench = json.loads(Path(__file__).with_name("live_workbench_contract_delta.json").read_text())
+    assert set(workbench["paths"]) == {
+        "/api/v1/projects/{project_id}/workbench",
+        "/api/v1/projects/{project_id}/workbench/files",
+        "/api/v1/projects/{project_id}/workbench/file",
+        "/api/v1/projects/{project_id}/workbench/events",
+    }
+    assert set(workbench["schemas"]) == {"FileOperation", "DirectoryOperation"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & workbench[category].keys()
+        expected["contract"][category].update(workbench[category])
     assert contract(app.openapi()) == expected["contract"]
 
 

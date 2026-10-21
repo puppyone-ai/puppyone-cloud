@@ -1,4 +1,5 @@
 'use client';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
 import { CopyResourceLink } from '@/features/files/components/CopyResourceLink';
 
@@ -67,11 +68,12 @@ import { ProjectUnavailableShell } from '@/features/files/components/ProjectUnav
 import type { EditorTarget } from '@/features/files/components/right-panel';
 import { useAccessPointEntries } from '@/features/files/hooks/useAccessPointEntries';
 import { useDataCreateFlow } from '@/features/files/hooks/useDataCreateFlow';
-import { writeFile } from '@/lib/contentTreeApi';
 import { isTextLikeCategory, resolveFormat } from '@/lib/fileFormats';
 import { projectAllows } from '@/lib/projectsApi';
 
 export function FilesWorkspace({ projectId }: { projectId: string }) {
+  const {files} = useWorkspaceFiles();
+  const {writeFile} = files;
   const router = useWorkspaceRouter();
   const searchParams = useSearchParams();
   const { session, isAuthReady, userId } = useAuth();
@@ -525,18 +527,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
       }
     }
     return segments;
-  }, [
-    activeProject,
-    projectId,
-    folderBreadcrumbs,
-    currentFolderId,
-    activeNodeId,
-    activeNodeDisplayName,
-    currentTableData?.name,
-    isResolvingPath,
-    routePath,
-    navigateTo,
-  ]);
+  }, [activeProject, projectId, folderBreadcrumbs, currentFolderId, activeNodeId, activeNodeDisplayName, currentTableData?.name, isResolvingPath, routePath]);
 
   const activeNodeListing = useMemo(
     () => contentNodes.find(node => node.path === activeNodeId),

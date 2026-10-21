@@ -547,7 +547,11 @@ async def app_lifespan(app: FastAPI):
             await task
         except Exception as e:
             log_error(f"Storage reconciliation shutdown error: {e}")
-    await _shutdown_services()
+    try:
+        if service := getattr(app.state, "workbench_service", None):
+            await service.close()
+    finally:
+        await _shutdown_services()
 
 
 def create_app() -> FastAPI:
@@ -582,7 +586,7 @@ def create_app() -> FastAPI:
     from src.utils.middleware import RequestContextMiddleware
 
     app.add_middleware(RequestContextMiddleware)
-    from src.platform.access.adapters.agent.runtime.telemetry import AgentDatabaseTelemetry
+    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     app.add_middleware(AgentDatabaseTelemetry)
 
@@ -637,16 +641,16 @@ def create_app() -> FastAPI:
     app.include_router(
         internal_router, tags=["internal"]
     )  # Internal API does not use /api/v1 prefix
-    from src.internal.mcp_runtime import router as mcp_runtime_router
+    from src.platform.access.adapters.mcp_endpoint.runtime import router as mcp_runtime_router
 
     app.include_router(mcp_runtime_router, tags=["internal-mcp-runtime"])
-    from src.version_engine.entrypoints.http.content import router as content_router
+    from src.platform.access.adapters.api.router import router as content_router
 
     app.include_router(content_router, prefix="/api/v1", tags=["content"])
-    from src.version_engine.entrypoints.http.audit import router as audit_router
+    from src.platform.access.adapters.api.audit import router as audit_router
 
     app.include_router(audit_router, prefix="/api/v1", tags=["audit-logs"])
-    from src.version_engine.entrypoints.git.router import router as git_protocol_router
+    from src.platform.access.adapters.git.router import router as git_protocol_router
 
     app.include_router(
         git_protocol_router,
@@ -655,16 +659,16 @@ def create_app() -> FastAPI:
     )
     # Metadata/results use current Runtime authorization in their own handlers,
     # not the transport-cache lease (whose acquisition is itself a mutation).
-    from src.version_engine.entrypoints.git.operations import (
+    from src.platform.access.adapters.git.operations import (
         operations_router as git_metadata_router,
     )
 
     app.include_router(git_metadata_router, prefix="/git", tags=["git-protocol"])
     # WebSocket /ws — server→client commit_update notifications.
-    from src.version_engine.entrypoints.http.websocket import ws_router as version_ws_router
+    from src.platform.access.adapters.api.websocket import ws_router as version_ws_router
 
     app.include_router(version_ws_router, tags=["version-ws"])
-    from src.version_engine.entrypoints.http.access_point_fs import router as ap_fs_router
+    from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
     from src.platform.workspace.router import router as workspace_router
@@ -684,6 +688,9 @@ def create_app() -> FastAPI:
     from src.platform.scope_sandbox.router import router as scope_sandbox_router
 
     app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
+    from src.platform.scope_sandbox.workbench_router import router as workbench_router
+
+    app.include_router(workbench_router)
     from src.platform.auth.router import router as auth_router
 
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
@@ -725,8 +732,8 @@ def create_app() -> FastAPI:
     app.include_router(gateway_router, prefix="/api/v1", tags=["gateways"])
 
     # Repository identity is separate from Access resource inventory.
-    from src.repo.identity_router import router as repo_identity_router
-    from src.repo.scope_router import router as repo_scope_router
+    from src.platform.access.identity_router import router as repo_identity_router
+    from src.platform.repository_target.scope_router import router as repo_scope_router
 
     app.include_router(repo_scope_router, prefix="/api/v1", tags=["repo-scopes"])
     app.include_router(repo_identity_router, prefix="/api/v1", tags=["repo-identity"])

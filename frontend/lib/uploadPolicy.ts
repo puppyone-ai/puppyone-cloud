@@ -4,9 +4,11 @@
  *
  * See ``docs/proposals/PUP-3-folder-upload-policy.md`` for the product
  * contract this implements. The backend lives at
- * ``backend/src/ingest/policy/upload_policy.py`` and the CLI mirror at
- * ``cli/src/commands/fs/lib/upload-policy.js``; any constant changes
- * here MUST be applied in those two files as well.
+ * ``backend/src/platform/upload/policy.py``. A third mirror lives
+ * in the separate ``puppyone-ai/puppyone-cli`` repository at
+ * ``src/commands/fs/lib/upload-policy.js``; any constant change here
+ * MUST be applied to both, and
+ * ``backend/tests/ingest/test_upload_policy.py`` enforces the parity.
  *
  * Why duplicate instead of import-from-shared-JSON: cross-language
  * shared constants require a build step or runtime JSON parsing, and

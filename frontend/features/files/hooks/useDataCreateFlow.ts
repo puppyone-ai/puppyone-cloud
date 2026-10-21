@@ -1,4 +1,5 @@
 'use client';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
 import { useExplorerActions } from '@/features/files/explorerSession';
 
@@ -11,8 +12,6 @@ import type { AccessResource } from '@/contexts/AgentContext';
 import {
   directChildrenOf,
   listDir,
-  mkdir,
-  writeFile,
   type NodeInfo,
   type NodeType,
 } from '@/lib/contentTreeApi';
@@ -53,14 +52,17 @@ async function parentContainsFolder(
   projectId: string,
   parentPath: string,
   folderPath: string,
+  listFiles: typeof listDir,
 ): Promise<boolean> {
-  const listing = await listDir(projectId, parentPath, { timeoutMs: 10_000 });
+  const listing = await listFiles(projectId, parentPath, { timeoutMs: 10_000 });
   return directChildrenOf(listing.nodes, parentPath).some(
     (node) => node.path === folderPath && node.type === 'folder',
   );
 }
 
 function recoverAmbiguousFolderCreate(args: {
+  readonly listFiles: typeof listDir;
+  readonly identity: string;
   readonly removePendingCreatingPath: (projectId: string, path: string) => void;
   readonly projectId: string;
   readonly parentPath: string;
@@ -72,7 +74,7 @@ function recoverAmbiguousFolderCreate(args: {
     durationMs?: number | null,
   ) => void;
 }): void {
-  const { projectId, parentPath, folderPath, folderName, showToast, removePendingCreatingPath } = args;
+  const { projectId, parentPath, folderPath, folderName, showToast, removePendingCreatingPath, identity } = args;
   let settled = false;
 
   const verify = async () => {
@@ -82,7 +84,7 @@ function recoverAmbiguousFolderCreate(args: {
       await sleep(delay);
       if (settled) return;
       try {
-        if (await parentContainsFolder(projectId, parentPath, folderPath)) {
+        if (await parentContainsFolder(projectId, parentPath, folderPath, args.listFiles)) {
           await refreshFolderNodes(projectId, parentPath, folderPath);
           void refreshProjectHistory(projectId);
           removePendingCreatingPath(projectId, folderPath);
@@ -98,7 +100,7 @@ function recoverAmbiguousFolderCreate(args: {
     }
 
     if (reachedServerWithoutFolder) {
-      optimisticRemoveDirectoryNode(projectId, parentPath, folderPath);
+      optimisticRemoveDirectoryNode(projectId, parentPath, folderPath, identity);
       await refreshFolderNodes(projectId, parentPath).catch(() => undefined);
       removePendingCreatingPath(projectId, folderPath);
       showToast?.(`Failed to create "${folderName}"`, 'error');
@@ -229,6 +231,26 @@ function getCreateMenuOpenId(
   return targetFolderId;
 }
 
+const PROVIDER_NODE_TYPE: Record<string, 'json' | 'markdown' | 'folder'> = {
+  gmail: 'json',
+  calendar: 'json',
+  sheets: 'json',
+  linear: 'json',
+  supabase: 'json',
+  docs: 'markdown',
+  notion: 'folder',
+};
+
+const PROVIDER_DEFAULT_NAMES: Record<string, string> = {
+  gmail: 'Gmail Inbox',
+  calendar: 'Calendar Events',
+  sheets: 'Sheet Data',
+  linear: 'Linear Issues',
+  docs: 'Document',
+  notion: 'Notion Pages',
+  supabase: 'Supabase Data',
+};
+
 export function useDataCreateFlow({
   projectId,
   currentFolderId,
@@ -239,6 +261,8 @@ export function useDataCreateFlow({
   openFileImportDialogForTarget,
   showToast,
 }: UseDataCreateFlowOptions) {
+  const {files, identity} = useWorkspaceFiles();
+  const {listDir, mkdir, writeFile} = files;
   const { addPendingCreatingNode, addPendingCreatingPath, ensureExpanded, removePendingCreatingPath } = useExplorerActions();
   const { cache } = useSWRConfig();
   const openPanel = useProjectSession(state => state.openPanel);
@@ -317,13 +341,7 @@ export function useDataCreateFlow({
       setCreateInFolderId(parentId);
       setCreateMenuOpen(true);
     },
-    [
-      closeCreateMenu,
-      createMenuOpen,
-      createMenuOpenForId,
-      currentFolderId,
-      updateCreateMenuPosition,
-    ],
+    [closeCreateMenu, createMenuOpen, createMenuOpenForId, currentFolderId, updateCreateMenuPosition],
   );
 
   const handleCreateClick = useCallback(
@@ -396,26 +414,6 @@ export function useDataCreateFlow({
     [],
   );
 
-  const PROVIDER_NODE_TYPE: Record<string, 'json' | 'markdown' | 'folder'> = {
-    gmail: 'json',
-    calendar: 'json',
-    sheets: 'json',
-    linear: 'json',
-    supabase: 'json',
-    docs: 'markdown',
-    notion: 'folder',
-  };
-
-  const PROVIDER_DEFAULT_NAMES: Record<string, string> = {
-    gmail: 'Gmail Inbox',
-    calendar: 'Calendar Events',
-    sheets: 'Sheet Data',
-    linear: 'Linear Issues',
-    docs: 'Document',
-    notion: 'Notion Pages',
-    supabase: 'Supabase Data',
-  };
-
   const handleCreateAndSync = useCallback(
     async (saasProvider: string) => {
       const nodeType = PROVIDER_NODE_TYPE[saasProvider];
@@ -459,7 +457,7 @@ export function useDataCreateFlow({
         openSyncCreatePanel();
       }
     },
-    [currentFolderId, openSyncCreatePanel, openSyncSetting, projectId, showToast],
+    [currentFolderId, openSyncSetting, openSyncCreatePanel, showToast, projectId, writeFile, mkdir],
   );
 
   // Provider-pick handler that branches on which menu launched it:
@@ -527,7 +525,7 @@ export function useDataCreateFlow({
       extension: string = '',
     ): Promise<string> => {
       const parentPath = targetFolderPath ?? '';
-      let siblings = readCachedDirectoryNodes(cache, projectId, parentPath);
+      let siblings = readCachedDirectoryNodes(cache, projectId, parentPath, identity);
 
       if (!siblings) {
         try {
@@ -574,8 +572,9 @@ export function useDataCreateFlow({
           buildOptimisticNode({
             projectId, path: folderPath, name: folderName, type: 'folder',
           }),
+          identity,
         );
-        optimisticSeedEmptyDirectory(projectId, folderPath);
+        optimisticSeedEmptyDirectory(projectId, folderPath, identity);
         if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
 
         let keepPendingForRecovery = false;
@@ -591,7 +590,7 @@ export function useDataCreateFlow({
             keepPendingForRecovery = true;
             showToast?.(`Checking "${folderName}"...`, 'loading', 5000);
             recoverAmbiguousFolderCreate({
-              removePendingCreatingPath,
+              listFiles: listDir, identity, removePendingCreatingPath,
               projectId,
               parentPath,
               folderPath,
@@ -600,7 +599,7 @@ export function useDataCreateFlow({
             });
             return;
           }
-          optimisticRemoveDirectoryNode(projectId, parentPath, folderPath);
+          optimisticRemoveDirectoryNode(projectId, parentPath, folderPath, identity);
           await refreshFolderNodes(projectId, parentPath);
           showToast?.(`Failed to create "${folderName}"`, 'error');
         } finally {
@@ -631,6 +630,7 @@ export function useDataCreateFlow({
           buildOptimisticNode({
             projectId, path: filePath, name: fileName, type: 'json',
           }),
+          identity,
         );
         if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
         highlightCreatedNode(filePath);
@@ -644,7 +644,7 @@ export function useDataCreateFlow({
           showToast?.(`Created "${fileName}"`);
         } catch (err) {
           console.error('Failed to create JSON:', err);
-          optimisticRemoveDirectoryNode(projectId, parentPath, filePath);
+          optimisticRemoveDirectoryNode(projectId, parentPath, filePath, identity);
           await refreshFolderNodes(projectId, parentPath);
           showToast?.(`Failed to create "${fileName}"`, 'error');
         } finally {
@@ -670,6 +670,7 @@ export function useDataCreateFlow({
           buildOptimisticNode({
             projectId, path: filePath, name: fileName, type: 'markdown',
           }),
+          identity,
         );
         if (targetFolderPath) ensureExpanded(projectId, targetFolderPath);
         highlightCreatedNode(filePath);
@@ -683,7 +684,7 @@ export function useDataCreateFlow({
           showToast?.(`Created "${fileName}"`);
         } catch (err) {
           console.error('Failed to create markdown:', err);
-          optimisticRemoveDirectoryNode(projectId, parentPath, filePath);
+          optimisticRemoveDirectoryNode(projectId, parentPath, filePath, identity);
           await refreshFolderNodes(projectId, parentPath);
           showToast?.(`Failed to create "${fileName}"`, 'error');
         } finally {
@@ -762,23 +763,7 @@ export function useDataCreateFlow({
         openPanel({ type: 'access_list', view: 'detail', nodeId: path });
       },
     };
-  }, [
-    accessTargetPath,
-    cache,
-    closeCreateMenu,
-    createInFolderId,
-    currentFolderId,
-    handleAccessSelect,
-    highlightCreatedNode,
-    navigateTo,
-    openSyncCreatePanel,
-    openSyncSetting,
-    openFilePickerForTarget,
-    openFileImportDialogForTarget,
-    projectId,
-    openPanel,
-    showToast,
-  ]);
+  }, [closeCreateMenu, createInFolderId, currentFolderId, cache, projectId, identity, listDir, addPendingCreatingPath, ensureExpanded, showToast, mkdir, removePendingCreatingPath, addPendingCreatingNode, highlightCreatedNode, writeFile, navigateTo, openFileImportDialogForTarget, openFilePickerForTarget, accessTargetPath, handleAccessSelect, openSyncSetting, openSyncCreatePanel, openPanel]);
 
   const closeCreateTable = useCallback(() => {
     setCreateTableOpen(false);

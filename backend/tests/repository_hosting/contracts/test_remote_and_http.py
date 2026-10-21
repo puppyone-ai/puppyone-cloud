@@ -4,8 +4,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.version_engine.entrypoints.git.locator import canonical_git_url, parse_canonical_git_url
-from src.version_engine.entrypoints.git.router import router as git_router
+from src.platform.access.adapters.git.locator import canonical_git_url, parse_canonical_git_url
+from src.platform.access.adapters.git.router import router as git_router
 
 pytestmark = pytest.mark.hosting_component
 
@@ -43,7 +43,7 @@ def test_ambiguous_locator_is_not_a_repository_identity(url):
 @pytest.mark.parametrize("service", ["git-upload-pack", "git-receive-pack"])
 @pytest.mark.parametrize("authorization", [None, "Basic !!!", "Bearer invalid"])
 def test_real_route_rejects_unauthenticated_discovery(monkeypatch, path, service, authorization):
-    from src.version_engine.entrypoints.git import auth
+    from src.platform.access.adapters.git import auth
 
     monkeypatch.setattr(auth.settings, "SKIP_AUTH", False)
 

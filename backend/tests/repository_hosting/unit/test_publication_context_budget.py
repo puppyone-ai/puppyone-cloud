@@ -70,7 +70,7 @@ def test_git_base_preserves_branch_and_head_guard_without_tree_lookup(fmt, width
 
 
 def test_result_query_uses_metadata_only_operation():
-    from src.version_engine.adapters.git.run_transport import RunGitTransport
+    from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 
     manager = SimpleNamespace(
         get_native_operation_status=Mock(return_value={"result": {"status": "committed"}}),

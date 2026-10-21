@@ -244,7 +244,7 @@ async def test_git_read_requests_hold_project_lifecycle_lease(
             return False
 
     monkeypatch.setattr(
-        "src.version_engine.entrypoints.git.auth.resolve_git_project_auth",
+        "src.platform.access.adapters.git.auth.resolve_git_project_auth",
         resolve,
     )
     monkeypatch.setattr("src.platform.project.write_lease.ProjectWriteLease", Lease)
@@ -296,7 +296,7 @@ async def test_git_mutations_still_reject_read_only_runtime_grants(
             return False
 
     monkeypatch.setattr(
-        "src.version_engine.entrypoints.git.auth.resolve_git_project_auth",
+        "src.platform.access.adapters.git.auth.resolve_git_project_auth",
         resolve,
     )
     monkeypatch.setattr("src.platform.project.write_lease.ProjectWriteLease", Lease)
@@ -332,7 +332,7 @@ async def test_access_key_git_read_is_resolved_then_leased(monkeypatch) -> None:
             return False
 
     monkeypatch.setattr(
-        "src.version_engine.entrypoints.git.router.resolve_git_access_point",
+        "src.platform.access.adapters.git.router.resolve_git_access_point",
         resolve,
     )
     monkeypatch.setattr("src.platform.project.write_lease.ProjectWriteLease", Lease)

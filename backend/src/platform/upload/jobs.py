@@ -32,7 +32,7 @@ from src.platform.upload.config import upload_config
 from src.platform.upload.state.models import ETLPhase, ETLRuntimeState
 from src.platform.upload.state.repository import ETLStateRepositoryRedis
 from src.platform.upload.tasks.models import ETLTaskResult, ETLTaskStatus
-from src.version_engine.adapters.product.operation_adapter import BlobRef
+from src.file_operations.operation_adapter import BlobRef
 
 logger = logging.getLogger(__name__)
 

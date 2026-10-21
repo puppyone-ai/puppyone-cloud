@@ -22,11 +22,14 @@
 > merge admission** rules: refresh the target, inspect the entire release diff
 > and applied-version set, explain any older missing migrations, and prove the
 > relevant populated upgrade. `--include-all` is not dependency validation.
-> Keep unready cleanup in `contract.pending.sql`; do not activate final-only
-> application/Contract changes before their real cutover prerequisites exist.
+> Keep unready cleanup in `contract.pending.sql`. Premerge CI proves the whole
+> populated upgrade in disposable Docker. After merge, the shared release
+> coordinator establishes actual cutover prerequisites before executing Contract
+> SQL and deploying the application. Do not require production to apply the
+> candidate migrations before the candidate can merge.
 > Distinguish tested, merged, database-ready, deployed and accepted evidence.
-> The document's enforcement snapshot lists gaps; prose does not configure
-> GitHub branch protection or prove a hosted release.
+> The document's hosted activation contract owns environment setup; prose does
+> not configure GitHub branch protection or prove a hosted release.
 
 ## Current Version Engine contract (2026-10-07)
 
@@ -123,15 +126,13 @@ backend/
 │   ├── config.py              # Global config (Pydantic Settings)
 │   │
 │   ├── version_engine/        # Git-native Version Engine (core write funnel)
-│   │   ├── adapters/
-│   │   │   ├── git/           #   Git smart-HTTP protocol boundary
-│   │   │   └── product/       #   grant-bound ProductOperationAdapter
 │   │   ├── write_engine/      #   native operations, ref transactions, Git formats
 │   │   ├── read/              #   pinned native tree/history readers
-│   │   ├── entrypoints/       #   Git and Product HTTP routes
 │   │   ├── infrastructure/    #   Supabase authority and admission adapters
 │   │   ├── storage/           #   canonical S3 objects, capacity and GC fencing
 │   │   └── derived/           #   native projection jobs and GC
+│   │
+│   ├── file_operations/       # Hosted file commands, Product operations and file rules
 │   │
 │   ├── content/               # Content node tree (folder/JSON/MD/file)
 │   │   └── table/             #     Structured data tables (JSON Pointer)
@@ -140,6 +141,8 @@ backend/
 │   ├── provider/              # External-source adapters, OAuth, database capabilities
 │   │
 │   ├── platform/              # Platform services
+│   │   ├── access/            #   Git/Web/CLI/MCP/Agent adapters, credentials, shared FS
+│   │   ├── repository_target/ #   Project-root/Scope models and geometry management
 │   │   ├── auth/              #   JWT auth (Supabase Auth)
 │   │   ├── organization/      #   Org management & member invitations
 │   │   ├── project/           #   Project CRUD & members & dashboard
@@ -182,7 +185,7 @@ backend/
 
 ### Database Tables
 
-All tables use plural snake_case names. The "unified access" architecture serves agents, MCP endpoints, sandbox endpoints, and Git-remote/CLI credentials through `access_surfaces`, differentiated by `kind` and targeted by `(project_id, nullable scope_id)`. NULL means the Project-owned root; a non-NULL value references a true non-empty-path row in `repository_scopes`. Every machine secret lives hash-only in `access_surface_credentials` and is revealed only on issuance. Provider config must never contain credentials. External source relationships live in `synchronize_bindings`, and executions in `synchronize_runs`. Database Import configurations live independently in `import_database_sources`. Populated upgrades require the reviewed Expand/data release before the gated Contract/application release.
+All tables use plural snake_case names. The "unified access" architecture serves agents, MCP endpoints, sandbox endpoints, and Git-remote/CLI credentials through `access_surfaces`, differentiated by `kind` and targeted by `(project_id, nullable scope_id)`. NULL means the Project-owned root; a non-NULL value references a true non-empty-path row in `repository_scopes`. Every machine secret lives hash-only in `access_surface_credentials` and is revealed only on issuance. Provider config must never contain credentials. External source relationships live in `synchronize_bindings`, and executions in `synchronize_runs`. Database Import configurations live independently in `import_database_sources`. Populated upgrades execute reviewed Expand/data phases before gated Contract/application phases in one coordinated release.
 
 | Table | Repository | Description |
 |-------|-----------|-------------|
@@ -193,7 +196,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `org_invitations` | `organization/repository.py` | Organization invitations |
 | `profiles` | `profile/repository.py` | User profiles |
 | `access_surfaces` | `platform/access/router.py`, `platform/access/surface_repository.py` | Unified access surfaces keyed by `kind`, targeting Project root or one Scope through nullable `scope_id` |
-| `repository_scopes` | `repo/scope_repository.py`, `repo/scope_service.py` | Non-root subtree geometry (`path`, `exclude`, `max_mode`); never a repository or credential owner |
+| `repository_scopes` | `platform/repository_target/scope_repository.py`, `platform/repository_target/scope_service.py` | Non-root subtree geometry (`path`, `exclude`, `max_mode`); never a repository or credential owner |
 | `synchronize_bindings` / `synchronize_runs` | `platform/synchronize/repository.py`, `platform/synchronize/run_repository.py` | Durable bindings and executions; run parent is `synchronize_binding_id` |
 | `import_database_sources` | `platform/imports/database/repository.py` | Encrypted reusable one-time Import configuration; never inferred from provider or equal IDs |
 | `synchronize_github_bindings` / `synchronize_github_logs` | `platform/synchronize/github/repository.py` | Dedicated GitHub bindings/history, canonical parent, watermarks and inbound/outbound direction |
@@ -201,7 +204,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `access_tools` | `platform/access/adapters/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
 | `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
-| `access_surface_credentials` | `repo/access_credentials.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
+| `access_surface_credentials` | `platform/access/credential_repository.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
 | `chunks` | `chunking/repository.py` | Text chunks for search |
 | `uploads` | `upload/file/tasks/repository.py` | File upload/ingest tasks |
 | `etl_rules` | `upload/file/rules/repository_supabase.py` | ETL transformation rules |
@@ -225,7 +228,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 |-------------|--------|-------------|
 | `/api/v1/organizations` | organization | Org CRUD & members & invitations |
 | `/api/v1/projects` | project | Project CRUD & members & dashboard |
-| `/api/v1/content/{project_id}` | version_engine/routers/content_router | Versioned content tree, write, history, diff, rollback |
+| `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Versioned content tree, write, history, diff, rollback |
 | `/api/v1/tables` | table | Data tables & JSON Pointer operations |
 | `/api/v1/tools` | tool | Tool registration & search index |
 | `/api/v1/agents` | platform/access/adapters/agent | Agent SSE streaming chat |
@@ -238,9 +241,9 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/access`, `/api/v1/integrations` | retired resource routes | Not mounted in the final-source build; no client fallback |
 | `/api/v1/filesystem` | connectors/filesystem | Filesystem access lifecycle |
 | `/api/v1/ingest` | upload | File/URL ingestion ETL |
-| `/api/v1/ap-fs` | version_engine/routers/access_point_fs | Puppyone CLI scoped filesystem API |
-| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | version_engine/entrypoints/git/router | Canonical Git smart-HTTP clone/fetch/push; credential is HTTP auth, not URL data |
-| `/git/ap/{access_key}.git` | version_engine/entrypoints/git/router | Bounded, instrumented legacy compatibility only; never construct for new clients |
+| `/api/v1/ap-fs` | platform/access/adapters/cli/router | Puppyone CLI scoped filesystem API |
+| `/git/{project_id}.git`, `/git/{project_id}/scopes/{scope_id}.git` | platform/access/adapters/git/router | Canonical Git smart-HTTP clone/fetch/push; credential is HTTP auth, not URL data |
+| `/git/ap/{access_key}.git` | platform/access/adapters/git/router | Bounded, instrumented legacy compatibility only; never construct for new clients |
 | `/api/v1/workspace` | workspace | Workspace management |
 | `/api/v1/imports/database/sources` | platform/imports/database/public_router | One-time database sources; never Synchronize or Access identities |
 | `/api/v1/projects/{project_id}/synchronize/github` | platform/synchronize/github/public_router | GitHub binding, pull/push and logs; webhook at `/api/v1/synchronize/github/webhook` |

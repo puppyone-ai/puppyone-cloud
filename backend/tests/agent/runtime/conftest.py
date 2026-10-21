@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -100,8 +101,13 @@ def submitted(postgres):
         timeout=600,
     )
     yield arguments, postgres.rpc("submit", **arguments)
-    # Stop remaining active rows so claims in later cases cannot select them.
-    postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE project_id='{project}';")
+    # Failed runs with retained resources remain claimable for cleanup after
+    # lease expiry. Retire both selectors in this owned fixture so later tests
+    # cannot take over a previous case's intentionally uncertain recovery.
+    postgres.sql(f"""
+        UPDATE agent_runs SET state='failed',snapshot=snapshot-'resource_retained'
+        WHERE project_id='{project}';
+    """)
 
 
 @pytest.fixture(scope="session")
@@ -147,7 +153,9 @@ def services(control_api, object_endpoint, monkeypatch):
     from src.infra.supabase.client import SupabaseClient
     from src.version_engine.bootstrap.container import build_version_engine_container
 
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv(
+        "NO_PROXY", ",".join(filter(None, [os.environ.get("NO_PROXY"), "127.0.0.1,localhost"]))
+    )
     for key, value in {
         "S3_ENDPOINT_URL": object_endpoint,
         "S3_ACCESS_KEY_ID": "agent-fixture",

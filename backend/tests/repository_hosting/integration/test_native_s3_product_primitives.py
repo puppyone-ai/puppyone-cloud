@@ -11,7 +11,7 @@ import uuid
 import pytest
 
 from src.platform.billing.storage import logical_tree_delta
-from src.version_engine.adapters.product.tree_patch import splice_put_blob
+from src.version_engine.write_engine.tree_patch import splice_put_blob
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.storage.object_store import ObjectStore
 from tests.repository_hosting.harness.git import Git

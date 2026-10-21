@@ -1,6 +1,7 @@
 'use client';
 
 import React, { use } from 'react';
+import { WorkspaceFilesProvider } from '@/features/files/WorkspaceFilesProvider';
 import { ExplorerSessionProvider } from '@/features/files/explorerSession';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { AgentProvider } from '@/contexts/AgentContext';
@@ -35,9 +36,9 @@ export default function ProjectLayout({
   return (
     <AgentProvider key={`${userId}:${projectId}`} projectId={projectId}>
       <ProjectSessionProvider projectId={projectId}><ExplorerSessionProvider projectId={projectId}>
-        <VersionWebSocketProvider projectId={projectId}>
+        <WorkspaceFilesProvider projectId={projectId}><VersionWebSocketProvider projectId={projectId}>
           <ProjectLayoutInner projectId={projectId}>{children}</ProjectLayoutInner>
-        </VersionWebSocketProvider>
+        </VersionWebSocketProvider></WorkspaceFilesProvider>
       </ExplorerSessionProvider></ProjectSessionProvider>
     </AgentProvider>
   );

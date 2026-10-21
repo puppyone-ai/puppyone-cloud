@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -326,10 +327,19 @@ class Settings(BaseSettings):
     def enforce_hosted_sandbox_safety(self):
         """Hosted deployments may never fall back to a shared-kernel Docker sandbox."""
         if self.APP_ENV in {"staging", "production"}:
+            if self.CLOUD_AGENT_SANDBOX_PROVIDER == "docker":
+                raise ValueError("Hosted Cloud Agent requires E2B or Fly (no Docker fallback)")
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
-            if not self.E2B_API_KEY:
-                raise ValueError("E2B_API_KEY is required for hosted sandbox execution")
+            if self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
+                if not self.CLOUD_AGENT_FLY_APP or not self.CLOUD_AGENT_FLY_TOKEN:
+                    raise ValueError(
+                        "Fly Cloud Agent requires CLOUD_AGENT_FLY_APP and CLOUD_AGENT_FLY_TOKEN"
+                    )
+                if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", self.CLOUD_AGENT_FLY_IMAGE):
+                    raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
+            elif not self.E2B_API_KEY:
+                raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
             if self.SCOPE_SANDBOX_STORE != "supabase":
                 raise ValueError("Hosted sandbox sessions require SCOPE_SANDBOX_STORE=supabase")
             if not self.SCOPE_SANDBOX_REAPER_ENABLED:
@@ -373,6 +383,15 @@ class Settings(BaseSettings):
     # - "auto": Auto-select (use E2B if E2B_API_KEY is available, otherwise use Docker)
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
+    # Only new Agent workspaces use this default. Existing bindings remain pinned.
+    CLOUD_AGENT_SANDBOX_PROVIDER: str = "auto"
+    CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
+    CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
+    CLOUD_AGENT_FLY_APP: str = ""
+    CLOUD_AGENT_FLY_TOKEN: str = ""
+    CLOUD_AGENT_FLY_REGION: str = "sin"
+    CLOUD_AGENT_FLY_IMAGE: str = ""
+    CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""

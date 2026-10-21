@@ -42,7 +42,7 @@ def test_binding_repository_does_not_reexport_legacy_identity_aliases():
 
 def test_access_operations_do_not_reexport_connector_dto_aliases():
     from src.platform.access import project_router, router
-    from src.repo import schemas
+    from src.platform.access import identity_schemas as schemas
 
     for name in ("ConnectionOut", "ConnectionUpdate", "UnifiedConnectionCreate", "UnifiedConnectionOut"):
         assert not hasattr(router, name)

@@ -11,6 +11,11 @@ class RunQueries:
     def __init__(self, client=None):
         self.client = client if client is not None else get_supabase_client()
 
+    def workspace(self, session_id):
+        rows = (self.client.table("agent_session_workspaces").select("*")
+                .eq("session_id", session_id).limit(1).execute().data)
+        return rows[0] if rows else None
+
     def surface(self, agent_id):
         rows = (
             self.client.table("access_surfaces")
@@ -47,7 +52,11 @@ class RunQueries:
         except APIError as exc:
             if exc.code == "PGRST202":
                 raise DatabaseSchemaOutdatedException() from exc
+            if exc.message == "workbench_unavailable":
+                raise HTTPException(404, {"code": exc.message}) from exc
             if exc.message in {
+                "agent_workbench_required",
+                "agent_workbench_session_mismatch",
                 "agent_request_conflict",
                 "agent_context_changed",
                 "agent_session_busy",

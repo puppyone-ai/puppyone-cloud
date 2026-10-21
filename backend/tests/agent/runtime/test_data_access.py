@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from src.exceptions import DatabaseSchemaOutdatedException, NotFoundException
 from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
-from src.platform.access.adapters.agent.runtime.models import SubmitRun
+from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from tests.agent.runtime.test_supervisor import ModelFixture
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
 
@@ -474,11 +474,12 @@ async def test_real_pi_answers_file_question_using_offline_find_and_read(
     assert counts["prepare"] == counts["snapshot"] == counts["finalize"] == 1
     assert counts["push"] == 0
     report = supervisor.metrics.report()
-    # Cold Session ownership adds one claim, four persisted transitions and a
-    # publication confirmation before pause. The whole operation remains bounded.
+    # Read the persisted provider/artifact binding once before allocating or
+    # resuming. Cold ownership then adds one claim and four state transitions.
+    assert report["operations"].get("GET agent_session_workspaces") == 1
     assert report["operations"].get("POST rpc/agent_run_workspace_acquire") == 1
     assert report["operations"].get("POST rpc/agent_run_workspace_transition") == 4
-    assert_run_budget(supervisor, report, 26)
+    assert_run_budget(supervisor, report, 27)
     assert report["max_inflight"] <= 2, report
     assert report["operations"].get("POST rpc/get_version_pinned_object_locations") == 1
     (tmp_path / "read-tool-performance.json").write_text(

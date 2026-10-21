@@ -23,7 +23,7 @@ from src.tool.supabase_schemas import (
 from src.tool.supabase_schemas import (
     ToolUpdate as SbToolUpdate,
 )
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 
 
 @dataclass

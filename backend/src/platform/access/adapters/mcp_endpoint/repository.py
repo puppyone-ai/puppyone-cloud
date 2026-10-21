@@ -2,13 +2,13 @@
 
 from typing import Any, Dict, List, Optional
 
-from src.repo.access_credentials import (
+from src.platform.access.credential_repository import (
     AccessCredentialRepository,
     mask_access_token,
 )
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.repo.scope_service import ScopeService
-from src.version_engine.scoped_fs.policy import (
+from src.platform.repository_target.scope_service import ScopeService
+from src.platform.access.filesystem.policy import (
     custom_tool_bindings_from_tools_config,
 )
 

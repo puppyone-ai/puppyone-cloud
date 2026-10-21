@@ -1,0 +1,11 @@
+{
+  "baseline_product_commit": "8a93c52e",
+  "scope": "ISSUE-118 adds only optional UUID workbench_id to SubmitRun. Null/absent retain the legacy digest; an unready composition root rejects explicit selection without fallback.",
+  "paths": {},
+  "schemas": {
+    "SubmitRun": {
+      "before": "207ec510e1a90da96bc209b9b4f36c10b7347589a8a574fe39889b3b76f9f86e",
+      "after": "dbb4fb8c970829a00e457ff8f3862e1aeeb5083ef7251dd7575e8fddbc5d8151"
+    }
+  }
+}

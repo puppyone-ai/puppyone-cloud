@@ -6,7 +6,7 @@ joined through a mixed Connection DTO or unqualified ID set.
 
 from pydantic import BaseModel
 
-from src.version_engine.adapters.product.operation_adapter import ProductOperationAdapter
+from src.file_operations.operation_adapter import ProductOperationAdapter
 
 
 class DashboardProject(BaseModel):
