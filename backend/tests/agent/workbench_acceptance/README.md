@@ -51,9 +51,12 @@ tests must not enable either hosted provider.
 
 The full regular-Docker runtime suite is still blocked by local container startup;
 native BuildKit is component evidence only. Native Linux process tests passed;
-emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end timing,
-release integration and hosted activation remain open. The candidate branches are
-intentionally retained pending these gates.
+emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end timing
+and hosted activation remain open. Backend source was fast-forwarded into local
+`qubits` at `df46de61` on 2026-10-22 after explicit user authorization; post-merge
+Agent regression passed 215 cases and unrelated working changes were preserved.
+No push or deployment was performed. The Desktop companion remains on its
+candidate branch. JSON receipts retain their original pre-merge evidence scope.
 
 ## E2B persistent-service acceptance
 

@@ -8,7 +8,7 @@
 - [x] Update canonical docs and verification receipts.
 - [x] Adapt E2B template startup and service transport; prevent read attachment from resuming compute.
 - [x] Accept E2B native files, Agent/Git, shared connections, notifications, pause/resume and cleanup using an isolated template; keep deployment inactive.
-- [ ] Integrate the accepted candidate into qubits, preserving unrelated work.
+- [x] Integrate the accepted backend candidate into qubits, preserving unrelated work.
 
 The candidate image is built locally. Automatic approval review rejected upload
 to the existing Fly registry pending explicit destination approval. The user
@@ -16,7 +16,7 @@ question is pending. No candidate artifact was uploaded and no existing Machine
 was upgraded. Local evidence is not real Fly end-to-end or deployment evidence.
 
 Local evidence: `backend/tests/agent/workbench_acceptance/persistent-connection-receipt.json`.
-Canonical architecture: `puppy-issues@4c21f2a:document/agent-runtime.md`.
+Canonical architecture: `puppy-issues@1d6902d:document/agent-runtime.md`.
 
 E2B follow-up is closed on `33f2415c`: the user authorized its isolated
 candidate template, all six real-provider cases passed, and the original I/O
@@ -28,6 +28,12 @@ snapshot absence are verified. Product configuration remains Fly, with no E2B
 key/template activation and no fallback. Evidence:
 `backend/tests/agent/workbench_acceptance/e2b-persistent-connection-receipt.json`.
 
-This closes only the E2B adapter/acceptance item. The independent Fly artifact
-upload/acceptance and qubits integration items above remain open; this is not
-full ISSUE-118 A1–A6, billing, browser or PTY acceptance.
+The user explicitly authorized backend source integration on 2026-10-22.
+Local `qubits` fast-forwarded from `b54cfd53` to `df46de61`; 215 Agent regressions
+passed on the merged checkout. Existing tracked changes, staged state and
+untracked file bytes were verified unchanged. No remote push or deployment was
+performed. The Desktop companion remains separately on its candidate branch.
+
+The independent Fly artifact upload/acceptance remains open. Source integration
+does not establish Fly deployment, full ISSUE-118 A1–A6, billing, browser or PTY
+acceptance.
