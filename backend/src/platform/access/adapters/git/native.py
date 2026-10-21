@@ -33,9 +33,9 @@ class NativeGitEndpoint:
     def upload(self, path, *, protocol=""):
         return self.repository.upload(self.grant, path, protocol=protocol)
 
-    def receive(self, path):
+    def receive(self, path, *, initial_attempt=None):
         try:
-            return self.repository.receive(self.grant, path)
+            return self.repository.receive(self.grant, path, initial_attempt=initial_attempt)
         except PublicationIndeterminateError as exc:
             # Do not emit an `ng` report for an operation that may be durable.
             raise HTTPException(

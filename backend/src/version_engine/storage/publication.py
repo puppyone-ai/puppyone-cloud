@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from src.version_engine.storage.mutation_context import publication_context
 from src.version_engine.storage.object_store import StorageBackend
 from src.version_engine.write_engine.git_object_format import (
     decode_object,
@@ -82,6 +83,13 @@ class ClosureVerifier:
         self.max_objects = max_objects
         self.max_bytes = max_bytes
         self.proofs = None
+
+    def _readback_record(self, oid, on_object):
+        context = publication_context.get()
+        if (on_object is not None or context is None or context.readbacks is None
+                or context.project_id != self.backend.publication_project_id):
+            return None
+        return context.readbacks.get(oid)
 
     def verify(
         self,
@@ -173,6 +181,7 @@ class ClosureVerifier:
             # the same missing/new object while processing a wide tree.
             self.proofs.prefetch(
                 oid for oid, _, exiting in stack[-200:] if not exiting and oid not in records
+                and self._readback_record(oid, on_object) is None
             )
             oid, expected, exiting = stack.pop()
             if exiting:
@@ -213,11 +222,23 @@ class ClosureVerifier:
                 continue
             if len(records) >= self.max_objects:
                 raise ClosureVerificationError("closure object budget exceeded")
-            trusted = self.proofs.get(oid)
+            readback = self._readback_record(oid, on_object)
+            trusted = self.proofs.get(oid) if readback is None else None
             if trusted is not None:
                 if expected is not None and trusted.kind != expected:
                     raise ClosureVerificationError("closure object type mismatch")
                 records[oid] = trusted
+                continue
+            if readback is not None:
+                if expected is not None and readback.kind != expected:
+                    raise ClosureVerificationError("closure object type mismatch")
+                total_bytes += readback.size
+                if total_bytes > self.max_bytes:
+                    raise ClosureVerificationError("closure byte budget exceeded")
+                records[oid] = readback
+                active.add(oid)
+                stack.append((oid, readback.kind, True))
+                stack.extend((child, kind, False) for child, kind in readback.edges)
                 continue
             prefetch = getattr(reader, "prefetch_durable", None)
             if prefetch:
@@ -226,7 +247,9 @@ class ClosureVerifier:
                     *(
                         child
                         for child, _, done in reversed(stack[-100:])
-                        if not done and child not in records and self.proofs.get(child) is None
+                        if not done and child not in records
+                        and self._readback_record(child, on_object) is None
+                        and self.proofs.get(child) is None
                     ),
                 ]
                 prefetch(candidates)

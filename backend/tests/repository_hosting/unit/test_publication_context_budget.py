@@ -10,7 +10,7 @@ from src.version_engine.read.ref_metadata import GitBranchBase
 from src.version_engine.write_engine.ref_transaction import RefState
 
 
-@pytest.mark.parametrize("count", [1, 199, 200, 201, 400, 401])
+@pytest.mark.parametrize("count", [0, 1, 200, 201, 6014, 16384, 16385])
 def test_final_capacity_batch_and_seal_are_one_operation(count):
     calls = []
     objects = {
@@ -27,9 +27,9 @@ def test_final_capacity_batch_and_seal_are_one_operation(count):
 
     def call(name, **kwargs):
         calls.append((name, kwargs))
-        if name == "reserve_version_object_capacity":
+        if name == "reserve_version_object_capacity_page":
             return {"new_body_bytes": 0, "new_objects": 0}
-        assert name == "seal_version_capacity_batch"
+        assert name == "seal_version_capacity_page"
         return {
             "id": "pin",
             "project_id": "project",
@@ -39,11 +39,11 @@ def test_final_capacity_batch_and_seal_are_one_operation(count):
         }
 
     RepositoryCapacity(SimpleNamespace(call=call)).seal("project", "actor", "pin", manifest)
-    assert len(calls) == (count + 199) // 200
-    assert calls[-1][0] == "seal_version_capacity_batch"
+    assert len(calls) == max(1, (count + 16383) // 16384)
+    assert calls[-1][0] == "seal_version_capacity_page"
     rows = [row for _, args in calls for row in args["p_objects"]]
     assert [row["object_id"] for row in rows] == sorted(objects)
-    assert all(1 <= len(args["p_objects"]) <= 200 for _, args in calls)
+    assert all(0 <= len(args["p_objects"]) <= 16384 for _, args in calls)
 
 
 @pytest.mark.parametrize("fmt,width", [("sha1", 40), ("sha256", 64)])

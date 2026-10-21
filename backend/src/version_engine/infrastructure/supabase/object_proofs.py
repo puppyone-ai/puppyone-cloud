@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from src.version_engine.storage.metadata_pages import metadata_pages
 from src.version_engine.storage.publication import ClosureVerificationError, VerifiedObject
 
 
@@ -57,13 +58,9 @@ class ObjectProofRepository:
         return self.cache[oid]
 
     def persist(self, manifest):
-        batch, size = [], 0
-
-        def flush():
-            if not batch:
-                return
+        for batch in metadata_pages(self._proof_rows(manifest)):
             count = self.control.call(
-                "register_version_object_proofs",
+                "register_version_object_proof_page",
                 p_project_id=self.project_id,
                 p_actor=self.actor,
                 p_pin_id=self.pin,
@@ -74,6 +71,7 @@ class ObjectProofRepository:
             for row in batch:
                 self.cache[row["object_id"]] = manifest.objects[row["object_id"]]
 
+    def _proof_rows(self, manifest):
         # Verification supplies dependency order. Each old boundary is already
         # published or belongs to this exact admitted retry; it is not rewritten.
         for oid in manifest.new_objects:
@@ -90,9 +88,4 @@ class ObjectProofRepository:
             encoded_size = len(json.dumps(row).encode())
             if encoded_size > 2 * 1024**2:
                 raise ClosureVerificationError("object proof metadata budget exceeded")
-            if batch and (len(batch) == 200 or size + encoded_size > 2 * 1024**2):
-                flush()
-                batch, size = [], 0
-            batch.append(row)
-            size += encoded_size
-        flush()
+            yield row

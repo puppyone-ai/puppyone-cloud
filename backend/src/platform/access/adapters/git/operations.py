@@ -1,7 +1,8 @@
 """Known native operation keys under exact Project-root Runtime credentials.
 
-This does not add a request-key extension to the stock Git wire protocol. A
-caller must already know its key; a Human JWT is not a Runtime credential.
+Desktop initial pushes can supply their immutable attempt UUID in an HTTP
+header; stock Git remains compatible. A caller must already know its key;
+a Human JWT is not a Runtime credential.
 """
 
 from __future__ import annotations
@@ -13,13 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from httpx import HTTPError
 from postgrest.exceptions import APIError
 
-from src.platform.authorization.models import RuntimeGrant
-from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.platform.access.adapters.git.auth import resolve_git_project_auth
 from src.platform.access.repository_schemas import (
     NativeOperationStatusEnvelope,
     NativeRepositoryMetadataEnvelope,
 )
+from src.platform.authorization.models import RuntimeGrant
+from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 operations_router = APIRouter()

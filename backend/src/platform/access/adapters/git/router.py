@@ -18,20 +18,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.common_schemas import ApiResponse
 from src.config import settings
-from src.platform.repository_target.auth_context import repository_target_from_auth
-from src.platform.repository_target.models import repository_target_scope_id
-from src.utils.logger import log_info
-from src.platform.access.adapters.git.execution import (
-    MAX_PACK_BYTES,
-    MAX_SECONDS,
-    admission,
-    current_execution,
-    run_owned,
-)
-from src.version_engine.admission.repo_facade import (
-    repo_facade_from_auth,
-)
-from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.platform.access.adapters.git.auth import (
     request_actor,
     resolve_git_project_auth,
@@ -40,8 +26,22 @@ from src.platform.access.adapters.git.auth import (
 from src.platform.access.adapters.git.auth import (
     resolve_git_access_point as _resolve_git_access_point,
 )
+from src.platform.access.adapters.git.execution import (
+    MAX_PACK_BYTES,
+    MAX_SECONDS,
+    admission,
+    current_execution,
+    run_owned,
+)
 from src.platform.access.adapters.git.native import select_native_git_endpoint
 from src.platform.access.credentials import resolve_access_point
+from src.platform.repository_target.auth_context import repository_target_from_auth
+from src.platform.repository_target.models import repository_target_scope_id
+from src.utils.logger import log_info
+from src.version_engine.admission.repo_facade import (
+    repo_facade_from_auth,
+)
+from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 router = APIRouter(prefix="/git")
@@ -457,7 +457,10 @@ async def _native_rpc(native, request, *, upload, project_id):
                     native.upload if upload else native.receive,
                     path,
                     disconnect=request.is_disconnected,
-                    **({"protocol": request.headers.get("git-protocol", "")} if upload else {}),
+                    **({"protocol": request.headers.get("git-protocol", "")} if upload else (
+                        {"initial_attempt": request.headers["x-puppyone-initial-attempt"]}
+                        if "x-puppyone-initial-attempt" in request.headers else {}
+                    )),
                 )
                 return retain(response)
             finally:

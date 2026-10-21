@@ -10,6 +10,7 @@ from __future__ import annotations
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     RefAuthorityRepository,
 )
+from src.version_engine.storage.metadata_pages import metadata_pages
 from src.version_engine.storage.publication import ClosureManifest
 
 
@@ -35,18 +36,20 @@ class RepositoryCapacity:
         # Retained proof boundaries have already been accounted for. Only
         # physically verified new facts need capacity reconciliation.
         new_objects = set(manifest.new_objects) if manifest.new_objects is not None else None
-        rows = [
+        rows = (
             dict(object_id=oid, object_kind=record.kind, body_bytes=record.size)
             for oid, record in sorted(manifest.objects.items())
             if new_objects is None or oid in new_objects
-        ]
-        for offset in range(0, max(0, len(rows) - 200), 200):
+        )
+        pages = iter(metadata_pages(rows))
+        tail = next(pages, [])
+        for following in pages:
             result = self.control.call(
-                "reserve_version_object_capacity",
+                "reserve_version_object_capacity_page",
                 p_project_id=project_id,
                 p_actor=actor,
                 p_pin_id=pin,
-                p_objects=rows[offset : offset + 200],
+                p_objects=tail,
                 p_io_id=None,
             )
             if not isinstance(result, dict) or any(
@@ -54,17 +57,17 @@ class RepositoryCapacity:
                 for key in ("new_body_bytes", "new_objects")
             ):
                 raise RuntimeError("invalid capacity admission result")
+            tail = following
         # No raw-seal fallback. This attestation is as trusted as the existing
         # backend physical-closure attestation; SQL additionally fences old issuers.
-        tail = ((len(rows) - 1) // 200) * 200 if rows else 0
         result = self.control.call(
-            "seal_version_capacity_batch",
+            "seal_version_capacity_page",
             p_project_id=project_id,
             p_actor=actor,
             p_pin_id=pin,
             p_manifest_sha256=manifest.digest,
             p_root_details=manifest.root_details(),
-            p_objects=rows[tail:],
+            p_objects=tail,
         )
         if (
             not isinstance(result, dict)
