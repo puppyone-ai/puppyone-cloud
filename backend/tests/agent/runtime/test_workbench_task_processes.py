@@ -23,7 +23,7 @@ IMAGE = settings.CLOUD_AGENT_IMAGE
 async def until_file(owner, path, expected):
     async with asyncio.timeout(30):
         while True:
-            content = await owner._docker(
+            content = await owner.runtime._docker(
                 "exec",
                 "--user=1001:1000",
                 owner.resource["resource_id"],
@@ -85,7 +85,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
     try:
         owner.resource.update(workbench_id=workbench_id, workbench_generation=generation)
         resource = await owner.create()
-        await owner._docker(
+        await owner.runtime._docker(
             "exec",
             resource["resource_id"],
             "node",
@@ -93,7 +93,8 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
             "-e",
             "import {initializeWorkbench} from '/opt/puppyone-agent/workbench-initialize.mjs';"
             "process.umask(0o002); await initializeWorkbench("
-            + json.dumps({"workbench": workbench_id, "generation": generation}) + ","
+            + json.dumps({"workbench": workbench_id, "generation": generation})
+            + ","
             + json.dumps({"project_id": "fixture", **config()["workspace"]})
             + ", () => {throw new Error('Empty fixture must not fetch')});",
         )
@@ -109,7 +110,9 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
                 store=InMemoryExecutionSessionStore(),
             )
             workers.append(task)
-            await task.connect({**resource, "task_execution_id": task.task_execution_id, "task_uid": uid})
+            await task.connect(
+                {**resource, "task_execution_id": task.task_execution_id, "task_uid": uid}
+            )
             await task.start(config())
         # Genuine terminal with a controlling PTY, not a substitute sleep process.
         terminal = await asyncio.create_subprocess_exec(
@@ -129,7 +132,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         )
         children.append(terminal)
         await read_marker(terminal.stdout, b"TTY_READY")
-        await owner._docker(
+        await owner.runtime._docker(
             "exec",
             "-d",
             "--workdir=/workspace/repo",
@@ -154,7 +157,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in admitted)), 30)
         await until_file(owner, "/workspace/repo/agent-0.ready", "ready")
         await until_file(owner, "/workspace/repo/agent-1.ready", "ready")
-        await owner._docker(
+        await owner.runtime._docker(
             "exec", "--user=1001:1000", resource["resource_id"], "touch", "/workspace/repo/go"
         )
         await until_file(owner, "/workspace/repo/shared.txt", "agent-0")
@@ -163,7 +166,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         await until_file(owner, "/workspace/repo/detached-0.pid", "")
         await until_file(owner, "/workspace/repo/detached-1.pid", "")
         # A current user's edit after both Agents started must survive task cleanup.
-        await owner._docker(
+        await owner.runtime._docker(
             "exec",
             "--user=1001:1000",
             resource["resource_id"],
@@ -182,7 +185,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         terminal.stdin.write(b"PTY_AFTER_TASK_END\n")
         await terminal.stdin.drain()
         await read_marker(terminal.stdout, b"PTY_AFTER_TASK_END")
-        preview = await owner._docker(
+        preview = await owner.runtime._docker(
             "exec",
             "--user=1001:1000",
             resource["resource_id"],
@@ -196,7 +199,7 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
         assert "agent-0" in shared
         # Detached owner children are gone; the other task's child is not killed.
         for index, alive in [(0, False), (1, True)]:
-            state = await owner._docker(
+            state = await owner.runtime._docker(
                 "exec",
                 resource["resource_id"],
                 "sh",
@@ -209,9 +212,9 @@ async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files
             await workers[1].snapshot()
         with pytest.raises(PermissionError, match="workbench"):
             await workers[1].pause()
-        assert json.loads(await owner._docker("inspect", resource["resource_id"]))[0]["State"][
-            "Running"
-        ]
+        assert json.loads(await owner.runtime._docker("inspect", resource["resource_id"]))[0][
+            "State"
+        ]["Running"]
     finally:
         for driver in drivers:
             driver.cancel()

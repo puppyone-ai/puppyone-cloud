@@ -326,6 +326,9 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
                 return len(changes)
 
             await eventually(observed, lambda count: count > 0, timeout=40)
+            file_channels = case.app.state.workbench_service.channels
+            shared_channel = next(iter(file_channels.entries.values())).channel
+            assert shared_channel.service_receipt["workbench"] == workbench
             model.release.set()
 
             async def read(path):
@@ -357,6 +360,9 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
             )
             await eventually(observed, lambda count: count > 1, timeout=30)
             assert all(change.get("generation") == generation for change in changes)
+            assert len(file_channels.entries) == 1
+            assert next(iter(file_channels.entries.values())).channel is shared_channel
+            passed("native file reads and SSE watch share one admitted service connection")
 
             async def write(path, value, revision=None):
                 return await http.put(

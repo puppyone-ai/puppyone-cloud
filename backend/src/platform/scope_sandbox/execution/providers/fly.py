@@ -7,12 +7,9 @@ A Fly volume is not an E2B memory snapshot: legacy snapshot recovery is rejected
 
 import asyncio
 import base64
-import os
 import re
 import shlex
 import shutil
-import tempfile
-from pathlib import Path
 from urllib.parse import quote
 from uuid import UUID
 
@@ -21,6 +18,7 @@ import httpx
 from src.config import settings
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
 
+from .fly_transport import acquire_transport, close_transports
 from .port import (
     RuntimeCapabilities,
     RuntimeConnection,
@@ -40,7 +38,7 @@ class FlyRuntimeProvider:
     def __init__(self, *, client=None):
         self.client = client
         self._owned_client = None
-        self._channel_config = None
+        self._transport = None
 
     def validate(self, artifact, resource=None):
         self._path(resource or {"app": settings.CLOUD_AGENT_FLY_APP})
@@ -303,24 +301,12 @@ class FlyRuntimeProvider:
             "fly-control",
             *host.control_command(),
         ]
-        if self._channel_config is not None:
+        if self._transport is not None:
             await self.close_channel(host)
-        # Do not borrow a workstation's cached organization-wide WireGuard
-        # peer or daemon. This channel authenticates with its app-scoped token;
-        # its isolated agent exits with flyctl, including after backend failure.
-        self._channel_config = tempfile.TemporaryDirectory(prefix="puppy-fly-")
-        config = Path(self._channel_config.name, "config.yml")
-        config.write_text("{}\n")
-        config.chmod(0o600)
-        env = {
-            "FLY_CONFIG_DIR": self._channel_config.name,
-            "FLY_AGENT_ISOLATED": "1",
-            "FLY_WIREGUARD_TOKEN_MODE": "1",
-            "FLY_NO_UPDATE_CHECK": "1",
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": os.environ.get("HOME", ""),
-            "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN,
-        }
+        self._transport = await acquire_transport(
+            host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
+        )
+        env = self._transport.env
         host.process = await asyncio.create_subprocess_exec(
             settings.CLOUD_AGENT_FLY_CLI,
             "ssh",
@@ -341,6 +327,11 @@ class FlyRuntimeProvider:
         )
         read_process(host)
 
+    async def open_service(self, host, service):
+        if service != "files":
+            raise ValueError("Unsupported workspace service")
+        await self.open_channel(host)
+
     async def send(self, host, data, *, timeout):
         host.process.stdin.write(data.encode())
         await host.process.stdin.drain()
@@ -355,9 +346,11 @@ class FlyRuntimeProvider:
         finally:
             host.connection = None
             await self.aclose()
-            if self._channel_config is not None:
-                self._channel_config.cleanup()
-                self._channel_config = None
+            if self._transport is not None:
+                self._transport.release()
+                self._transport = None
+
+    shutdown_transports = staticmethod(close_transports)
 
     async def aclose(self):
         if self._owned_client is not None:

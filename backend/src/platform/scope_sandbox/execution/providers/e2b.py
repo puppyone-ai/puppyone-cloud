@@ -19,7 +19,9 @@ from .port import (
 
 class E2BRuntimeProvider:
     name = "e2b"
-    capabilities = RuntimeCapabilities(recovery_backend="provider-snapshot")
+    # Legacy Pi sessions remain readable/recoverable; the supervised workspace
+    # service has not been enabled for E2B. Reject new workbenches before allocation.
+    capabilities = RuntimeCapabilities(recovery_backend="provider-snapshot", native_files=False)
 
     def validate(self, artifact, resource=None):
         if not artifact or not settings.E2B_API_KEY:
@@ -83,6 +85,9 @@ class E2BRuntimeProvider:
     async def pause(self, host):
         await host._disconnect_output()
         await host.sandbox.pause()
+
+    async def open_service(self, host, service):
+        raise ValueError("E2B persistent workspace services are not enabled")
 
     async def open_channel(self, host):
         host.handle = await host.sandbox.commands.run(

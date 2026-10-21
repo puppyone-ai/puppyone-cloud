@@ -70,16 +70,18 @@ def worker(provider="docker"):
 )
 async def test_wrong_or_missing_cleanup_binding_is_rejected_before_provider_access(field):
     value, resource = worker()
-    value._docker = AsyncMock(side_effect=AssertionError("wrong resource binding reached provider"))
+    value.runtime._docker = AsyncMock(
+        side_effect=AssertionError("wrong resource binding reached provider")
+    )
     resource.pop(field)
     with pytest.raises(PermissionError, match="binding"):
         await value.connect(resource)
-    value._docker.assert_not_awaited()
+    value.runtime._docker.assert_not_awaited()
 
 
 async def test_task_connection_cannot_unpause_a_docker_computer():
     value, resource = worker()
-    value._docker = AsyncMock(
+    value.runtime._docker = AsyncMock(
         side_effect=lambda *args: (
             json.dumps([{"Id": "sha256:fixture"}])
             if args[0] == "image"
@@ -90,12 +92,12 @@ async def test_task_connection_cannot_unpause_a_docker_computer():
     )
     with pytest.raises(WorkerDisconnected, match="lifecycle"):
         await value.connect(resource)
-    assert all(call.args[0] != "unpause" for call in value._docker.await_args_list)
+    assert all(call.args[0] != "unpause" for call in value.runtime._docker.await_args_list)
 
 
 async def test_task_uses_its_execution_identity_not_the_resource_owner():
     value, resource = worker()
-    value._docker = AsyncMock(
+    value.runtime._docker = AsyncMock(
         side_effect=[
             json.dumps([{"Image": "sha256:fixture", "State": {"Running": True, "Paused": False}}]),
             json.dumps([{"Id": "sha256:fixture"}]),
@@ -148,12 +150,12 @@ async def test_task_requires_attach_only_protocol_before_preparing_or_starting(p
 
 async def test_legacy_resume_and_attach_are_not_task_capabilities():
     value, resource = worker()
-    value._docker = AsyncMock(side_effect=AssertionError("task called provider lifecycle"))
+    value.runtime._docker = AsyncMock(side_effect=AssertionError("task called provider lifecycle"))
     with pytest.raises(PermissionError, match="lifecycle"):
         await value.resume(resource)
     with pytest.raises(PermissionError, match="binding"):
         await WorkbenchTask.attach(resource, "project")
-    value._docker.assert_not_awaited()
+    value.runtime._docker.assert_not_awaited()
 
 
 async def test_heartbeat_renews_task_control_not_provider_timeout():

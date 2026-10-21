@@ -19,12 +19,23 @@ class DockerRuntimeProvider:
     name = "docker"
     capabilities = RuntimeCapabilities(recovery_backend="docker-volume", file_retention="volume")
 
+    async def _docker(self, *args):
+        proc = await asyncio.create_subprocess_exec(
+            "docker", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode:
+            raise RuntimeError(
+                "Sandbox provider command failed: " + stderr.decode(errors="replace")[:300]
+            )
+        return stdout.decode().strip()
+
     def validate(self, artifact, resource=None):
         if not artifact:
             raise ValueError("A Docker worker image is required")
 
     async def allocate(self, host):
-        inspected = json.loads(await host._docker("image", "inspect", host.image))[0]
+        inspected = json.loads(await self._docker("image", "inspect", host.image))[0]
         if host.restore_point and host.restore_point.get("artifact") != inspected["Id"]:
             raise ValueError("Recovery worker artifact mismatch")
         host.resource["image_id"] = inspected["Id"]
@@ -43,7 +54,7 @@ class DockerRuntimeProvider:
                 + generation
                 + ",target=/run/puppyone-workbench",
             ]
-        await host._docker(
+        await self._docker(
             "create",
             "--name",
             host.resource["resource_id"],
@@ -66,15 +77,21 @@ class DockerRuntimeProvider:
             "--tmpfs=/run:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0755",
             "--tmpfs=/home/node:rw,nosuid,nodev,size=8m,uid=1000,gid=1000",
             "-i",
+            *(["--entrypoint=node"] if host.resource.get("workbench_id") else []),
             inspected["Id"],
+            *(
+                ["/opt/puppyone-agent/workbench-files-supervisor.mjs"]
+                if host.resource.get("workbench_id")
+                else []
+            ),
         )
-        await host._docker("start", host.resource["resource_id"])
+        await self._docker("start", host.resource["resource_id"])
         host.attached = True
 
     async def attach(self, host):
         try:
             state = json.loads(
-                await host._docker("container", "inspect", host.resource["resource_id"])
+                await self._docker("container", "inspect", host.resource["resource_id"])
             )[0]["State"]
         except RuntimeError as exc:
             if "No such container:" in str(exc) or "No such object:" in str(exc):
@@ -83,40 +100,40 @@ class DockerRuntimeProvider:
         if not state["Running"]:
             raise WorkerLost("Sandbox tmpfs no longer exists")
         if state.get("Paused"):
-            await host._docker("unpause", host.resource["resource_id"])
+            await self._docker("unpause", host.resource["resource_id"])
 
     async def resume(self, host):
         resource = host.resource
         try:
-            found = json.loads(await host._docker("container", "inspect", resource["resource_id"]))[
+            found = json.loads(await self._docker("container", "inspect", resource["resource_id"]))[
                 0
             ]
         except RuntimeError as exc:
             if "No such container" in str(exc) or "No such object" in str(exc):
                 raise WorkerLost("Workspace was reclaimed") from exc
             raise
-        artifact = json.loads(await host._docker("image", "inspect", host.image))[0]["Id"]
+        artifact = json.loads(await self._docker("image", "inspect", host.image))[0]["Id"]
         if (
             not found["State"]["Running"]
             and resource.get("workbench_id")
             and found["Image"] == artifact
         ):
-            await host._docker("start", resource["resource_id"])
+            await self._docker("start", resource["resource_id"])
             found["State"]["Running"] = True
         if found["Image"] != artifact or not found["State"]["Running"]:
             raise WorkerLost("Workspace artifact or filesystem unavailable")
         if found["State"].get("Paused"):
-            await host._docker("unpause", resource["resource_id"])
+            await self._docker("unpause", resource["resource_id"])
         host.attached = True
 
     async def pause(self, host):
         if host.process:
             await host.process.wait()
         state = json.loads(
-            await host._docker("container", "inspect", host.resource["resource_id"])
+            await self._docker("container", "inspect", host.resource["resource_id"])
         )[0]["State"]
         if not state.get("Paused"):
-            await host._docker("pause", host.resource["resource_id"])
+            await self._docker("pause", host.resource["resource_id"])
 
     async def open_channel(self, host):
         command = (
@@ -139,6 +156,11 @@ class DockerRuntimeProvider:
         )
 
         read_process(host)
+
+    async def open_service(self, host, service):
+        if service != "files":
+            raise ValueError("Unsupported workspace service")
+        await self.open_channel(host)
 
     async def snapshot(self, host):
         value = await host.control("snapshot")
@@ -193,10 +215,10 @@ class DockerRuntimeProvider:
 
     async def pause_resource(self, host):
         state = json.loads(
-            await host._docker("container", "inspect", host.resource["resource_id"])
+            await self._docker("container", "inspect", host.resource["resource_id"])
         )[0]["State"]
         if state["Running"] and not state.get("Paused"):
-            await host._docker("pause", host.resource["resource_id"])
+            await self._docker("pause", host.resource["resource_id"])
         if not state["Running"]:
             raise WorkerLost("Workspace is not running; preservation requires reconciliation")
         return RuntimeTransition(resource_identity(host.resource), True, True)
@@ -232,7 +254,7 @@ class DockerRuntimeProvider:
             host.connection = connection
             return
         try:
-            found = json.loads(await host._docker("container", "inspect", resource["resource_id"]))[
+            found = json.loads(await self._docker("container", "inspect", resource["resource_id"]))[
                 0
             ]
         except RuntimeError as exc:
@@ -241,6 +263,6 @@ class DockerRuntimeProvider:
             raise
         if not found["State"]["Running"] or found["State"].get("Paused"):
             raise WorkerDisconnected("Workbench lifecycle must make the resource running")
-        artifact = json.loads(await host._docker("image", "inspect", host.image))[0]["Id"]
+        artifact = json.loads(await self._docker("image", "inspect", host.image))[0]["Id"]
         if found["Image"] != artifact:
             raise WorkerDisconnected("Workbench artifact differs from its binding")

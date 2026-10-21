@@ -131,3 +131,80 @@ test('native file channel watches Bash saves before publication and rejects stal
     await rm(ROOT,{recursive:true,force:true}); await rm(CONTROL_ROOT,{recursive:true,force:true});
   }
 });
+
+test('supervised service survives clients, fences epochs and restarts on the same native files', {timeout: 60000}, async () => {
+  const {spawn} = await import('node:child_process');
+  const {createInterface} = await import('node:readline');
+  const workbench = randomUUID(), generation = randomUUID(), clients = [];
+  let supervisor, stage = 'initial connection';
+  function connect(epoch) {
+    const child = spawn('node', ['/opt/puppyone-agent/workbench-file-client.mjs'], {stdio: ['pipe', 'pipe', 'inherit']});
+    const pending = new Map(), events = [];
+    createInterface({input: child.stdout}).on('line', line => {
+      const frame = JSON.parse(line);
+      if (frame.type === 'control_result') {
+        const request = pending.get(frame.id); pending.delete(frame.id);
+        if (request) frame.error ? request.reject(new Error(frame.error)) : request.resolve(frame.result);
+      } else events.push(frame);
+    });
+    child.on('exit', () => { for (const request of pending.values()) request.reject(new Error(`Disconnected during ${stage}`)); pending.clear(); });
+    const call = (action, value) => new Promise((resolve, reject) => {
+      const id = randomUUID(); pending.set(id, {resolve, reject}); child.stdin.write(JSON.stringify({type: 'control', id, action, value}) + '\n');
+    });
+    const client = {child, call, events, hello: () => call('hello', {protocol: 1, workbench, generation, compute_epoch: epoch})};
+    clients.push(client); return client;
+  }
+  async function servicePid() {
+    return Number((await readFile(`/proc/${supervisor.pid}/task/${supervisor.pid}/children`, 'utf8')).trim().split(/\s+/)[0]);
+  }
+  async function readyConnection(epoch) {
+    let client, receipt;
+    // A spawned PID or socket inode alone is not service readiness. During a
+    // restart, retry only this read-only handshake, never a file mutation.
+    await poll(async () => {
+      client = connect(epoch);
+      try { receipt = await client.hello(); return true; }
+      catch (error) {
+        client.child.stdin.end();
+        if (!/Disconnected/.test(error.message)) throw error;
+        return false;
+      }
+    });
+    return {client, receipt};
+  }
+  try {
+    await initializeWorkbench({workbench, generation}, {project_id: 'fixture', object_format: 'sha1', target_ref: 'refs/heads/main', base_oid: null}, () => {throw new Error('Unexpected Git');});
+    supervisor = spawn('node', ['/opt/puppyone-agent/workbench-files-supervisor.mjs'], {stdio: ['ignore', 'inherit', 'inherit']});
+    await poll(async () => { try { return (await stat(`${CONTROL_ROOT}/files.sock`)).isSocket(); } catch { return false; } });
+    const first = connect(1), second = connect(1);
+    const receipt = await first.hello(); assert.equal((await second.hello()).service_id, receipt.service_id);
+    await first.call('watch'); await second.call('watch');
+    const saved = await second.call('files', {action: 'write', path: 'persist.txt', expected_revision: null, content_base64: Buffer.from('persisted').toString('base64')});
+    assert.ok(saved.result); await poll(() => first.events.length > 0 && second.events.length > 0);
+    first.child.stdin.end(); await poll(() => first.child.exitCode !== null);
+    const remaining = connect(1); assert.equal((await remaining.hello()).service_id, receipt.service_id);
+    assert.equal(Buffer.from((await remaining.call('files', {action: 'read', path: 'persist.txt'})).result.content_base64, 'base64').toString(), 'persisted');
+    const count = second.events.length;
+    await exec('sh', ['-c', 'printf updated > .save; mv .save persist.txt'], {cwd: ROOT, uid: 1000, gid: 1000});
+    await poll(() => second.events.length > count);
+    // Elevated epoch disconnects existing connections; an old epoch cannot reattach.
+    stage = 'epoch fencing';
+    const newer = connect(2); await newer.hello();
+    await poll(() => second.child.exitCode !== null && remaining.child.exitCode !== null);
+    await assert.rejects(connect(1).hello(), /Stale/);
+    stage = 'service restart';
+    const oldPid = await servicePid(); process.kill(oldPid, 'SIGKILL');
+    await poll(async () => (await servicePid()) > 0 && (await servicePid()) !== oldPid);
+    await poll(async () => { try { return (await stat(`${CONTROL_ROOT}/files.sock`)).isSocket(); } catch { return false; } });
+    const {client: resumed, receipt: resumedReceipt} = await readyConnection(2);
+    assert.notEqual(resumedReceipt.service_id, receipt.service_id);
+    assert.equal(resumedReceipt.boot_id, receipt.boot_id);
+    assert.equal(Buffer.from((await resumed.call('files', {action: 'read', path: 'persist.txt'})).result.content_base64, 'base64').toString(), 'updated');
+    await assert.rejects(connect(1).hello(), /Stale/);
+    await assert.rejects(exec('node', ['/opt/puppyone-agent/workbench-file-client.mjs'], {uid: 1000, gid: 1000, timeout: 5000}), /platform control/);
+  } finally {
+    for (const client of clients) { client.child.stdin.end(); await poll(() => client.child.exitCode !== null); }
+    supervisor?.kill('SIGTERM'); if (supervisor) await poll(() => supervisor.exitCode !== null || supervisor.signalCode !== null);
+    await rm(ROOT, {recursive: true, force: true}); await rm(CONTROL_ROOT, {recursive: true, force: true});
+  }
+});

@@ -65,7 +65,9 @@ async def test_pause_response_loss_retries_provider_without_restarting_control(m
 async def test_confirmed_missing_resource_restores_fresh_allocation_identity(monkeypatch):
     value = worker("docker")
     fresh = dict(value.resource)
-    value._docker = AsyncMock(side_effect=RuntimeError("No such container: old-provider-id"))
+    value.runtime._docker = AsyncMock(
+        side_effect=RuntimeError("No such container: old-provider-id")
+    )
     old = {**fresh, "resource_id": "old-provider-id", "session_id": "old-execution"}
     with pytest.raises(WorkerLost):
         await value.resume(old)
@@ -148,10 +150,10 @@ async def test_e2b_snapshot_uses_only_provider_api_and_never_falls_back_to_local
     if fails:
         snapshot.side_effect = RuntimeError("provider snapshot unavailable")
     value.sandbox = SimpleNamespace(
-        create_snapshot=snapshot, commands=SimpleNamespace(
+        create_snapshot=snapshot,
+        commands=SimpleNamespace(
             connect=AsyncMock(return_value=handle), list=AsyncMock(return_value=[])
-        )
-
+        ),
     )
     try:
         if fails:
