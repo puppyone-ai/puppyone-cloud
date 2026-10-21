@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-22",
+  "result": "local_regressions_passed_hosted_acceptance_pending",
+  "backend_source": "7ca7d7fffa27a61e369c2a0ba04faa7957c141bb",
+  "desktop_source": "be263e2e7fbddc5b907c0d0507267a3028f96305",
+  "architecture_source": "puppy-issues@df29648:document/agent-runtime.md",
+  "artifact": {
+    "local_tag": "puppyone-cloud-agent:persistent-files",
+    "platform": "linux/amd64",
+    "manifest": "sha256:756f9e818af79b5068e5bd1c7efe892365c0839564364e81866430fe39a971a3",
+    "manifest_list": "sha256:34cbbbd31a067bedc3591e24c7f7af5e07e8c797063ee4c31442a66a9b397aaf",
+    "uploaded": false
+  },
+  "checks": {
+    "python_agent": {
+      "passed": 197,
+      "deselected": 250,
+      "scope": "non-integration/non-e2e/non-network Agent tests"
+    },
+    "owned_database_product_entry": {
+      "passed": 58,
+      "services": "owned local PostgreSQL/PostgREST/MinIO; no hosted database mutation"
+    },
+    "linux_worker": {
+      "passed": 50,
+      "environment": "native Linux arm64 BuildKit, Node 22.22.3, network disabled",
+      "scope": "Pi/protocol/Git/relay/recovery and process isolation; root-only suites run as root, Git unit suites as node"
+    },
+    "linux_native_files": {
+      "passed": 4,
+      "repeated_runs": 3,
+      "environment": "same native Linux arm64 BuildKit",
+      "scope": "native atomic saves, multi-client notifications, service retention, epoch fencing and supervised restart"
+    },
+    "desktop": {
+      "passed": 265,
+      "files": 28,
+      "typescript": "passed",
+      "targeted_eslint": "passed",
+      "cloud_architecture_and_test_layout": "passed"
+    },
+    "actual_flyctl_private_agent": {
+      "passed": true,
+      "scope": "real CLI startup, one process for two borrowers, owned shutdown and directory cleanup; no SSH/VM mutation"
+    },
+    "changed_python_ruff": "passed",
+    "changed_node_syntax": "passed",
+    "openspec_strict": "passed",
+    "documentation": "passed; 25 existing cross-repository source-link warnings"
+  },
+  "limitations": [
+    "Automatic approval review blocked candidate image upload pending explicit registry-destination approval; real Fly product-chain and I/O tests have not run for this candidate.",
+    "No latency improvement is claimed. The read-only existing-Machine SSH probe skipped because the Machine was stopped; it was not woken.",
+    "The full Docker-provider runtime suite was interrupted when a regular Docker container could not start; BuildKit component suites are not its substitute.",
+    "Emulated linux/amd64 process acceptance failed because QEMU did not implement pidfd_open; final process acceptance used native linux/arm64, not Fly amd64.",
+    "Broader Python lint reports 31 findings, all in unchanged files. Only the changed-file lint gate is green.",
+    "Candidate branches remain unmerged/unpushed and undeployed; existing Workbench artifact bindings were not modified. Paired backend/Worker rollout and explicit preserved-volume upgrade remain required."
+  ],
+  "log_sha256": {
+    "agent_regression": "9c5872aceb8a529cc063032d685c37f426af204ae503bcf9203abff5749627f4",
+    "owned_product_entry": "cef705dc7dcbac9b3ebb47d5cc73af27dff828ba4e18b2f63339eb45c61eb5de",
+    "linux_worker": "4bad2a78b0d9af742c7dc3730ab2a2610c67fa423dfaa4a8bdfa5bc546a85810",
+    "desktop": "72f7163839f98e396c15a98dcf33f8660e002d679374536e1cf284319edd0f99",
+    "flyctl_process": "d446f42eb3640a7b2c1436325594fb43331824fa5c2ddbf430988fef3692b732"
+  }
+}

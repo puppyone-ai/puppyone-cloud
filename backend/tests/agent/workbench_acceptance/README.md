@@ -21,6 +21,39 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
    The user authorized disposable Fly resources for this test; opt-in remains
    mandatory so routine regression jobs cannot incur provider charges.
 
+## Persistent connection candidate (2026-10-22)
+
+[`persistent-connection-receipt.json`](persistent-connection-receipt.json) records
+backend `7ca7d7ff`, Desktop `be263e2e`, the local linux/amd64 candidate image,
+verification scope and outstanding gates. This supersedes no historical Fly receipt.
+Local checks pass: 197 Agent cases, 58 owned database/product-entry cases,
+50 native Linux Worker cases, four native-file scenarios and 265 Desktop cases.
+The native-file scenarios passed three final runs after replacing socket/PID-only
+restart readiness with a read-only handshake. Real flyctl private-agent startup,
+reuse and cleanup also passed; no workspace was woken for that check.
+
+The implementation separates the VM-owned service, shared request/watch channel,
+and provider-private transport. `accept_fly.py` now asserts file/watch connection
+reuse. `accept_io.py` additionally measures concurrent reads and transport-only
+reconnection, and checks service identity survives SSH loss while a real Fly
+stop/start advances boot and compute identities. These two candidate Fly tests
+**have not run**: automatic approval review rejected candidate artifact upload
+pending explicit registry-destination approval. Do not reuse the older performance
+numbers below as evidence for this implementation.
+
+The candidate requires a paired Worker/backend rollout. Changing the default
+image does not upgrade existing persisted artifact bindings. Keep their Volume
+and files; upgrading them requires explicit lifecycle admission and binding
+updates. Do not point new file clients at old images or silently fall back to
+published Git files. E2B workspace-file capability is disabled before allocation;
+legacy Pi recovery remains available. Routine tests must not enable E2B.
+
+The full regular-Docker runtime suite is still blocked by local container startup;
+native BuildKit is component evidence only. Native Linux process tests passed;
+emulated amd64 process tests lacked `pidfd_open`. Real Fly amd64, end-to-end timing,
+release integration and hosted activation remain open. The candidate branches are
+intentionally retained pending these gates.
+
 ## Required continuous scenario (all still required)
 
 | Phase | Required executable assertions / evidence |
