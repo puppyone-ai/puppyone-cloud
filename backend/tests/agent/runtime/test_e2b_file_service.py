@@ -1,7 +1,7 @@
 """Pinned SDK attachment contract: GET credentials, never implicit resume."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -35,8 +35,8 @@ def attachment(monkeypatch):
         template_id="template",
         sandbox_id="sandbox",
         client_id="client",
-        started_at=datetime.now(timezone.utc),
-        end_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
+        end_at=datetime.now(UTC),
         envd_version="0.4.5",
         cpu_count=2,
         memory_mb=2048,

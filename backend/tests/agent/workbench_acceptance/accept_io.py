@@ -19,7 +19,8 @@ import pytest
 
 from src.config import settings
 from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from tests.agent.workbench_acceptance.accept_fly import cleanup_owned, http_server
+from tests.agent.workbench_acceptance.accept_e2b import cleanup_owned as cleanup_e2b
+from tests.agent.workbench_acceptance.accept_fly import cleanup_owned
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
 )
@@ -29,6 +30,7 @@ from tests.agent.workbench_acceptance.accept_production_entry import (
 )
 from tests.agent.workbench_acceptance.accept_production_entry import postgres as postgres
 from tests.agent.workbench_acceptance.accept_production_entry import services as services
+from tests.agent.workbench_acceptance.provider_scenario import http_server
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -205,17 +207,7 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             if provider_name == "fly":
                 await cleanup_owned(entry, provider, receipt)
             else:
-                rows = (
-                    entry.client.table("cloud_workbenches")
-                    .select("resource")
-                    .eq("project_id", entry.project)
-                    .execute()
-                    .data
-                )
-                for row in rows:
-                    if row["resource"]:
-                        await provider.cleanup(row["resource"])
-                receipt["cleanup"] = "owned E2B sandboxes killed"
+                await cleanup_e2b(entry, provider, receipt)
             cleanup_succeeded = True
         finally:
             try:
