@@ -81,7 +81,16 @@ test('native file channel watches Bash saves before publication and rejects stal
     assert.equal(Buffer.from(read.result.content_base64,'base64').toString(),'agent-saving');
     // No finalize/commit/push was called: live access is independent of Git.
     await assert.rejects(exec('git',['rev-parse','--verify','HEAD'],{cwd:ROOT,uid:1000,gid:1000}));
+    // The editor saves by replacing the inode. Later Bash writes must still
+    // notify the open editor, not only newly created files in the tree.
+    const beforeSave = changes;
+    const saved = await file({action:'write',path:'file.txt',expected_revision:read.result.revision,
+      content_base64:Buffer.from('desktop-save').toString('base64')});
+    assert.ok(saved.result);
+    await poll(() => changes > beforeSave);
+    const afterSave = changes;
     await exec('sh',['-c', 'printf agent-newer > file.txt'],{cwd:ROOT,uid:1000,gid:1000});
+    await poll(() => changes > afterSave);
     const stale = await file({action:'write',path:'file.txt',expected_revision:read.result.revision,content_base64:Buffer.from('stale human').toString('base64')});
     assert.equal(stale.error,'file_conflict');
     assert.equal(Buffer.from((await file({action:'read',path:'file.txt'})).result.content_base64,'base64').toString(),'agent-newer');
@@ -91,8 +100,16 @@ test('native file channel watches Bash saves before publication and rejects stal
     assert.ok(repeated.every(value => Buffer.from(value.result.content_base64,'base64').toString() === 'agent-newer'));
     await exec('ln',['-s','/etc/passwd','outside'],{cwd:ROOT,uid:1000,gid:1000});
     for (const path of ['../etc/passwd','.git/config','outside']) assert.ok((await file({action:'read',path})).error);
+    const beforeFolder = changes;
     assert.ok((await file({action:'mkdir',path:'folder'})).result);
+    await poll(() => changes > beforeFolder);
+    const beforeMove = changes;
     assert.ok((await file({action:'move',path:'file.txt',destination:'folder/moved.txt'})).result);
+    await poll(() => changes > beforeMove);
+    const beforeNestedWrite = changes;
+    await exec('sh',['-c','printf nested-newer > folder/moved.txt'],{cwd:ROOT,uid:1000,gid:1000});
+    await poll(() => changes > beforeNestedWrite);
+    assert.equal(Buffer.from((await file({action:'read',path:'folder/moved.txt'})).result.content_base64,'base64').toString(),'nested-newer');
     assert.ok((await file({action:'remove',path:'folder'})).result);
     assert.equal((await file({action:'read',path:'folder/moved.txt'})).error,'file_not_found');
     const large = Buffer.from('native-file-content-'.repeat(1000));
