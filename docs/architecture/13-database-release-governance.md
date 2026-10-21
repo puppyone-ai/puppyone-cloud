@@ -2,8 +2,18 @@
 
 Puppyone releases an environment by merging one tested source revision to its
 protected branch. `qubits` selects staging; `main` selects production. The
-release coordinator owns database upgrade, application deployment and
-acceptance as one serialized operation.
+shared workflow automatically waits for candidate CI, then migrates and verifies
+Supabase on a GitHub-hosted runner. Compatible SQL requires only the existing
+Supabase environment credentials. Application deployment is a separate stage;
+its configuration cannot block an ordinary database migration.
+
+When the environment has `PUPPYONE_RELEASE_CONFIG`, the full coordinator follows
+successful schema verification with exact-source application deployment and
+acceptance. Without that configuration, the workflow explicitly reports
+**database migrated; application deployment not configured**. It never writes
+an accepted application deployment receipt for a database-only run. Pending
+data/Contract work always routes to the full coordinator and fails if its
+required infrastructure is unavailable; it cannot fall back to uncoordinated SQL.
 
 ## Migration merge admission
 
@@ -15,8 +25,9 @@ Empty-database installation remains a separate required test.
 
 Production does not need candidate schema or data receipts before merge.
 Those receipts are outputs of the release after merge. A normal promotion
-from Qubits still requires a successful staging release for the exact promoted
-head. Branch protection requires `Release upgrade rehearsal`, database
+from Qubits still requires a successful staging database workflow for the exact
+promoted head. This database attestation is distinct from application acceptance.
+Branch protection requires `Release upgrade rehearsal`, database
 validation, backend/frontend checks and security checks. Production promotion
 also requires `Main Release Gate`. Hosted configuration is verified separately
 from repository YAML; editing a workflow does not enable branch protection.
@@ -32,19 +43,21 @@ deployment is never a successful upgrade baseline.
 ```text
 merge to qubits / main
   -> candidate CI, including populated Docker rehearsal
-  -> protected environment + database-wide release lock
-  -> source, target and deployment-owner verification; candidate build
-  -> determine pending schema/data phases from real database receipts
-  -> when a data/Contract cutover is pending:
-       stop ingress and periodic producers
-       drain delayed, retry and in-flight work while consumers remain alive
-       stop consumers; verify process exit and write-lease expiry
-       create, restore-test and retain a private database backup
-  -> compatible schema -> data run + verify -> dependent Contract
-  -> final schema history, product contracts, Data API containment, public drift
-  -> deploy the exact source SHA to all declared application services
-  -> authenticated Git and live workspace file write/read + real Agent reply on an owned test project
-  -> durable accepted receipt and GitHub deployment success
+  -> protected Supabase environment + database-wide release lock
+  -> validate history, the complete pending plan and immutable data receipts
+  -> ordinary SQL:
+       apply every missing migration through the official Supabase CLI
+       verify exact history, database contracts, Data API containment and drift
+       publish database result independently of application configuration
+  -> pending data/Contract cutover (no candidate SQL applied by the ordinary lane):
+       enter full coordinator; recheck actual prerequisites under the same lock
+       stop producers -> drain work -> stop consumers and verify writer exit
+       create and restore-test a private backup
+       compatible schema -> data run + verify -> dependent Contract -> verify DB
+  -> when application release is configured, or a cutover requires it:
+       build/deploy the exact source SHA to declared application services
+       authenticated Git, live workspace and real Agent acceptance
+       durable accepted receipt and GitHub deployment success
 ```
 
 Ordinary additive releases keep the application online. Data migrations and
@@ -55,15 +68,19 @@ approved or discarded by release automation. Drain has a bounded timeout and
 fails without applying the schema if work cannot finish.
 
 GitHub concurrency queues releases separately for each environment. A
-PostgreSQL session advisory lock also serializes the physical database, covering
-build, migration, deployment and acceptance. The executor checks the owning
+PostgreSQL session advisory lock also serializes the physical database. The
+ordinary SQL stage holds it from history inspection through verification; the
+full coordinator reacquires the same lock and rechecks state before build,
+cutover, deployment and acceptance. The executor checks the owning
 connection between operations. Immutable data artifacts retain their own
 transaction or advisory locks and restart-safe checkpoints.
 
 Application build/start never performs schema mutation. Railway's Automatic
 Deployments setting is disabled for coordinator-owned services; their GitHub
-repository connection stays attached. The coordinator checks the provider's
-actual autodeploy status and repository source before migration. The
+repository connection stays attached. The full coordinator checks the
+provider's actual autodeploy status and repository source before a coordinated cutover. Independent application
+autodeploy must not race a migration; enabling application release requires
+coordinator ownership, and its job depends on successful database admission. The
 coordinator explicitly deploys its immutable commit, checks every service's
 reported commit and health, and never substitutes the latest branch head.
 `serviceInstanceDeployV2` returns the deployment ID that subsequent polling verifies.
@@ -85,7 +102,8 @@ backend/src/infra/data_migrations/
   catalog.py, runner.py       existing artifact validation/execution/receipts
   release/
     plan.py                  dependency, retirement and checksum validation
-    engine.py                environment release state machine
+    engine.py                coordinated environment release state machine
+    schema_only.py           independent compatible SQL stage and cutover handoff
     target.py, schema.py      shared database operations and Supabase CLI
     journal.py               private release progress and source ordering
     docker.py, hosted.py      actual environment adapters
@@ -175,8 +193,14 @@ results, without customer IDs, object paths, SQL errors or credentials.
 
 ## Hosted activation contract
 
-Both environments need the same infrastructure contract before their first
-coordinated release:
+Every protected merge runs CI and the ordinary schema stage automatically.
+That stage uses `DATABASE_URL`, `SUPABASE_PROJECT_ID` and
+`SUPABASE_ACCESS_TOKEN` from the existing GitHub environment. The official
+Supabase CLI and locked Python migration runtime are installed on the runner;
+there is no Redis, Railway, S3 or self-hosted-runner requirement for SQL.
+
+Application deployment and data/Contract cutovers additionally need the
+following infrastructure contract:
 
 - GitHub-hosted `ubuntu-24.04` runners. The reusable release workflow admits
   only protected `qubits`/`main` push or manual-dispatch events from the
@@ -201,11 +225,16 @@ coordinated release:
   in the temporary directory and are deleted with it; only the sanitized
   release result is retained as a GitHub artifact.
 - Disabled independent Railway and Supabase schema deployment bindings. The
-  coordinator is the only normal release writer and application deployer.
+  shared workflow is the only normal schema writer; its full coordinator owns
+  data cutovers and configured application deployment.
 
-Missing activation configuration must fail explicitly; it must not silently
-fall back to independent application deployment. Repository implementation and
-actual environment activation are separately verified deliverables.
+Missing application configuration never blocks compatible SQL. The application
+stage is explicitly reported as not configured and does not deploy anything.
+When actual database receipts require a data/Contract cutover, missing
+configuration fails the workflow before candidate SQL; no migration success
+is reported. A failed application stage after compatible SQL reports the
+database as ready and the application as failed. Repository implementation,
+database readiness and actual application activation are separate evidence.
 
 `pull_request_target` admission uses the target branch's trusted workflow, not
 the proposed replacement. A gate change must first reach that protected target

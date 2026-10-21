@@ -112,14 +112,14 @@ def test_workflow_keeps_credentials_after_ci_and_out_of_public_artifacts():
     workflow = yaml.safe_load((ROOT / ".github/workflows/_environment-release.yml").read_text())
     jobs = workflow["jobs"]
     release = jobs["release"]
-    assert release["needs"] == "admission"
+    assert release["needs"] == "database"
     assert release["runs-on"] == "ubuntu-24.04"
     assert release["environment"] == "${{ inputs.environment }}"
     steps = release["steps"]
-    names = [step.get("name", "") for step in steps]
-    assert names.index("Wait for candidate CI before changing the environment") < names.index(
-        "Bind protected database credentials"
-    )
+    assert jobs["database"]["needs"] == "admission"
+    assert any(s.get("name") == "Wait for candidate CI before changing the environment"
+               for s in jobs["admission"]["steps"])
+    assert "environment" not in jobs["admission"]
     artifacts = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
     assert len(artifacts) == 1
     assert artifacts[0]["with"]["path"] == "${{ runner.temp }}/environment-release.json"
