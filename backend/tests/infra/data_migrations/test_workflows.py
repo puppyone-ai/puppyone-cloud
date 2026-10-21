@@ -263,6 +263,7 @@ def test_both_environments_use_one_automatic_release_program(file, branch, envir
     assert trigger["push"] == {"branches": [branch]}
     job = workflow["jobs"]["release"]
     assert job["uses"] == "./.github/workflows/_environment-release.yml"
+    assert job["secrets"] == "inherit"
     assert job["with"] == {"environment": environment}
     assert "refs/heads/" + branch in job["if"]
     assert "puppyone-ai/puppyone-cloud" in job["if"]
