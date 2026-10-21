@@ -178,20 +178,28 @@ results, without customer IDs, object paths, SQL errors or credentials.
 Both environments need the same infrastructure contract before their first
 coordinated release:
 
-- A dedicated ephemeral release runner group, limited to the protected
-  reusable release workflow on `qubits` and `main`. Public/fork PR jobs cannot
-  select the group. Its name is `PUPPYONE_RELEASE_RUNNER_GROUP` in repository
-  variables; environment-specific labels select staging or production.
+- GitHub-hosted `ubuntu-24.04` runners. The reusable release workflow admits
+  only protected `qubits`/`main` push or manual-dispatch events from the
+  canonical repository. PR jobs never receive release credentials. No
+  self-hosted machine, runner group or organization runner permission is needed.
 - GitHub environment branch policies and required checks that enforce the
   source boundary without a routine manual approval between release phases.
-- A private configuration file at `/etc/puppyone/releases/<environment>.json`,
-  mode 0600, with target-bound database access, Railway project token and full
-  API/frontend/Agent/Upload/Import/Synchronize/MCP service inventory, Redis
-  queue names, versioned backup storage and a dedicated acceptance account.
-- Python 3.12, locked backend dependencies, Node/Docker build support,
-  PostgreSQL 17 tools and pinned Supabase CLI on the runner. Backup and raw
-  diagnostics reside in a private retained location; ephemeral-runner teardown
-  does not delete the remote recovery point.
+- An environment-scoped `PUPPYONE_RELEASE_CONFIG` secret containing the
+  existing format-version-1 release configuration: environment identity,
+  Railway project token and full API/frontend/Agent/Upload/Import/Synchronize/MCP
+  service inventory, Redis queue names, S3 and private versioned backup storage,
+  public frontend build arguments and a dedicated acceptance account.
+  Existing `DATABASE_URL`, `SUPABASE_PROJECT_ID`, `SUPABASE_ACCESS_TOKEN` and
+  `SUPABASE_SERVICE_ROLE_KEY` environment secrets bind database authority;
+  the JSON document cannot override that binding. After candidate CI passes,
+  `supabase/releases/github_actions.py` creates a mode-0600 configuration under
+  `$RUNNER_TEMP/puppyone-release-private`, removed at job completion.
+- The workflow installs Python 3.12, locked backend dependencies, Node build
+  support, PostgreSQL 17 tools and the pinned Supabase CLI, using Docker on the
+  GitHub VM. Recovery points remain in the private versioned S3 backup bucket
+  and the release journal remains in PostgreSQL. Raw diagnostics stay private
+  in the temporary directory and are deleted with it; only the sanitized
+  release result is retained as a GitHub artifact.
 - Disabled independent Railway and Supabase schema deployment bindings. The
   coordinator is the only normal release writer and application deployer.
 

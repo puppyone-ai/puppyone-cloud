@@ -1,4 +1,4 @@
-"""Trusted private-runner adapter; cloud credentials never enter public PR jobs."""
+"""Protected environment adapter; cloud credentials never enter public PR jobs."""
 
 from __future__ import annotations
 
