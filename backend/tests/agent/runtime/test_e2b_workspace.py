@@ -202,8 +202,16 @@ async def test_e2b_stock_git_fetch_commit_push_and_clean_next_turn(prepared, mon
 
     monkeypatch.setattr(PiWorker, "snapshot", record_snapshot)
 
-    def factory(execution, project):
-        worker = PiWorker(execution, project, provider="e2b", store=InMemoryExecutionSessionStore())
+    def factory(execution, project, *, provider="e2b", image=None, artifact=None):
+        assert provider == "e2b"
+        worker = PiWorker(
+            execution,
+            project,
+            provider=provider,
+            image=image,
+            artifact=artifact,
+            store=InMemoryExecutionSessionStore(),
+        )
         workers.append(worker)
         return worker
 
