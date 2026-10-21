@@ -11,12 +11,13 @@ from uuid import uuid4
 
 import pytest
 
+from src.config import settings
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
 from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
 from tests.agent.runtime.test_pi_worker import completion, config
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
-IMAGE = "puppyone-cloud-agent:issue-118-process-tests"
+IMAGE = settings.CLOUD_AGENT_IMAGE
 
 
 async def until_file(owner, path, expected):

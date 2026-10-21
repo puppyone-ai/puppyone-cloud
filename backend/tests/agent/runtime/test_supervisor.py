@@ -145,8 +145,9 @@ def read_case(case, path):
         return reader.read_file(case.project, path)
 
 
-def worker_factory(execution, project):
-    return PiWorker(execution, project, provider="docker", store=InMemoryExecutionSessionStore())
+def worker_factory(execution, project, *, provider="docker", image=None, artifact=None):
+    return PiWorker(execution, project, provider=provider, image=image, artifact=artifact,
+                    store=InMemoryExecutionSessionStore())
 
 
 class RecoveringToolModel(ModelFixture):
@@ -537,7 +538,12 @@ async def test_failed_provider_allocation_resolves_before_recovery(prepared, mon
         return []
 
     monkeypatch.setattr(PiWorker, "create", rejected)
-    monkeypatch.setattr(PiWorker, "resolve_resources", staticmethod(absent))
+    from src.platform.scope_sandbox.execution.providers.e2b import E2BRuntimeProvider
+
+    async def resolve(_provider, resource):
+        return await absent(resource)
+
+    monkeypatch.setattr(E2BRuntimeProvider, "resolve", resolve)
     await supervisor.run_claim(case.run)
     result = case.repo.get(case.run["id"])
     assert result["state"] == "failed"
@@ -1524,7 +1530,7 @@ async def test_declined_continuation_is_idempotent_and_uses_bounded_database_com
         "input": {"path": "no.txt"},
         "checkpoint": {"version": 1, "pi_version": "0.85.1", "entries": [], "leaf_id": None},
     }
-    case.repo.begin_tool(case.run, frame, checkpoint={}, mutation=True)
+    case.repo.begin_tool(case.run, frame, checkpoint={}, approval_required=True)
     decision = str(uuid4())
     await asyncio.to_thread(
         case.service.command,

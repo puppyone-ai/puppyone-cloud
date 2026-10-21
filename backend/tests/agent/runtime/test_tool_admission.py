@@ -148,9 +148,9 @@ async def test_question_git_inspection_and_tool_error_complete_then_resume(
 
     monkeypatch.setattr(PiWorker, "snapshot", snapshot)
 
-    def factory(execution, project):
+    def factory(execution, project, **binding):
         worker = PiWorker(
-            execution, project, provider=provider, store=InMemoryExecutionSessionStore()
+            execution, project, **{"provider": provider, **binding}, store=InMemoryExecutionSessionStore()
         )
         workers.append(worker)
         return worker
