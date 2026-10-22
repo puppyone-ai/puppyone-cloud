@@ -1,5 +1,7 @@
 """Docker configuration must not inherit secrets or weaken owned-service guards."""
 import importlib.util
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -60,6 +62,35 @@ def test_container_configuration_drops_unrelated_secrets_and_proxy_settings():
     assert values['HOSTING_TEST_DB_URL'] == environment()['HOSTING_TEST_DB_URL']
     assert values['S3_ENDPOINT_URL'] == values['SUPABASE_URL'] + '/storage/v1/s3'
     assert values['NO_PROXY'] == '*'
+
+
+def test_application_security_uses_owned_redis_not_host_configuration(tmp_path, monkeypatch):
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    captured = {}
+    monkeypatch.setattr(docker, 'owned_network', lambda *_: 'owned-network')
+
+    def run(command, **kwargs):
+        if '--env-file' in command:
+            path = Path(command[command.index('--env-file') + 1])
+            captured.update(line.split('=', 1) for line in path.read_text().splitlines())
+            (output / 'container-environment.json').write_text(json.dumps({
+                'git': 'git version test', 'python': 'test',
+            }))
+            (output / 'container-resources.json').write_text(json.dumps({'failures': []}))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(docker.subprocess, 'run', run)
+    result = {}
+    assert docker.run_tests(
+        tmp_path, output, ['python', '-m', 'pytest'],
+        environment() | {'AUTH_SECURITY_REDIS_URL': 'redis://private-host:6379/0'},
+        {}, 'sha256:test', result,
+    ) == 0
+    assert captured['AUTH_SECURITY_REDIS_URL'] == 'redis://issue-062-redis-1234abcd:6379/3'
+    assert captured['NOTIFICATIONS_REDIS_URL'] == 'redis://issue-062-redis-1234abcd:6379/2'
+    assert captured['SKIP_AUTH'] == 'false'
+    assert not any('private-host' in value for value in captured.values())
 
 
 @pytest.mark.parametrize('key,value', [
