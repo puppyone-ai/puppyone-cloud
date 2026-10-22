@@ -21,7 +21,7 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
    The user authorized disposable Fly resources for this test; opt-in remains
    mandatory so routine regression jobs cannot incur provider charges.
 
-## Durable readiness candidate (2026-10-23)
+## Durable readiness acceptance (2026-10-23)
 
 [`readiness-20261023-receipt.json`](readiness-20261023-receipt.json) records
 backend `fa7d505a`, Desktop `1de682c5`, the built runtime identity, passing
@@ -41,7 +41,24 @@ the 300 ms p50 target at about 434 ms, also seen in control-only round trips;
 do not represent that cross-region path as a performance pass. First allocation,
 first API channel and resume are measured separately in both receipts.
 
-**The user's existing preview recovery and paired release are still pending.**
+The backend fix merged to `qubits` as `657fd0b7` and the protected
+[database release](https://github.com/puppyone-ai/puppyone-cloud/actions/runs/39836939774)
+passed; a read-only target check confirms the readiness migration among 54
+applied versions. This is database evidence, not a hosted application rollout.
+The known local API and worker were replaced by the paired launcher using one
+configuration snapshot. The user's existing stopped Machine was upgraded after
+a Volume snapshot and a fenced binding change; its Machine, Volume and generation
+were retained. Fly CLI resolves the OCI index to its linux/amd64 manifest, so the
+binding pins that verified child digest rather than comparing it with the index.
+
+[`readiness-20261023-restoration.json`](readiness-20261023-restoration.json)
+records a real ProjectGrant/WorkbenchService open against the hosted database and
+original SIN workspace: ready after 54.8 seconds, root listing and preview reads
+passed, all 861 original file hashes and Git HEAD unchanged. Warm reads through
+that actual database path took 1.83–1.92 seconds and **do not meet the I/O target**.
+The owned-fixture LAX performance pass does not replace this measurement.
+Native Desktop automation was unavailable; no actual UI click/render acceptance
+is claimed. The app-side waiting/cancellation/error and integration tests passed.
 E2B remains inactive; prior E2B receipts do not validate this new manifest build.
 
 Release order:
@@ -66,7 +83,11 @@ The revised provider scenarios require the background lifecycle worker. A POST
 returns `202` while preparation proceeds; only ready workspaces return `200`.
 The I/O scenario waits for readiness and separates opening from warm operations.
 
-## Persistent connection candidate (2026-10-22)
+## Persistent connection candidate (2026-10-22, historical)
+
+The following records the earlier candidate's acceptance boundary. Its upload
+block and pending Fly gates were superseded by the 2026-10-23 evidence above;
+the original JSON receipt remains unchanged.
 
 [`persistent-connection-receipt.json`](persistent-connection-receipt.json) records
 backend `7ca7d7ff`, Desktop `be263e2e`, the local linux/amd64 candidate image,
