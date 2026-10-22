@@ -715,7 +715,7 @@ async def test_writing_run_uses_one_push_and_bounded_object_reservations(
         for index in range(count):
             assert reader.read_file(c.project, f"note-{index}.md") == f"note {index}".encode()
     report = supervisor.metrics.report()
-    # Empty tree shares the incoming batch; closure reconciliation is in seal.
+    # The complete Git pack needs no synthetic loose empty-tree write.
     assert report["operations"].get("POST rpc/reserve_version_object_capacity_page") == 1, report
     assert report["operations"].get("POST rpc/reserve_version_object_capacity", 0) == 0, report
     assert report["operations"].get("POST rpc/seal_version_capacity_page") == 1, report

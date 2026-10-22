@@ -176,7 +176,7 @@ class RefTransactionService:
         message: str = "",
         publication_id: str | None = None,
         read_snapshot=None,
-        prepare_includes_empty_tree: bool = False,
+        ensure_empty_tree: bool = True,
     ) -> dict:
         # A service can serve overlapping requests. A verifier's proof cache
         # belongs to exactly one actor/pin and must never escape that operation.
@@ -193,7 +193,7 @@ class RefTransactionService:
             message=message,
             publication_id=publication_id,
             read_snapshot=read_snapshot,
-            prepare_includes_empty_tree=prepare_includes_empty_tree,
+            ensure_empty_tree=ensure_empty_tree,
         )
 
     def _submit(
@@ -208,7 +208,7 @@ class RefTransactionService:
         message,
         publication_id,
         read_snapshot,
-        prepare_includes_empty_tree,
+        ensure_empty_tree,
     ):
         # Recovering the original result is a read, not a new publication.
         # The guarded control rechecks current facts and the original digest.
@@ -320,10 +320,13 @@ class RefTransactionService:
                     progress=renew,
                 ):
                     prepare()
-                    empty_oid, empty_loose = encode_object(
-                        "tree", b"", object_format=self.object_format
-                    )
-                    if not prepare_includes_empty_tree:
+                    # Product writes can synthesize an empty tree in memory.
+                    # Standard Git supplies every required object itself; its
+                    # closure must pass without a separate synthetic upload.
+                    if ensure_empty_tree:
+                        empty_oid, empty_loose = encode_object(
+                            "tree", b"", object_format=self.object_format
+                        )
                         self.backend.put_durable(empty_oid, empty_loose)
                     manifest = self.verifier.verify(roots, progress=renew)
                     if self.verifier.proofs is not None:

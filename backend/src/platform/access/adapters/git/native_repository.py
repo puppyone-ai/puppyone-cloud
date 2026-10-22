@@ -243,7 +243,7 @@ class NativeGitRepository:
                                 prepare=prepare,
                                 message="git push",
                                 read_snapshot=snapshot,
-                                prepare_includes_empty_tree=False,
+                                ensure_empty_tree=False,
                             )
                         except Exception as exc:
                             actor = admitted_actor(grant, self.project_id, write=False)

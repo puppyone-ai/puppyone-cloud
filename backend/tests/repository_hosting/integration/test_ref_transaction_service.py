@@ -127,6 +127,38 @@ def test_missing_physical_dependency_prevents_receipt_and_ack(publisher):
     assert auth.count("version_ref_transactions") == 0
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_complete_git_preparation_does_not_synthesize_an_empty_tree(publisher, empty):
+    _, auth, backend, service, git, oid, prepare = publisher
+    if empty:
+        oid = git.commit({"file": None}, message="empty tree remains a real dependency")
+    empty_oid, _ = encode_object("tree", b"")
+
+    def submit():
+        return service.submit(
+            grant(service.project_id), request_key=str(uuid.uuid4()), generation=1,
+            edits=[RefEdit(b"refs/heads/main", RefState(), RefState(oid=oid))],
+            roots={oid: "commit"}, prepare=prepare, ensure_empty_tree=False,
+        )
+
+    if empty:
+        original = prepare
+
+        def prepare():
+            original()
+            backend.delete(empty_oid)
+
+        with pytest.raises(RuntimeError, match="cannot verify"):
+            submit()
+        assert auth.state() is None
+        assert auth.count("version_publication_receipts") == 0
+        assert auth.count("version_ref_transactions") == 0
+    else:
+        assert submit()["status"] == "committed"
+        assert auth.state()["oid"] == oid
+    assert not backend.exists(empty_oid)
+
+
 def test_stale_old_oid_is_durable_rejection_not_success(publisher):
     _, auth, _, service, git, oid, prepare = publisher
     request(service, oid, prepare)

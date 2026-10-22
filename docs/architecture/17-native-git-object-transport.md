@@ -125,9 +125,12 @@ ends in `.pack`, not `.pob`. Capacity metadata pages precede physical writes;
 streamed physical checksum verification, location registration and I/O settlement
 precede promoted readback evidence and PG ref publication. Non-atomic multi-ref
 pushes upload the pack once while retaining the outer read pin. Later transactions
-perform their own closure/authority checks. The tiny canonical empty tree remains
-a separate existing write and reservation; not every push is exactly one total
-S3 or database call.
+perform their own closure/authority checks. Native Git preparation does not
+synthesize a separate empty-tree write or reservation: a referenced empty tree
+must be present in the incoming pack or the verified existing graph. Missing
+dependencies fail closure verification. Product callers retain their existing
+empty-tree materialization. Metadata paging and publication still require
+multiple database calls; this is not a one-request publication protocol.
 
 The generic `put_stream_durable`/`put_prepared_stream_durable` byte-window/POB
 implementation remains for Product/internal callers and old data. It is no longer
