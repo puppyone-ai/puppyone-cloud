@@ -8,6 +8,7 @@ from src.config import settings
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.workspace.execution.providers.registry import runtime_provider
+from src.platform.workspace.execution.timing import workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
@@ -98,18 +99,29 @@ class WorkbenchService(WorkbenchAdmission):
         await self.lifecycle.reap()
 
     async def check(self, row):
-        current = await asyncio.to_thread(self.repository.get, row["id"])
+        context, _ = await asyncio.to_thread(
+            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
+        )
+        # Context already contains the interactive default workspace. Automation
+        # workspaces have separate identities and still need their exact row.
+        current = (
+            context["workbench"]
+            if row.get("is_default")
+            else await asyncio.to_thread(self.repository.get, row["id"])
+        )
         if (
             not current
+            or current["id"] != row["id"]
+            or current["user_id"] != row["user_id"]
+            or current["project_id"] != row["project_id"]
             or current["generation"] != row["generation"]
             or current["state"] != "running"
             or current["owner_deleted_at"] is not None
             or current["binding"] != row["binding"]
+            or current.get("compute_epoch") != row.get("compute_epoch")
+            or current.get("resource") != row.get("resource")
         ):
             raise WorkerDisconnected("Workspace ownership changed")
-        await asyncio.to_thread(
-            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
-        )
         await self.billing.check_session(meter_id(row))
 
     async def connection(self, row, *, capabilities=()):
@@ -150,11 +162,13 @@ class WorkbenchService(WorkbenchAdmission):
 
     @asynccontextmanager
     async def files(self, user, project, generation, *, write=False, watch=False):
-        row, context = await self.bound(user, project, generation, write=write)
+        with workspace_stage("files.admission"):
+            row, context = await self.bound(user, project, generation, write=write)
         if not watch:
-            row = await asyncio.to_thread(
-                self.repository.activity, row, context["revision"], write=write
-            )
+            with workspace_stage("files.activity"):
+                row = await asyncio.to_thread(
+                    self.repository.activity, row, context["revision"], write=write
+                )
         await self.billing.check_session(meter_id(row))
         async with self.channels.borrow(row) as host:
             yield host
@@ -179,7 +193,8 @@ class WorkbenchService(WorkbenchAdmission):
                     self.repository.audit, user, project, generation, operation, audit_id, "intent"
                 )
             try:
-                result = await self.filesystem.operation(channel, operation)
+                with workspace_stage("files.operation"):
+                    result = await self.filesystem.operation(channel, operation)
             except FilesystemError as exc:
                 if write:
                     await asyncio.to_thread(
@@ -204,7 +219,8 @@ class WorkbenchService(WorkbenchAdmission):
                     "completed",
                 )
             # A response is never handed to a newly-revoked or replaced reader.
-            await self.bound(user, project, generation, write=write)
+            with workspace_stage("files.response_authorization"):
+                await self.bound(user, project, generation, write=write)
             return result
 
     async def events(self, user, project, generation):

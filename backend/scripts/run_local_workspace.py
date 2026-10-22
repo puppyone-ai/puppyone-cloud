@@ -15,6 +15,11 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.local_fly_agent import LocalFlyAgent
+
 
 def runtime_inputs(backend: Path, env_file: Path) -> tuple:
     """Watch source/config identity, never outputs, caches, logs or secrets."""
@@ -77,7 +82,15 @@ def main():
             "20",
         ],
     ]
-    while not stopping:
+    agent = LocalFlyAgent()
+    try:
+        run_services(backend, env_file, args, commands, parser, lambda: stopping, agent)
+    finally:
+        agent.close()
+
+
+def run_services(backend, env_file, args, commands, parser, is_stopping, agent):
+    while not is_stopping():
         identity = runtime_inputs(backend, env_file)
         configuration = {
             key: value for key, value in dotenv_values(env_file).items() if value is not None
@@ -94,10 +107,11 @@ def main():
             check=True,
             timeout=40,
         )
-        if stopping:
+        if is_stopping():
             break
         if runtime_inputs(backend, env_file) != identity:
             continue  # Source/config changed during preflight; check the new snapshot.
+        agent.configure(environment)
         children = []
         changed = False
         try:
@@ -106,10 +120,14 @@ def main():
                     subprocess.Popen([sys.executable, *command], cwd=backend, env=environment)
                 )
             next_check = time.monotonic() + 1
-            while not stopping and all(child.poll() is None for child in children):
+            while not is_stopping() and all(child.poll() is None for child in children):
                 time.sleep(0.25)
                 if time.monotonic() >= next_check:
                     next_check = time.monotonic() + 1
+                    if not agent.healthy():
+                        print("Local Fly agent exited; restarting its owned service group", flush=True)
+                        changed = True
+                        break
                     if runtime_inputs(backend, env_file) != identity:
                         if args.reload:
                             print(
@@ -123,7 +141,7 @@ def main():
                             flush=True,
                         )
                         identity = runtime_inputs(backend, env_file)
-            if not stopping and not changed:
+            if not is_stopping() and not changed:
                 raise SystemExit("A local service exited; stopping its peer")
         finally:
             stop_children(children)

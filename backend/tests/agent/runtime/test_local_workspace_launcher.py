@@ -84,6 +84,35 @@ def test_failed_preflight_never_starts_api_or_worker(monkeypatch, tmp_path):
     start.assert_not_called()
 
 
+def test_agent_death_restarts_children_without_a_source_change(monkeypatch, tmp_path):
+    _, handlers = environment(monkeypatch, tmp_path)
+    agent = Mock(healthy=Mock(side_effect=[False, True]))
+    monkeypatch.setattr(launcher, "LocalFlyAgent", Mock(return_value=agent))
+    clock, children = [0.0], []
+    monkeypatch.setattr(launcher.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 2:
+            handlers[signal.SIGTERM](None, None)
+
+    def start(*args, **kwargs):
+        child = Mock(poll=Mock(return_value=None))
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(launcher.time, "sleep", sleep)
+    monkeypatch.setattr(launcher.subprocess, "Popen", start)
+    monkeypatch.setattr(launcher.subprocess, "run", Mock())
+    launcher.main()
+    assert len(children) == 4
+    assert agent.configure.call_count == 2
+    agent.close.assert_called_once()
+    for child in children:
+        child.terminate.assert_called_once()
+        child.wait.assert_called_once()
+
+
 def test_source_identity_includes_added_removed_and_environment_files(monkeypatch, tmp_path):
     env, _ = environment(monkeypatch, tmp_path)
     original = launcher.runtime_inputs(tmp_path, env)

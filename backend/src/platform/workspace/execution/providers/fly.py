@@ -19,6 +19,7 @@ from src.config import settings
 from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
 
 from ..runtime_contract import WorkspaceUnavailable
+from ..timing import workspace_stage
 from .fly_transport import acquire_transport, close_transports
 from .port import (
     RuntimeCapabilities,
@@ -310,9 +311,10 @@ class FlyRuntimeProvider:
         ]
         if self._transport is not None:
             await self.close_channel(host)
-        self._transport = await acquire_transport(
-            host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
-        )
+        with workspace_stage("connection.agent_acquire"):
+            self._transport = await acquire_transport(
+                host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
+            )
         env = self._transport.env
         host.process = await asyncio.create_subprocess_exec(
             settings.CLOUD_AGENT_FLY_CLI,

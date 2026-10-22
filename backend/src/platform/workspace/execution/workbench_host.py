@@ -13,6 +13,7 @@ from uuid import UUID
 
 from .control_channel import ControlChannel
 from .runtime_contract import validate_runtime
+from .timing import workspace_event, workspace_stage
 from .worker_port import WorkerDisconnected
 
 
@@ -71,15 +72,16 @@ class WorkbenchChannel(ControlChannel):
         await self.runtime.connect_task(self, self.resource, connection)
         if self.purpose == "files":
             await self.runtime.open_service(self, "files")
-            receipt = await self.control(
-                "hello",
-                {
-                    "protocol": 1,
-                    "workbench": self.workbench_id,
-                    "generation": self.generation,
-                    "compute_epoch": self.compute_epoch,
-                },
-            )
+            with workspace_stage("connection.service_hello"):
+                receipt = await self.control(
+                    "hello",
+                    {
+                        "protocol": 1,
+                        "workbench": self.workbench_id,
+                        "generation": self.generation,
+                        "compute_epoch": self.compute_epoch,
+                    },
+                )
             expected = {
                 "protocol": 1,
                 "workbench": self.workbench_id,
@@ -199,6 +201,10 @@ class WorkbenchChannels:
         if channel:
             await channel.close()
 
+    def is_healthy(self, row):
+        entry = self.entries.get(self.key(row))
+        return bool(entry and not entry.retired and entry.channel and entry.channel.healthy())
+
     async def _sweep(self):
         while True:
             await asyncio.sleep(min(self.idle_seconds, 5))
@@ -213,12 +219,14 @@ class WorkbenchChannels:
         if self.closed:
             raise WorkerDisconnected("Workspace channel pool is closed")
         key = self.key(row)
+        reason = "reuse" if self.is_healthy(row) else "missing"
         retired = []
         # Reserve capacity and borrower count before the first await. Otherwise
         # concurrent requests could exceed the bound while closing evictions.
         if key not in self.entries:
             for old_key, old in list(self.entries.items()):
                 if old.workspace == row["id"]:
+                    reason = "binding_changed"
                     old.retired = True
                     self.entries.pop(old_key)
                     retired.append(old)
@@ -243,15 +251,19 @@ class WorkbenchChannels:
                 if self.closed or entry.retired:
                     raise WorkerDisconnected("Workspace channel binding was retired")
                 if entry.channel and not entry.channel.healthy():
+                    reason = "disconnected"
                     await self._discard(entry)
+                reused = entry.channel is not None
                 if entry.channel is None:
                     entry.channel = self.factory(row, purpose="files")
                     try:
-                        await entry.channel.connect()
+                        with workspace_stage("connection.open", reason=reason):
+                            await entry.channel.connect()
                     except BaseException:
                         await self._discard(entry)
                         raise
                 channel = entry.channel
+                workspace_event("connection.borrow", reused=reused)
             try:
                 yield channel
             except (ConnectionError, OSError):

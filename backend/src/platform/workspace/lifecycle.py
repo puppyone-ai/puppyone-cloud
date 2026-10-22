@@ -17,6 +17,7 @@ from src.platform.authorization.models import ProjectAction
 
 from .errors import access_failure
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
+from .execution.timing import workspace_stage
 from .execution.worker_port import WorkerDisconnected, WorkerLost
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class WorkbenchLifecycle:
     def context(self, *args):
         return self.service.context(*args)
 
-    async def preflight(self, row=None):
+    async def preflight(self, row=None, *, connected=False):
         provider = self.providers(None)
         binding = (
             (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
@@ -76,7 +77,7 @@ class WorkbenchLifecycle:
                 raise ValueError("Workspace capabilities required")
             provider.validate(binding["artifact"], (row or {}).get("resource"))
             async with self.preflight_lock:
-                if time.monotonic() >= self.checked_until:
+                if not connected and time.monotonic() >= self.checked_until:
                     async with asyncio.timeout(20):
                         await provider.preflight(binding["artifact"])
                     self.checked_until = time.monotonic() + 30
@@ -109,15 +110,20 @@ class WorkbenchLifecycle:
         )
         if row["user_id"] != user or row["project_id"] != project:
             raise PermissionError("Workbench ownership mismatch")
-        provider = await self.preflight(row)
+        provider = await self.preflight(
+            row, connected=row["state"] == "running" and self.channels.is_healthy(row)
+        )
         if row["state"] in {"retained", "cleanup_pending"}:
             raise WorkspaceUnavailable("workbench_requires_recovery")
         if row["state"] == "running":
             try:
                 row = await asyncio.to_thread(self.repository.activity, row, context["revision"])
-                await self.check(row)
                 async with asyncio.timeout(35):
-                    await self.ready(row)
+                    with workspace_stage("opening.files_ready"):
+                        await self.ready(row)
+                # Recheck the same identity/epoch and current authorization
+                # after potentially slow network I/O, before reporting ready.
+                await self.check(row)
             except (WorkerDisconnected, TimeoutError) as exc:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
