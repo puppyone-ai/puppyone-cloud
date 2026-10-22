@@ -2,10 +2,10 @@
 
 import base64
 
-from src.version_engine.write_engine.ref_transaction import RefEdit, RefState, validate_ref_name
-
 from src.platform.access.adapters.git.execution import MAX_OBJECTS, MAX_REFS, checkpoint
 from src.platform.access.adapters.git.protocol import pkt_line
+from src.version_engine.storage.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
+from src.version_engine.write_engine.ref_transaction import RefEdit, RefState, validate_ref_name
 
 
 def version(protocol):
@@ -151,6 +151,8 @@ def receive_commands(handle, object_format):
     zero = "0" * (40 if object_format == "sha1" else 64)
     while True:
         value = packet(handle)
+        if handle.tell() > MAX_RECEIVE_COMMAND_BYTES:
+            raise ValueError("Git receive commands exceed the protocol metadata budget")
         if value == 0:
             break
         if not isinstance(value, bytes):

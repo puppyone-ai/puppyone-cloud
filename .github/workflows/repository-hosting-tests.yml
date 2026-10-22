@@ -4,8 +4,13 @@ on:
   pull_request:
     paths:
       - 'backend/src/version_engine/**'
+      - 'backend/src/config.py'
+      - 'backend/src/platform/access/adapters/git/**'
       - 'backend/tests/repository_hosting/**'
       - 'backend/tests/conflicts/**'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'backend/nixpacks.toml'
       - 'scripts/testing/**'
       - 'supabase/**'
       - '.github/workflows/repository-hosting-tests.yml'
@@ -24,6 +29,71 @@ permissions:
   contents: read
 
 jobs:
+  push-retry:
+    # This contract must run on PRs, where workflow_dispatch's live input is
+    # absent. Isolated PG and disk objects prove retry/ref atomicity, not S3.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Install PostgreSQL 17 and locked dependencies
+        timeout-minutes: 10
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          python -m pip install 'uv==0.5.11'
+          cd backend && uv sync --locked
+      - name: Verify interrupted pushes and standard pack storage
+        run: |
+          backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
+            --native-pg --target --output backend/.push-retry-results \
+            -k 'interrupted_push_retry or native_initialization_abandon or native_size_limits or standard_git_pack' -q
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: git-push-retry-results
+          path: backend/.push-retry-results/
+          retention-days: 14
+
+  standard-pack-s3:
+    # Git, S3 and PG are owned by this runner; no hosted credentials or
+    # self-hosted runner are needed. Linux also exercises helper rlimits.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
+        with:
+          version: '2.107.0'
+      - name: Install locked runner dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          python -m pip install 'uv==0.5.11'
+          cd backend && uv sync --locked
+      - name: Verify standard packs on owned S3 and PostgreSQL
+        run: |
+          backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
+            --live --s3 --docker --target --output backend/.standard-pack-s3-results \
+            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes' -q
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: standard-pack-s3-results
+          path: backend/.standard-pack-s3-results/
+          retention-days: 14
+
   hosting:
     runs-on: ubuntu-latest
     timeout-minutes: 25

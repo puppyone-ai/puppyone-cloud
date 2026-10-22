@@ -6,6 +6,12 @@ from typing import Any, Literal
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.version_engine.domain.git_pack_limits import (
+    DEFAULT_PACK_SCRATCH_BYTES,
+    DEFAULT_STORED_PACK_BYTES,
+    MAX_RECEIVE_PACK_BYTES,
+)
+
 
 class Settings(BaseSettings):
     """Application configuration"""
@@ -350,6 +356,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_git_transport_caps(self):
+        from src.version_engine.domain.git_pack_limits import PackLimits
+
+        PackLimits(
+            receive_bytes=self.GIT_MAX_RECEIVE_PACK_BYTES,
+            stored_bytes=self.GIT_MAX_STORED_PACK_BYTES,
+            scratch_bytes=self.GIT_PACK_SCRATCH_BYTES,
+        )
         if self.APP_ENV not in {"development", "test"} and (
             self.GIT_MAX_RECEIVE_PACK_BYTES <= 0 or self.GIT_MAX_UPLOAD_PACK_BYTES <= 0
         ):
@@ -624,9 +637,22 @@ class Settings(BaseSettings):
     # Git transport hardening (ISSUE-014). Bound the compressed request body of a
     # push and the wall-clock time of any git subprocess so a hostile client
     # cannot exhaust disk/CPU/memory via an oversized or decompression-bomb pack.
-    # 0 disables the respective limit.
-    GIT_MAX_RECEIVE_PACK_BYTES: int = 1024 * 1024 * 1024  # 1 GiB compressed push cap
+    # Receive policy is independent of completed/cold-read pack resource limits.
+    # Zero never disables a receive/storage budget. Lowering receive policy must
+    # not make existing packs unreadable. Scratch excludes the HTTP request spool
+    # and other workers/cache entries; provision deployment disk separately.
+    # A push never accepts more than 2 GiB on the wire. Completed thin packs
+    # need independent headroom; these are disk budgets, not RAM allocations.
+    GIT_MAX_RECEIVE_PACK_BYTES: int = Field(
+        default=MAX_RECEIVE_PACK_BYTES, gt=0, le=MAX_RECEIVE_PACK_BYTES
+    )
+    GIT_MAX_STORED_PACK_BYTES: int = Field(default=DEFAULT_STORED_PACK_BYTES, gt=0)
+    GIT_PACK_SCRATCH_BYTES: int = Field(default=DEFAULT_PACK_SCRATCH_BYTES, gt=0)
     GIT_MAX_UPLOAD_PACK_BYTES: int = 16 * 1024 * 1024  # 16 MiB fetch-negotiation cap
+    # Total logical traversal/verification work, not a RAM or expanded-spool
+    # allocation. Shared by native reads, publication and derived projection.
+    # Preserve the environment name; zero never disables the finite work cap.
+    GIT_MAX_EXPANDED_BYTES: int = Field(default=8 * 1024**3, gt=0, le=8 * 1024**3)
     GIT_SUBPROCESS_TIMEOUT_SECONDS: int = 300  # per git invocation
 
     VERSION_OBJECT_GC_ENABLED: bool = False

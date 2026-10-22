@@ -1,5 +1,10 @@
 # 可扩展 Git 接收与存储架构
 
+> Native push storage is superseded by the user-approved 2026-10-22
+> `adopt-standard-git-pack-storage` first slice: standard packs and bounded stock
+> Git replace incoming raw spooling/POB conversion. The remaining POB discussion
+> below records the earlier implementation and generic Product write path.
+
 ## Third slice approved 2026-10-22
 
 The user approved (1) reusing physical upload verification, (2) consolidating

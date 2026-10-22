@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI, Request
 
 from src.platform.access.adapters.git.native_repository import NativeGitRepository
-from src.platform.access.adapters.git.object_pack import IncomingPack, bounded_delta
+from src.platform.access.adapters.git.object_pack import IncomingPack
 from src.platform.access.adapters.git.object_reader import PublishedObjectReader
 from src.platform.access.adapters.git.protocol import pkt_line, read_pkt_lines
 from src.version_engine.read.repository_snapshot import repository_snapshot
@@ -83,6 +83,9 @@ def storage(git):
         backend.put_durable(oid, data) for oid, data in objects
     ]
     backend.put_prepared_stream_durable = lambda objects, facts: backend.put_stream_durable(objects)
+    backend.put_git_pack_durable = lambda pack: objects.update(
+        (oid, pack.get(oid)) for oid in pack.objects
+    )
     return (
         SimpleNamespace(
             control=control,
@@ -192,11 +195,6 @@ def test_incoming_stock_delta_pack_preserves_bytes_without_copying_old_repo(
     expected = source.objects()
     new_head = source.text("rev-parse", "HEAD")
 
-    def forbidden(*args, **kwargs):
-        pytest.fail("incoming pack created a bare repo or executed Git")
-
-    monkeypatch.setattr("tempfile.TemporaryDirectory", forbidden)
-    monkeypatch.setattr("subprocess.Popen", forbidden)
     with (
         repository_snapshot(
             service.control, service.backend, grant("p"), project_id="p"
@@ -214,6 +212,8 @@ def test_incoming_stock_delta_pack_preserves_bytes_without_copying_old_repo(
 @pytest.mark.parametrize("format", ["sha1", "sha256"])
 def test_forward_ref_delta_chain_resolves_against_a_published_thin_base(tmp_path, format):
     from dulwich.pack import create_delta
+
+    from src.version_engine.storage.git_pack_limits import PackLimits
 
     source = Git.init(tmp_path / "source", format=format)
     base = b"a thin base already published\n" * 100
@@ -241,10 +241,18 @@ def test_forward_ref_delta_chain_resolves_against_a_published_thin_base(tmp_path
         ) as snapshot,
         IncomingPack(PublishedObjectReader(snapshot, service.control)) as incoming,
     ):
-        incoming.read(io.BytesIO(pack))
+        incoming.read(io.BytesIO(pack), max_input_bytes=len(pack))
+        assert incoming.path.stat().st_size > len(pack)
         assert incoming.get(final_oid) == ("blob", final)
         assert incoming.get(middle_oid) == ("blob", middle)
-        assert base_oid not in incoming.objects
+        assert incoming.get(base_oid) == ("blob", base)
+        assert base_oid in incoming.objects  # Durable pack is self-contained.
+        # Completed-pack resource rejection is independent of the wire quota.
+        with IncomingPack(
+            PublishedObjectReader(snapshot, service.control),
+            limits=PackLimits(receive_bytes=len(pack), stored_bytes=len(pack)),
+        ) as limited, pytest.raises(ValueError, match="storage processing budget"):
+            limited.read(io.BytesIO(pack))
     assert not pins
 
 
@@ -257,16 +265,13 @@ def test_pack_checksum_and_expansion_are_checked_before_publication(tmp_path, mo
         service.control, service.backend, grant("p"), project_id="p"
     ) as snapshot:
         reader = PublishedObjectReader(snapshot, service.control)
-        with IncomingPack(reader) as incoming, pytest.raises(ValueError, match="checksum"):
+        with IncomingPack(reader) as incoming, pytest.raises(ValueError, match="invalid pack"):
             incoming.read(io.BytesIO(pack[:-1] + bytes([pack[-1] ^ 1])))
         header = struct.pack("!4sII", b"PACK", 2, 1)
         malicious = header + b"\x31" + zlib.compress(b"x" * 100000)
         malicious += hashlib.sha1(malicious).digest()
-        with IncomingPack(reader) as incoming, pytest.raises(ValueError, match="expansion"):
+        with IncomingPack(reader) as incoming, pytest.raises(ValueError, match="invalid pack"):
             incoming.read(io.BytesIO(malicious))
-    # Declares one output byte, then repeatedly copies the full base.
-    with pytest.raises(ValueError, match="expansion"):
-        bounded_delta(b"x" * 65536, b"\x80\x80\x04\x01\x80\x80")
 
 
 @pytest.mark.parametrize(
@@ -283,7 +288,10 @@ def test_incoming_tree_cannot_smuggle_git_metadata_paths(tmp_path, name):
         IncomingPack(PublishedObjectReader(snapshot, service.control)) as incoming,
         pytest.raises(ValueError, match="protected Git path"),
     ):
-        incoming.add("tree", b"100644 " + name + b"\0" + b"\xaa" * 20)
+        from src.version_engine.storage.git_pack import GitPack
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(GitPack, "get", lambda *_: ("tree", b"100644 " + name + b"\0" + b"\xaa" * 20))
+            incoming.get("a" * 40)
 
 
 def test_uniterated_response_releases_pin_and_unpublished_oid_is_not_read(tmp_path):
@@ -448,3 +456,60 @@ def test_stock_http_shallow_partial_and_incremental_roundtrips(
             "clone", "--shallow-since=2027-01-01", remote, tmp_path / "future", check=False
         ).returncode
     assert not pins
+
+
+def test_non_atomic_multiple_refs_persist_the_incoming_pack_once(tmp_path):
+    source = Git.init(tmp_path / "multi")
+    old = source.commit({"file": b"old"})
+    service, _, pins, _ = storage(source)
+    first = source.commit({"file": b"first"})
+    second = source.commit({"file": b"second"})
+    payload = source.run("pack-objects", "--stdout", "--all").stdout
+    writes = []
+    persist = service.backend.put_git_pack_durable
+
+    def put(pack):
+        writes.append(pack.digest)
+        persist(pack)
+
+    service.backend.put_git_pack_durable = put
+
+    def submit(_grant, *, prepare, **kwargs):
+        prepare()
+        return {"status": "committed"}
+
+    service.submit = submit
+    path = tmp_path / "multi.request"
+    path.write_bytes(
+        pkt_line(f"{old} {second} refs/heads/main\0report-status\n".encode())
+        + pkt_line(f"{'0' * 40} {first} refs/heads/feature\n".encode())
+        + b"0000" + payload
+    )
+    response = NativeGitRepository(service).receive(grant("p"), path)
+    assert b"ok refs/heads/main" in response.body
+    assert b"ok refs/heads/feature" in response.body
+    assert len(writes) == 1 and not pins
+
+
+@pytest.mark.parametrize("format", ["sha1", "sha256"])
+def test_thin_pack_cannot_import_an_unpublished_external_base(tmp_path, format):
+    source = Git.init(tmp_path / "private", format=format)
+    old = source.commit({"file": b"private baseline\n" * 10000})
+    service, reads, pins, _ = storage(source)
+    wire = service.control.read_snapshot()
+    wire["refs"] = wire["refs"][:1]  # Only unborn HEAD; no published root.
+
+    def begin(_project, _actor, pin):
+        pins.add(pin)
+        return deepcopy(wire) | {"pin_id": pin}
+
+    service.control.begin_read = begin
+    source.commit({"file": b"private baseline\n" * 9999 + b"changed\n"})
+    payload = source.run("pack-objects", "--stdout", "--revs", "--thin", input=("HEAD\n^" + old + "\n").encode()).stdout
+    with (
+        repository_snapshot(service.control, service.backend, grant("p"), project_id="p") as snapshot,
+        IncomingPack(PublishedObjectReader(snapshot, service.control)) as incoming,
+        pytest.raises(ValueError, match="invalid pack"),
+    ):
+        incoming.read(io.BytesIO(payload))
+    assert reads == [] and not pins

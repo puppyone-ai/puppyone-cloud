@@ -20,8 +20,6 @@ from src.platform.access.adapters.git.object_pack import IncomingPack
 from src.platform.access.adapters.git.object_reader import PublishedObjectReader
 from src.platform.access.adapters.git.protocol import flush_pkt, pkt_line
 from src.version_engine.read.repository_snapshot import repository_snapshot
-from src.version_engine.storage.mutation_context import publication_context
-from src.version_engine.write_engine.git_object_format import encode_object
 from src.version_engine.write_engine.git_object_graph import object_edges
 from src.version_engine.write_engine.ref_transaction import (
     RefState,
@@ -105,7 +103,8 @@ class NativeGitRepository:
         with request_path.open("rb") as handle:
             return receive_commands(handle, self.format)
 
-    def receive(self, grant, request_path: Path, *, publication=None, initial_attempt=None):
+    def receive(self, grant, request_path: Path, *, publication=None, initial_attempt=None,
+                max_pack_bytes=None):
         admitted_actor(grant, self.project_id, write=True)
         outcomes = {}
         with request_path.open("rb") as handle:
@@ -132,12 +131,12 @@ class NativeGitRepository:
                     raise PermissionError("Run repository generation changed")
                 with IncomingPack(reader) as incoming:
                     try:
-                        incoming.read(handle)
+                        incoming.read(handle, max_input_bytes=max_pack_bytes)
                     except (ValueError, KeyError, PermissionError) as exc:
                         return self.report(
                             edits, capabilities, {}, unpack="invalid pack: " + str(exc)
                         )
-                    accepted, closures, roots = [], {}, {}
+                    accepted, roots = [], {}
                     for edit in edits:
                         try:
                             if edit.name == b"HEAD":
@@ -196,7 +195,6 @@ class NativeGitRepository:
                                     raise PermissionError(
                                         "Run candidate does not descend from its base"
                                     )
-                            closures[edit.name] = closure
                             accepted.append(edit)
                         except (ValueError, KeyError, PermissionError) as exc:
                             outcomes[edit.name] = str(exc)
@@ -206,7 +204,7 @@ class NativeGitRepository:
                     batches = (
                         [accepted] if "atomic" in capabilities else [[edit] for edit in accepted]
                     )
-                    uploaded = set()
+                    pack_persisted = False
                     for batch in batches:
                         if not batch:
                             continue
@@ -215,41 +213,18 @@ class NativeGitRepository:
                             for edit in batch
                             if edit.new.oid is not None
                         }
-                        pending = set().union(*(closures[edit.name] for edit in batch)) - uploaded
 
-                        def prepare(pending=pending):
-                            # The canonical empty tree shares the incoming batch;
-                            # it must not create a second physical lease/reservation.
-                            empty_oid, empty_loose = encode_object(
-                                "tree", b"", object_format=self.format
-                            )
-
-                            def objects():
-                                yield empty_oid, empty_loose
-                                for oid in pending:
-                                    checkpoint()
-                                    snapshot.check_live()
-                                    context = publication_context.get()
-                                    if context is not None and context.progress is not None:
-                                        context.progress()
-                                    if oid == empty_oid:
-                                        continue
-                                    kind, body = incoming.get(oid)
-                                    actual, loose = encode_object(kind, body, object_format=self.format)
-                                    if actual != oid:
-                                        raise ValueError("incoming object hash mismatch")
-                                    yield oid, loose
-
-                            # Storage owns byte windows, concurrency and layout.
-                            # Returning here proves all started I/O has joined.
-                            facts = {
-                                oid: (incoming.objects[oid][0], incoming.objects[oid][2])
-                                for oid in pending
-                            }
-                            facts[empty_oid] = ("tree", 0)
-                            self.service.backend.put_prepared_stream_durable(objects(), facts)
-                            uploaded.update(pending)
-                            uploaded.add(empty_oid)
+                        def prepare():
+                            nonlocal pack_persisted
+                            # Persist the completed standard pack, including any
+                            # thin bases Git appended. Never re-encode incoming
+                            # objects into the old loose/bundle representation.
+                            if incoming.path is not None and not pack_persisted:
+                                self.service.backend.put_git_pack_durable(incoming)
+                                # The enclosing read pin protects the pack across
+                                # non-atomic ref transactions. Later publications
+                                # still make their own closure/capacity checks.
+                                pack_persisted = True
 
                         request_key = (
                             publication.request_key
@@ -268,7 +243,7 @@ class NativeGitRepository:
                                 prepare=prepare,
                                 message="git push",
                                 read_snapshot=snapshot,
-                                prepare_includes_empty_tree=True,
+                                prepare_includes_empty_tree=False,
                             )
                         except Exception as exc:
                             actor = admitted_actor(grant, self.project_id, write=False)

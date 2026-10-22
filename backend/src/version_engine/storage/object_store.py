@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import fcntl
+import json
 import os
+import shutil
 import tempfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -61,6 +64,10 @@ class StorageBackend(abc.ABC):
         """Known incoming object facts permit operation-wide admission on S3."""
         self.put_stream_durable(objects)
 
+    def put_git_pack_durable(self, pack) -> None:
+        """A native pack must never silently fall back to loose re-encoding."""
+        raise NotImplementedError("backend does not support standard Git pack persistence")
+
     @abc.abstractmethod
     def get(self, h: str) -> bytes:
         """Return Git loose-object bytes for object id ``h``."""
@@ -86,7 +93,7 @@ class StorageBackend(abc.ABC):
 
 
 class FileSystemBackend(StorageBackend):
-    """Git loose-object filesystem layout: ``objects/aa/bb...``."""
+    """Local loose objects and immutable standard Git packs."""
 
     def __init__(self, objects_dir: Path):
         self.dir = objects_dir
@@ -94,11 +101,96 @@ class FileSystemBackend(StorageBackend):
     def _path_for(self, h: str) -> Path:
         return self.dir / h[:2] / h[2:]
 
+    def pinned_reader(self, snapshot):
+        return self.durable_readback()
+
     def get(self, h: str) -> bytes:
         path = self._path_for(h)
         if not path.exists():
-            raise ObjectNotFoundError(f"object not found: {h}")
+            return self._get_packed(h)
         return path.read_bytes()
+
+    def _pack_locations(self):
+        path = self.dir / "pack" / "locations.json"
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    @contextmanager
+    def _pack_lock(self):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / "locations.lock").open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _save_pack_locations(self, locations):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=directory)
+        try:
+            with os.fdopen(fd, "w") as output:
+                json.dump(locations, output)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, directory / "locations.json")
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(name)
+
+    def put_git_pack_durable(self, pack) -> None:
+        if pack.path is None:
+            return
+        with self._pack_lock():
+            self._put_git_pack(pack)
+
+    def _put_git_pack(self, pack):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (pack.digest + ".pack")
+        fd, name = tempfile.mkstemp(dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as output, pack.path.open("rb") as source:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, path)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(name)
+        locations = self._pack_locations()
+        locations.update({oid: pack.digest for oid in pack.objects})
+        self._save_pack_locations(locations)
+
+    def _get_packed(self, oid, *, cache_token=None):
+        from src.version_engine.storage.git_pack import GitPack
+        from src.version_engine.storage.git_pack_cache import pack_cache
+
+        digest = self._pack_locations().get(oid)
+        if digest is None:
+            raise ObjectNotFoundError(f"object not found: {oid}")
+        path = self.dir / "pack" / (digest + ".pack")
+        # The filesystem adapter is a local test/development backend; include
+        # file identity to avoid turning a stale cache into durability evidence.
+        stat = path.stat()
+        key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, cache_token)
+        fmt = "sha256" if len(oid) == 64 else "sha1"
+
+        def load():
+            pack = GitPack(fmt)
+            try:
+                with path.open("rb") as source:
+                    pack.read_stored(source)
+                if pack.digest != digest:
+                    raise ValueError("stored Git pack checksum mismatch")
+                return pack
+            except BaseException:
+                pack.close()
+                raise
+
+        with pack_cache.acquire(key, load) as pack:
+            return encode_object(*pack.get(oid), object_format=fmt)[1]
 
     def put(self, h: str, loose_bytes: bytes) -> None:
         path = self._path_for(h)
@@ -115,10 +207,20 @@ class FileSystemBackend(StorageBackend):
                 os.unlink(tmp_name)
 
     def get_durable(self, h: str) -> bytes:
-        return self.get(h)
+        path = self._path_for(h)
+        if path.exists():
+            return path.read_bytes()
+        return self._get_packed(h, cache_token=getattr(self, "_readback_token", object()))
+
+    def durable_readback(self):
+        if not self._pack_locations():
+            return self
+        reader = FileSystemBackend(self.dir)
+        reader._readback_token = object()
+        return reader
 
     def exists(self, h: str) -> bool:
-        return self._path_for(h).exists()
+        return self._path_for(h).exists() or h in self._pack_locations()
 
     def all_hashes(self) -> list[str]:
         result: list[str] = []
@@ -128,28 +230,37 @@ class FileSystemBackend(StorageBackend):
             if shard.is_dir() and len(shard.name) == 2:
                 for obj in sorted(shard.iterdir()):
                     result.append(shard.name + obj.name)
-        return result
+        return sorted(set(result) | self._pack_locations().keys())
 
     def count(self) -> tuple[int, int]:
-        n, size = 0, 0
+        size = 0
         if not self.dir.exists():
             return 0, 0
         for shard in self.dir.iterdir():
-            if shard.is_dir():
+            if shard.is_dir() and len(shard.name) == 2:
                 for obj in shard.iterdir():
-                    n += 1
                     size += obj.stat().st_size
-        return n, size
+        size += sum(path.stat().st_size for path in (self.dir / "pack").glob("*.pack"))
+        return len(self.all_hashes()), size
 
     def delete(self, h: str) -> bool:
+        with self._pack_lock():
+            return self._delete(h)
+
+    def _delete(self, h: str) -> bool:
         path = self._path_for(h)
-        if not path.exists():
-            return False
-        path.unlink()
+        locations = self._pack_locations()
+        digest = locations.pop(h, None)
+        found = digest is not None or path.exists()
+        if digest is not None:
+            self._save_pack_locations(locations)
+            if digest not in locations.values():
+                (self.dir / "pack" / (digest + ".pack")).unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
         parent = path.parent
         if parent.exists() and not any(parent.iterdir()):
             parent.rmdir()
-        return True
+        return found
 
 
 class ObjectStore:

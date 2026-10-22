@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.config import settings
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.infrastructure.supabase.audit_backend import SupabaseAuditManager
@@ -129,7 +130,7 @@ class VersionRepoManager:
             project_id=project_id,
             object_format=metadata["object_format"],
             max_objects=100_000,
-            max_bytes=256 * 1024**2,
+            max_bytes=settings.GIT_MAX_EXPANDED_BYTES,
             capacity=RepositoryCapacity(control),
             billing=RepositoryBilling(control),
             policy=RepositoryFilePolicy(control),
