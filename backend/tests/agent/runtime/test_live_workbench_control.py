@@ -204,12 +204,12 @@ async def test_product_owner_single_flight_native_files_and_revocation(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from fastapi import HTTPException
+    from src.platform.workspace.errors import WorkspaceError
 
     from src.exceptions import NotFoundException
-    from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
-    from src.platform.scope_sandbox.workbench_repository import WorkbenchRepository
-    from src.platform.scope_sandbox.workbench_service import WorkbenchService
+    from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
+    from src.platform.workspace.repository import WorkbenchRepository
+    from src.platform.workspace.service import WorkbenchService
 
     args, _ = submitted
     selected, allocations, initializations, channels = ["docker"], [], [], []
@@ -365,7 +365,7 @@ async def test_product_owner_single_flight_native_files_and_revocation(
     assert [entry["status"] for entry in audits] == ["intent", "completed"]
     assert audits[0]["metadata"]["operation_id"] == audits[1]["metadata"]["operation_id"]
     assert "content_base64" not in str(audits)
-    with pytest.raises(HTTPException) as stale:
+    with pytest.raises(WorkspaceError) as stale:
         await service.file_operation(
             args["user"], args["project"], str(uuid4()), {"action": "read", "path": "live.md"}
         )

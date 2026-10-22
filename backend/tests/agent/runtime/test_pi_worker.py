@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from tests.agent.runtime.workspace_assertions import recovery_file
 
 pytestmark = pytest.mark.integration

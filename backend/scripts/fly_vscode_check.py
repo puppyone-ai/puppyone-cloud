@@ -28,8 +28,8 @@ def _load_env() -> None:
 
 _load_env()
 
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider  # noqa: E402
-from src.platform.scope_sandbox.provider import SandboxSpec  # noqa: E402
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider  # noqa: E402
+from src.platform.workspace.scopes.provider import SandboxSpec  # noqa: E402
 
 FLYCTL = r"C:\Users\29757\.fly\bin\flyctl.exe"
 

@@ -1,48 +1,7 @@
-"""Working-directory preservation and Git operations required by this runtime.
+"""Agent filesystem capability; its contract is owned by Workspace."""
 
-Native live operations are independent of publication/recovery. A separate
-authorized workspace channel serves the editor and change notifications.
-"""
+from src.platform.workspace.filesystem.port import (
+    FileServiceChannel, FilesystemChannel, FilesystemError, FilesystemPort, Row,
+)
 
-from asyncio import Queue
-from contextlib import AbstractAsyncContextManager
-from typing import Any, Protocol
-
-Row = dict[str, Any]
-
-
-class FilesystemError(Exception):
-    def __init__(self, code: str):
-        self.code = code
-        super().__init__(code)
-
-
-class FilesystemChannel(Protocol):
-    restore_point: Row | None
-
-    async def prepare(self, config: Row) -> Row | None: ...
-    async def control(self, action: str, value: Row | None = None) -> Row: ...
-    async def snapshot(self) -> Row: ...
-
-
-class FileServiceChannel(Protocol):
-    """Live file requests and subscriptions, independent of Pi task lifecycle."""
-
-    service_receipt: Row
-
-    async def control(self, action: str, value: Row | None = None) -> Row: ...
-    def subscribe(self) -> AbstractAsyncContextManager[Queue[Row]]: ...
-
-
-class FilesystemPort(Protocol):
-    def bind_recovery(self, channel: FilesystemChannel, recovery: Row | None) -> None: ...
-    async def prepare(
-        self, channel: FilesystemChannel, workspace: Row, *, resume: bool
-    ) -> Row | None: ...
-    async def inspect(self, channel: FilesystemChannel, workspace: Row) -> Row: ...
-    async def snapshot(self, channel: FilesystemChannel) -> Row: ...
-    async def finalize(self, channel: FilesystemChannel, message: str) -> Row: ...
-    async def push(self, channel: FilesystemChannel, candidate: str) -> Row: ...
-    async def operation(self, channel: FileServiceChannel, operation: Row) -> Row: ...
-    async def watch(self, channel: FileServiceChannel) -> None: ...
-    def subscribe(self, channel: FileServiceChannel) -> AbstractAsyncContextManager[Queue[Row]]: ...
+__all__ = ["FileServiceChannel", "FilesystemChannel", "FilesystemError", "FilesystemPort", "Row"]

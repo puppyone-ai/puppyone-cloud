@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.platform.scope_sandbox.execution.runtime_contract import (
+from src.platform.workspace.execution.runtime_contract import (
     WorkspaceUnavailable,
     validate_runtime,
 )
-from src.platform.scope_sandbox.workbench_lifecycle import WorkbenchLifecycle
+from src.platform.workspace.lifecycle import WorkbenchLifecycle
 
 
 def lifecycle(state="paused"):
@@ -124,7 +124,7 @@ def test_incompatible_or_malformed_runtime_is_explicit(value):
 
 
 def test_status_reports_elapsed_deadline_even_without_a_live_worker():
-    from src.platform.scope_sandbox.workbench_service import public_workbench
+    from src.platform.access.adapters.api.workbench_router import public_workbench
 
     _, row, _ = lifecycle("allocating")
     row.update(

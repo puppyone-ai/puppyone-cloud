@@ -16,8 +16,8 @@ from src.infra.file_processing.ocr.external_cleanup import (
 from src.infra.s3.service import S3Service, get_s3_service_instance
 from src.infra.supabase.client import SupabaseClient
 from src.infra.turbopuffer.service import TurbopufferSearchService
-from src.platform.scope_sandbox.factory import provider_from_settings
-from src.platform.scope_sandbox.provider import SandboxState
+from src.platform.workspace.scopes.factory import provider_from_settings
+from src.platform.workspace.scopes.provider import SandboxState
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
 )

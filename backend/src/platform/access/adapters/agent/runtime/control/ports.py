@@ -2,17 +2,9 @@
 
 from typing import Any, Protocol
 
+from src.platform.workspace.filesystem.port import GitTransport as GitTransport
+
 Row = dict[str, Any]
-
-
-class GitTransport(Protocol):
-    """Run-bound smart HTTP and metadata; no file/object storage capability."""
-
-    def describe(self, project: str, grant: Any, *, target_ref: str | None = None) -> Row: ...
-    def result(self, project: str, grant: Any, request_key: str) -> Row | None: ...
-    async def exchange(
-        self, project: str, grant: Any, frame: Row, *, base: Row, publication: Any = None
-    ) -> Row: ...
 
 
 class RenewalPort(Protocol):

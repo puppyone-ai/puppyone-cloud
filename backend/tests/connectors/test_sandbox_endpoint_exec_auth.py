@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.platform.access.adapters.sandbox_endpoint.dependencies import get_sandbox_endpoint_service
 from src.platform.access.adapters.sandbox_endpoint.router import router
-from src.platform.scope_sandbox.execution.dependencies import get_sandbox_service
+from src.platform.workspace.execution.dependencies import get_sandbox_service
 
 
 class _SandboxService:

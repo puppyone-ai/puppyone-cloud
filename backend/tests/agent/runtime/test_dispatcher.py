@@ -66,7 +66,7 @@ async def test_dispatcher_runs_other_session_while_one_waits_approval(
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-        from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+        from src.platform.workspace.execution.pi_worker import PiWorker
 
         for execution in case.repo.executions(second["id"]):
             if execution["resource"]:

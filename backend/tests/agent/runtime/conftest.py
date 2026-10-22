@@ -178,7 +178,7 @@ def services(control_api, object_endpoint, monkeypatch):
 @pytest.fixture(autouse=True)
 async def owned_worker_resources(monkeypatch):
     """Only discard recovery volumes allocated by this isolated test's workers."""
-    from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+    from src.platform.workspace.execution.pi_worker import PiWorker
 
     allocated = []
     create = PiWorker.create

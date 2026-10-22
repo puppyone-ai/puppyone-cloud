@@ -11,8 +11,8 @@ from e2b.api.client.api.sandboxes import get_sandboxes_sandbox_id
 from e2b.api.client.models import SandboxDetail, SandboxLifecycle, SandboxOnTimeout, SandboxState
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.providers.e2b import E2BRuntimeProvider
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.execution.providers.e2b import E2BRuntimeProvider
+from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 pytestmark = pytest.mark.asyncio
 

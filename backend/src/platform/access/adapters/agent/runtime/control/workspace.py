@@ -3,8 +3,8 @@
 import asyncio
 import logging
 
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
-from src.platform.scope_sandbox.execution.worker_port import WorkerLost
+from src.platform.workspace.filesystem.port import FilesystemPort
+from src.platform.workspace.execution.worker_port import WorkerLost
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from src.platform.access.adapters.agent.runtime.control.runner import RunSupervi
 from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
 from src.platform.access.adapters.agent.runtime.control.workspace import workspace_state
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository

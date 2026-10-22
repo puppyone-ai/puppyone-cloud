@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import httpx
 
-from src.platform.scope_sandbox.e2b_provider import E2BClient, E2BProvider
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider
-from src.platform.scope_sandbox.manager import AcquiredVia, ScopeSandboxManager
-from src.platform.scope_sandbox.policy import SessionPolicyConfig
-from src.platform.scope_sandbox.provider import SandboxSpec, SandboxState
-from src.platform.scope_sandbox.registry import InMemorySandboxSessionStore
+from src.platform.workspace.scopes.e2b_provider import E2BClient, E2BProvider
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider
+from src.platform.workspace.scopes.manager import AcquiredVia, ScopeSandboxManager
+from src.platform.workspace.scopes.policy import SessionPolicyConfig
+from src.platform.workspace.scopes.provider import SandboxSpec, SandboxState
+from src.platform.workspace.scopes.registry import InMemorySandboxSessionStore
 
 
 class FakeE2BClient(E2BClient):
@@ -116,7 +116,7 @@ async def test_e2b_connection_login_user_matches_e2b_account():
     # The E2B template's account is "user"; authorized_keys + the scope
     # workspace live under /home/user, so the SSH login name must be "user"
     # (a "puppy" default would break VSCode Remote-SSH on E2B).
-    from src.platform.scope_sandbox.ssh_e2b import DEFAULT_USER
+    from src.platform.workspace.scopes.ssh_e2b import DEFAULT_USER
     info = await E2BProvider(FakeE2BClient()).create(_spec())
     assert info.connection.username == "user" == DEFAULT_USER
 

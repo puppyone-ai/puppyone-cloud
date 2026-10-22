@@ -12,7 +12,7 @@ from src.platform.project.deletion_cleanup import (
     ProjectExternalResourceCleaner,
     _validated_project_prefixes,
 )
-from src.platform.scope_sandbox.provider import SandboxInfo, SandboxState
+from src.platform.workspace.scopes.provider import SandboxInfo, SandboxState
 
 PROJECT_ID = "project-1"
 REQUESTED_BY = "00000000-0000-4000-8000-000000000001"

@@ -189,7 +189,7 @@ backend/src/platform/access/
   adapters/git/                Git HTTP authentication, routing and wire/pack transport
   adapters/mcp_endpoint/
     resolver.py / runtime.py   MCP bearer admission and internal tool dispatch
-  adapters/agent/runtime/control/git_transport.py
+  adapters/git/workspace_transport.py
                                run-bound bridge to the shared Git transport
   repository_schemas.py        shared Web, Git metadata and CLI wire models
   adapters/cli/

@@ -31,7 +31,7 @@ def main():
     if not configuration:
         parser.error("An explicit, non-empty local environment file is required")
     subprocess.run(
-        [sys.executable, "-m", "src.platform.scope_sandbox.execution.preflight"],
+        [sys.executable, "-m", "src.platform.workspace.execution.preflight"],
         cwd=backend,
         env=environment,
         check=True,

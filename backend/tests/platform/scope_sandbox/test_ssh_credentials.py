@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 
-from src.platform.scope_sandbox import ssh_credentials as sc
+from src.platform.workspace.scopes import ssh_credentials as sc
 
 ED = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc123 alice@laptop"
 

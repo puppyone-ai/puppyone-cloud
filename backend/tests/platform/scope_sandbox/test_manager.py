@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from src.platform.scope_sandbox.manager import AcquiredVia, ScopeSandboxManager
-from src.platform.scope_sandbox.policy import SessionPolicyConfig
-from src.platform.scope_sandbox.provider import (
+from src.platform.workspace.scopes.manager import AcquiredVia, ScopeSandboxManager
+from src.platform.workspace.scopes.policy import SessionPolicyConfig
+from src.platform.workspace.scopes.provider import (
     ConnectionInfo,
     ProviderCapabilities,
     SandboxInfo,
@@ -12,7 +12,7 @@ from src.platform.scope_sandbox.provider import (
     SandboxSpec,
     SandboxState,
 )
-from src.platform.scope_sandbox.registry import InMemorySandboxSessionStore, SandboxSession
+from src.platform.workspace.scopes.registry import InMemorySandboxSessionStore, SandboxSession
 
 
 class FakeProvider(SandboxProvider):

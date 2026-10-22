@@ -19,7 +19,7 @@ import pytest
 
 class TestCommandPolicy:
     def _mod(self):
-        from src.platform.scope_sandbox import execution_policy as command_policy
+        from src.platform.workspace.execution import policy as command_policy
         return command_policy
 
     @pytest.mark.parametrize("cmd", [

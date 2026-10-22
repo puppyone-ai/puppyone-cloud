@@ -23,11 +23,11 @@ from src.platform.access.adapters.agent.runtime.control.tool_results import (
     tool_error,
 )
 from src.platform.access.adapters.agent.runtime.execution.port import BoundToolPort, ExecutionPort
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
+from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopProtocolError
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
-from src.platform.scope_sandbox.execution.worker_port import WorkerLifecycle, WorkerLost
+from src.platform.workspace.execution.worker_port import WorkerLifecycle, WorkerLost
 
 logger = logging.getLogger(__name__)
 

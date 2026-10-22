@@ -28,9 +28,9 @@ def _load_env() -> None:
 
 _load_env()
 
-from src.platform.scope_sandbox import ssh_credentials  # noqa: E402
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider  # noqa: E402
-from src.platform.scope_sandbox.provider import SandboxSpec  # noqa: E402
+from src.platform.workspace.scopes import ssh_credentials  # noqa: E402
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider  # noqa: E402
+from src.platform.workspace.scopes.provider import SandboxSpec  # noqa: E402
 
 KEY_DIR = Path(r"C:\Users\29757\PuppyNew\.fly_ssh_test")
 REGION = "sin"

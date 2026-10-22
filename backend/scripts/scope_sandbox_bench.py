@@ -26,9 +26,9 @@ def _load_env() -> None:
 
 _load_env()
 
-from src.platform.scope_sandbox.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider  # noqa: E402
-from src.platform.scope_sandbox.provider import SandboxSpec, SandboxState  # noqa: E402
+from src.platform.workspace.scopes.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider  # noqa: E402
+from src.platform.workspace.scopes.provider import SandboxSpec, SandboxState  # noqa: E402
 
 mono = time.monotonic
 

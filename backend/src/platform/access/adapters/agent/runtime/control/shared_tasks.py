@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any, Protocol
 
-from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
-from src.platform.scope_sandbox.execution.worker_port import WorkerLost
+from src.platform.workspace.execution.workbench_task import WorkbenchTask
+from src.platform.workspace.execution.worker_port import WorkerLost
 
 
 class WorkbenchHost(Protocol):

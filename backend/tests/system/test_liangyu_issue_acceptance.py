@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from mcp_service.core.session_registry import SessionRegistry
-from src.platform.scope_sandbox.execution.e2b_sandbox import E2BSandbox
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.e2b_sandbox import E2BSandbox
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from src.version_engine.derived.object_gc_worker import process_object_gc_projects
 from src.version_engine.storage.object_store import ObjectStore
 

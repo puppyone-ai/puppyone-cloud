@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.version_engine.read.ref_metadata import GitBranchBase
 from tests.repository_hosting.unit.test_workbench_ref_publication import metadata
 

@@ -29,11 +29,11 @@ def _load_env_key() -> None:
 
 _load_env_key()
 
-from src.platform.scope_sandbox.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
-from src.platform.scope_sandbox.manager import ScopeSandboxManager  # noqa: E402
-from src.platform.scope_sandbox.policy import SessionPolicyConfig  # noqa: E402
-from src.platform.scope_sandbox.provider import SandboxSpec  # noqa: E402
-from src.platform.scope_sandbox.registry import InMemorySandboxSessionStore  # noqa: E402
+from src.platform.workspace.scopes.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
+from src.platform.workspace.scopes.manager import ScopeSandboxManager  # noqa: E402
+from src.platform.workspace.scopes.policy import SessionPolicyConfig  # noqa: E402
+from src.platform.workspace.scopes.provider import SandboxSpec  # noqa: E402
+from src.platform.workspace.scopes.registry import InMemorySandboxSessionStore  # noqa: E402
 
 # E2B published rates (e2b.dev/pricing, 2026-06) for a rough cost estimate.
 VCPU_PER_HR = 0.0504

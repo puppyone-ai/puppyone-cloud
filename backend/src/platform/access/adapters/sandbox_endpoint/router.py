@@ -22,8 +22,8 @@ from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
-from src.platform.scope_sandbox.execution.dependencies import get_sandbox_service
-from src.platform.scope_sandbox.execution.service import SandboxService
+from src.platform.workspace.execution.dependencies import get_sandbox_service
+from src.platform.workspace.execution.service import SandboxService
 
 router = APIRouter(
     prefix="/sandbox-endpoints",
@@ -90,7 +90,7 @@ def _is_write_command(command: str) -> bool:
 def _validate_command(command: str, mounts: list[dict[str, Any]]) -> None:
     # Forbidden-pattern policy lives in the shared choke point so the endpoint
     # and the agent bash tool stay in lockstep (ISSUE-009).
-    from src.platform.scope_sandbox.execution_policy import (
+    from src.platform.workspace.execution.policy import (
         SandboxCommandRejected,
         assert_command_allowed,
     )

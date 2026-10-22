@@ -6,10 +6,10 @@ Uses an in-memory fake of the Supabase table API (no DB), so the store's logic +
 
 from __future__ import annotations
 
-from src.platform.scope_sandbox.manager import AcquiredVia, ScopeSandboxManager
-from src.platform.scope_sandbox.provider import ConnectionInfo, SandboxState
-from src.platform.scope_sandbox.registry import SandboxSession
-from src.platform.scope_sandbox.supabase_store import (
+from src.platform.workspace.scopes.manager import AcquiredVia, ScopeSandboxManager
+from src.platform.workspace.scopes.provider import ConnectionInfo, SandboxState
+from src.platform.workspace.scopes.registry import SandboxSession
+from src.platform.workspace.scopes.supabase_store import (
     SupabaseSandboxSessionStore,
     row_to_session,
     session_to_row,
