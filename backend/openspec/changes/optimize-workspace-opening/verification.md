@@ -2,10 +2,12 @@
 
 Date: 2026-10-23. Scope: local source and owned fixtures; no schema change or hosted deployment.
 
-- Required backend gate: `pytest -q -m 'not e2e and not integration and not network'`: **3,555 passed, 955 skipped, 409 deselected**.
+- Required backend gate after rebasing onto the concurrently integrated SSH changes (`8bcf5452`): `pytest -q -m 'not e2e and not integration and not network'`: **3,573 passed, 955 skipped, 420 deselected** on `d5be48d6`. Earlier task-source gate: 3,555 passed.
 - Owned native PostgreSQL/PostgREST and console timing acceptance: **7 passed**. This uses disposable local processes; no hosted database mutation or Docker requirement.
 - Supervisor recovery, credential/owner isolation, revocation/replacement and logging cases: **30 passed**.
 - Changed-file Ruff, diff whitespace and strict OpenSpec validation passed.
+- After integration with existing local backend edits: **42 relevant cases passed**. The local API/worker supervisor was restarted from the integrated source; `/health` returned 200 and one private supervisor-owned Fly agent was present. No hosted deployment or migration was performed by this change.
+- Canonical connection ownership and client handoff documentation updated in `puppy-issues`; documentation validation passed. Task worktrees and branches were removed after local integration; existing Desktop and backend changes were preserved.
 - Desktop `cfb221a4`: scoped single-use handoff, running status fast path and real hook request-budget case. **650 passed, 1 unrelated existing failure** in the broad Cloud suite; the same share-preview failure reproduces on unmodified baseline `06c099aa`. After local WIP integration, **95 relevant cases passed**, production TypeScript and Cloud/workbench boundaries passed. Task-source test TypeScript, lint and full architecture boundaries passed.
 
 ## Request budget and security
