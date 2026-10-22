@@ -156,7 +156,7 @@ def test_repository_failure_fails_closed_as_retryable_unavailability():
     with pytest.raises(ServiceUnavailableException) as resolved:
         service.resolve_project_grant("project-1", "user-1")
     assert resolved.value.status_code == 503
-    assert resolved.value.details == {"retryable": True}
+    assert resolved.value.details == {"retryable": True, "code": "project_authorization_unavailable"}
     assert resolved.value.headers == {"Retry-After": "1"}
 
     with pytest.raises(ServiceUnavailableException) as authorized:

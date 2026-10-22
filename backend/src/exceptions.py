@@ -95,13 +95,14 @@ class ServiceUnavailableException(AppException):
         message: str = "Service temporarily unavailable",
         *,
         retry_after_seconds: int = 1,
+        reason_code: str | None = None,
     ):
         self.headers = {"Retry-After": str(max(1, retry_after_seconds))}
         super().__init__(
             code=ErrorCode.INTERNAL_SERVER_ERROR,
             message=message,
             status_code=503,
-            details={"retryable": True},
+            details={"retryable": True, **({"code": reason_code} if reason_code else {})},
         )
 
 
