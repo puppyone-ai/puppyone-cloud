@@ -21,6 +21,13 @@ Verified: 2026-10-23.
   Command: `.venv/bin/python -m pytest -q -m 'not e2e and not integration and not network'`.
   Local loopback HTTP/Redis fixture permissions were required.
 - Final runtime/Scope/provider/access suite: **400 passed, 260 deselected**.
+- After merging into local `qubits`, the combined checkout including the user's
+  existing changes passed: **3506 passed, 956 skipped, 409 deselected** (153.11 s).
+  Command: `NOTIFICATIONS_REDIS_URL='' .venv/bin/python -m pytest -q -m 'not e2e and not integration and not network' --disable-warnings --maxfail=6`.
+  An initial run had one default-configuration assertion fail because the local
+  `.env` enables Redis notifications. The rerun overrides that value only for
+  the test process; development configuration was not changed.
+  All 17 pre-existing modified files retain their original SHA-256 hashes.
 - Additional boundary/security subset: **51 passed**.
 - New behavior checks cover identical file-conflict HTTP output, SSH delegation
   through the workspace API, cross-Project local completion rejection and native
