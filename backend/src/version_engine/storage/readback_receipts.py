@@ -51,9 +51,12 @@ class PreparedReadback:
         self.max_bytes = max_bytes
 
     def verify(self, oid, loose):
+        kind, body = decode_object(loose)
+        return self.verify_raw(oid, kind, body)
+
+    def verify_raw(self, oid, kind, body):
         from src.version_engine.storage.publication import VerifiedObject
 
-        kind, body = decode_object(loose)
         fmt = "sha256" if len(oid) == 64 else "sha1"
         if hash_object(kind, body, object_format=fmt) != oid:
             raise ValueError("incoming object hash mismatch")

@@ -2,6 +2,7 @@ name: Frontend Readability
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'frontend/**'
       - 'packages/**'
@@ -14,6 +15,8 @@ on:
       - 'packages/**'
       - 'artifacts/tests/issue-105/**'
       - '.github/workflows/frontend-readability.yml'
+
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -5,7 +5,10 @@ from collections import OrderedDict
 from src.version_engine.write_engine.git_object_format import decode_object, hash_object
 from src.version_engine.write_engine.git_object_graph import object_edges
 
-from src.platform.access.adapters.git.execution import MAX_GRAPH_BYTES, MAX_OBJECT_BYTES, MAX_OBJECTS
+from src.platform.access.adapters.git.execution import (
+    MAX_NATIVE_GRAPH_BYTES as MAX_GRAPH_BYTES,
+    MAX_OBJECT_BYTES, MAX_OBJECTS,
+)
 
 
 class PublishedObjectReader:

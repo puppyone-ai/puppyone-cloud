@@ -2,8 +2,11 @@ name: Backend Release Checks
 
 on:
   pull_request:
+    branches: [main]
   push:
-    branches: [qubits, main]
+    branches: [main]
+
+  workflow_dispatch:
 
 permissions:
   contents: read

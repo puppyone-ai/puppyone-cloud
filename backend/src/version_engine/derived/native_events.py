@@ -11,6 +11,7 @@ import asyncio
 import json
 import uuid
 
+from src.config import settings
 from src.infra.search.text_indexer import _chunk_text, _decode_for_index
 from src.utils.logger import log_warning
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
@@ -34,7 +35,7 @@ def rebuild_projection(manager, project, token):
         actor=actor,
         pin=pin,
         wire=wire,
-        max_bytes=256 * 1024**2,
+        max_bytes=settings.GIT_MAX_EXPANDED_BYTES,
     )
     try:
         reader = NativeTreeReader(snapshot)

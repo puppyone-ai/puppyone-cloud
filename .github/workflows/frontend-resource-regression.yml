@@ -2,9 +2,10 @@ name: Frontend Resource Regression
 
 on:
   pull_request:
+    branches: [main]
     paths: ['frontend/**', '.github/workflows/frontend-resource-regression.yml']
   push:
-    branches: [qubits, main]
+    branches: [main]
     paths: ['frontend/**', '.github/workflows/frontend-resource-regression.yml']
   workflow_dispatch:
 

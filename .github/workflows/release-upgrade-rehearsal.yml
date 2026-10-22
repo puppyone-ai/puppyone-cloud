@@ -2,9 +2,9 @@ name: Release Upgrade Rehearsal
 
 on:
   pull_request:
-    branches: [qubits, main]
+    branches: [main]
   push:
-    branches: [qubits, main]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

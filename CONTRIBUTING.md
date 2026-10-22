@@ -93,21 +93,22 @@ rules (PR + required reviews + required status checks).
 
 | Check                | Trigger                                  | Release policy / role               |
 |----------------------|------------------------------------------|-------------------------------------|
-| **Frontend Build**   | All PRs; selected `main` pushes          | `main`, `qubits`                    |
-| **Run Gitleaks**     | All PRs, push to `main`, weekly schedule | `main`, `qubits`                    |
-| **Main Release Gate** | PRs targeting `main`                    | `main` (release/hotfix source + owner gate) |
-| **Database validation result** | All PRs; heavy jobs only for database paths | `main`, `qubits` |
-| **Deploy Database to Qubits** | Every push to `qubits` | exact-SHA prerequisite for application deployment |
-| **E2E Visual Tests** | Manual (`workflow_dispatch`)            | (manual release/debug check)        |
-| **Supabase Preview** | All PRs                                  | (advisory, not blocking)            |
-| **Branch housekeeping** | Weekly schedule                       | n/a (cleanup job)                   |
+| **Frontend Build / Backend tests / application contracts** | PRs to `main`, `main` pushes, manual dispatch | Local/manual for Qubits; production CI retained |
+| **Run Gitleaks** | All PRs, protected pushes, weekly schedule | Required on `main`, `qubits` |
+| **Main Release Gate** | PRs targeting `main` | Production source + owner gate |
+| **Database validation result** | All PRs and protected pushes | Required on `main`, `qubits`; Qubits uses database policy/regression checks, full rehearsals run on main/manual |
+| **Release upgrade rehearsal / Installation validation result** | PRs to `main`, `main` pushes, manual dispatch | Local/manual for Qubits; production CI retained |
+| **Deploy Database to Qubits** | Every push to `qubits` | Exact-SHA Supabase migration and verification after database checks and Gitleaks |
+| **E2E Visual Tests** | Manual (`workflow_dispatch`) | Release/debug acceptance |
+| **Supabase Preview** | All PRs | Advisory, not blocking |
 
-The table states release policy, not proof of installed GitHub settings.
-On 2026-10-08, Qubits required only Frontend Build and Gitleaks; the database
-check existed but was not required by branch protection. See the
-[enforcement snapshot](docs/architecture/13-database-release-governance.md#required-checks-and-actual-enforcement).
-Reviewers must resolve applicable database/upgrade failures before merging;
-a mergeable PR alone does not demonstrate that a release is ready.
+Qubits requires `Database validation result` and `Run Gitleaks`; full application
+and installation tests run locally before submission, with commands and results
+recorded in the PR. Production retains full automatic CI. See
+[the release contract](docs/architecture/13-database-release-governance.md#qubits-testing-and-database-delivery)
+for local commands and the distinction between database-ready and application
+acceptance. Workflow YAML and GitHub branch protection must be updated together;
+a green database-only check does not assert that application tests ran.
 
 Branch housekeeping may delete merged remote branches idle >14 days. Protected
 branches (`main`, `qubits`, `newmu`) are never deleted.
@@ -157,7 +158,7 @@ before changing a shared database.
   older migrations require an explicit catch-up plan and matching upgrade
   fixture; `--include-all` alone is not proof of safe ordering.
 - Keep unready cleanup in `contract.pending.sql`. Before merge, prove the full
-  populated upgrade in Docker. After merge, the coordinator establishes the
+  populated upgrade locally for Qubits, or in CI for production. After merge, the coordinator establishes the
   real cutover prerequisites before Contract execution and app deployment;
   production does not need to have applied the candidate before merge.
 - Never edit a shared/applied migration. Add a forward artifact.

@@ -2,7 +2,7 @@
 
 Matches v2-audit's implementation: `_spool_git_request_body` enforces a
 compressed-body cap (Content-Length precheck + streaming guard) and rejects
-with HTTP 400; `run_git` bounds subprocess wall-clock time. Hermetic: a fake
+with HTTP 413; `run_git` bounds subprocess wall-clock time. Hermetic: a fake
 Request (no ASGI server, no Supabase); run_git shells out to local `git` only.
 """
 
@@ -44,7 +44,7 @@ def test_spool_rejects_streamed_body_over_cap_and_cleans_up(tmp_path, monkeypatc
 
     with pytest.raises(HTTPException) as ei:
         asyncio.run(router._spool_git_request_body(req, max_body_bytes=1000))
-    assert ei.value.status_code == 400
+    assert ei.value.status_code == 413
     # No partial spool file left behind.
     assert list(tmp_path.glob("puppyone-git-rpc-*")) == []
 
@@ -54,7 +54,7 @@ def test_spool_rejects_declared_content_length_over_cap(tmp_path):
     req = _FakeStreamRequest([b"x"], headers={"content-length": "99999"})
     with pytest.raises(HTTPException) as ei:
         asyncio.run(router._spool_git_request_body(req, max_body_bytes=1000))
-    assert ei.value.status_code == 400
+    assert ei.value.status_code == 413
 
 
 def test_spool_accepts_body_within_cap(tmp_path):
