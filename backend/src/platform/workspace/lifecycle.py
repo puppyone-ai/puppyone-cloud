@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from src.config import settings
 from src.exceptions import NotFoundException
+from src.infra.dependency_diagnostics import dependency_failure
 from src.platform.authorization.models import ProjectAction
 
 from .errors import access_failure
@@ -84,6 +85,12 @@ class WorkbenchLifecycle:
         except WorkspaceUnavailable:
             raise
         except Exception as exc:
+            logger.warning(
+                "workbench_provider_connection_failed",
+                extra={
+                    "dependency_failure": dependency_failure(exc, "workspace_provider"),
+                },
+            )
             raise WorkspaceUnavailable("workbench_connection_unavailable", retryable=True) from exc
         finally:
             await provider.aclose()

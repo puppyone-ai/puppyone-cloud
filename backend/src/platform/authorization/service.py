@@ -12,6 +12,7 @@ from src.exceptions import (
     PermissionException,
     ServiceUnavailableException,
 )
+from src.infra.dependency_diagnostics import dependency_failure
 from src.platform.authorization.models import (
     ROLE_CAPABILITIES,
     GrantSource,
@@ -140,6 +141,7 @@ class AuthorizationService:
                 extra={
                     "project_ref": redacted_project_ref(project_id),
                     "error_type": type(exc).__name__,
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
                 },
             )
             raise ServiceUnavailableException(
@@ -231,7 +233,11 @@ class AuthorizationService:
             # while distinguishing dependency outage from an empty result.
             _logger.warning(
                 "project_authorization_batch_facts_unavailable",
-                extra={"error_type": type(exc).__name__, "candidate_count": len(projects)},
+                extra={
+                    "error_type": type(exc).__name__,
+                    "candidate_count": len(projects),
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
+                },
             )
             raise ServiceUnavailableException(
                 "Project authorization is temporarily unavailable"
@@ -277,6 +283,7 @@ class AuthorizationService:
                 extra={
                     "error_type": type(exc).__name__,
                     "candidate_count": len(normalized),
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
                 },
             )
             raise ServiceUnavailableException(
