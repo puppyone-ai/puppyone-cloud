@@ -74,10 +74,11 @@ class WorkspaceConnections:
     async def open(self, identity, user, project, workbench, generation):
         identity = str(UUID(identity))
         row, revision = await self.authorize(user, project, workbench, generation)
+        handle = await self.workspace.connection(row, capabilities={"workspace_shell"})
         connection = await asyncio.to_thread(self.repository.reserve, identity, row, revision)
         shell = self.shell_factory(connection)
         try:
-            await shell.connect(await self.workspace.connection(row))
+            await shell.connect(handle)
             yield connection, shell
         finally:
             # Unconfirmed stop remains durable and blocks pause. The reaper can

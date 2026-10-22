@@ -112,7 +112,7 @@ class WorkbenchService(WorkbenchAdmission):
         )
         await self.billing.check_session(meter_id(row))
 
-    async def connection(self, row):
+    async def connection(self, row, *, capabilities=()):
         # Used by already-admitted tasks, including revoked-task cleanup. The
         # task ledger holds occupancy until stop ACK, so idle pause cannot race.
         current = await asyncio.to_thread(self.repository.get, row["id"])
@@ -122,6 +122,14 @@ class WorkbenchService(WorkbenchAdmission):
             or current["state"] != "running"
         ):
             raise WorkerDisconnected("Workbench is not running")
+        if capabilities:
+            # Optional execution protocols must be checked before reserving a
+            # process identity. Old artifacts cannot acknowledge their cleanup.
+            async with asyncio.timeout(35), self.channels.borrow(current) as host:
+                available = host.service_receipt["runtime"]["capabilities"]
+                if not set(capabilities).issubset(available):
+                    raise WorkspaceError(409, {"code": "workspace_capability_missing"})
+                return host.connection
         host = self.channel_factory(row)
         try:
             return await host.runtime.running_connection(host)

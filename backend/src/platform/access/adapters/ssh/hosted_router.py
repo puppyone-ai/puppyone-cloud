@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
+from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 
-from .hosted import HostedSshAccess, build_hosted_ssh
+from .hosted import HostedSshAccess
 
 router = APIRouter(
     prefix="/api/v1/projects/{project_id}/workbench/ssh-grants", tags=["workspace-ssh"]
@@ -22,12 +23,16 @@ class SshGrantRequest(BaseModel):
     expires_in: int = Field(default=900, ge=60, le=3600)
 
 
+def get_hosted_ssh_service(workspace=Depends(get_workbench_service)):
+    return HostedSshAccess(workspace)
+
+
 @router.post("", response_model=ApiResponse)
 async def issue(
     project_id: str,
     payload: SshGrantRequest,
     user: CurrentUser = Depends(get_current_user),
-    service: HostedSshAccess = Depends(build_hosted_ssh),
+    service: HostedSshAccess = Depends(get_hosted_ssh_service),
 ):
     result = await service.issue(
         user.user_id, project_id, str(payload.generation), payload.public_key, payload.expires_in
@@ -40,7 +45,7 @@ async def revoke(
     project_id: str,
     grant_id: UUID,
     user: CurrentUser = Depends(get_current_user),
-    service: HostedSshAccess = Depends(build_hosted_ssh),
+    service: HostedSshAccess = Depends(get_hosted_ssh_service),
 ):
     await service.revoke(user.user_id, project_id, str(grant_id))
     return ApiResponse.success(data={"revoked": True})

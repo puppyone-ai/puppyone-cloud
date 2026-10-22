@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -14,6 +15,7 @@ from src.platform.access.adapters.ssh.hosted import HostedSshAccess, public_key
 from src.platform.workspace.connections import WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.shell import WorkspaceShell
+from src.platform.workspace.service import WorkbenchService
 
 
 def setup():
@@ -169,3 +171,24 @@ async def test_reaper_does_not_stop_a_connection_renewed_after_scan():
     await service.cleanup(connection, expired=True)
     factory.assert_not_called()
     repository.update.assert_called_once_with(connection, "expire")
+
+
+async def test_unsupported_artifact_cannot_reserve_connection_occupancy():
+    row = dict(id="w", generation="g", state="running")
+    workspace = WorkbenchService(None, None, None, repository=Mock(get=Mock(return_value=row)))
+
+    @asynccontextmanager
+    async def channel(_row):
+        yield SimpleNamespace(service_receipt={"runtime": {"capabilities": ["native_files"]}})
+
+    workspace.channels.borrow = channel
+    repository = Mock()
+    factory = Mock()
+    connections = WorkspaceConnections(workspace, repository, shell_factory=factory)
+    connections.authorize = AsyncMock(return_value=(row, {}))
+    with pytest.raises(WorkspaceError) as failure:
+        async with connections.open(str(uuid4()), "user", "project", "w", "g"):
+            pytest.fail("Unsupported runtime must not open a session")
+    assert failure.value.code == "workspace_capability_missing"
+    repository.reserve.assert_not_called()
+    factory.assert_not_called()

@@ -9,11 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.platform.access.composition import build_workbench_service
+from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
 from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
-from src.version_engine.bootstrap.dependencies import get_version_engine_container
 
 
 def public_workbench(row):
@@ -37,14 +36,6 @@ def public_workbench(row):
 
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])
-
-
-async def get_workbench_service(request: Request, engine=Depends(get_version_engine_container)):
-    service = getattr(request.app.state, "workbench_service", None)
-    if service is None:
-        service = build_workbench_service(engine=engine)
-        request.app.state.workbench_service = service
-    return service
 
 
 class FileOperation(BaseModel):

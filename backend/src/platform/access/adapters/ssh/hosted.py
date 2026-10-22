@@ -96,6 +96,7 @@ class HostedSshAccess:
         )
         row, _ = await self.workspace.bound(user, project, generation, write=True)
         await self.connections.authorize(user, project, row["id"], generation)
+        await self.workspace.connection(row, capabilities={"workspace_shell"})
         if not 60 <= ttl <= 3600:
             raise WorkspaceError(422, {"code": "ssh_grant_invalid_expiry"})
         identity = str(uuid4())

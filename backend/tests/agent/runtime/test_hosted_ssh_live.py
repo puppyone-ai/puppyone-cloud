@@ -22,9 +22,8 @@ from src.platform.access.adapters.ssh.gateway import start_gateway
 from src.platform.access.adapters.ssh.hosted import (
     HostedSshAccess,
     SshGrantRepository,
-    build_hosted_ssh,
 )
-from src.platform.access.adapters.ssh.hosted_router import router
+from src.platform.access.adapters.ssh.hosted_router import get_hosted_ssh_service, router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.workspace.connections import ConnectionRepository, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
@@ -135,7 +134,7 @@ async def live(postgres, submitted, control_api, tmp_path, monkeypatch):
         app.include_router(files_router)
         app.add_exception_handler(WorkspaceError, workspace_error_handler)
         app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id=args["user"])
-        app.dependency_overrides[build_hosted_ssh] = lambda: service
+        app.dependency_overrides[get_hosted_ssh_service] = lambda: service
         app.dependency_overrides[get_workbench_service] = lambda: workspace
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://fixture"
