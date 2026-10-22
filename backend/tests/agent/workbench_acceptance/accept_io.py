@@ -19,6 +19,7 @@ import pytest
 
 from src.config import settings
 from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
+from src.platform.scope_sandbox.workbench_service import build_workbench_service
 from tests.agent.workbench_acceptance.accept_e2b import cleanup_owned as cleanup_e2b
 from tests.agent.workbench_acceptance.accept_fly import cleanup_owned
 from tests.agent.workbench_acceptance.accept_production_entry import (
@@ -30,7 +31,7 @@ from tests.agent.workbench_acceptance.accept_production_entry import (
 )
 from tests.agent.workbench_acceptance.accept_production_entry import postgres as postgres
 from tests.agent.workbench_acceptance.accept_production_entry import services as services
-from tests.agent.workbench_acceptance.provider_scenario import http_server
+from tests.agent.workbench_acceptance.provider_scenario import http_server, open_ready
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -63,15 +64,16 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
         workload="50 iterations of write/read/list; 4096-byte compressible ASCII text (counter plus dot padding); authenticated HTTP; local API+owned PG/S3",
         metering="disabled; not billing acceptance",
     )
+    owner = build_workbench_service(engine=entry.engine)
+    lifecycle = asyncio.create_task(owner.lifecycle.serve())
     samples = {key: [] for key in ("write", "read", "list")}
     try:
         async with http_server(entry.app, entry.http.headers) as http:
             root = f"/api/v1/projects/{entry.project}/workbench"
             start = time.perf_counter()
-            opened = await http.post(root)
-            assert opened.status_code == 200, opened.text
+            opened = await open_ready(http, root)
             receipt["open_ms"] = round((time.perf_counter() - start) * 1000, 2)
-            workspace = opened.json()
+            workspace = opened
             params = {"generation": workspace["generation"]}
             start = time.perf_counter()
             first = await http.get(root + "/file", params={**params, "path": "seed.txt"})
@@ -170,14 +172,13 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             receipt["artifact"] = row["binding"]["artifact"]
             claimed = service.repository.lifecycle_claim(row, suspend=True)
             assert claimed["acquired"]
-            await service._pause(claimed["workbench"])
+            await service.lifecycle.pause(claimed["workbench"])
             paused = service.repository.get(workspace["id"])
             receipt["preservation"] = paused["resource"]["preservation"]
             assert (await http.get(root + "/files", params=params)).status_code == 409
             start = time.perf_counter()
-            resumed = await http.post(root)
-            assert resumed.status_code == 200, resumed.text
-            assert resumed.json()["generation"] == workspace["generation"]
+            resumed = await open_ready(http, root)
+            assert resumed["generation"] == workspace["generation"]
             receipt["resume_ms"] = round((time.perf_counter() - start) * 1000, 2)
             read_start = time.perf_counter()
             persisted = await http.get(root + "/file", params={**params, "path": "io.txt"})
@@ -203,6 +204,9 @@ async def test_real_provider_file_io(entry, monkeypatch, provider_name):
             ), receipt["warm"]
             receipt["result"] = "runtime_passed_cleanup_pending"
     finally:
+        lifecycle.cancel()
+        await asyncio.gather(lifecycle, return_exceptions=True)
+        await owner.close()
         cleanup_succeeded = False
         try:
             if provider_name == "fly":

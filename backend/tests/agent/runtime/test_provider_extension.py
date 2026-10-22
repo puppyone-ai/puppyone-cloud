@@ -57,6 +57,16 @@ async def test_new_supplier_only_needs_provider_registration(monkeypatch):
                         "id": frame["id"],
                         "result": {
                             **frame["value"],
+                            "runtime": {
+                                "runtime_protocol": 1,
+                                "file_protocol": 1,
+                                "build_id": "a" * 64,
+                                "capabilities": [
+                                    "workspace_lifecycle",
+                                    "native_files",
+                                    "file_watch",
+                                ],
+                            },
                             "boot_id": str(uuid4()),
                             "service_id": str(uuid4()),
                         },
@@ -128,10 +138,9 @@ def test_preservation_receipt_distinguishes_files_from_processes():
 @pytest.mark.asyncio
 async def test_incompatible_supplier_is_rejected_before_allocation():
     from types import SimpleNamespace
-    from unittest.mock import Mock
+    from unittest.mock import AsyncMock, Mock
 
-    from fastapi import HTTPException
-
+    from src.platform.scope_sandbox.execution.runtime_contract import WorkspaceUnavailable
     from src.platform.scope_sandbox.workbench_service import WorkbenchService
 
     row = dict(
@@ -148,6 +157,7 @@ async def test_incompatible_supplier_is_rejected_before_allocation():
         artifact=lambda image: "pinned",
         capabilities=RuntimeCapabilities(recovery_backend=None, native_files=False),
         validate=Mock(),
+        aclose=AsyncMock(),
     )
     repository = Mock(get=Mock(return_value=row))
     service = WorkbenchService(
@@ -160,9 +170,9 @@ async def test_incompatible_supplier_is_rejected_before_allocation():
     )
     service.context = Mock(return_value=({}, object()))
     try:
-        with pytest.raises(HTTPException) as rejected:
+        with pytest.raises(WorkspaceUnavailable) as rejected:
             await service.ensure_running({"user_id": "user", "project_id": "project"}, row)
-        assert rejected.value.status_code == 503
+        assert rejected.value.code == "workbench_provider_not_configured"
         repository.acquire.assert_not_called()
         provider.validate.assert_not_called()
     finally:

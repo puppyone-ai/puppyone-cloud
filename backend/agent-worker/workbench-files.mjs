@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { channel } from './protocol.mjs';
+import { runtimeManifest } from './runtime-contract.mjs';
 import { ROOT } from './git.mjs';
 import { UUID, STATE, initializeControlState, requireWorkspace } from './workbench-state.mjs';
 const SOCKET = '/run/puppyone-workbench/files.sock';
@@ -166,7 +167,7 @@ function attach(input, output, disconnect, initialBinding) {
         let result;
         if (frame.action === 'hello') {
           client.binding = await admit(frame.value, client);
-          result = {protocol: 1, ...client.binding, boot_id: bootId, service_id: serviceId, write_encodings: ['deflate']};
+          result = {runtime: runtimeManifest, protocol: 1, ...client.binding, boot_id: bootId, service_id: serviceId, write_encodings: ['deflate']};
         } else {
           if (!client.binding) throw new Error('File service handshake required');
           await requireWorkspace(client.binding);

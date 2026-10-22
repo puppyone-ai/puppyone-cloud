@@ -5,6 +5,7 @@ import logging
 from uuid import uuid4
 
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
+from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
@@ -22,7 +23,6 @@ from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
 from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
                 logger.exception("cloud_agent_workspace_reaper_failed")
             await asyncio.sleep(30)
 
+    lifecycle = asyncio.create_task(workbench_owner.lifecycle.serve()) if workbench_owner else None
     reaper = asyncio.create_task(retire_idle())
     try:
         while True:
@@ -123,7 +124,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
                 logger.exception("cloud_agent_dispatch_failed")
                 await asyncio.sleep(2)
     finally:
-        pending = [*active, reaper]
+        pending = [*active, reaper, *([lifecycle] if lifecycle else [])]
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
@@ -132,7 +133,9 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
 
 
 if __name__ == "__main__":
+    from src.platform.scope_sandbox.execution.preflight import main as preflight
     from src.utils.logging_setup import setup_logging
 
     setup_logging()
+    preflight()
     asyncio.run(serve())

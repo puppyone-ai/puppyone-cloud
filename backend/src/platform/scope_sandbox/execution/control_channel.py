@@ -77,12 +77,29 @@ class ControlChannel:
             with suppress(asyncio.CancelledError, Exception):
                 await self.reader
 
+    @property
+    def buffer(self):
+        return "".join(self._chunks)
+
+    @buffer.setter
+    def buffer(self, value):
+        # Reconnection discards only the incomplete frame. Accumulating chunks
+        # avoids copying a large Git pack for every small transport read.
+        self._chunks = [value] if value else []
+        self._buffer_bytes = len(value.encode())
+
     async def _output(self, chunk):
-        self.buffer += chunk
-        if len(self.buffer.encode()) > MAX_FRAME:
-            raise RuntimeError("Pi control frame too large")
-        while "\n" in self.buffer:
-            line, self.buffer = self.buffer.split("\n", 1)
+        parts = chunk.split("\n")
+        for index, part in enumerate(parts):
+            self._buffer_bytes += len(part.encode())
+            if self._buffer_bytes > MAX_FRAME:
+                raise RuntimeError("Pi control frame too large")
+            if part:
+                self._chunks.append(part)
+            if index == len(parts) - 1:
+                break
+            line = "".join(self._chunks)
+            self.buffer = ""
             if line:
                 frame = json.loads(line)
                 sequence = frame.get("sequence", 0)
@@ -122,8 +139,14 @@ class ControlChannel:
             import logging
 
             logging.getLogger(__name__).exception("agent_git_exchange_failed")
-            with suppress(Exception):
-                await self.send({"type": "reply", "id": frame["id"], "error": type(exc).__name__})
+            if isinstance(exc, WorkerDisconnected):
+                await self._disconnected()
+                await self.runtime.disconnect(self)
+            else:
+                with suppress(Exception):
+                    await self.send(
+                        {"type": "reply", "id": frame["id"], "error": type(exc).__name__}
+                    )
 
     async def _disconnected(self):
         if self.reconnecting:
@@ -159,9 +182,11 @@ class ControlChannel:
         data = json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
         if len(data.encode()) > MAX_FRAME:
             raise ValueError("Pi input frame too large")
+        megabytes = len(data.encode()) / (1024 * 1024)
+        timeout = min(120, SEND_TIMEOUT + megabytes) if megabytes > 1 else SEND_TIMEOUT
         try:
-            async with asyncio.timeout(SEND_TIMEOUT), self.send_lock:
-                await self.runtime.send(self, data, timeout=SEND_TIMEOUT)
+            async with asyncio.timeout(timeout), self.send_lock:
+                await self.runtime.send(self, data, timeout=timeout)
         except TimeoutError as exc:
             raise WorkerDisconnected("Sandbox input delivery timed out") from exc
 

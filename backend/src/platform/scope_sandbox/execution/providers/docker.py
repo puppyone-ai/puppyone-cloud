@@ -34,6 +34,10 @@ class DockerRuntimeProvider:
         if not artifact:
             raise ValueError("A Docker worker image is required")
 
+    async def preflight(self, artifact):
+        self.validate(artifact)
+        await self._docker("image", "inspect", artifact)
+
     async def allocate(self, host):
         inspected = json.loads(await self._docker("image", "inspect", host.image))[0]
         if host.restore_point and host.restore_point.get("artifact") != inspected["Id"]:

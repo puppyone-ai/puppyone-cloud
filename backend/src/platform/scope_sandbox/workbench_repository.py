@@ -64,8 +64,49 @@ class WorkbenchRepository:
             write=write,
         )
 
-    def due(self):
-        return self.command("maintenance")
+    def request_open(self, row, binding, revision):
+        return self.command(
+            "request_open",
+            workbench=row["id"],
+            user=row["user_id"],
+            project=row["project_id"],
+            binding=binding,
+            revision=revision,
+        )
+
+    def pending(self, provider):
+        return self.command("pending", provider=provider)
+
+    def progress(self, row, phase, error=None, retryable=False):
+        return self.command(
+            "progress",
+            workbench=row["id"],
+            generation=row["generation"],
+            operation=row["operation_id"],
+            phase=phase,
+            error=error,
+            retryable=retryable,
+        )
+
+    def ready(self, row, resource):
+        return self.command(
+            "ready",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+            operation=row["operation_id"],
+            resource=resource,
+        )
+
+    def expire_open(self, row):
+        return self.command("expire_open", workbench=row["id"], deadline=row["open_deadline"])
+
+    def due(self, provider=None):
+        return (
+            self.command("maintenance_for_provider", provider=provider)
+            if provider
+            else self.command("maintenance")
+        )
 
     def idle(self, row):
         return self.command(

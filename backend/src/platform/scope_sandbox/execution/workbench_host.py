@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from .control_channel import ControlChannel
+from .runtime_contract import validate_runtime
 from .worker_port import WorkerDisconnected
 
 
@@ -92,6 +93,7 @@ class WorkbenchChannel(ControlChannel):
                     UUID(receipt[key])
             except (KeyError, TypeError, ValueError) as exc:
                 raise WorkerDisconnected("Invalid workspace service receipt") from exc
+            validate_runtime(receipt.get("runtime"))
             self.service_receipt = receipt
         else:
             await self._open_control()
