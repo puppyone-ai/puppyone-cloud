@@ -21,6 +21,45 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
    The user authorized disposable Fly resources for this test; opt-in remains
    mandatory so routine regression jobs cannot incur provider charges.
 
+## Durable readiness candidate (2026-10-23)
+
+[`readiness-20261023-receipt.json`](readiness-20261023-receipt.json) records
+backend `b8b1e189`, Desktop `1de682c5`, the built runtime identity, passing
+local checks, and the one unrelated Desktop baseline failure. The new common
+lifecycle persists open intent, performs fenced background initialization,
+checks native file readiness, and reports bounded typed failures. Desktop polls
+without reissuing wake requests. SQL upgrade tests preserve existing resource
+bindings and file-volume identities.
+
+**Real Fly acceptance and the user's preview recovery are still pending.**
+Automatic approval review rejected publishing this runtime image to
+`registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c` until the user explicitly
+authorizes this payload and registry. No image upload, hosted SQL migration,
+VM update, or local API/worker replacement has been performed for this candidate.
+E2B remains inactive; prior E2B receipts do not validate this new manifest build.
+
+Release order:
+
+- Follow the canonical database release admission for the additive readiness
+  migration; do not edit historical SQL or apply unrelated pending migrations.
+- Publish the tested runtime and pin its immutable artifact identity. Run the
+  same `accept_fly.py` and `accept_io.py` against owned fixtures and actual Fly.
+- In both API and worker environments run
+  `python -m src.platform.scope_sandbox.execution.preflight`; compare provider,
+  artifact and protocol output. This checks credentials and SQL availability
+  without creating compute. Worker process startup performs it automatically.
+- For local operation use `python scripts/run_local_workspace.py --env-file .env`
+  to start/stop API and worker from one configuration snapshot. First stop the
+  known old local processes; the launcher never kills processes it did not own.
+- Upgrade an existing binding only through an explicit paused, fenced operation,
+  preserving its Machine/Volume and verifying files before and after. Changing
+  the default image does not upgrade persisted bindings. No old-image fallback.
+- Verify the actual user's file tree/preview and Agent edits before claiming closure.
+
+The revised provider scenarios require the background lifecycle worker. A POST
+returns `202` while preparation proceeds; only ready workspaces return `200`.
+The I/O scenario waits for readiness and separates opening from warm operations.
+
 ## Persistent connection candidate (2026-10-22)
 
 [`persistent-connection-receipt.json`](persistent-connection-receipt.json) records
