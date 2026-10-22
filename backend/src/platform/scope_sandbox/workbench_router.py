@@ -4,13 +4,14 @@ import json
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.platform.auth.dependencies import get_current_user
 from src.version_engine.bootstrap.dependencies import get_version_engine_container
 
+from .execution.runtime_contract import WorkspaceUnavailable
 from .workbench_service import build_workbench_service, public_workbench
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])
@@ -40,9 +41,17 @@ async def status(
 
 @router.post("")
 async def open_workspace(
-    project_id: str, user=Depends(get_current_user), service=Depends(get_workbench_service)
+    project_id: str,
+    response: Response,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
 ):
-    return public_workbench(await service.open(user.user_id, project_id))
+    try:
+        row = await service.request_open(user.user_id, project_id)
+    except WorkspaceUnavailable as exc:
+        raise HTTPException(503, {"code": exc.code, "retryable": exc.retryable}) from exc
+    response.status_code = 200 if row["state"] == "running" else 202
+    return public_workbench(row)
 
 
 @router.get("/files")

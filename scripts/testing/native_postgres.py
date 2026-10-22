@@ -40,7 +40,7 @@ def product_migration_sql(migration: Path) -> str:
 
 
 @contextmanager
-def native_postgres():
+def native_postgres(*, through=None):
     executable = shutil.which("postgres") or "/opt/homebrew/opt/postgresql@17/bin/postgres"
     binaries = Path(executable).parent
     version = run(binaries / "postgres", "--version").strip()
@@ -65,6 +65,8 @@ def native_postgres():
             sql("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;")
             sql((ROOT / "scripts/testing/postgres_auth_stub.sql").read_text())
             migrations = sorted((ROOT / "supabase/migrations").glob("*.sql"))
+            if through is not None:
+                migrations = [migration for migration in migrations if migration.name <= through]
             for migration in migrations:
                 sql(product_migration_sql(migration))
             yield {

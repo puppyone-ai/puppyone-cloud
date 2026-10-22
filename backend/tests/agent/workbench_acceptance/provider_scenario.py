@@ -76,6 +76,27 @@ async def eventually(action, predicate, *, timeout=180):
             await asyncio.sleep(0.3)
 
 
+async def open_ready(http, root):
+    response = await http.post(root)
+    assert response.status_code in {200, 202}, response.text
+    row = response.json()
+
+    async def status():
+        response = await http.get(root)
+        assert response.status_code == 200, response.text
+        value = response.json()["workspace"]
+        assert not value.get("operation", {}).get("error"), value
+        return value
+
+    if row["state"] != "running" or row.get("operation", {}).get("pending"):
+        row = await eventually(
+            status,
+            lambda value: value["state"] == "running" and not value["operation"]["pending"],
+            timeout=620,
+        )
+    return row
+
+
 async def accept_runtime(case, monkeypatch, probe):
     provider, model = probe.provider, Model()
     monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PROVIDER", provider.name)
@@ -276,13 +297,13 @@ async def accept_runtime(case, monkeypatch, probe):
             current = owner.repository.get(workbench)
             claimed = owner.repository.lifecycle_claim(current, suspend=True)
             assert claimed["acquired"]
-            await owner._pause(claimed["workbench"])
+            await owner.lifecycle.pause(claimed["workbench"])
             await probe.assert_paused(resource)
             assert (await read("agent.txt")).status_code == 409  # Reading cannot wake compute.
             await probe.assert_paused(resource)
-            reopened = await http.post(root)
-            assert reopened.status_code == 200, reopened.text
-            assert reopened.json()["generation"] == generation
+            worker_task = asyncio.create_task(dispatcher.serve())
+            reopened = await open_ready(http, root)
+            assert reopened["generation"] == generation
             assert (await read("agent.txt")).json()["content_base64"] == saved.json()[
                 "content_base64"
             ]

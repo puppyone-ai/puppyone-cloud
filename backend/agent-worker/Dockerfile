@@ -10,6 +10,8 @@ COPY workbench-controller.mjs workbench-task.mjs workbench-signals.mjs workbench
 COPY shared-git.mjs workbench-git-layout.mjs workbench-state.mjs workbench-initialize.mjs workbench-lifecycle.mjs ./
 COPY workbench-files.mjs workbench-files.py workbench-file-client.mjs workbench-files-supervisor.mjs fly-init.mjs ./
 COPY providers/docker-recovery.mjs ./providers/
+COPY runtime-contract.mjs write-runtime-manifest.mjs ./
+RUN node write-runtime-manifest.mjs
 RUN mkdir -p /workspace /home/node/.pi && chown node:node /workspace /home/node/.pi
 USER root
 WORKDIR /workspace

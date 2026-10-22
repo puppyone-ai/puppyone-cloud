@@ -1,5 +1,6 @@
 /** Workspace creation channel: Git initialization only, no task/model execution. */
 import { channel } from './protocol.mjs';
+import { runtimeManifest } from './runtime-contract.mjs';
 import { requireWorkspace } from './workbench-state.mjs';
 import { initializeWorkbench } from './workbench-initialize.mjs';
 const [workbench, generation] = process.argv.slice(2);
@@ -12,7 +13,7 @@ control.dispatch(frame => {
   pending = pending.then(async () => {
     try {
       let result;
-      if (frame.action === 'capabilities') result = { workbench_lifecycle: 1 };
+      if (frame.action === 'capabilities') result = { workbench_lifecycle: 1, runtime: runtimeManifest };
       else if (frame.action === 'ready') { await requireWorkspace({workbench, generation}); result = {}; }
       else if (frame.action === 'initialize')
         result = await initializeWorkbench({ workbench, generation }, frame.value, control.request);

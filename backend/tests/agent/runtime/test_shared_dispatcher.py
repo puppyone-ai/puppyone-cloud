@@ -23,9 +23,16 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
         claims.append(kind)
         return queue.pop() if queue else None
 
-    repo = SimpleNamespace(client=object(), claim_run=lambda **_: claim("legacy", legacy),
-                           claim_workbench_run=lambda **_: claim("shared", shared))
-    owner = SimpleNamespace(reap=AsyncMock()) if enabled else None
+    repo = SimpleNamespace(
+        client=object(),
+        claim_run=lambda **_: claim("legacy", legacy),
+        claim_workbench_run=lambda **_: claim("shared", shared),
+    )
+    owner = (
+        SimpleNamespace(reap=AsyncMock(), lifecycle=SimpleNamespace(serve=release.wait))
+        if enabled
+        else None
+    )
 
     class Supervisor:
         def __init__(self, *args, **kwargs):
@@ -43,7 +50,11 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
     monkeypatch.setattr(worker, "Publication", lambda transport, filesystem: object())
     monkeypatch.setattr(worker, "RunGitTransport", lambda _: object())
     monkeypatch.setattr(worker, "BoundTools", lambda _: object())
-    monkeypatch.setattr(worker, "build_worker_version_engine_container", lambda **_: SimpleNamespace(repo_manager=None))
+    monkeypatch.setattr(
+        worker,
+        "build_worker_version_engine_container",
+        lambda **_: SimpleNamespace(repo_manager=None),
+    )
     monkeypatch.setattr(worker, "get_billing_gateway", lambda: None)
     monkeypatch.setattr(worker, "get_provider_registry", lambda: None)
     monkeypatch.setattr(worker, "get_inference_service", lambda *_: None)

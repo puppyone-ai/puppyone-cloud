@@ -225,6 +225,9 @@ async def test_product_owner_single_flight_native_files_and_revocation(
         def validate(self, artifact, resource=None):
             assert artifact == "pinned-image"
 
+        async def preflight(self, artifact):
+            self.validate(artifact)
+
         async def running_connection(self, host):
             return None
 
@@ -266,11 +269,21 @@ async def test_product_owner_single_flight_native_files_and_revocation(
 
         async def control(self, action, value=None):
             if action == "capabilities":
-                return {"workbench_lifecycle": 1}
+                return {
+                    "workbench_lifecycle": 1,
+                    "runtime": {
+                        "runtime_protocol": 1,
+                        "file_protocol": 1,
+                        "build_id": "a" * 64,
+                        "capabilities": ["workspace_lifecycle", "native_files", "file_watch"],
+                    },
+                }
             if action == "initialize":
                 initializations.append(value)
                 return {}
             if action == "files":
+                if value["action"] == "list":
+                    return {"result": {"entries": []}}
                 if value["action"] == "write":
                     assert (
                         postgres.sql(
@@ -279,7 +292,11 @@ async def test_product_owner_single_flight_native_files_and_revocation(
                         == "intent"
                     )
                     return {"result": {"revision": revision}}
-                assert value == {"action": "read", "path": "live.md", "transfer_encoding": "deflate"}
+                assert value == {
+                    "action": "read",
+                    "path": "live.md",
+                    "transfer_encoding": "deflate",
+                }
                 return {
                     "result": {
                         "content_base64": base64.b64encode(b"uncommitted agent edit").decode(),
@@ -318,12 +335,12 @@ async def test_product_owner_single_flight_native_files_and_revocation(
     )
     assert await service.current(args["user"], args["project"]) is None
     assert allocations == []
+    lifecycle_task = asyncio.create_task(service.lifecycle.serve())
     first, second = await asyncio.gather(
         service.open(args["user"], args["project"]), service.open(args["user"], args["project"])
     )
     assert first["id"] == second["id"] and len(allocations) == 1
     assert len(initializations) == 1 and billing.ensure_session.await_count == 1
-    selected[0] = "fly"
     reused = await service.open(args["user"], args["project"])
     assert reused["resource"] == first["resource"] and len(allocations) == 1
     data = await service.file_operation(
@@ -363,4 +380,6 @@ async def test_product_owner_single_flight_native_files_and_revocation(
             {"action": "read", "path": "live.md"},
         )
     assert len(channels) == before
+    lifecycle_task.cancel()
+    await asyncio.gather(lifecycle_task, return_exceptions=True)
     await service.close()

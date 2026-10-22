@@ -228,3 +228,19 @@ async def test_output_replay_deduplicates_but_missing_frame_is_not_silent():
     with pytest.raises(WorkerDisconnected, match="gap"):
         await value._output(frame(4))
     assert value.output_sequence == 2
+
+
+@pytest.mark.asyncio
+async def test_fragmented_output_enforces_each_frame_not_the_combined_read(monkeypatch):
+    from src.platform.scope_sandbox.execution import control_channel
+
+    monkeypatch.setattr(control_channel, "MAX_FRAME", 96)
+    value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())
+    first = json.dumps({"type": "text", "delta": "文件", "sequence": 1}, ensure_ascii=False) + "\n"
+    second = json.dumps({"type": "text", "delta": "next", "sequence": 2}) + "\n"
+    await value._output(first[:10])
+    await value._output(first[10:] + second)
+    assert value.queue.qsize() == 2 and value.buffer == ""
+    await value._output("x" * 80)
+    with pytest.raises(RuntimeError, match="too large"):
+        await value._output("x" * 17)

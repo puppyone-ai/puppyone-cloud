@@ -18,6 +18,7 @@ import httpx
 from src.config import settings
 from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected, WorkerLost
 
+from ..runtime_contract import WorkspaceUnavailable
 from .fly_transport import acquire_transport, close_transports
 from .port import (
     RuntimeCapabilities,
@@ -46,6 +47,10 @@ class FlyRuntimeProvider:
             raise ValueError("Fly requires its backend API token and flyctl SSH transport")
         if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", artifact or ""):
             raise ValueError("Fly worker image must be pinned by digest")
+
+    async def preflight(self, artifact):
+        self.validate(artifact)
+        await self._request({"app": settings.CLOUD_AGENT_FLY_APP}, "GET", "")
 
     def artifact(self, image):
         return settings.CLOUD_AGENT_FLY_IMAGE
@@ -96,6 +101,8 @@ class FlyRuntimeProvider:
                 if attempt + 1 == attempts:
                     raise
                 await asyncio.sleep(0.2 * 2**attempt)
+        if response.status_code in {401, 403}:
+            raise WorkspaceUnavailable("workbench_provider_authentication")
         response.raise_for_status()
         return response.json() if response.content else None
 

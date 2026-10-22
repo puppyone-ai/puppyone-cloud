@@ -6,7 +6,7 @@ export const MAX_FRAME = 192 * 1024 * 1024;
 export function channel(input = process.stdin, output = process.stdout, options = {}) {
   const maxFrame = options.maxFrame ?? MAX_FRAME;
   const pending = new Map();
-  let sequence = 0, buffer = '', handler;
+  let sequence = 0, chunks = [], bufferedBytes = 0, handler;
 
   const send = value => {
     const data = JSON.stringify({ ...value, sequence: sequence + 1 }) + '\n';
@@ -47,21 +47,21 @@ export function channel(input = process.stdin, output = process.stdout, options 
 
   input.setEncoding('utf8');
   const onData = chunk => {
-    buffer += chunk;
-    let end;
-    while ((end = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, end);
-      buffer = buffer.slice(end + 1);
-      if (Buffer.byteLength(line) + 1 > maxFrame) {
-        buffer = '';
+    let start = 0;
+    while (start < chunk.length) {
+      const end = chunk.indexOf('\n', start);
+      const piece = chunk.slice(start, end < 0 ? chunk.length : end);
+      bufferedBytes += Buffer.byteLength(piece);
+      if (bufferedBytes + 1 > maxFrame) {
+        chunks = []; bufferedBytes = 0;
         fail(new Error('Control frame exceeds limit'));
         return;
       }
+      chunks.push(piece);
+      if (end < 0) break;
+      const line = chunks.join(''); chunks = []; bufferedBytes = 0;
       if (line) dispatchFrame(line);
-    }
-    if (Buffer.byteLength(buffer) >= maxFrame) {
-      buffer = '';
-      fail(new Error('Control frame exceeds limit'));
+      start = end + 1;
     }
   };
 
@@ -73,7 +73,7 @@ export function channel(input = process.stdin, output = process.stdout, options 
     for (const waiter of pending.values()) waiter.reject(new Error('Control disconnected'));
     pending.clear();
     input.removeListener('data', onData);
-    buffer = '';
+    chunks = []; bufferedBytes = 0;
   };
   return { send, request, dispatch, close };
 }

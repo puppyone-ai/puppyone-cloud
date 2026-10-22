@@ -1,0 +1,82 @@
+{
+  "date": "2026-10-23",
+  "result": "fly_validated_deployment_pending",
+  "backend_source": "fa7d505a205d12ce74c46c741c4c60e3837c0918",
+  "desktop_source": "1de682c5",
+  "desktop_connection_companion": "e8d3d8ba",
+  "runtime": {
+    "runtime_protocol": 1,
+    "file_protocol": 1,
+    "capabilities": [
+      "workspace_lifecycle",
+      "native_files",
+      "file_watch"
+    ],
+    "build_id": "4e4c2d624ac74ffc46f798f400cfaf72e7843bd7c247a74609b98bdb6b97959a"
+  },
+  "local_image": {
+    "tag": "puppyone-cloud-agent:workspace-readiness",
+    "platform": "linux/amd64",
+    "image_id": "sha256:32e4f8556fc177b7c55d21e029855346025af3cd9c1254f6fd12ec1e22282b31",
+    "manifest": "sha256:e4f8af0c48b17b974833a16bea76316da56b842f76681b18c110c06b81235be7"
+  },
+  "checks": {
+    "backend_non_integration": {
+      "passed": 3480,
+      "skipped": 953,
+      "deselected": 409
+    },
+    "lifecycle_sql_and_populated_upgrade": {
+      "passed": 24,
+      "database": "owned PostgreSQL 17; Supabase auth stubs and extension exclusions as documented in native_postgres.py"
+    },
+    "node_protocol_git_tools": {
+      "passed": 26
+    },
+    "native_linux_process_and_git": {
+      "passed": 18,
+      "platform": "linux/arm64 BuildKit"
+    },
+    "native_file_service": {
+      "passed": 4,
+      "platform": "linux/amd64 BuildKit"
+    },
+    "desktop_affected": {
+      "passed": 455,
+      "files": 52
+    },
+    "desktop_types": "passed",
+    "desktop_boundaries": "passed",
+    "canonical_documentation": "passed",
+    "populated_upgrade_against_current_qubits": {
+      "passed": 9
+    },
+    "desktop_integration_with_preserved_wip": {
+      "passed": 70,
+      "files": 4
+    }
+  },
+  "wider_desktop_regression": {
+    "passed": 587,
+    "failed": 1,
+    "baseline_failure": "tests/component/cloud/share/projectReach.test.tsx: previews the part of the project the link would cover",
+    "baseline_source": "e0270706",
+    "baseline_reproduced": true
+  },
+  "pending": [
+    "Merge and release readiness SQL through qubits CI/CD.",
+    "Update the existing workspace artifact and paired API/worker, retain its Volume and verify the actual project preview.",
+    "Final integration evidence and documentation; unrelated canonical WIP is preserved."
+  ],
+  "product_provider": "fly",
+  "e2b_activation": false,
+  "hosted_mutation_performed": true,
+  "live_fly": {
+    "sin": "readiness-20261023-fly-sin.json",
+    "lax": "readiness-20261023-fly-lax.json",
+    "functional": "passed in both regions",
+    "latency": "LAX passed p50 <= 300 ms and p95 <= 1000 ms; SIN failed p50 with local egress reaching LAX; control-only round trips have the same floor",
+    "fixture": "real provider/Pi/dispatcher/Git/files/SSE; deterministic model; owned PG/S3; billing disabled"
+  },
+  "hosted_mutation_scope": "Uploaded authorized runtime image and created/cleaned disposable Fly Machines and Volumes; existing user workspace unchanged at this receipt."
+}

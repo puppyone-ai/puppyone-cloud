@@ -31,6 +31,20 @@ class E2BRuntimeProvider:
         if not artifact or not settings.E2B_API_KEY:
             raise ValueError("E2B requires its API key and pinned worker template")
 
+    async def preflight(self, artifact):
+        from e2b import AsyncSandbox
+
+        from ..runtime_contract import WorkspaceUnavailable
+
+        self.validate(artifact)
+        try:
+            await AsyncSandbox.list(api_key=settings.E2B_API_KEY).next_items()
+        except Exception as exc:
+            # Credentials remain provider-owned; never expose SDK payloads.
+            if type(exc).__name__ in {"AuthenticationException", "AuthorizationException"}:
+                raise WorkspaceUnavailable("workbench_provider_authentication") from exc
+            raise
+
     async def allocate(self, host):
         from e2b import AsyncSandbox
 
