@@ -61,6 +61,7 @@ jobs:
         with:
           name: git-push-retry-results
           path: backend/.push-retry-results/
+          include-hidden-files: true
           retention-days: 14
 
   standard-pack-s3:
@@ -86,12 +87,29 @@ jobs:
         run: |
           backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
             --live --s3 --docker --target --output backend/.standard-pack-s3-results \
-            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes' -q
+            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes or test_docker_native_git_canonical_auth_refs_policy_cold_restart' -q
+      - name: Report owned acceptance evidence
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = Path('backend/.standard-pack-s3-results/run.json')
+          if report.exists():
+              result = json.loads(report.read_text())
+              print(json.dumps({key: result.get(key) for key in (
+                  'exit_code', 'pytest_exit', 'sql_exit', 'layers',
+                  'evidence_error', 'infrastructure_error',
+              )}, indent=2))
+          else:
+              print('Acceptance report was not produced.')
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: standard-pack-s3-results
           path: backend/.standard-pack-s3-results/
+          include-hidden-files: true
           retention-days: 14
 
   hosting:
