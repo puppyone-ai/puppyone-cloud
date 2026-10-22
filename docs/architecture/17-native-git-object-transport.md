@@ -181,6 +181,72 @@ proportional to objects; proof registration retains dependency-ordered checked
 chunks. Prior interfaces remain for old writers. Apply migrations before
 deploying the new backend; missing capabilities fail closed.
 
+### Capacity transaction ownership
+
+Migration `20261023000000_batch_capacity_authorization.sql` makes page admission
+explicit. Both the compatibility 200-object RPC and the 4 MiB / 16,384-object
+page RPC converge on `reserve_version_object_capacity_page`. One page checks
+the current actor/file policy once, then validates and inserts the object set.
+For an ordinary Runtime Git credential, credential resolution and canonical
+Project role resolution each occur once, regardless of the page's object count.
+Larger inventories use additional bounded pages, each with fresh authorization.
+
+```mermaid
+sequenceDiagram
+    participant Git as Git / Product adapter
+    participant VE as Version Engine storage
+    participant PG as PostgreSQL
+    participant S3 as S3 immutable packs
+    Git->>VE: Verified pack and bounded object facts
+    VE->>PG: reserve_version_object_capacity_page
+    Note over PG: Short transaction: lock current facts, authorize once, bulk validate and reserve
+    Note over PG: Recheck expiry and execution fence; commit all or roll back all
+    PG-->>VE: Reservation and independent I/O identity
+    VE->>S3: Upload and verify pack outside DB transaction
+    VE->>PG: Register locations and settle this I/O
+    Git->>PG: Final publication through RefTransactionService
+    Note over PG: Fresh permission/policy checks, expected-ref CAS, atomic result and audit
+    PG-->>Git: Committed or rejected transaction result
+```
+
+The private `_version_begin_capacity_admission` and
+`_version_finish_capacity_admission` helpers belong to the SQL transaction, not
+the Git router or the S3 client. Membership, surface, credential, policy and
+lease rows remain locked within that short transaction. A local PL/pgSQL value
+captures the file limit and locked time-based deadlines. The final check uses
+wall-clock expiry plus the existing lease/Agent execution fence; no credential
+cache or user-supplied authorization context is accepted. No transaction/row
+lock spans the S3 upload. Final publication obtains current authority again.
+
+The per-object authorization triggers are removed in the same transactional
+migration. Table DML and private helpers remain inaccessible to application
+roles. Owner-only inventory activation runs before policy enrollment; recovery
+finalization still requires its verified inventory and remains owner-only.
+A statement trigger retains the 64 MiB object guard for all actual insertions;
+the runtime page also checks mixed old/new conflict inputs. PK/FK constraints,
+identity mismatch checks, quota accounting, expiry rollback and separate I/O
+settlement identities remain intact. Existing oversized files are grandfathered
+against later plan reductions, as before.
+
+Source ownership after this change:
+
+```text
+supabase/migrations/
+  20261023000000_batch_capacity_authorization.sql  # atomic admission, bulk SQL, ACLs
+backend/src/version_engine/
+  storage/metadata_pages.py                     # bounded metadata payloads
+  storage/backends/s3.py                        # reserve -> transfer -> verify -> settle
+  infrastructure/supabase/capacity_repository.py # capacity RPC adapter and seal
+  write_engine/ref_transaction.py               # final checked publication
+backend/tests/repository_hosting/
+  integration/test_capacity_batch_admission.py  # permissions, expiry, atomicity, call counts
+  integration/test_capacity_batch_upgrade.py    # populated upgrade and rollback
+  harness/capacity_benchmark.py                 # before/after full RPC in owned PG
+```
+
+The [verification record](../../backend/openspec/changes/batch-capacity-authorization/verification.md)
+separates local SQL evidence from hosted activation and full push latency.
+
 Prepared S3 writes collect bounded typed facts in `readback_receipts.py`. Facts
 are promoted only after physical readback, checked placement registration and
 settlement. They record the exact immutable placement and contain no body bytes.
