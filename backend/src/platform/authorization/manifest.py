@@ -346,6 +346,12 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/api/v1/imports/database/sources/{import_database_source_id}/save"): _human(ProjectAction.CONTENT_WRITE),
 })
 
+# Incoming SSH credentials are issued on the Human management plane.
+PROJECT_ROUTE_AUTHORIZATION.update({
+    ("POST", "/api/v1/projects/{project_id}/workbench/ssh-grants"): _human(ProjectAction.CREDENTIAL_MANAGE),
+    ("DELETE", "/api/v1/projects/{project_id}/workbench/ssh-grants/{grant_id}"): _human(ProjectAction.CREDENTIAL_MANAGE),
+})
+
 # Compatibility name for call sites that only consume Human action mappings.
 PROJECT_ROUTE_ACTIONS = {
     key: contract.action

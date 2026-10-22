@@ -47,9 +47,11 @@ dependencies = [
     "openpyxl>=3.1.0",
     "pyyaml>=6.0.0",
     "e2b==2.53.1",
+    "asyncssh>=2.21,<3",
 ]
 
 [project.scripts]
+puppyone-ssh = "src.platform.access.adapters.ssh.gateway:main"
 puppyone-db = "src.infra.data_migrations.cli:main"
 
 [build-system]

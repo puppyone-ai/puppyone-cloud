@@ -20,7 +20,7 @@ BEGIN
             RAISE EXCEPTION 'CLOUD_AGENT_BACKEND_ACCESS_MISSING: %', relation;
         END IF;
     END LOOP;
-    FOREACH relation IN ARRAY ARRAY['cloud_workbenches','cloud_workbench_tasks'] LOOP
+    FOREACH relation IN ARRAY ARRAY['cloud_workbenches','cloud_workbench_tasks','cloud_workbench_connections'] LOOP
         IF to_regclass('public.' || relation) IS NULL THEN
             RAISE EXCEPTION 'CLOUD_AGENT_SCHEMA_MISSING: %', relation;
         END IF;
@@ -38,6 +38,9 @@ BEGIN
         END IF;
     END LOOP;
     FOREACH signature IN ARRAY ARRAY[
+        'public.cloud_workbench_connection_acquire(uuid,uuid,uuid,uuid,text,jsonb)',
+        'public.cloud_workbench_connection_update(uuid,uuid,text)',
+        'public.workspace_ssh_grant_consume(uuid)',
         'public.cloud_workbench_context(uuid,text)',
         'public.cloud_workbench_default(uuid,text,jsonb)',
         'public.cloud_workbench_automation(uuid,text,uuid,jsonb)',
@@ -94,6 +97,8 @@ BEGIN
     END LOOP;
     IF (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'D'
         AND (tgrelid,tgname) IN (
+            ('public.cloud_workbenches'::regclass,'cloud_workbench_connection_resource_guard'),
+            ('public.cloud_workbench_connections'::regclass,'cloud_workbench_connection_delete_guard'),
             ('public.cloud_workbenches'::regclass,'cloud_workbench_occupancy_guard'),
             ('public.cloud_workbenches'::regclass,'cloud_workbench_delete_guard'),
             ('public.agent_runs'::regclass,'cloud_workbench_run_binding'),
@@ -110,8 +115,14 @@ BEGIN
             ('public.version_ref_transactions'::regclass,'version_publish_object_proofs'),
             ('public.version_ref_transactions'::regclass,'version_transaction_incremental_fence'),
             ('public.version_publication_receipts'::regclass,'version_receipt_incremental_fence')
-        )) <> 16 THEN
+        )) <> 18 THEN
         RAISE EXCEPTION 'CLOUD_AGENT_PUBLICATION_GUARD_MISSING';
+    END IF;
+    IF to_regclass('public.workspace_ssh_grants') IS NULL
+      OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid='public.workspace_ssh_grants'::regclass)
+      OR has_table_privilege('anon','public.workspace_ssh_grants','SELECT,INSERT,UPDATE,DELETE')
+      OR has_table_privilege('authenticated','public.workspace_ssh_grants','SELECT,INSERT,UPDATE,DELETE') THEN
+      RAISE EXCEPTION 'WORKSPACE_SSH_GRANTS_ACCESS_INVALID';
     END IF;
     -- Proof facts are written only by the checked commands, including for the
     -- backend role. Missing confinement must fail before new workers activate.

@@ -688,6 +688,9 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.ssh.router import router as scope_sandbox_router
 
     app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
+    from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
+
+    app.include_router(hosted_ssh_router)
     from src.platform.access.adapters.api.workbench_router import router as workbench_router
 
     app.include_router(workbench_router)

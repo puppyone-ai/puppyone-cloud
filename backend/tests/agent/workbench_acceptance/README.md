@@ -21,6 +21,40 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
    The user authorized disposable Fly resources for this test; opt-in remains
    mandatory so routine regression jobs cannot incur provider charges.
 
+## Hosted Workspace SSH acceptance
+
+`tests/agent/runtime/test_hosted_ssh_live.py` exercises the production SSH
+adapter, native shell/PTY protocol, Workspace connection ledger and file API
+against disposable provider resources. It covers stock OpenSSH binary I/O,
+stderr/exit status, interactive context and resize, file/watch visibility before
+Git commit, wrong-key denial, single-use grants, revocation, expiry, disconnect
+cleanup and recovery by a new cleanup owner. Teardown deletes only the test
+Project's Machines and generation-owned Volumes.
+
+From `backend/`, with a pinned runtime containing `workspace_shell` and the
+configured Fly token/app/CLI:
+
+```sh
+CLOUD_AGENT_TEST_SSH_PROVIDER=fly CLOUD_AGENT_TEST_FLY=1 \
+  uv run pytest -q tests/agent/runtime/test_hosted_ssh_live.py --durations=10
+```
+
+The fixture uses owned local PostgreSQL/PostgREST, real Project authorization,
+and a local TCP SSH listener with pinned host keys. HTTP identity and billing
+are fixture inputs; it does not establish hosted JWT, billing, public TCP
+deployment, model calls or the full Agent/Git publication scenario. Docker can
+run the same cases using `puppyone-workspace-ssh-acceptance:local`; E2B is not
+activated by this suite. Three-provider connection contract tests are offline
+and do not substitute for live provider acceptance.
+
+Activation requires migration `20261023020000`, a matching runtime artifact,
+and a separate gateway process (`puppyone-ssh` or `railway.ssh.toml`). Set the
+`WORKSPACE_SSH_` public host/port, pinned public host key and persistent private
+host-key file (mode `0600`) in the API/gateway environments as applicable. API
+grants are disabled until an endpoint and host key are configured. Never disable
+client host-key checking. The gateway must retain provider transport access and
+database service credentials; clients receive neither.
+
 ## Durable readiness acceptance (2026-10-23)
 
 [`readiness-20261023-receipt.json`](readiness-20261023-receipt.json) records
