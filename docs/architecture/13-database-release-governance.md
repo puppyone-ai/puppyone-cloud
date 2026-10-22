@@ -17,7 +17,7 @@ required infrastructure is unavailable; it cannot fall back to uncoordinated SQL
 
 ## Migration merge admission
 
-Before merge, CI starts the last accepted target version in disposable Docker,
+Before production merge, CI starts the last accepted target version in disposable Docker,
 creates representative users and repository data, and runs the candidate
 upgrade program against the same volumes. The candidate must preserve login,
 file contents and permissions, then pass authenticated reads and writes.
@@ -27,7 +27,7 @@ Production does not need candidate schema or data receipts before merge.
 Those receipts are outputs of the release after merge. A normal promotion
 from Qubits still requires a successful staging database workflow for the exact
 promoted head. This database attestation is distinct from application acceptance.
-Branch protection requires `Release upgrade rehearsal`, database
+Production branch protection requires `Release upgrade rehearsal`, database
 validation, backend/frontend checks and security checks. Production promotion
 also requires `Main Release Gate`. Hosted configuration is verified separately
 from repository YAML; editing a workflow does not enable branch protection.
@@ -38,11 +38,43 @@ environment with no coordinator receipt. Older accepted deployment statuses
 remain valid baseline evidence after GitHub marks them inactive. A failed
 deployment is never a successful upgrade baseline.
 
+## Qubits testing and database delivery
+
+Qubits uses a database-focused automatic profile. Pull requests and protected
+pushes run immutable migration/history policy, manifest validation, RPC signature
+checks, database release regression tests and Gitleaks. Its required branch
+checks are `Database validation result` and `Run Gitleaks`. Ordinary SQL migration
+waits only for those two workflows at the exact merged SHA. The protected
+Supabase target, release lock, migration ledger and post-migration database
+verification remain mandatory.
+
+Backend/frontend, Agent, Git/S3, populated installation and historical upgrade
+suites run locally before submission. Their GitHub workflows remain available
+through manual dispatch and run automatically for `main`. Manual dispatch of
+`Validate Database Changes` also selects the full database rehearsal profile.
+Qubits automatic checks explicitly omit these suites; their green result is not
+proof of application acceptance. Record local commands, revision, results and
+any untested coverage in the PR. Production gates and coordinated data/Contract
+cutover requirements are unchanged.
+
+Typical local checks from `backend/`:
+
+```sh
+uv run pytest -q -m 'not e2e and not integration and not network'
+uv run python ../scripts/testing/run_repository_hosting.py --native-pg -q \
+  -k 'ref_transaction_service or interrupted_push_retry or native_initialization_abandon or standard_git_pack or direct_object_transport or native_size_limits'
+```
+
+Use the relevant workflow's commands for frontend, Docker/S3 or full installation
+coverage when those boundaries change. Local acceptance never mutates the hosted
+Supabase target; only the post-merge release workflow applies hosted migrations.
+
 ## Release execution
 
 ```text
 merge to qubits / main
-  -> candidate CI, including populated Docker rehearsal
+  -> qubits: database policy + release regressions + Gitleaks
+     main: full candidate CI, including populated Docker rehearsal
   -> protected Supabase environment + database-wide release lock
   -> validate complete schema history and the checksum-bound upgrade plan
   -> ordinary SQL:
@@ -272,7 +304,8 @@ workbench route, mismatched checkout or stale worker blocks release acceptance;
 successful Git hosting alone does not prove Desktop Cloud readiness.
 Runtime suites separately cover sandbox reads/writes, publication, concurrency
 and database-request budgets. Those performance contracts remain part of the
-required Agent CI, not a repeated whole-customer-data release audit.
+local/manual Qubits checks and automatic production Agent CI, not a repeated
+whole-customer-data release audit.
 
 ## Upstream alignment
 

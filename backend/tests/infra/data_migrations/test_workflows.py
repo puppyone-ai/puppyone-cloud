@@ -417,17 +417,112 @@ def test_every_qubits_head_receives_an_exact_schema_attestation() -> None:
     assert "    paths:" not in staging
 
 
-def test_every_waited_workflow_runs_on_each_protected_push_without_cancellation():
-    shared = (WORKFLOWS / "_environment-release.yml").read_text()
-    waited = re.findall(r"'([a-z-]+\.yml)'", shared)
+@pytest.mark.parametrize("environment,branch", [("staging", "qubits"), ("production", "main")])
+def test_release_waits_only_for_workflows_that_run_on_its_branch(environment, branch):
+    waited = _run_release_admission(environment)["waited"]
     assert "secret-scanning-gitleaks.yml" in waited
-    assert "release-upgrade-rehearsal.yml" in waited
+    assert "validate-migrations.yml" in waited
+    if environment == "staging":
+        assert len(waited) == 2
+    else:
+        assert set(waited) == {
+            "backend-release.yml", "frontend-build.yml", "agent-runtime-contracts.yml",
+            "validate-migrations.yml", "release-upgrade-rehearsal.yml",
+            "self-hosted-install.yml", "secret-scanning-gitleaks.yml",
+        }
     for name in waited:
         workflow = yaml.safe_load((WORKFLOWS / name).read_text())
         trigger = workflow.get("on", workflow.get(True))
-        assert set(trigger["push"]["branches"]) == {"main", "qubits"}, name
+        assert branch in trigger["push"]["branches"], name
         assert "paths" not in trigger["push"] and "paths-ignore" not in trigger["push"], name
         assert workflow.get("concurrency", {}).get("cancel-in-progress") is not True, name
+
+
+def _run_release_admission(environment, conclusion="success"):
+    workflow = yaml.safe_load((WORKFLOWS / "_environment-release.yml").read_text())
+    step = workflow["jobs"]["admission"]["steps"][1]
+    harness = """
+      const output = {waited: [], error: null};
+      const context = {repo: {owner: 'fixture', repo: 'fixture'}, sha: 'exact-sha'};
+      const github = {rest: {actions: {async listWorkflowRuns(args) {
+        if (args.head_sha !== context.sha || args.event !== 'push') throw new Error('Wrong candidate');
+        output.waited.push(args.workflow_id);
+        return {data: {workflow_runs: [{head_sha: context.sha, status: 'completed',
+                                      conclusion: process.env.TEST_CONCLUSION}]}};
+      }}}};
+    """ + "(async () => {" + step["with"]["script"] + """
+      })().catch(e => {output.error = e.message}).then(() => console.log(JSON.stringify(output)));
+    """
+    result = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, check=True,
+        env={**os.environ, "RELEASE_ENVIRONMENT": environment, "TEST_CONCLUSION": conclusion},
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped"])
+def test_database_release_does_not_ignore_failed_admission(environment, conclusion):
+    assert "Required workflow failed" in _run_release_admission(environment, conclusion)["error"]
+
+
+def test_unknown_release_environment_fails_closed():
+    assert _run_release_admission("unknown")["error"] == "Unknown release environment"
+
+
+@pytest.mark.parametrize("event,base,ref,expected", [
+    ("pull_request", "qubits", "1404/merge", "qubits"),
+    ("push", "", "qubits", "qubits"),
+    ("pull_request", "main", "1405/merge", "full"),
+    ("push", "", "main", "full"),
+    ("workflow_dispatch", "", "qubits", "full"),
+    ("pull_request", "other", "1406/merge", "full"),
+])
+def test_database_validation_profile(event, base, ref, expected, tmp_path):
+    workflow = yaml.safe_load((WORKFLOWS / "validate-migrations.yml").read_text())
+    step = next(s for s in workflow["jobs"]["database_change_scope"]["steps"] if s.get("id") == "profile")
+    output = tmp_path / "output"
+    subprocess.run(["bash", "-c", step["run"]], check=True, env={
+        **os.environ, "EVENT_NAME": event, "BASE_REF": base, "REF_NAME": ref,
+        "GITHUB_OUTPUT": str(output),
+    })
+    assert output.read_text().strip() == f"profile={expected}"
+
+
+@pytest.mark.parametrize("profile,policy,rpc,local,containment,success", [
+    ("qubits", "success", "success", "skipped", "skipped", True),
+    ("qubits", "failure", "success", "skipped", "skipped", False),
+    ("qubits", "success", "cancelled", "skipped", "skipped", False),
+    ("qubits", "success", "success", "failure", "skipped", False),
+    ("full", "success", "success", "success", "success", True),
+    ("full", "success", "success", "skipped", "success", False),
+    ("full", "success", "success", "success", "failure", False),
+    ("unknown", "success", "success", "skipped", "skipped", False),
+])
+def test_database_summary_enforces_selected_profile(profile, policy, rpc, local, containment, success, tmp_path):
+    workflow = yaml.safe_load((WORKFLOWS / "validate-migrations.yml").read_text())
+    step = workflow["jobs"]["database_validation_result"]["steps"][0]
+    result = subprocess.run(["bash", "-c", step["run"]], capture_output=True, env={
+        **os.environ, "CHANGE_SCOPE_RESULT": "success", "DATABASE_CHANGED": "true",
+        "RAILWAY_RELEASE_RESULT": "success", "VALIDATION_PROFILE": profile,
+        "POLICY_RESULT": policy, "RPC_LINT_RESULT": rpc, "LOCAL_DATABASE_RESULT": local,
+        "CONTAINMENT_RESULT": containment, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    })
+    assert (result.returncode == 0) is success
+
+
+def test_application_and_full_rehearsal_workflows_remain_manual_for_qubits():
+    for name in (
+        "backend-release.yml", "frontend-build.yml", "agent-runtime-contracts.yml",
+        "native-inventory-migration-tests.yml", "release-upgrade-rehearsal.yml",
+        "organization-workspace-acceptance.yml", "frontend-resource-regression.yml",
+        "self-hosted-install.yml", "prepare-baseline.yml", "repository-hosting-tests.yml",
+        "frontend-readability.yml",
+    ):
+        trigger = yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)["on"]
+        assert trigger["pull_request"]["branches"] == ["main"], name
+        assert "qubits" not in trigger.get("push", {}).get("branches", []), name
+        assert "workflow_dispatch" in trigger, name
 
 
 def test_database_workflow_third_party_actions_are_sha_pinned() -> None:

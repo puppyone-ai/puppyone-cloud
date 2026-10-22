@@ -29,11 +29,18 @@ jobs:
           esac
       - name: Wait for candidate CI before changing the environment
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
         with:
           script: |
-            const required = ['backend-release.yml', 'frontend-build.yml', 'agent-runtime-contracts.yml',
+            const profiles = {
+              staging: ['validate-migrations.yml', 'secret-scanning-gitleaks.yml'],
+              production: ['backend-release.yml', 'frontend-build.yml', 'agent-runtime-contracts.yml',
                               'validate-migrations.yml', 'release-upgrade-rehearsal.yml',
-                              'self-hosted-install.yml', 'secret-scanning-gitleaks.yml'];
+                              'self-hosted-install.yml', 'secret-scanning-gitleaks.yml']
+            };
+            const required = profiles[process.env.RELEASE_ENVIRONMENT];
+            if (!required) throw new Error('Unknown release environment');
             const deadline = Date.now() + 90 * 60 * 1000;
             while (Date.now() < deadline) {
               let ready = true;

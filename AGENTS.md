@@ -22,7 +22,8 @@
 > merge admission** rules: refresh the target, inspect the entire release diff
 > and applied-version set, explain any older missing migrations, and prove the
 > relevant populated upgrade. `--include-all` is not dependency validation.
-> Keep unready cleanup in `contract.pending.sql`. Premerge CI proves the whole
+> Keep unready cleanup in `contract.pending.sql`. For Qubits, prove relevant upgrades locally; automatic CI checks database
+> policy and release regressions plus Gitleaks. Production premerge CI proves the whole
 > populated upgrade in disposable Docker. After merge, the shared workflow applies and verifies compatible SQL with
 > Supabase credentials alone. Pending Contract/dependent SQL routes to the full
 > coordinator, which establishes cutover prerequisites before Contract SQL.

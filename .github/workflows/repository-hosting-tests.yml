@@ -2,6 +2,7 @@ name: Repository hosting contracts
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'backend/src/version_engine/**'
       - 'backend/src/config.py'
@@ -55,7 +56,7 @@ jobs:
         run: |
           backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
             --native-pg --target --output backend/.push-retry-results \
-            -k 'interrupted_push_retry or native_initialization_abandon or native_size_limits or standard_git_pack' -q
+            -k 'interrupted_push_retry or native_initialization_abandon or ref_transaction_service or native_size_limits or standard_git_pack' -q
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
