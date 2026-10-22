@@ -80,11 +80,14 @@ def test_backend_imports_work_without_pytest_module_cache(runner, consumer_name)
     assert result.returncode == 0, result.stderr
 
 
-def test_real_rehearsal_is_part_of_stable_database_gate():
+def test_real_rehearsal_is_required_by_full_database_profile():
     root = Path(__file__).resolve().parents[4]
     jobs = yaml.safe_load((root / ".github/workflows/validate-migrations.yml").read_text())["jobs"]
     rehearsal = jobs["validate_data_api_containment"]
-    assert rehearsal["if"] == "needs.database_change_scope.outputs.changed == 'true'"
+    assert rehearsal["if"] == (
+        "needs.database_change_scope.outputs.changed == 'true'"
+        " && needs.database_change_scope.outputs.profile == 'full'"
+    )
     assert any("scripts/test_data_api_containment.py" in step.get("run", "") for step in rehearsal["steps"])
     gate = jobs["database_validation_result"]
     assert "validate_data_api_containment" in gate["needs"]

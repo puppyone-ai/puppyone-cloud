@@ -17,7 +17,7 @@ pytestmark = pytest.mark.hosting_component
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limit_source", ["plan", "worker", "upload_configuration"])
+@pytest.mark.parametrize("limit_source", ["plan", "deployment", "upload_configuration"])
 async def test_native_request_limits_reject_before_spooling_or_running_git(
     monkeypatch, limit_source
 ):
@@ -32,7 +32,8 @@ async def test_native_request_limits_reject_before_spooling_or_running_git(
 
     monkeypatch.setattr(router, "_git_receive_max_body_bytes", effective_receive_cap)
     monkeypatch.setattr(router.settings, "GIT_MAX_UPLOAD_PACK_BYTES", 4)
-    declared = router.MAX_PACK_BYTES + 1 if limit_source == "worker" else 5
+    declared = (5 if limit_source == "upload_configuration" else
+                (4 if limit_source == "plan" else 1024**3) + router.MAX_RECEIVE_COMMAND_BYTES + 1)
     request = Request({"type": "http", "headers": [(b"content-length", str(declared).encode())]})
     # No receive callable and no Git endpoint: rejection must precede both
     # reading the request stream and attempting transport materialization.
@@ -43,7 +44,7 @@ async def test_native_request_limits_reject_before_spooling_or_running_git(
             upload=limit_source == "upload_configuration",
             project_id="limited-project",
         )
-    assert caught.value.status_code == 400
+    assert caught.value.status_code == 413
     assert calls == ([] if limit_source == "upload_configuration" else ["limited-project"])
 
 

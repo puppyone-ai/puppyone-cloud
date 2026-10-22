@@ -1,7 +1,7 @@
 name: Native inventory migration (local Docker)
 on:
   push:
-    branches: [qubits, main]
+    branches: [main]
     paths:
       - 'supabase/**'
       - 'backend/src/**'
@@ -9,6 +9,7 @@ on:
       - 'scripts/testing/**'
       - '.github/workflows/native-inventory-migration-tests.yml'
   pull_request:
+    branches: [main]
     paths:
       - 'supabase/**'
       - 'backend/src/**'

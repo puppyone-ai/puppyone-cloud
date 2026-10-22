@@ -27,7 +27,6 @@ from src.platform.access.adapters.git.auth import (
     resolve_git_access_point as _resolve_git_access_point,
 )
 from src.platform.access.adapters.git.execution import (
-    MAX_PACK_BYTES,
     MAX_SECONDS,
     admission,
     current_execution,
@@ -43,6 +42,7 @@ from src.version_engine.admission.repo_facade import (
 )
 from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
+from src.version_engine.storage.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
 
 router = APIRouter(prefix="/git")
 
@@ -168,7 +168,7 @@ async def _spool_git_request_body(
             declared_size = -1
         if declared_size > max_body_bytes:
             raise HTTPException(
-                status_code=400,
+                status_code=413,
                 detail=(
                     f"Git request body is {declared_size} bytes; "
                     f"max allowed is {max_body_bytes} bytes"
@@ -186,7 +186,7 @@ async def _spool_git_request_body(
                 total += len(chunk)
                 if max_body_bytes is not None and total > max_body_bytes:
                     raise HTTPException(
-                        status_code=400,
+                        status_code=413,
                         detail=(f"Git request body exceeds max allowed {max_body_bytes} bytes"),
                     )
                 tmp.write(chunk)
@@ -442,25 +442,27 @@ async def _native_rpc(native, request, *, upload, project_id):
     # is sent/aborted, bounding slow clients' object buffers and snapshot pins.
     with admission() as retain:
         async with asyncio.timeout(MAX_SECONDS):
+            receive_options = {}
             if upload:
                 max_body_bytes = min(
                     16 * 1024**2, settings.GIT_MAX_UPLOAD_PACK_BYTES or 16 * 1024**2
                 )
             else:
-                # The native worker budget supplements the existing deployment
-                # and plan admission; it must never replace a tighter limit.
                 effective_cap = await run_owned(_git_receive_max_body_bytes, project_id)
-                max_body_bytes = min(MAX_PACK_BYTES, effective_cap)
+                # Protocol commands have their own bound. The exact pack cap
+                # travels to the parser, so headers neither consume that quota
+                # nor allow an oversized pack to bypass plan admission.
+                max_body_bytes = effective_cap + MAX_RECEIVE_COMMAND_BYTES
+                receive_options["max_pack_bytes"] = effective_cap
+                if "x-puppyone-initial-attempt" in request.headers:
+                    receive_options["initial_attempt"] = request.headers["x-puppyone-initial-attempt"]
             path = await _spool_git_request_body(request, max_body_bytes=max_body_bytes)
             try:
                 response = await _native_call(
                     native.upload if upload else native.receive,
                     path,
                     disconnect=request.is_disconnected,
-                    **({"protocol": request.headers.get("git-protocol", "")} if upload else (
-                        {"initial_attempt": request.headers["x-puppyone-initial-attempt"]}
-                        if "x-puppyone-initial-attempt" in request.headers else {}
-                    )),
+                    **({"protocol": request.headers.get("git-protocol", "")} if upload else receive_options),
                 )
                 return retain(response)
             finally:

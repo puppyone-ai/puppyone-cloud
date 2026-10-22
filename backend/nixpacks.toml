@@ -28,7 +28,7 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python312"]
+nixPkgs = ["python312", "git"]
 
 [phases.install]
 # Replace the default Python provider install phase entirely. We:

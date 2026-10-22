@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from starlette.responses import StreamingResponse
 
+from src.config import settings
 from src.version_engine.infrastructure.owned_work import (
     MAX_SECONDS,
     Execution,
@@ -23,11 +24,16 @@ from src.version_engine.infrastructure.owned_work import (
     current_execution,
 )
 from src.version_engine.infrastructure.owned_work import run_owned as run_owned
+from src.version_engine.storage.git_pack_limits import (
+    MAX_OBJECT_BYTES as MAX_OBJECT_BYTES,
+    MAX_OBJECTS as MAX_OBJECTS,
+)
 
-MAX_PACK_BYTES = 128 * 1024**2
+MAX_PACK_BYTES = settings.GIT_MAX_RECEIVE_PACK_BYTES
 MAX_GRAPH_BYTES = 256 * 1024**2
-MAX_OBJECT_BYTES = 64 * 1024**2
-MAX_OBJECTS = 100_000
+# Native object streams use their own configurable disk/graph budget. Keep the
+# retained subprocess profile aligned with process_limits.py's original caps.
+MAX_NATIVE_GRAPH_BYTES = settings.GIT_MAX_EXPANDED_BYTES
 MAX_REFS = 10_000
 MAX_DISK_BYTES = 768 * 1024**2
 _slots = threading.BoundedSemaphore(2)

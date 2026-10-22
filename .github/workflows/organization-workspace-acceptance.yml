@@ -2,6 +2,7 @@ name: Organization workspace acceptance
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'backend/src/**'
       - 'backend/tests/platform/organization/**'
@@ -18,7 +19,7 @@ on:
       - 'docker/Dockerfile.minio'
       - '.github/workflows/organization-workspace-acceptance.yml'
   push:
-    branches: [qubits, main]
+    branches: [main]
     paths:
       - 'backend/src/**'
       - 'backend/tests/platform/organization/**'

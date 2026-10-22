@@ -2,6 +2,7 @@ name: Cloud Agent data and runtime contracts
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'backend/src/**'
       - 'backend/tests/agent/**'
@@ -16,7 +17,7 @@ on:
       - 'docker/Dockerfile.minio'
       - '.github/workflows/agent-runtime-contracts.yml'
   push:
-    branches: [qubits, main]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

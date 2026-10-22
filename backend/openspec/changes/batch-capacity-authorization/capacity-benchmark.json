@@ -1,0 +1,255 @@
+{
+  "scope": "Local PG17, actual full capacity RPC with Runtime credential/file policy; no S3/network/publication",
+  "pack_sha256": "a4825c29051f9cee0e3f61a40642811067253aacaafa6b1b5b74a61e8847d97b",
+  "pack_bytes": 19994608,
+  "objects": 6017,
+  "logical_bytes": 63081993,
+  "before": {
+    "execution_ms": 20590.884,
+    "wall_seconds": 20.6516,
+    "functions": [
+      {
+        "funcname": "_version_assert_current_repository_actor",
+        "calls": 24068,
+        "total_time": 19262.851,
+        "self_time": 792.966
+      },
+      {
+        "funcname": "_version_assert_write_lease",
+        "calls": 24068,
+        "total_time": 145.831,
+        "self_time": 145.831
+      },
+      {
+        "funcname": "_version_fence_native_io_admission",
+        "calls": 6017,
+        "total_time": 10024.033,
+        "self_time": 71.223
+      },
+      {
+        "funcname": "_version_fence_new_blob_size",
+        "calls": 6017,
+        "total_time": 10261.699,
+        "self_time": 130.735
+      },
+      {
+        "funcname": "_version_file_policy_limit",
+        "calls": 12034,
+        "total_time": 408.375,
+        "self_time": 61.454
+      },
+      {
+        "funcname": "resolve_git_runtime_credential",
+        "calls": 24068,
+        "total_time": 15022.056,
+        "self_time": 11289.803
+      },
+      {
+        "funcname": "resolve_project_role",
+        "calls": 48136,
+        "total_time": 7180.081,
+        "self_time": 7180.081
+      }
+    ]
+  },
+  "after": [
+    {
+      "execution_ms": 171.494,
+      "wall_seconds": 0.2071,
+      "functions": [
+        {
+          "funcname": "_version_assert_current_repository_actor",
+          "calls": 1,
+          "total_time": 2.739,
+          "self_time": 1.559
+        },
+        {
+          "funcname": "_version_assert_write_lease",
+          "calls": 2,
+          "total_time": 0.26,
+          "self_time": 0.26
+        },
+        {
+          "funcname": "_version_begin_capacity_admission",
+          "calls": 1,
+          "total_time": 4.261,
+          "self_time": 0.461
+        },
+        {
+          "funcname": "_version_fence_native_io_admission",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_fence_new_blob_size",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_file_policy_limit",
+          "calls": 1,
+          "total_time": 0.852,
+          "self_time": 0.165
+        },
+        {
+          "funcname": "_version_finish_capacity_admission",
+          "calls": 1,
+          "total_time": 0.167,
+          "self_time": 0.115
+        },
+        {
+          "funcname": "_version_guard_object_capacity_page",
+          "calls": 1,
+          "total_time": 0.352,
+          "self_time": 0.352
+        },
+        {
+          "funcname": "resolve_git_runtime_credential",
+          "calls": 1,
+          "total_time": 1.179,
+          "self_time": 0.95
+        },
+        {
+          "funcname": "resolve_project_role",
+          "calls": 1,
+          "total_time": 0.229,
+          "self_time": 0.229
+        }
+      ]
+    },
+    {
+      "execution_ms": 176.629,
+      "wall_seconds": 0.211,
+      "functions": [
+        {
+          "funcname": "_version_assert_current_repository_actor",
+          "calls": 1,
+          "total_time": 2.327,
+          "self_time": 1.29
+        },
+        {
+          "funcname": "_version_assert_write_lease",
+          "calls": 2,
+          "total_time": 0.211,
+          "self_time": 0.211
+        },
+        {
+          "funcname": "_version_begin_capacity_admission",
+          "calls": 1,
+          "total_time": 3.896,
+          "self_time": 0.426
+        },
+        {
+          "funcname": "_version_fence_native_io_admission",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_fence_new_blob_size",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_file_policy_limit",
+          "calls": 1,
+          "total_time": 0.977,
+          "self_time": 0.128
+        },
+        {
+          "funcname": "_version_finish_capacity_admission",
+          "calls": 1,
+          "total_time": 0.16,
+          "self_time": 0.113
+        },
+        {
+          "funcname": "_version_guard_object_capacity_page",
+          "calls": 1,
+          "total_time": 0.322,
+          "self_time": 0.322
+        },
+        {
+          "funcname": "resolve_git_runtime_credential",
+          "calls": 1,
+          "total_time": 1.036,
+          "self_time": 0.813
+        },
+        {
+          "funcname": "resolve_project_role",
+          "calls": 1,
+          "total_time": 0.223,
+          "self_time": 0.223
+        }
+      ]
+    },
+    {
+      "execution_ms": 173.124,
+      "wall_seconds": 0.2099,
+      "functions": [
+        {
+          "funcname": "_version_assert_current_repository_actor",
+          "calls": 1,
+          "total_time": 2.508,
+          "self_time": 1.36
+        },
+        {
+          "funcname": "_version_assert_write_lease",
+          "calls": 2,
+          "total_time": 0.226,
+          "self_time": 0.226
+        },
+        {
+          "funcname": "_version_begin_capacity_admission",
+          "calls": 1,
+          "total_time": 4.007,
+          "self_time": 0.437
+        },
+        {
+          "funcname": "_version_fence_native_io_admission",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_fence_new_blob_size",
+          "calls": 0,
+          "total_time": 0,
+          "self_time": 0
+        },
+        {
+          "funcname": "_version_file_policy_limit",
+          "calls": 1,
+          "total_time": 0.884,
+          "self_time": 0.143
+        },
+        {
+          "funcname": "_version_finish_capacity_admission",
+          "calls": 1,
+          "total_time": 0.146,
+          "self_time": 0.096
+        },
+        {
+          "funcname": "_version_guard_object_capacity_page",
+          "calls": 1,
+          "total_time": 0.316,
+          "self_time": 0.316
+        },
+        {
+          "funcname": "resolve_git_runtime_credential",
+          "calls": 1,
+          "total_time": 1.147,
+          "self_time": 0.886
+        },
+        {
+          "funcname": "resolve_project_role",
+          "calls": 1,
+          "total_time": 0.261,
+          "self_time": 0.261
+        }
+      ]
+    }
+  ]
+}

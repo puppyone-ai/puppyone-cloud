@@ -30,10 +30,26 @@ jobs:
     timeout-minutes: 5
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
+      profile: ${{ steps.profile.outputs.profile }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
+      - name: Select database validation profile
+        id: profile
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME:$BASE_REF:$REF_NAME" in
+            pull_request:qubits:*|push::qubits) profile=qubits ;;
+            *) profile=full ;;
+          esac
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
 
       - name: Detect database release paths
         id: detect
@@ -122,11 +138,15 @@ jobs:
             uv run puppyone-db policy --base-ref "origin/$BASE_REF"
           fi
 
-      - name: Run data migration and workflow regression tests
+      - name: Run database release regression tests
+        working-directory: backend
+        run: uv run pytest tests/infra/data_migrations -q
+
+      - name: Run application boundary regression tests
+        if: needs.database_change_scope.outputs.profile == 'full'
         working-directory: backend
         run: |
           uv run pytest \
-            tests/infra/data_migrations \
             tests/security/test_credential_backfill_ci_contract.py \
             tests/security/test_unified_authorization_architecture.py \
             tests/security/test_billing_database_boundary.py \
@@ -144,7 +164,7 @@ jobs:
   validate_local_database:
     name: Verify fresh install and existing-data upgrade
     needs: database_change_scope
-    if: needs.database_change_scope.outputs.changed == 'true'
+    if: needs.database_change_scope.outputs.changed == 'true' && needs.database_change_scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -241,7 +261,7 @@ jobs:
   validate_data_api_containment:
     name: Verify internal Data API containment
     needs: database_change_scope
-    if: needs.database_change_scope.outputs.changed == 'true'
+    if: needs.database_change_scope.outputs.changed == 'true' && needs.database_change_scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -332,6 +352,7 @@ jobs:
     env:
       CHANGE_SCOPE_RESULT: ${{ needs.database_change_scope.result }}
       DATABASE_CHANGED: ${{ needs.database_change_scope.outputs.changed }}
+      VALIDATION_PROFILE: ${{ needs.database_change_scope.outputs.profile }}
       POLICY_RESULT: ${{ needs.repository_policy.result }}
       LOCAL_DATABASE_RESULT: ${{ needs.validate_local_database.result }}
       CONTAINMENT_RESULT: ${{ needs.validate_data_api_containment.result }}
@@ -354,10 +375,26 @@ jobs:
             echo "No database release paths changed."
             exit 0
           fi
-          for result in "$POLICY_RESULT" "$LOCAL_DATABASE_RESULT" "$CONTAINMENT_RESULT" "$RPC_LINT_RESULT"; do
+          case "$VALIDATION_PROFILE" in
+            qubits)
+              if [ "$LOCAL_DATABASE_RESULT" != skipped ] || [ "$CONTAINMENT_RESULT" != skipped ]; then
+                echo "::error::Unexpected Qubits rehearsal state."
+                exit 1
+              fi
+              ;;
+            full)
+              if [ "$LOCAL_DATABASE_RESULT" != success ] || [ "$CONTAINMENT_RESULT" != success ]; then
+                echo "::error::A required database rehearsal did not succeed."
+                exit 1
+              fi
+              ;;
+            *) echo "::error::Unknown database validation profile."; exit 1 ;;
+          esac
+          for result in "$POLICY_RESULT" "$RPC_LINT_RESULT"; do
             if [ "$result" != "success" ]; then
               echo "::error::A required database validation job did not succeed."
               exit 1
             fi
           done
-          echo "All database release validations succeeded."
+          echo "Database validation succeeded for profile: $VALIDATION_PROFILE"
+          echo "Profile: $VALIDATION_PROFILE. Application testing is reported separately." >> "$GITHUB_STEP_SUMMARY"

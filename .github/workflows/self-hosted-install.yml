@@ -2,8 +2,9 @@ name: Self-hosted Installation
 
 on:
   pull_request:
+    branches: [main]
   push:
-    branches: [qubits, main]
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 

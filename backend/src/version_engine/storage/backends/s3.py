@@ -253,6 +253,9 @@ class CachedStorageBackend(StorageBackend):
     def put_prepared_stream_durable(self, objects, facts) -> None:
         self._inner.put_prepared_stream_durable(objects, facts)
 
+    def put_git_pack_durable(self, pack) -> None:
+        self._inner.put_git_pack_durable(pack)
+
     def _cache_key(self, h: str):
         return (self._cache_namespace, h)
 
@@ -568,6 +571,8 @@ class S3StorageBackend(StorageBackend):
 
     def get_durable(self, h: str) -> bytes:
         # A location cached before compaction/deletion is not current proof.
+        import uuid
+
         reader = S3StorageBackend(
             self._s3,
             self._project_id,
@@ -576,6 +581,7 @@ class S3StorageBackend(StorageBackend):
             require_immutable_chunks=True,
         )
         location = reader._lookup_object_location(h)
+        reader._pack_readback_token = uuid.uuid4().hex
         if location is not None:
             key = location.pack_key.removeprefix(_CHUNKED_PACK_PREFIX)
             if not key.startswith(reader._bundle_prefix + "/"):
@@ -699,6 +705,82 @@ class S3StorageBackend(StorageBackend):
 
     def put_prepared_stream_durable(self, objects, facts) -> None:
         _run_async(self.async_put_prepared_stream(objects, facts))
+
+    def put_git_pack_durable(self, pack) -> None:
+        """Keep stock Git's completed pack; metadata remains compatibility-indexed."""
+        from src.version_engine.storage.git_pack_io import upload_pack, verify_pack
+
+        self._check_publication_context()
+        context = publication_context.get()
+        if context is None or not self._active_io_strategy().location_index_enabled:
+            raise StorageWriteError("Git pack storage requires admitted location indexing")
+        if pack.path is None:
+            return
+        key = f"{self._bundle_prefix}/{pack.digest[:2]}/{pack.digest}.pack"
+        facts = [{"object_id": oid, "object_kind": kind, "body_bytes": size}
+                 for oid, (kind, _, size, _) in pack.objects.items()]
+        rows = [{"project_id": self._project_id, "object_id": oid, "pack_key": key,
+                 "offset_bytes": offset, "size_bytes": packed_size}
+                for oid, (_, offset, _, packed_size) in pack.objects.items()]
+        evidence = PreparedReadback(max_bytes=max(0, context.readbacks.MAX_BYTES - context.readbacks.bytes)) if context.readbacks else None
+        if evidence is not None:
+            for oid in pack.objects:
+                checkpoint()
+                if context.progress:
+                    context.progress()
+                evidence.verify_raw(oid, *pack.get(oid))
+
+        async def persist():
+            io_id = await self._async_reserve_capacity(facts, paged=True)
+            physical = self._physical_s3()
+            with operation_io_budget(self._active_io_strategy().write_concurrency):
+                await upload_pack(physical, key, pack.path, progress=context.progress)
+                await verify_pack(physical, key, expected_size=pack.path.stat().st_size,
+                                  expected_digest=pack.digest, progress=context.progress)
+                await self._async_upsert_object_locations(rows, paged=True)
+            await self._async_settle_capacity(io_id)
+
+        _run_async(persist())
+        if evidence is not None:
+            evidence.placements(rows)
+            context.readbacks.promote(evidence.finish())
+
+    def _get_git_pack_object(self, h, location):
+        import tempfile
+        from pathlib import Path
+
+        from src.version_engine.storage.git_pack import GitPack
+        from src.version_engine.storage.git_pack_cache import pack_cache
+        from src.version_engine.storage.git_pack_io import download_pack
+        from src.version_engine.write_engine.git_object_format import encode_object
+
+        self._validate_location(location)
+        key = location.pack_key
+        fmt = "sha256" if len(h) == 64 else "sha1"
+        digest = Path(key).stem
+        namespace = (id(self._s3), self._project_id, key, getattr(self, "_pack_readback_token", None))
+
+        def load():
+            pack = GitPack(fmt)
+            try:
+                with tempfile.TemporaryDirectory(prefix="puppyone-pack-download-") as directory:
+                    path = Path(directory) / "stored.pack"
+                    _run_async(download_pack(self._s3, key, path, max_bytes=pack.limits.stored_bytes))
+                    with path.open("rb") as stream:
+                        pack.read_stored(stream)
+                if pack.digest != digest:
+                    raise StorageWriteError("stored Git pack checksum mismatch")
+                return pack
+            except BaseException:
+                pack.close()
+                raise
+
+        with pack_cache.acquire(namespace, load) as pack:
+            record = pack.objects.get(h)
+            if record is None or (record[1], record[3]) != (location.offset_bytes, location.size_bytes):
+                raise StorageWriteError("Git pack location does not match its verified index")
+            kind, body = pack.get(h)
+            return encode_object(kind, body, object_format=fmt)[1]
 
     def exists(self, h: str) -> bool:
         if self._lookup_object_location(h) is not None:
@@ -1445,6 +1527,8 @@ class S3StorageBackend(StorageBackend):
 
     def _get_packed_object_at(self, h: str, location: ObjectLocation) -> bytes:
         self._validate_location(location)
+        if location.pack_key.endswith(".pack"):
+            return self._get_git_pack_object(h, location)
         if location.pack_key.startswith(_CHUNKED_PACK_PREFIX):
             return _run_async(self._async_get_chunked_object_at(h, location))
         try:
@@ -1485,6 +1569,8 @@ class S3StorageBackend(StorageBackend):
         location: ObjectLocation,
     ) -> bytes:
         self._validate_location(location)
+        if location.pack_key.endswith(".pack"):
+            return await call_owned(self._get_git_pack_object, h, location)
         if location.pack_key.startswith(_CHUNKED_PACK_PREFIX):
             return await self._async_get_chunked_object_at(h, location)
         try:
@@ -2007,6 +2093,8 @@ class _S3DurableReadback:
     """
 
     def __init__(self, backend):
+        import uuid
+
         self.reader = S3StorageBackend(
             backend._s3,
             backend._project_id,
@@ -2015,6 +2103,7 @@ class _S3DurableReadback:
             require_immutable_chunks=True,
         )
         self.pending = {}
+        self.reader._pack_readback_token = uuid.uuid4().hex
         self.verified_bytes = {}
         self.buffered_bytes = 0
 
@@ -2037,7 +2126,8 @@ class _S3DurableReadback:
         groups = {}
         for oid in wanted:
             location = locations.get(oid)
-            if location is not None and not location.pack_key.startswith(_CHUNKED_PACK_PREFIX):
+            if (location is not None and not location.pack_key.startswith(_CHUNKED_PACK_PREFIX)
+                    and not location.pack_key.endswith(".pack")):
                 self.reader._validate_location(location)
                 groups.setdefault(location.pack_key, []).append((oid, location))
         ranges = []

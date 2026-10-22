@@ -14,6 +14,10 @@ from src.platform.access.adapters.git.native_repository import (
     PublicationIndeterminateError,
 )
 from src.version_engine.read.repository_snapshot import repository_snapshot
+from src.version_engine.storage.git_pack_limits import (
+    MAX_RECEIVE_COMMAND_BYTES,
+    configured_pack_limits,
+)
 from src.version_engine.write_engine.ref_transaction import admitted_actor
 
 
@@ -33,9 +37,10 @@ class NativeGitEndpoint:
     def upload(self, path, *, protocol=""):
         return self.repository.upload(self.grant, path, protocol=protocol)
 
-    def receive(self, path, *, initial_attempt=None):
+    def receive(self, path, *, initial_attempt=None, max_pack_bytes=None):
         try:
-            return self.repository.receive(self.grant, path, initial_attempt=initial_attempt)
+            return self.repository.receive(self.grant, path, initial_attempt=initial_attempt,
+                                           max_pack_bytes=max_pack_bytes)
         except PublicationIndeterminateError as exc:
             # Do not emit an `ng` report for an operation that may be durable.
             raise HTTPException(
@@ -46,6 +51,7 @@ class NativeGitEndpoint:
 
     def health(self):
         service = self.repository.service
+        pack_limits = configured_pack_limits()
         with repository_snapshot(
             service.control, service.backend, self.grant, project_id=service.project_id
         ) as snapshot:
@@ -76,16 +82,19 @@ class NativeGitEndpoint:
                     "object_format": service.object_format,
                 },
                 "limits": {
-                    "receive_pack_bytes": limits.MAX_PACK_BYTES,
+                    "receive_pack_bytes": pack_limits.receive_bytes,
+                    "receive_command_bytes": MAX_RECEIVE_COMMAND_BYTES,
+                    "stored_pack_bytes": pack_limits.stored_bytes,
                     "object_body_bytes": limits.MAX_OBJECT_BYTES,
-                    "graph_body_bytes": limits.MAX_GRAPH_BYTES,
+                    "graph_body_bytes": limits.MAX_NATIVE_GRAPH_BYTES,
                     "objects": limits.MAX_OBJECTS,
                     "refs": limits.MAX_REFS,
                     "worker_seconds": limits.MAX_SECONDS,
                     "concurrent_workers_per_process": 2,
                     "object_cache_bytes_per_request": 8 * 1024**2,
-                    "fetch_repository_scratch_bytes": 0,
-                    "temporary_bytes_excluding_input": limits.MAX_GRAPH_BYTES,
+                    "fetch_repository_scratch_bytes": pack_limits.scratch_bytes,
+                    "temporary_bytes_excluding_input": pack_limits.scratch_bytes,
+                    "standard_pack_cache_entries_per_process": 4,
                 },
                 "health": "empty" if empty else "healthy",
                 "git_head": revision.commit_oid,
