@@ -24,18 +24,24 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
 ## Durable readiness candidate (2026-10-23)
 
 [`readiness-20261023-receipt.json`](readiness-20261023-receipt.json) records
-backend `b8b1e189`, Desktop `1de682c5`, the built runtime identity, passing
+backend `fa7d505a`, Desktop `1de682c5`, the built runtime identity, passing
 local checks, and the one unrelated Desktop baseline failure. The new common
 lifecycle persists open intent, performs fenced background initialization,
 checks native file readiness, and reports bounded typed failures. Desktop polls
 without reissuing wake requests. SQL upgrade tests preserve existing resource
 bindings and file-volume identities.
 
-**Real Fly acceptance and the user's preview recovery are still pending.**
-Automatic approval review rejected publishing this runtime image to
-`registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c` until the user explicitly
-authorizes this payload and registry. No image upload, hosted SQL migration,
-VM update, or local API/worker replacement has been performed for this candidate.
+The user authorized the runtime upload and real Fly acceptance. The pinned
+artifact passed the full Agent/Git/files/watch/reconnect/pause/resume scenario
+in SIN and LAX. Both runs cleaned up their owned Machines and Volumes.
+[`readiness-20261023-fly-lax.json`](readiness-20261023-fly-lax.json) passes the
+unchanged I/O latency gate: write/read/list p50 272/267/269 ms. The local egress
+reaches Fly's LAX gateway. The SIN comparison passes functionality but fails
+the 300 ms p50 target at about 434 ms, also seen in control-only round trips;
+do not represent that cross-region path as a performance pass. First allocation,
+first API channel and resume are measured separately in both receipts.
+
+**The user's existing preview recovery and paired release are still pending.**
 E2B remains inactive; prior E2B receipts do not validate this new manifest build.
 
 Release order:

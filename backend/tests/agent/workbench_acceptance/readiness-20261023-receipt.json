@@ -1,7 +1,7 @@
 {
   "date": "2026-10-23",
-  "result": "local_passed_fly_acceptance_pending",
-  "backend_source": "b8b1e189",
+  "result": "fly_validated_deployment_pending",
+  "backend_source": "fa7d505a205d12ce74c46c741c4c60e3837c0918",
   "desktop_source": "1de682c5",
   "desktop_connection_companion": "e8d3d8ba",
   "runtime": {
@@ -22,8 +22,8 @@
   },
   "checks": {
     "backend_non_integration": {
-      "passed": 3414,
-      "skipped": 902,
+      "passed": 3480,
+      "skipped": 953,
       "deselected": 409
     },
     "lifecycle_sql_and_populated_upgrade": {
@@ -47,7 +47,14 @@
     },
     "desktop_types": "passed",
     "desktop_boundaries": "passed",
-    "canonical_documentation": "passed"
+    "canonical_documentation": "passed",
+    "populated_upgrade_against_current_qubits": {
+      "passed": 9
+    },
+    "desktop_integration_with_preserved_wip": {
+      "passed": 70,
+      "files": 4
+    }
   },
   "wider_desktop_regression": {
     "passed": 587,
@@ -57,12 +64,19 @@
     "baseline_reproduced": true
   },
   "pending": [
-    "Explicit runtime image upload authorization for registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c:workspace-readiness-20261023 (automatic approval review rejection).",
-    "Real Fly accept_fly.py and accept_io.py on the new pinned artifact.",
-    "Paired database/API/worker/artifact rollout, preserving the existing workspace Volume, and actual user preview verification.",
-    "Integration into qubits after real Fly acceptance; canonical worktrees retain unrelated changes."
+    "Merge and release readiness SQL through qubits CI/CD.",
+    "Update the existing workspace artifact and paired API/worker, retain its Volume and verify the actual project preview.",
+    "Final integration evidence and documentation; unrelated canonical WIP is preserved."
   ],
   "product_provider": "fly",
   "e2b_activation": false,
-  "hosted_mutation_performed": false
+  "hosted_mutation_performed": true,
+  "live_fly": {
+    "sin": "readiness-20261023-fly-sin.json",
+    "lax": "readiness-20261023-fly-lax.json",
+    "functional": "passed in both regions",
+    "latency": "LAX passed p50 <= 300 ms and p95 <= 1000 ms; SIN failed p50 with local egress reaching LAX; control-only round trips have the same floor",
+    "fixture": "real provider/Pi/dispatcher/Git/files/SSE; deterministic model; owned PG/S3; billing disabled"
+  },
+  "hosted_mutation_scope": "Uploaded authorized runtime image and created/cleaned disposable Fly Machines and Volumes; existing user workspace unchanged at this receipt."
 }

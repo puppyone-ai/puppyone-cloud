@@ -5,8 +5,8 @@
 - [x] Validate credential/configuration and artifact release consistency.
 - [x] Fix Desktop waiting, cancellation and errors without provider knowledge.
 - [x] Verify contracts, populated SQL, native files and lifecycle failure scenarios.
-- [ ] Publish the candidate Fly artifact and pass real product API/Agent/Git/files/watch/resume and I/O acceptance.
+- [x] Publish the candidate Fly artifact and pass real product API/Agent/Git/files/watch/resume and I/O acceptance.
 - [ ] Restore the user's hosted preview with verified matching local services and artifact.
 - [ ] Integrate tested changes, update receipts and canonical documentation, preserve unrelated work.
 
-Local verification is complete. Real Fly artifact upload was rejected by automatic approval review pending explicit authorization for the runtime image and registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c. Do not mark provider acceptance or preview recovery complete until that gate and the real tests pass.
+Real Fly functional acceptance passed in SIN and LAX; LAX also passed the unchanged I/O latency gate. The SIN path via the local LAX egress has a measured 434 ms control/file round trip and does not meet the 300 ms p50 target. Receipts preserve both outcomes. Existing user preview recovery is a separate release gate.
