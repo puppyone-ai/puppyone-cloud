@@ -16,7 +16,7 @@ publish a production listener or change the default provider.
 - Add a standard SSH gateway adapter, with no provider SDK or resource ownership.
 - Add provider-neutral shell/PTY channels and durable Workspace connection leases.
 - Preserve files and occupancy until the exact task's cleanup is acknowledged.
-- Validate native SSH with a real local sandbox and populated PostgreSQL upgrade.
+- Validate native SSH with an owned real Fly sandbox and populated PostgreSQL upgrade.
 
 ## Impact
 - Affected spec: workspace-access.

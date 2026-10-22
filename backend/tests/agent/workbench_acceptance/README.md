@@ -23,6 +23,9 @@ It does **not** change ISSUE-118 A1–A6 or turn component results into closure.
 
 ## Hosted Workspace SSH acceptance
 
+The [2026-10-23 receipt](hosted-ssh-20261023-receipt.json) records six passing
+real Fly scenarios on source `5f1a8b68`, including verified resource cleanup.
+
 `tests/agent/runtime/test_hosted_ssh_live.py` exercises the production SSH
 adapter, native shell/PTY protocol, Workspace connection ledger and file API
 against disposable provider resources. It covers stock OpenSSH binary I/O,
