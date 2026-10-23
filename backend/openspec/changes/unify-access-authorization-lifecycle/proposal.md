@@ -30,4 +30,3 @@ authorized; publication and hosted migration are separate operations.
 
 Access/Authorization/Workspace boundaries, additive SQL migration, registered
 client APIs, existing SSH/Git/CLI/MCP admission and their acceptance contracts.
-

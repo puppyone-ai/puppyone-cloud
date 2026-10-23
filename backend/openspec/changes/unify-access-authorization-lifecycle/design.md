@@ -31,4 +31,3 @@ owner; finite leases bound disconnected workers. Completed writes are not undone
 Tests use isolated PostgreSQL and production adapters. No hosted deployment,
 remote customer data, real mail or existing Fly machines are needed for this
 permission refactor's local acceptance.
-

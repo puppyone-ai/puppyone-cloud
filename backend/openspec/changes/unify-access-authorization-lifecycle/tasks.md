@@ -1,9 +1,12 @@
 ## Implementation
 
-- [ ] Add durable identity, invitation, grant, credential renewal and session schema with backend-only transitions.
-- [ ] Implement shared policy types and lifecycle services with authenticated APIs.
-- [ ] Integrate SSH and repository credential admission without broadening legacy credentials.
-- [ ] Connect session revocation and cleanup to the existing Workspace owner.
-- [ ] Verify policy, protocol, real SQL races, populated upgrade and existing regressions.
-- [ ] Update canonical architecture and record exact acceptance and deployment boundaries.
+- [x] Add durable identity, invitation, grant, credential renewal and session schema with backend-only transitions.
+- [x] Implement shared policy types and lifecycle services with authenticated APIs.
+- [x] Integrate SSH and repository credential admission without broadening legacy credentials.
+- [x] Connect session revocation and cleanup to the existing Workspace owner.
+- [x] Verify policy, protocol, real SQL races, populated upgrade and existing regressions.
+- [x] Update canonical architecture and record exact acceptance and deployment boundaries.
 
+## Remaining acceptance
+
+- [ ] Run the registered-Agent real SSH/VM scenario once the local Docker start failure is resolved, or with an explicitly configured disposable Fly fixture. See `verification.md`; local SQL/HTTP success is not live-provider acceptance.

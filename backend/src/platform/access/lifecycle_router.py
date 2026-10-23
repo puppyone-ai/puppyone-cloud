@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
+from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 
@@ -29,6 +30,11 @@ class AccessRoute(APIRoute):
         handler = super().get_route_handler()
 
         async def redacted_validation(request):
+            # Old replicas cannot evaluate the new parent/audience facts. Do not
+            # issue managed credentials during a mixed-version deployment.
+            # Inspection and revocation stay available when issuance is disabled.
+            if request.method in {"POST", "PUT"} and not settings.ACCESS_LIFECYCLE_ENABLED:
+                raise HTTPException(503, detail={"code": "access_lifecycle_not_enabled"})
             try:
                 return await handler(request)
             except RequestValidationError as exc:

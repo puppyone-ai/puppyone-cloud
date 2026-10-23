@@ -119,3 +119,19 @@ async def test_failed_cleanup_does_not_starve_other_sessions():
     connections = SimpleNamespace(cleanup=AsyncMock(side_effect=[TimeoutError(), None]))
     await sessions.reap(connections)
     assert connections.cleanup.await_count == 2
+
+
+def test_mixed_version_rollout_cannot_issue_new_credentials(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.config import settings
+    from src.platform.access.lifecycle_router import router
+
+    monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", False)
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        response = client.post("/api/v1/access/credentials/renew", json={})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "access_lifecycle_not_enabled"

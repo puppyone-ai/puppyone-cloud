@@ -414,6 +414,7 @@ async def test_real_http_registration_approval_and_renewal(
     monkeypatch.setattr(
         settings, "ACCESS_CREDENTIAL_HASH_SECRET", "owned-access-lifecycle-fixture-strong-secret"
     )
+    monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
     args, _ = submitted
     project, owner = args["project"], args["user"]
     guest, reg_id, invitation_id, request_id, surface = [str(uuid4()) for _ in range(5)]
@@ -604,7 +605,7 @@ def test_publication_authority_serializes_with_grant_revocation(postgres, submit
     def checked_operation():
         lock_started.set()
         return postgres.sql(
-            f"SET application_name='{marker}'; BEGIN; SELECT access_credential_grant_valid('{receipt['id']}','git',true); SELECT pg_sleep(1.0); COMMIT;"
+            f"SET application_name='{marker}'; BEGIN; SELECT access_credential_grant_valid('{receipt['id']}','git',true); SELECT pg_sleep(2.0); COMMIT;"
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -631,9 +632,39 @@ def test_publication_authority_serializes_with_grant_revocation(postgres, submit
             project_id=context["project"],
             state="revoked",
         )
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            blocked = postgres.sql(
+                f"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%{context['grant']}%'"
+            )
+            if blocked != "0":
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("Revocation did not wait for the checked operation's commit")
         assert checked.result(timeout=5).startswith("t")
         assert revoke.result(timeout=5)["state"] == "revoked"
     assert (
         call(postgres, "access_credential_grant_valid", id=receipt["id"], channel="git", write=True)
         is False
     )
+
+
+def test_shared_policy_evaluates_real_workspace_authority(postgres, submitted):
+    from src.exceptions import PermissionException
+    from src.platform.authorization.service import AuthorizationService
+
+    args, _ = submitted
+    workspace = running(postgres, args)
+    context = setup_access(postgres, args, workspace=workspace)
+    facts = call(postgres, "access_grant_context", grant=context["grant"], channel="ssh")
+    authority = AuthorizationService.authorize_delegated(
+        facts, "ssh", project=context["project"], workbench=workspace["id"]
+    )
+    assert authority.subject_user_id == context["guest"]
+    assert authority.approved_by == context["owner"]
+    assert authority.registration_id == context["registration"]
+    with pytest.raises(PermissionException):
+        AuthorizationService.authorize_delegated(facts, "ssh", workbench=str(uuid4()))
+    with pytest.raises(PermissionException):
+        AuthorizationService.authorize_delegated(facts, "git")
