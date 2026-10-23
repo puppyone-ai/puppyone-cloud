@@ -1,5 +1,26 @@
 # Operation lifecycle verification
 
+## Entry coverage audit follow-up — 2026-10-24
+
+The recursive entry/read audit is recorded in [entrypoint-audit.md](entrypoint-audit.md).
+It explicitly retains unresolved legacy paths; passing regression is not complete
+adoption of the operation boundary.
+
+- Expanded HTTP coverage walks nested dependencies and typed request models.
+- Whole-source factory/read-reference inventory includes import aliases and new
+  directories, exact reference counts, stale-entry checks and named migration debt.
+- Public Synchronize dependency forwarding and one-authorized-snapshot behavior
+  now have regression coverage. Four SHA-1/SHA-256 success/missing cases failed
+  before the wiring fix; all eight success/missing/denied/foreign cases pass after.
+- Focused audit, lifecycle and Synchronize checks: **94 passed**.
+- Required local suite, retaining the baseline's existing 17 modified files:
+  **3,689 passed, 956 skipped, 439 deselected, 0 failed/errors**, 154.26 seconds.
+- New audit/test modules pass Ruff; `git diff --check` passes. No SQL/schema,
+  migration, remote push, hosted deployment or service restart. The external
+  database/runtime activation status below has not been reverified by this audit.
+
+## Original lifecycle delivery
+
 Status: implemented, locally regression-tested and integrated into qubits; runtime activation blocked by the test database HTTP dependency.
 
 Baseline: `bc8714ec`, plus the canonical workstation's pre-existing uncommitted changes (preserved separately during development).

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.file_operations.queries import run_read
+from src.infra.execution.runner import run_owned
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -926,16 +927,20 @@ async def trigger_push(
     from src.platform.authorization.models import ProjectAction
     from src.version_engine.read.tree_reader import detect_type
 
-    _ensure_project_access(
-        authorization,
-        current_user,
+    grant = await run_owned(
+        authorization.authorize,
         project_id,
+        current_user.user_id,
         ProjectAction.AUTOMATION_RUN,
     )
 
-    ops = ops.for_user(project_id, current_user.user_id)
+    ops = ops.for_grant(grant)
     try:
-        content = await run_read(ops, project_id, lambda read: read.read_file(project_id, path))
+        content, commit_id = await run_read(
+            ops,
+            project_id,
+            lambda read: (read.read_file(project_id, path), read.get_head_commit_id(project_id)),
+        )
     except FileNotFoundError:
         return ApiResponse.error(code=1004, message=f"File not found: {path}")
 
@@ -950,7 +955,7 @@ async def trigger_push(
 
     result = await engine.push_execute(
         path=path,
-        commit_id=ops.get_head_commit_id(project_id),
+        commit_id=commit_id,
         content=parsed_content,
         node_type=node_type,
     )

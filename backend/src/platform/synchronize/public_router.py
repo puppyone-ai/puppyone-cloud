@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from src.common_schemas import ApiResponse
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -39,6 +40,7 @@ from src.platform.synchronize.public_schemas import (
 )
 from src.platform.synchronize.service import SynchronizeService
 from src.provider.registry import ProviderRegistry
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 Service = Annotated[SynchronizeService, Depends(get_synchronize_service)]
 Registry = Annotated[ProviderRegistry, Depends(get_synchronize_provider_registry)]
@@ -46,6 +48,7 @@ Queue = Annotated[SyncArqClient, Depends(get_sync_arq_client)]
 Engine = Annotated[SynchronizeEngine, Depends(get_synchronize_engine)]
 Authorization = Annotated[AuthorizationService, Depends(get_authorization_service)]
 User = Annotated[CurrentUser, Depends(get_current_user)]
+Operations = Annotated[ProductOperationAdapter, Depends(get_product_operation_adapter)]
 
 
 def _validate_query_contract(request: Request) -> None:
@@ -225,8 +228,8 @@ async def pull_synchronize_bindings(service: Service, sync_arq_client: Queue, au
 
 @router.post("/push/{path:path}", response_model=ApiResponse[SynchronizePushResult])
 async def push_synchronize_path(path: str, project_id: str, engine: Engine,
-        authorization: Authorization, current_user: User):
-    return _reply(await operations.trigger_push(path=path, project_id=project_id, engine=engine,
+        authorization: Authorization, current_user: User, ops: Operations):
+    return _reply(await operations.trigger_push(path=path, project_id=project_id, engine=engine, ops=ops,
         authorization=authorization, current_user=current_user),
         lambda data: SynchronizePushResult(pushed=_dict(data)["pushed"],
             results=[_execution(row) for row in _dict(data)["results"]]))
