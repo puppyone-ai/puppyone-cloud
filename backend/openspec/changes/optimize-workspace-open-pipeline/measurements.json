@@ -61,6 +61,7 @@
   "limitations": [
     "Owned local PostgreSQL/S3; excludes hosted database latency",
     "Billing disabled; excludes Desktop resolution/rendering",
-    "Samples are not production percentile guarantees"
+    "Samples are not production percentile guarantees",
+    "Cold transport clears process proxy/credential/SSH caches; supervisor Fly agent stays running"
   ]
 }
