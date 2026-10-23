@@ -481,7 +481,7 @@ async def test_real_pi_answers_file_question_using_offline_find_and_read(
     assert report["operations"].get("POST rpc/agent_run_workspace_transition") == 4
     assert_run_budget(supervisor, report, 27)
     assert report["max_inflight"] <= 2, report
-    assert report["operations"].get("POST rpc/get_version_pinned_object_locations") == 1
+    assert report["operations"].get("POST rpc/get_version_pinned_object_locations_page") == 1
     (tmp_path / "read-tool-performance.json").write_text(
         json.dumps(
             {

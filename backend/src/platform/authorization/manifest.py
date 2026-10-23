@@ -98,6 +98,7 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
             "tree": ProjectAction.CONTENT_READ,
             "commit-content": ProjectAction.HISTORY_READ,
             "commits": ProjectAction.HISTORY_READ,
+            "commit-detail": ProjectAction.HISTORY_READ,
             "head": ProjectAction.HISTORY_READ,
             "diff": ProjectAction.HISTORY_READ,
         }.items()

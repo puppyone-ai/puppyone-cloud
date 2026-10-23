@@ -6,9 +6,17 @@ import hashlib
 import heapq
 import json
 from dataclasses import replace
+from types import MappingProxyType
 
+from src.version_engine.infrastructure.owned_work import checkpoint
 from src.version_engine.read.history_facts import _git_identity_time
-from src.version_engine.read.history_models import HistoryGraphTooLargeError, HistoryRef
+from src.version_engine.read.history_models import (
+    GraphCommit,
+    HistoryCommitUnavailableError,
+    HistoryGraphSnapshot,
+    HistoryGraphTooLargeError,
+    HistoryRef,
+)
 from src.version_engine.read.native_tree_reader import NativeTreeReader
 from src.version_engine.write_engine.git_object_format import decode_commit, split_author_line
 from src.version_engine.write_engine.git_object_graph import object_edges
@@ -63,6 +71,7 @@ class NativeHistory:
                 )
         todo = list(roots)
         while todo:
+            checkpoint()
             oid = todo.pop()
             if oid in self.nodes:
                 continue
@@ -115,9 +124,35 @@ class NativeHistory:
             json.dumps(snapshot.to_wire()["refs"], sort_keys=True).encode()
         ).hexdigest()
 
+    def graph(self):
+        nodes = {
+            oid: GraphCommit(
+                oid,
+                tuple(n["parent_ids"]),
+                n["root_hash"],
+                n["who"],
+                n["message"],
+                n["created_at"],
+                n["timestamp"],
+            )
+            for oid, n in self.nodes.items()
+        }
+        return HistoryGraphSnapshot(
+            tuple(self.order),
+            MappingProxyType({oid: i for i, oid in enumerate(self.order)}),
+            MappingProxyType(nodes),
+            (),
+            tuple(self.refs),
+            self.roots,
+            self.head,
+            self.snapshot.revision().tree_oid,
+        )
+
     def require(self, oid):
         if oid not in self.nodes:
-            raise ValueError("commit is not reachable from the current repository refs")
+            raise HistoryCommitUnavailableError(
+                "commit is not reachable from the current repository refs"
+            )
         return self.nodes[oid]
 
     def changes(self, oid):
@@ -144,6 +179,7 @@ class NativeHistory:
         # Only the selected HEAD ancestry belongs to the linear Project view.
         reachable, todo = set(), [self.head] if self.head else []
         while todo:
+            checkpoint()
             oid = todo.pop()
             if oid not in reachable:
                 reachable.add(oid)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from starlette.concurrency import run_in_threadpool
+from src.version_engine.infrastructure.owned_work import run_owned
 
 
 class VersionAdminService:
@@ -20,14 +20,14 @@ class VersionAdminService:
         return await VersionWriteEngine(self._repos).initialize_project_tree(project_id)
 
     def _read(self, project_id, callback):
-        from src.version_engine.read.native_tree_reader import open_tree_read
         from src.version_engine.read.native_history import NativeHistory
+        from src.version_engine.read.native_tree_reader import open_tree_read
 
-        with open_tree_read(self._repos, project_id, self._grant) as reader:
+        with open_tree_read(self._repos, project_id, self._grant, bulk=True) as reader:
             return callback(NativeHistory(reader.snapshot))
 
     async def get_history_view(self, project_id, path=None, limit=50, since_commit_id=""):
-        return await run_in_threadpool(
+        return await run_owned(
             self._read,
             project_id,
             lambda h: (
@@ -38,24 +38,24 @@ class VersionAdminService:
         )
 
     async def get_commit_history(self, project_id, path=None, limit=50, since_commit_id=""):
-        return await run_in_threadpool(
+        return await run_owned(
             self._read, project_id, lambda h: h.linear(limit, since_commit_id, path)
         )
 
     async def get_project_head_commit_id(self, project_id):
-        return await run_in_threadpool(self._read, project_id, lambda h: h.head)
+        return await run_owned(self._read, project_id, lambda h: h.head)
 
     async def get_commit_parent_ids(self, project_id, commit_ids):
-        return await run_in_threadpool(
+        return await run_owned(
             self._read,
             project_id,
             lambda h: {oid: h.require(oid)["parent_ids"] for oid in commit_ids},
         )
 
     async def get_commit_content(self, project_id, path, commit_id):
-        return await run_in_threadpool(self._read, project_id, lambda h: h.content(commit_id, path))
+        return await run_owned(self._read, project_id, lambda h: h.content(commit_id, path))
 
     async def compute_diff(self, project_id, from_commit_id, to_commit_id):
-        return await run_in_threadpool(
+        return await run_owned(
             self._read, project_id, lambda h: h.diff(from_commit_id, to_commit_id)
         )

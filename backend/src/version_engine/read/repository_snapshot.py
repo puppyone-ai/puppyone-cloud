@@ -104,6 +104,10 @@ class RepositorySnapshot:
         self._objects = OrderedDict()
         self._cache_bytes = 0
         self._cache_limit = min(max_bytes, 8 * 1024**2)
+        # Physical immutable bytes may be reused under this pin. Fresh durable
+        # readback remains exclusive to publication/proof verification.
+        open_reader = getattr(backend, "snapshot_reader", None)
+        self.backend = open_reader(self) if open_reader is not None else backend
 
     def to_wire(self) -> dict:
         return deepcopy(self._wire)
@@ -188,6 +192,14 @@ class RepositorySnapshot:
         self._closed = True
         self._objects.clear()
         self._cache_bytes = 0
+        try:
+            close = getattr(self.backend, "close_read", None)
+            if close is not None:
+                close()
+        finally:
+            self._release_pin()
+
+    def _release_pin(self):
         try:
             self.control.release(self.project_id, self.actor, self.pin)
         except Exception:

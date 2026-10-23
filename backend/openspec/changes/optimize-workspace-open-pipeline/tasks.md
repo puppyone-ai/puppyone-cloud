@@ -4,4 +4,4 @@
 - [x] Add bounded coalesced status waiting and Desktop compatibility/cancellation behavior.
 - [x] Cover concurrency, revocation, deadlines, owner failure, provider fallback and populated SQL upgrades.
 - [x] Run required checks and measure real Fly resume separately from warm access.
-- [ ] Release SQL through Qubits, integrate local code, update canonical documentation and clean task worktrees.
+- [x] Release SQL through Qubits, integrate local code, update canonical documentation and clean task worktrees.

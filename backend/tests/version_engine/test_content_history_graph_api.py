@@ -5,6 +5,7 @@ import base64
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.platform.access.adapters.api.history import history_router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.version_engine.bootstrap.dependencies import (
@@ -12,7 +13,6 @@ from src.version_engine.bootstrap.dependencies import (
     get_product_operation_adapter,
     get_version_admin_service,
 )
-from src.platform.access.adapters.api.history import history_router
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_cursor import HistoryCursorCodec
 from src.version_engine.read.history_graph import HistoryGraphService
@@ -106,3 +106,52 @@ def test_native_history_traversal_has_budget(native_reads):
     client, _, _ = client_for(native_reads, limit=1)
     response = client.get("/api/v1/content/p/commits", params={"order": "topo"})
     assert response.status_code == 422
+
+
+def test_summary_avoids_tree_reads_and_cache_hit_still_admits(native_reads):
+    client, ids, wire = client_for(native_reads)
+    calls = native_reads[3]
+    calls.clear()
+    params = {"order": "topo", "summary": True}
+    first = client.get("/api/v1/content/p/commits", params=params)
+    assert first.status_code == 200
+    assert all(c["changes_loaded"] is False for c in first.json()["data"]["commits"])
+    # Exactly four distinct commit bodies; no trees or blobs on a list request.
+    assert calls.count("get") == 4
+    calls.clear()
+    assert client.get("/api/v1/content/p/commits", params=params).json() == first.json()
+    assert calls == ["begin", "release"]
+    detail = client.get("/api/v1/content/p/commit-detail", params={"commit_id": ids[-1]})
+    assert detail.status_code == 200 and detail.json()["data"]["changes_loaded"]
+    assert detail.json()["data"]["changes"]
+    # A generation/ref-sequence change cannot silently reuse old derived facts.
+    wire["generation"] += 1
+    calls.clear()
+    assert client.get("/api/v1/content/p/commits", params=params).status_code == 200
+    assert calls.count("get") == 4
+    unreachable = client.get(
+        "/api/v1/content/p/commit-detail", params={"commit_id": "f" * len(ids[0])}
+    )
+    assert unreachable.status_code == 404
+
+
+def test_summary_cache_does_not_bypass_revocation(native_reads):
+    client, _, _ = client_for(native_reads)
+    params = {"order": "topo", "summary": True}
+    assert client.get("/api/v1/content/p/commits", params=params).status_code == 200
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from src.platform.authorization.dependencies import get_authorization_service
+
+    def denied(*args):
+        raise HTTPException(403, "revoked")
+
+    client.app.dependency_overrides[get_authorization_service] = lambda: SimpleNamespace(
+        authorize=denied
+    )
+    calls = native_reads[3]
+    calls.clear()
+    assert client.get("/api/v1/content/p/commits", params=params).status_code == 403
+    assert not calls

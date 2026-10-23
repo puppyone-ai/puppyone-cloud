@@ -13,6 +13,18 @@ class PinnedObjectReader:
         self.max_bytes, self.size = max_bytes, 0
         self.cache = OrderedDict()
 
+    def pinned_reader(self, snapshot):
+        if hasattr(self.backend, "_pinned_locations"):
+            return self
+        return self.backend.pinned_reader(snapshot)
+
+    def close_read(self):
+        self.cache.clear()
+        self.size = 0
+        locations = getattr(self.backend, "_pinned_locations", None)
+        if locations is not None:
+            locations.close()
+
     def get_durable(self, oid):
         self.snapshot.check_live()
         if oid in self.cache:
