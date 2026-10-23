@@ -163,8 +163,31 @@ and SHA-256 are supported.
 
 History reads Git commits/parents/trees, not an independently written history
 row. Multi-ref history uses bounded topology traversal and signed cursors tied
-to the captured ref set. If refs change between pages, clients refresh. Restore
-creates a new forward commit with the chosen historical tree.
+to the project, object format, repository generation, ref sequence and captured
+ref set. A changed identity requires clients to refresh, including refs that
+move away and back. Restore creates a new forward commit with the chosen tree.
+
+Every request authorizes through `platform/authorization` and opens a current
+admitted snapshot. Ordinary snapshot reads share immutable pack bytes; only
+publication verification requests fresh durable readback. Small file reads keep
+lazy placement lookup. Bulk history obtains keyset pages of at most 4,096
+locations, checked against the read pin, generation and GC epoch. A private
+temporary SQLite index bounds metadata memory and closes before pin release;
+it is disposable and is not a new persistent authority.
+
+The app-scoped `HistoryGraphCache` stores bounded immutable graph values keyed
+by repository identity. It contains no grants, pins or live readers. Concurrent
+requests share a builder; each request still admits independently. Cancellation
+of one subscriber does not kill another subscriber's build. The last departing
+subscriber stops cooperative work and owned workers finish before cleanup.
+
+`summary=true` returns topology without tree diffs and marks changed-path counts
+as unknown. The separate authorized commit-detail read verifies current
+reachability and computes only the selected commit's changes. Existing full
+responses remain compatible. Warm summaries need authorization, admission and
+release, with no placement queries or S3 reads. Cold loose objects, metadata
+pages, cache evictions and the first download of each pack remain real costs.
+Caches are process-local; this contract does not add a shared disk service.
 
 Path and text indexes are rebuilt from a pinned default-HEAD snapshot. A durable
 per-project queue coalesces ref changes, including migration activation and new
@@ -229,9 +252,17 @@ backend/src/version_engine/
     repository_snapshot.py     pinned ref/closure provenance
     native_tree_reader.py      shared admitted read context, trees and exact bytes
     native_history.py          commit DAG, history, diff and timestamps
+    history_graph.py           summary/detail orchestration under current admission
+    history_cache.py           bounded immutable topology and shared build lifetime
+    history_cursor.py          signed paging and repository snapshot identity
   infrastructure/             shared file locks, async contexts and Git view cache
     supabase/                 refs, admissions, capacity, billing and GC ports
+      object_location_repository.py
+                               bounded pin-checked placement pages
   storage/                    canonical S3 layout and mutation fencing
+    pinned_reader.py           operation-local verified reads
+    pinned_locations.py        disposable disk-backed placement index
+    git_pack_cache.py          leased immutable pack cache
   derived/native_events.py     native index/notification worker
   bootstrap/                  explicit request/worker dependency wiring
 ```

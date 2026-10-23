@@ -2,6 +2,7 @@
 
 import base64
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -106,6 +107,24 @@ def test_native_history_traversal_has_budget(native_reads):
     client, _, _ = client_for(native_reads, limit=1)
     response = client.get("/api/v1/content/p/commits", params={"order": "topo"})
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["generation", "ref_sequence"])
+def test_cursor_rejects_replaced_repository_or_ref_aba(native_reads, field):
+    client, _, wire = client_for(native_reads)
+    page = client.get(
+        "/api/v1/content/p/commits", params={"order": "topo", "summary": True, "limit": 2}
+    ).json()["data"]
+    # Even identical ref values do not authorize continuation across a new
+    # repository generation or a ref that moved away and back (ABA).
+    wire[field] += 1
+    response = client.get(
+        "/api/v1/content/p/commits", params={"cursor": page["next_cursor"], "summary": True}
+    )
+    assert response.status_code == 409
+    fresh = client.get("/api/v1/content/p/commits", params={"order": "topo", "summary": True})
+    assert fresh.status_code == 200
+    assert fresh.json()["data"]["snapshot_id"] != page["snapshot_id"]
 
 
 def test_summary_avoids_tree_reads_and_cache_hit_still_admits(native_reads):

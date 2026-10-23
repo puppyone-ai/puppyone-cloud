@@ -19,6 +19,15 @@ _MAX_ROOTS = 512
 _KEY_CONTEXT = b"puppyone/project-history-cursor/v1"
 
 
+def history_snapshot_id(wire: dict) -> str:
+    """Bind derived pages to repository identity, excluding the per-read pin."""
+    identity = {
+        key: wire[key]
+        for key in ("project_id", "object_format", "generation", "ref_sequence", "refs")
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
 class HistoryCursorCodec:
     """Encode ref roots into an authenticated cursor safe across replicas.
 

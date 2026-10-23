@@ -8,13 +8,10 @@ to response schemas.
 
 from __future__ import annotations
 
-import hashlib
-import json
-
 from src.version_engine.infrastructure.owned_work import run_owned
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.history_cache import HistoryGraphCache
-from src.version_engine.read.history_cursor import HistoryCursorCodec
+from src.version_engine.read.history_cursor import HistoryCursorCodec, history_snapshot_id
 from src.version_engine.read.history_models import (
     HistoryCursorState,
     HistoryGraphCacheStats,
@@ -59,9 +56,7 @@ class HistoryGraphService:
         # Admission is fresh even on a graph-cache hit. Cached derived facts
         # never substitute for current authorization, generation or ref state.
         with self._repos.open_native_read(project_id, grant) as snapshot:
-            snapshot_id = hashlib.sha256(
-                json.dumps(snapshot.to_wire()["refs"], sort_keys=True).encode()
-            ).hexdigest()
+            snapshot_id = history_snapshot_id(snapshot.to_wire())
             if state and state.snapshot_id != snapshot_id:
                 raise HistorySnapshotUnavailableError("repository refs changed; refresh history")
             key = (project_id, f"{snapshot.generation}:{snapshot.ref_sequence}:{snapshot_id}")
