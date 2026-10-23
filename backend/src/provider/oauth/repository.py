@@ -1,5 +1,6 @@
 """OAuth repository for database operations."""
 
+import asyncio
 from datetime import datetime
 from typing import Optional
 
@@ -47,21 +48,51 @@ def _select_preferred_connection_row(rows: list[dict]) -> dict | None:
 
 
 class OAuthRepository:
-    """Repository for OAuth connection operations."""
+    """Repository for OAuth connection operations.
+
+    The public API is async for service callers; the synchronous Supabase
+    client always runs in a worker thread, never on the event loop.
+    """
+
+    TABLE = "oauth_connections"
 
     def __init__(self):
         supabase_client = SupabaseClient()
         self.supabase = supabase_client.get_client()
 
     async def create(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
-        """Create a new OAuth connection."""
-        # Check if connection already exists for this user and provider
-        existing = await self.get_by_user_and_provider(
+        """Create, or refresh the existing, OAuth connection for a user/provider."""
+        return await asyncio.to_thread(self._create_sync, connection_create)
+
+    async def get_by_id(self, connection_id: int) -> Optional[OAuthConnection]:
+        """Get OAuth connection by ID."""
+        return await asyncio.to_thread(self._get_by_id_sync, connection_id)
+
+    async def get_by_user_and_provider(
+        self, user_id: str, provider: str
+    ) -> Optional[OAuthConnection]:
+        """Get OAuth connection by user ID and provider."""
+        return await asyncio.to_thread(self._get_by_user_and_provider_sync, user_id, provider)
+
+    async def update(
+        self, connection_id: int, update_data: OAuthConnectionUpdate
+    ) -> OAuthConnection:
+        """Update OAuth connection."""
+        return await asyncio.to_thread(self._update_sync, connection_id, update_data)
+
+    async def delete(self, connection_id: int) -> bool:
+        """Delete OAuth connection."""
+        return await asyncio.to_thread(self._delete_sync, connection_id)
+
+    async def delete_by_user_and_provider(self, user_id: str, provider: str) -> bool:
+        """Delete OAuth connection by user ID and provider."""
+        return await asyncio.to_thread(self._delete_by_user_and_provider_sync, user_id, provider)
+
+    def _create_sync(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
+        existing = self._get_by_user_and_provider_sync(
             connection_create.user_id, connection_create.provider
         )
-
         if existing:
-            # Update existing connection
             update_data = OAuthConnectionUpdate(
                 access_token=connection_create.access_token,
                 refresh_token=connection_create.refresh_token,
@@ -72,9 +103,8 @@ class OAuthRepository:
                 bot_id=connection_create.bot_id,
                 metadata=connection_create.metadata,
             )
-            return await self.update(existing.id, update_data)
+            return self._update_sync(existing.id, update_data)
 
-        # Create new connection
         data = {
             "user_id": connection_create.user_id,
             "provider": connection_create.provider,
@@ -89,52 +119,38 @@ class OAuthRepository:
             "bot_id": connection_create.bot_id,
             "metadata": connection_create.metadata,
         }
-
-        response = self.supabase.table("oauth_connections").insert(data).execute()
-
+        response = self.supabase.table(self.TABLE).insert(data).execute()
         if not response.data:
             raise Exception("Failed to create OAuth connection")
-
         return OAuthConnection(**response.data[0])
 
-    async def get_by_id(self, connection_id: int) -> Optional[OAuthConnection]:
-        """Get OAuth connection by ID."""
+    def _get_by_id_sync(self, connection_id: int) -> OAuthConnection | None:
         response = (
-            self.supabase.table("oauth_connections")
-            .select("*")
-            .eq("id", connection_id)
-            .execute()
+            self.supabase.table(self.TABLE).select("*").eq("id", connection_id).execute()
         )
-
         if not response.data:
             return None
-
         return OAuthConnection(**response.data[0])
 
-    async def get_by_user_and_provider(
+    def _get_by_user_and_provider_sync(
         self, user_id: str, provider: str
-    ) -> Optional[OAuthConnection]:
-        """Get OAuth connection by user ID and provider."""
+    ) -> OAuthConnection | None:
         response = (
-            self.supabase.table("oauth_connections")
+            self.supabase.table(self.TABLE)
             .select("*")
             .eq("user_id", user_id)
             .eq("provider", provider)
             .execute()
         )
-
         row = _select_preferred_connection_row(response.data or [])
         if not row:
             return None
-
         return OAuthConnection(**row)
 
-    async def update(
+    def _update_sync(
         self, connection_id: int, update_data: OAuthConnectionUpdate
     ) -> OAuthConnection:
-        """Update OAuth connection."""
         data = {}
-
         if update_data.access_token is not None:
             data["access_token"] = update_data.access_token
         if update_data.refresh_token is not None:
@@ -153,31 +169,19 @@ class OAuthRepository:
             data["metadata"] = update_data.metadata
 
         response = (
-            self.supabase.table("oauth_connections")
-            .update(data)
-            .eq("id", connection_id)
-            .execute()
+            self.supabase.table(self.TABLE).update(data).eq("id", connection_id).execute()
         )
-
         if not response.data:
             raise Exception("Failed to update OAuth connection")
-
         return OAuthConnection(**response.data[0])
 
-    async def delete(self, connection_id: int) -> bool:
-        """Delete OAuth connection."""
-        response = (
-            self.supabase.table("oauth_connections")
-            .delete()
-            .eq("id", connection_id)
-            .execute()
-        )
+    def _delete_sync(self, connection_id: int) -> bool:
+        response = self.supabase.table(self.TABLE).delete().eq("id", connection_id).execute()
         return len(response.data) > 0
 
-    async def delete_by_user_and_provider(self, user_id: str, provider: str) -> bool:
-        """Delete OAuth connection by user ID and provider."""
+    def _delete_by_user_and_provider_sync(self, user_id: str, provider: str) -> bool:
         response = (
-            self.supabase.table("oauth_connections")
+            self.supabase.table(self.TABLE)
             .delete()
             .eq("user_id", user_id)
             .eq("provider", provider)

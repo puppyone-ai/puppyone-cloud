@@ -104,3 +104,40 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
         "sync:conn-1",
     ]:
         assert jobs_by_id[job_id][1]["executor"] == "threadpool"
+
+
+@pytest.mark.asyncio
+async def test_startup_loaders_read_database_off_the_event_loop(monkeypatch):
+    import threading
+
+    loop_thread = threading.get_ident()
+    reads: list[tuple[str, int]] = []
+    registered: list[tuple[str, str]] = []
+
+    def agent_rows():
+        reads.append(("agents", threading.get_ident()))
+        return [{"id": "agent-1", "config": {"name": "Daily", "trigger": {"type": "cron"}}}]
+
+    def sync_rows():
+        reads.append(("syncs", threading.get_ident()))
+        return [{"id": "sync-1", "provider": "github", "trigger": {"type": "scheduled"}}]
+
+    async def add_agent_job(self, agent_id, trigger_config, agent_name=""):
+        registered.append(("agent", agent_id))
+
+    async def sync_trigger(self, connection_id, provider, trigger_config):
+        registered.append(("sync", connection_id))
+
+    monkeypatch.setattr(scheduler_module, "_scheduled_agent_rows", agent_rows)
+    monkeypatch.setattr(scheduler_module, "_scheduled_sync_rows", sync_rows)
+    monkeypatch.setattr(scheduler_module.SchedulerService, "add_agent_job", add_agent_job)
+    monkeypatch.setattr(scheduler_module.SchedulerService, "sync_trigger", sync_trigger)
+
+    service = scheduler_module.SchedulerService()
+    service.scheduler = FakeScheduler()
+    await service._load_scheduled_agents()
+    await service._load_scheduled_syncs()
+
+    assert [name for name, _thread in reads] == ["agents", "syncs"]
+    assert loop_thread not in {thread for _name, thread in reads}
+    assert registered == [("agent", "agent-1"), ("sync", "sync-1")]

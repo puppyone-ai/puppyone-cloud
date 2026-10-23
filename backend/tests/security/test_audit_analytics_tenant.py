@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.platform.analytics import router as analytics_router_mod
+from src.platform.analytics import service as analytics_service_mod
 from src.platform.analytics.router import router as analytics_router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
@@ -60,7 +60,7 @@ class _RecordingClient:
 def _install(monkeypatch, *, member_of):
     """Wire the Supabase analytics seam. Returns the recording client."""
     client = _RecordingClient()
-    monkeypatch.setattr(analytics_router_mod, "get_supabase_client", lambda: client)
+    monkeypatch.setattr(analytics_service_mod, "get_supabase_client", lambda: client)
     return client
 
 

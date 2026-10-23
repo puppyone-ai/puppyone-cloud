@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -101,3 +102,56 @@ async def test_google_oauth_services_keep_non_refreshable_rows_without_expiry():
     service.get_connection = get_connection
 
     assert await service.is_token_expired("user-1") is False
+
+
+async def test_oauth_repository_runs_supabase_queries_off_the_event_loop():
+    import threading
+
+    from src.provider.oauth.models import OAuthConnectionCreate
+    from src.provider.oauth.repository import OAuthRepository
+
+    loop_thread = threading.get_ident()
+    query_threads = []
+    now = "2026-10-24T00:00:00+00:00"
+    row = {
+        "id": 7,
+        "user_id": "user-1",
+        "provider": "github",
+        "access_token": "token",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    class Query:
+        def __init__(self, data):
+            self.data = data
+
+        def __getattr__(self, _name):
+            return lambda *args, **kwargs: self
+
+        def execute(self):
+            query_threads.append(threading.get_ident())
+            return SimpleNamespace(data=self.data)
+
+    class Client:
+        def __init__(self):
+            self.rows = []
+
+        def table(self, name):
+            assert name == "oauth_connections"
+            data, self.rows = list(self.rows), [row]
+            return Query(data)
+
+    repository = OAuthRepository.__new__(OAuthRepository)
+    repository.supabase = Client()
+
+    created = await repository.create(
+        OAuthConnectionCreate(user_id="user-1", provider="github", access_token="token")
+    )
+    found = await repository.get_by_user_and_provider("user-1", "github")
+    deleted = await repository.delete(7)
+
+    assert created.id == found.id == 7
+    assert deleted is True
+    assert len(query_threads) == 4  # lookup + insert, lookup, delete
+    assert loop_thread not in query_threads

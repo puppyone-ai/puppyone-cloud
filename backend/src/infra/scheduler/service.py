@@ -2,6 +2,7 @@
 Scheduler service for managing scheduled agent executions.
 """
 
+import asyncio
 import contextlib
 from datetime import datetime
 from typing import Optional
@@ -29,6 +30,44 @@ from src.infra.scheduler.jobs import (
 from src.infra.scheduler.jobs.import_job_reaper import process_import_job_reaper
 from src.infra.scheduler.jobs.upload_job_reaper import process_upload_job_reaper
 from src.utils.logger import log_error, log_info, log_warning
+
+# Startup loaders read the database synchronously; the scheduler runs them in
+# a worker thread so application startup never blocks the event loop.
+
+
+def _scheduled_agent_rows() -> list[dict]:
+    from src.platform.access.surface_repository import AccessSurfaceRepository
+
+    return [
+        row
+        for row in AccessSurfaceRepository().list_all(kind="agent", status="active")
+        if (row.get("config") or {}).get("type") == "schedule"
+        and ((row.get("config") or {}).get("trigger") or {}).get("type") in {"cron", "scheduled"}
+    ]
+
+
+def _scheduled_sync_rows() -> list[dict]:
+    from src.infra.supabase.client import SupabaseClient
+
+    result = (
+        SupabaseClient()
+        .client.table("synchronize_bindings")
+        .select("id, provider, trigger_type, trigger_config, status")
+        .eq("status", "active")
+        .execute()
+    )
+    syncs = [
+        {
+            "id": row["id"],
+            "provider": row.get("provider", ""),
+            "trigger": {
+                "type": row.get("trigger_type"),
+                **(row.get("trigger_config") or {}),
+            },
+        }
+        for row in (result.data or [])
+    ]
+    return [sync for sync in syncs if sync["trigger"].get("type") == "scheduled"]
 
 
 class SchedulerService:
@@ -201,15 +240,7 @@ class SchedulerService:
             return
 
         try:
-            from src.platform.access.surface_repository import AccessSurfaceRepository
-
-            agents = [
-                row
-                for row in AccessSurfaceRepository().list_all(kind="agent", status="active")
-                if (row.get("config") or {}).get("type") == "schedule"
-                and ((row.get("config") or {}).get("trigger") or {}).get("type")
-                in {"cron", "scheduled"}
-            ]
+            agents = await asyncio.to_thread(_scheduled_agent_rows)
             log_info(f"📋 Found {len(agents)} schedule agents to load")
 
             for agent in agents:
@@ -329,28 +360,7 @@ class SchedulerService:
             return
 
         try:
-            from src.infra.supabase.client import SupabaseClient
-
-            client = SupabaseClient().client
-            result = (
-                client.table("synchronize_bindings")
-                .select("id, provider, trigger_type, trigger_config, status")
-                .eq("status", "active")
-                .execute()
-            )
-
-            syncs = [
-                {
-                    "id": row["id"],
-                    "provider": row.get("provider", ""),
-                    "trigger": {
-                        "type": row.get("trigger_type"),
-                        **(row.get("trigger_config") or {}),
-                    },
-                }
-                for row in (result.data or [])
-            ]
-            scheduled = [s for s in syncs if (s.get("trigger") or {}).get("type") == "scheduled"]
+            scheduled = await asyncio.to_thread(_scheduled_sync_rows)
 
             log_info(f"Found {len(scheduled)} scheduled syncs to load")
 
