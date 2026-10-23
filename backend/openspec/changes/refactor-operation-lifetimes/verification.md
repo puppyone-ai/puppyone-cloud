@@ -1,6 +1,6 @@
 # Operation lifecycle verification
 
-Status: local candidate; integration receipt is completed after the final regression run.
+Status: locally tested candidate; runtime activation recorded below after integration.
 
 Baseline: `bc8714ec`, plus the canonical workstation's pre-existing uncommitted changes (preserved separately during development).
 
@@ -15,3 +15,14 @@ Baseline: `bc8714ec`, plus the canonical workstation's pre-existing uncommitted 
 - No SQL/schema migration, remote push or hosted deployment in this change.
 
 OpenSpec CLI is not installed in this environment. Proposal/design/tasks and requirement scenarios were checked structurally; do not report a CLI validation receipt.
+
+## Final local regression
+
+- Candidate implementation `e94bd80a` plus the canonical branch's existing 17 modified files, applied with a clean three-way merge.
+- Repository-required command: `python -m pytest -q -m 'not e2e and not integration and not network' --tb=short --disable-warnings`.
+- Result: **3,672 passed, 956 skipped, 439 deselected, 0 failed, 0 errors**, 149.59 seconds. Skips/exclusions are not claimed as end-to-end acceptance.
+- Additional explicit in-flight ZIP cancellation test (SHA-1 and SHA-256), added after collection: lifecycle file **18 passed**, 0.71 seconds. It waits for the running blob read before closing the pin.
+- New execution/query/injection modules and tests: Ruff passed. `git diff --check` passed. Existing unrelated style warnings were not used to rewrite other domains.
+- Structural OpenSpec checks passed; CLI unavailable, so no `openspec validate` success is claimed.
+
+The implementation does not certify every pre-existing synchronous call in every domain as optimized. This change closes the repeated process-engine construction in the listed request dependencies, composes CLI/shared-filesystem reads into one lifetime, and fixes download ownership. Long indexing pipelines, whole-history diff algorithms and other independent business operations retain their separate budgets and acceptance work. Web synchronous reads retain FastAPI threadpool execution; new queue settings apply to `run_read` consumers, not all backend traffic.

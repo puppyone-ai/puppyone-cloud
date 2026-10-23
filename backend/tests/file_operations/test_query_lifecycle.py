@@ -173,3 +173,56 @@ def test_read_session_budget_does_not_grow_with_file_count(native_reads):
     assert calls.count("begin") == calls.count("release") == 1
     # commit + root tree + child tree + blob, reused across the operation.
     assert calls.count("get") == 4
+
+
+@pytest.mark.asyncio
+async def test_cancel_download_joins_blob_read_before_releasing_pin(native_reads, monkeypatch):
+    from src.version_engine.read.native_tree_reader import NativeTreeReader
+
+    ops, _, _, calls, *_ = native_reads
+    monkeypatch.setattr(
+        api, "verify_token", lambda _: DownloadTokenClaims("p", "dir", "u", 9999999999)
+    )
+    authorization = Mock()
+    authorization.authorize.return_value = grant("p")
+    entered, finish = threading.Event(), threading.Event()
+    original = NativeTreeReader.read_file
+
+    def slow_read(self, *args):
+        entered.set()
+        assert finish.wait(2)
+        return original(self, *args)
+
+    monkeypatch.setattr(NativeTreeReader, "read_file", slow_read)
+    response = api.download(
+        "p",
+        Request({"type": "http", "headers": []}),
+        path="dir",
+        token="signed",
+        ops=ops,
+        authorization=authorization,
+    )
+
+    async def send(_):
+        pass
+
+    async def receive():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(
+        response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    )
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.is_set()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done() and "release" not in calls
+    finally:
+        finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls.count("begin") == calls.count("release") == 1
