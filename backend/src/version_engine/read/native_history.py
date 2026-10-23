@@ -6,7 +6,7 @@ import heapq
 from dataclasses import replace
 from types import MappingProxyType
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.read.history_cursor import history_snapshot_id
 from src.version_engine.read.history_facts import _git_identity_time
 from src.version_engine.read.history_models import (

@@ -8,7 +8,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from src.version_engine.infrastructure.owned_work import Execution, checkpoint, current_execution
+from src.infra.execution.context import Execution, checkpoint, current_execution
 from src.version_engine.read.history_models import HistoryGraphCacheStats, HistoryGraphSnapshot
 
 CacheKey = tuple[str, str]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.version_engine.infrastructure.owned_work import run_owned
+from src.infra.execution.runner import run_owned
 
 
 class VersionAdminService:

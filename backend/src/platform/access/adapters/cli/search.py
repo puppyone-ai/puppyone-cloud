@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import fnmatch
 import re
-
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel as _BaseModel
 
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.queries import ProductQueries, run_read
 from src.platform.access.filesystem.errors import ScopedFsError
 from src.platform.access.filesystem.indexed_grep import IndexedGrepError, run_indexed_grep_payload
 from src.platform.access.filesystem.service import ScopedFsService
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 from .context import (
     _assert_not_excluded,
@@ -37,7 +37,6 @@ from .context import (
     _scoped_fs_context,
     _scoped_fs_error,
 )
-
 
 router = APIRouter()
 
@@ -264,6 +263,10 @@ async def grep(
         command="grep",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(ops, project_id, lambda read: _grep_query(read, project_id, scope, pattern=pattern, path=path, ref=ref, regex=regex, ignore_case=ignore_case, invert_match=invert_match, only_matching=only_matching, include_hidden=include_hidden, include=include, exclude=exclude, exclude_dir=exclude_dir, max_depth=max_depth, max_count=max_count, require_file_list=require_file_list, before_context=before_context, after_context=after_context, include_offsets=include_offsets, limit=limit, max_files=max_files, max_bytes=max_bytes))
+
+
+def _grep_query(ops: ProductQueries, project_id: str, scope: dict, *, pattern, path, ref, regex, ignore_case, invert_match, only_matching, include_hidden, include, exclude, exclude_dir, max_depth, max_count, require_file_list, before_context, after_context, include_offsets, limit, max_files, max_bytes):
     rel_path = _clean_relative(path)
     _assert_not_excluded(rel_path, scope)
     max_depth = _query_int(max_depth, -1)
@@ -772,6 +775,10 @@ async def grep_indexed(
         command="grep",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(ops, project_id, lambda read: _grep_indexed_query(read, project_id, scope, body=body))
+
+
+def _grep_indexed_query(ops: ProductQueries, project_id: str, scope: dict, *, body):
     return ApiResponse.success(
         data=_run_grep_indexed_payload(
             project_id=project_id,
@@ -857,5 +864,4 @@ async def find_index(
     except ScopedFsError as exc:
         raise _scoped_fs_error(exc) from exc
     result["scope"] = _scope_payload(scope)
-    result["head_commit_id"] = ops.get_head_commit_id(project_id)
     return ApiResponse.success(data=result)

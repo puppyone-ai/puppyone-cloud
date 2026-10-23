@@ -16,9 +16,9 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass
 
+from src.infra.execution.context import checkpoint
 from src.platform.authorization.models import ProjectAction, ProjectGrant, RuntimeGrant
 from src.platform.repository_target.models import ProjectRootTarget
-from src.version_engine.infrastructure.owned_work import checkpoint
 from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling
 from src.version_engine.infrastructure.supabase.capacity_repository import RepositoryCapacity
 from src.version_engine.infrastructure.supabase.file_policy_repository import RepositoryFilePolicy

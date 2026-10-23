@@ -14,6 +14,10 @@ from src.version_engine.domain.git_pack_limits import (
 
 
 class Settings(BaseSettings):
+    FILE_READ_CONCURRENCY: int = Field(default=8, ge=1, le=128)
+    FILE_READ_QUEUE_LIMIT: int = Field(default=32, ge=0, le=1024)
+    FILE_READ_QUEUE_TIMEOUT_SECONDS: float = Field(default=10, gt=0, le=300)
+
     """Application configuration"""
 
     model_config = SettingsConfigDict(

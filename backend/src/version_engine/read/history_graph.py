@@ -8,7 +8,7 @@ to response schemas.
 
 from __future__ import annotations
 
-from src.version_engine.infrastructure.owned_work import run_owned
+from src.infra.execution.runner import run_owned
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.history_cache import HistoryGraphCache
 from src.version_engine.read.history_cursor import HistoryCursorCodec, history_snapshot_id

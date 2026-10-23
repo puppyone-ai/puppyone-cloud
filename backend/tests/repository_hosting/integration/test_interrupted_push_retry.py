@@ -11,10 +11,10 @@ from threading import Barrier
 import pytest
 from fastapi import FastAPI, Request
 
+from src.infra.execution.context import Execution, current_execution
 from src.platform.access.adapters.git import router
 from src.platform.access.adapters.git.native import NativeGitEndpoint
 from src.platform.access.adapters.git.native_wire import receive_commands
-from src.version_engine.infrastructure.owned_work import Execution, current_execution
 from src.version_engine.write_engine.git_object_format import encode_object
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.http_server import _serve_git_app

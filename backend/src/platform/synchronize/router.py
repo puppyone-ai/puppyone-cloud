@@ -12,6 +12,8 @@ from fastapi import Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
+from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.file_operations.queries import run_read
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -49,6 +51,7 @@ from src.platform.synchronize.service import SynchronizeService
 from src.provider._base import AuthRequirement
 from src.provider.registry import ProviderRegistry
 from src.utils.logger import log_error
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 _PROJECT_ID_DESC = "Project ID"
 _PULL_DIRECTIONS = {"inbound", "bidirectional"}
@@ -912,6 +915,7 @@ async def trigger_pull(
 
 async def trigger_push(
     path: str,
+    ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
     project_id: str = Query(..., description=_PROJECT_ID_DESC),
     engine: SynchronizeEngine = Depends(get_synchronize_engine),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -920,7 +924,6 @@ async def trigger_push(
     import json as _json
 
     from src.platform.authorization.models import ProjectAction
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
     from src.version_engine.read.tree_reader import detect_type
 
     _ensure_project_access(
@@ -930,13 +933,9 @@ async def trigger_push(
         ProjectAction.AUTOMATION_RUN,
     )
 
-    ops = (
-        build_worker_version_engine_container()
-        .product_operations()
-        .for_user(project_id, current_user.user_id)
-    )
+    ops = ops.for_user(project_id, current_user.user_id)
     try:
-        content = ops.read_file(project_id, path)
+        content = await run_read(ops, project_id, lambda read: read.read_file(project_id, path))
     except FileNotFoundError:
         return ApiResponse.error(code=1004, message=f"File not found: {path}")
 

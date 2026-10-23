@@ -1,21 +1,19 @@
 """Reuse configured search tools; no worker-selected Project or credential."""
 
-import asyncio
 import json
 import re
 from types import SimpleNamespace
 
-from src.infra.search.dependencies import get_search_service
+from src.file_operations.queries import run_read
+from src.infra.execution.runner import run_owned
 from src.infra.search.schemas import SearchToolQueryInput
 from src.platform.access.adapters.agent.runtime.control.workspace import allowed
-from src.tool.dependencies import get_tool_service
 
 
 class BoundTools:
-    def __init__(self, admission):
+    def __init__(self, admission, search):
         self.admission = admission
-        self.service = get_tool_service(admission.authorization)
-        self.search = get_search_service(admission.authorization)
+        self.search = search
 
     def definitions(self, run):
         tools = []
@@ -69,7 +67,10 @@ class BoundTools:
         value = SearchToolQueryInput.model_validate(values)
         # Scope service performs the canonical indexed lookup; Project identity
         # and search boundary always come from the persisted tool configuration.
-        entry = await asyncio.to_thread(self.search._ops.stat, run["project_id"], tool.path)
+        ops = await run_owned(self.search._ops.for_user, run["project_id"], run["user_id"])
+        entry = await run_read(ops, run["project_id"], lambda read: read.stat(run["project_id"], tool.path))
+        if entry is None:
+            raise FileNotFoundError(tool.path)
         if entry.type == "folder":
             result = await self.search.search_folder(
                 project_id=run["project_id"],

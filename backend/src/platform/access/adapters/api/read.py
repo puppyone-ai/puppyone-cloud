@@ -3,27 +3,23 @@
 from __future__ import annotations
 
 import json as _json
+from contextlib import ExitStack
 from typing import Annotated
 from urllib.parse import quote
 from zipfile import ZIP_DEFLATED
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from zipstream import ZipStream
 
 from src.common_schemas import ApiResponse
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
-from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.service import AuthorizationService
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.version_engine.admission.validation import validate_path
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
-from src.version_engine.domain.errors import (
-    ObjectNotFoundError,
-    PathNotFoundError,
-    VersionReadError,
+from src.platform.access.adapters.api.download_token import (
+    DEFAULT_TTL_SECONDS,
+    DownloadTokenError,
+    issue_token,
+    verify_token,
 )
 from src.platform.access.adapters.api.helpers import (
     display_git_path,
@@ -38,17 +34,24 @@ from src.platform.access.adapters.api.read_context import (
     _raise_version_read_error,
     _read_request_path,
 )
-from src.platform.access.adapters.api.download_token import (
-    DEFAULT_TTL_SECONDS,
-    DownloadTokenError,
-    issue_token,
-    verify_token,
-)
+from src.platform.access.adapters.api.streaming import OwnedStreamingResponse
 from src.platform.access.repository_schemas import (
     ListDirResponse,
     ReadFileResponse,
     StatResponse,
     TreeResponse,
+)
+from src.platform.auth.dependencies import get_current_user
+from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.version_engine.admission.validation import validate_path
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.version_engine.domain.errors import (
+    ObjectNotFoundError,
+    PathNotFoundError,
+    VersionReadError,
 )
 
 read_router = APIRouter()
@@ -503,6 +506,7 @@ def download(
     path: str = Query(..., description="File or folder path"),
     token: str = Query(..., description="Signed token from /download/sign"),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
+    authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     """Token-authenticated streaming download.
 
@@ -528,105 +532,109 @@ def download(
     if claims.project_id != project_id or claims.path != clean_path:
         raise HTTPException(status_code=403, detail="token does not match request")
 
-    try:
-        entry = ops.stat(project_id, clean_path)
-    except ObjectNotFoundError as exc:
-        _raise_storage_integrity_error(project_id, clean_path, exc)
-    if not entry:
-        raise HTTPException(status_code=404, detail=f"Path not found: {clean_path}")
-
-    if entry.type == "folder":
-        folder_name = entry.name or clean_path.rsplit("/", 1)[-1] or "root"
-        prefix = clean_path.strip("/")
-        prefix_with_slash = f"{prefix}/" if prefix else ""
-
-        # Snapshot the tree once, up-front. Doing it inside the generator
-        # would mean the request handler returns before list_tree runs,
-        # which complicates error reporting (the headers are already on
-        # the wire by then).
+    grant = authorization.authorize(project_id, claims.user_id, ProjectAction.CONTENT_READ)
+    with ExitStack() as resources:
+        read = resources.enter_context(ops.open_read(project_id, grant))
         try:
-            entries = ops.list_tree(project_id, clean_path, max_depth=-1)
+            entry = read.stat(project_id, clean_path)
         except ObjectNotFoundError as exc:
             _raise_storage_integrity_error(project_id, clean_path, exc)
-        except PathNotFoundError as exc:
-            _raise_directory_not_found(clean_path, exc)
-        except VersionReadError as exc:
-            _raise_version_read_error(clean_path, exc)
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"Path not found: {clean_path}")
 
-        def chunks():
-            # zipstream-ng's add()/mkdir() *queue* entries; all_files()
-            # processes the queue and yields chunks as they're produced.
-            # Calling all_files() after each add() means bytes leave the
-            # server as soon as each file is zipped — which is what gives
-            # the browser's native download manager real-time progress.
-            # footer() writes the central directory + end-of-archive
-            # record once all entries are done.
-            zs = ZipStream(compress_type=ZIP_DEFLATED)
-            for e in entries:
-                if any(part.startswith(".") for part in e.path.strip("/").split("/") if part):
-                    continue
-                rel_path = e.path[len(prefix_with_slash) :] if prefix_with_slash else e.path
-                if not rel_path:
-                    continue
-                arcname = f"{folder_name}/{rel_path}"
+        if entry.type == "folder":
+            folder_name = entry.name or clean_path.rsplit("/", 1)[-1] or "root"
+            prefix = clean_path.strip("/")
+            prefix_with_slash = f"{prefix}/" if prefix else ""
 
-                if e.type == "folder":
-                    # mkdir() is the dedicated API for empty directory
-                    # entries — keeps empty folders visible in the archive.
-                    zs.mkdir(arcname)
+            # Snapshot the tree once, up-front. Doing it inside the generator
+            # would mean the request handler returns before list_tree runs,
+            # which complicates error reporting (the headers are already on
+            # the wire by then).
+            try:
+                entries = read.list_tree(project_id, clean_path, max_depth=-1)
+            except ObjectNotFoundError as exc:
+                _raise_storage_integrity_error(project_id, clean_path, exc)
+            except PathNotFoundError as exc:
+                _raise_directory_not_found(clean_path, exc)
+            except VersionReadError as exc:
+                _raise_version_read_error(clean_path, exc)
+
+            def chunks():
+                # zipstream-ng's add()/mkdir() *queue* entries; all_files()
+                # processes the queue and yields chunks as they're produced.
+                # Calling all_files() after each add() means bytes leave the
+                # server as soon as each file is zipped — which is what gives
+                # the browser's native download manager real-time progress.
+                # footer() writes the central directory + end-of-archive
+                # record once all entries are done.
+                zs = ZipStream(compress_type=ZIP_DEFLATED)
+                for e in entries:
+                    if any(part.startswith(".") for part in e.path.strip("/").split("/") if part):
+                        continue
+                    rel_path = e.path[len(prefix_with_slash) :] if prefix_with_slash else e.path
+                    if not rel_path:
+                        continue
+                    arcname = f"{folder_name}/{rel_path}"
+
+                    if e.type == "folder":
+                        # mkdir() is the dedicated API for empty directory
+                        # entries — keeps empty folders visible in the archive.
+                        zs.mkdir(arcname)
+                        yield from zs.all_files()
+                        continue
+
+                    try:
+                        content = read.read_file(project_id, e.path)
+                    except ObjectNotFoundError:
+                        # The pre-flight list_tree should have caught broken
+                        # tree references. If a blob disappears between list and
+                        # stream, fail that entry instead of silently corrupting
+                        # the zip with partial content.
+                        raise
+                    except FileNotFoundError:
+                        continue
+                    zs.add(data=content, arcname=arcname)
                     yield from zs.all_files()
-                    continue
 
-                try:
-                    content = ops.read_file(project_id, e.path)
-                except ObjectNotFoundError:
-                    # The pre-flight list_tree should have caught broken
-                    # tree references. If a blob disappears between list and
-                    # stream, fail that entry instead of silently corrupting
-                    # the zip with partial content.
-                    raise
-                except FileNotFoundError:
-                    continue
-                zs.add(data=content, arcname=arcname)
-                yield from zs.all_files()
+                yield from zs.footer()
 
-            yield from zs.footer()
+            return OwnedStreamingResponse(
+                chunks(),
+                release=resources.pop_all().close,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": _content_disposition_attachment(f"{folder_name}.zip"),
+                    "Cache-Control": "private, no-store",
+                    # Hint to proxies/CDNs not to buffer the response, otherwise
+                    # the browser's progress bar won't move until the whole zip
+                    # is built.
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
-        return StreamingResponse(
-            chunks(),
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": _content_disposition_attachment(f"{folder_name}.zip"),
-                "Cache-Control": "private, no-store",
-                # Hint to proxies/CDNs not to buffer the response, otherwise
-                # the browser's progress bar won't move until the whole zip
-                # is built.
-                "X-Accel-Buffering": "no",
-            },
+        # Single-file path: same bytes as /raw, but `attachment` so the
+        # browser triggers a save dialog instead of trying to render it.
+        try:
+            content = read.read_file(project_id, clean_path)
+        except ObjectNotFoundError as exc:
+            _raise_storage_integrity_error(project_id, clean_path, exc)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"File not found: {clean_path}")
+
+        from src.version_engine.read.tree_reader import detect_mime
+
+        mime = detect_mime(clean_path) or "application/octet-stream"
+        filename = entry.name or clean_path.rsplit("/", 1)[-1] or "download"
+
+        return _serve_file_bytes(
+            request=request,
+            content=content,
+            media_type=mime,
+            filename=filename,
+            disposition="attachment",
+            cache_control="private, no-store",
         )
-
-    # Single-file path: same bytes as /raw, but `attachment` so the
-    # browser triggers a save dialog instead of trying to render it.
-    try:
-        content = ops.read_file(project_id, clean_path)
-    except ObjectNotFoundError as exc:
-        _raise_storage_integrity_error(project_id, clean_path, exc)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"File not found: {clean_path}")
-
-    from src.version_engine.read.tree_reader import detect_mime
-
-    mime = detect_mime(clean_path) or "application/octet-stream"
-    filename = entry.name or clean_path.rsplit("/", 1)[-1] or "download"
-
-    return _serve_file_bytes(
-        request=request,
-        content=content,
-        media_type=mime,
-        filename=filename,
-        disposition="attachment",
-        cache_control="private, no-store",
-    )
 
 
 # Suppress unused-import warning for DEFAULT_TTL_SECONDS — it's re-exported

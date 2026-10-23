@@ -11,12 +11,12 @@ from postgrest.exceptions import APIError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.common_schemas import ApiResponse
+from src.infra.execution.runner import run_owned
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
 from src.platform.authorization.models import ProjectAction
 from src.platform.project.schemas import NativeRepositoryCreate
 from src.platform.project.write_lease import ProjectWriteLease
 from src.version_engine.bootstrap.dependencies import get_repo_manager
-from src.version_engine.infrastructure.owned_work import run_owned
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.ref_metadata import repository_ref_metadata
 from src.version_engine.write_engine.ref_transaction import RefEdit, RefState, admitted_actor

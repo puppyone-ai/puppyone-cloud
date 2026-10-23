@@ -64,8 +64,8 @@ async def get_project_head(
     grant = await run_in_threadpool(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
+    from src.infra.execution.runner import run_owned
     from src.platform.access.adapters.api.repository_management import read_native_head
-    from src.version_engine.infrastructure.owned_work import run_owned
 
     native = await run_owned(read_native_head, repo_manager, grant)
     if native is not None:

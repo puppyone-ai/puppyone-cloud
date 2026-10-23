@@ -5,22 +5,30 @@ from typing import ClassVar
 import pytest
 from fastapi import HTTPException
 
+from src.file_operations.commands import VersionWriteCommandService
+from src.platform.access import repository_schemas as cli_schemas
+from src.platform.access.adapters.cli import (
+    context as cli_context,
+)
+from src.platform.access.adapters.cli import (
+    read as cli_read,
+)
+from src.platform.access.adapters.cli import (
+    router as cli_router,
+)
+from src.platform.access.adapters.cli import (
+    search as cli_search,
+)
+from src.platform.access.adapters.cli import (
+    write as cli_write,
+)
+from src.platform.access.adapters.cli.context import _filter_entries
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.repository_target.models import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.file_operations.commands import VersionWriteCommandService
-from src.platform.access.adapters.cli import (
-    context as cli_context,
-    read as cli_read,
-    write as cli_write,
-    search as cli_search,
-    router as cli_router,
-)
-from src.platform.access import repository_schemas as cli_schemas
-from src.platform.access.adapters.cli.context import _filter_entries
 from src.version_engine.infrastructure.supabase.scope_repository import SupabaseScopeBackend
 from src.version_engine.storage.object_store import StorageBackend
 
@@ -189,6 +197,10 @@ async def test_ap_fs_handlers_admit_expected_cli_command(
 
 
 class _FakeOps:
+    def read_session(self, project_id):
+        from contextlib import nullcontext
+        return nullcontext(self)
+
     def for_grant(self, grant):
         assert isinstance(grant, RuntimeGrant)
         self.grant = grant

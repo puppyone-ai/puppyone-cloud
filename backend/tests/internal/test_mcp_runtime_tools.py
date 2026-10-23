@@ -7,10 +7,10 @@ import pytest
 from fastapi import HTTPException
 
 from src.platform.access.adapters.mcp_endpoint import runtime as mcp_runtime
-from src.platform.access.filesystem.errors import ScopedFsPermissionDenied
-from src.platform.access.filesystem.context import ScopedFsContext
-from src.platform.access.filesystem import service as scoped_fs_service
 from src.platform.access.adapters.mcp_endpoint.resolver import ResolvedMcpRuntime
+from src.platform.access.filesystem import service as scoped_fs_service
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.errors import ScopedFsPermissionDenied
 from src.platform.access.filesystem.service import ScopedFsService
 
 
@@ -26,6 +26,7 @@ async def test_moved_runtime_keeps_internal_gate_before_credential_lookup(
 ):
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.config import settings
 
     monkeypatch.setattr(settings, "INTERNAL_API_SECRET", configured)
@@ -179,6 +180,10 @@ async def test_scoped_fs_grep_uses_shared_indexed_backend(monkeypatch):
         }
 
     class _Ops:
+        def read_session(self, project_id):
+            from contextlib import nullcontext
+            return nullcontext(self)
+
         def stat_in_scope(self, _project_id, _scope_path, _path, *, include_size=False):
             return None
 

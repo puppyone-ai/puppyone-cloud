@@ -29,11 +29,11 @@ from dataclasses import dataclass, replace
 
 import cachetools
 
+from src.infra.execution.context import checkpoint, current_execution
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
 from src.utils.logger import log_error, log_warning
 from src.version_engine.domain.errors import ObjectNotFoundError, StorageWriteError
-from src.version_engine.infrastructure.owned_work import checkpoint, current_execution
 from src.version_engine.infrastructure.supabase import safe_data
 from src.version_engine.infrastructure.supabase.db_names import OBJECT_LOCATIONS_TABLE
 from src.version_engine.storage.chunk_manifest import (

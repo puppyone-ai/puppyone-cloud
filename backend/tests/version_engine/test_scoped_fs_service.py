@@ -20,6 +20,10 @@ from src.version_engine.write_engine.errors import ConcurrentMutationError
 
 
 class _FakeOps:
+    def read_session(self, project_id):
+        from contextlib import nullcontext
+        return nullcontext(self)
+
     """ProductOperationAdapter stand-in — enough for read happy-paths."""
 
     def list_dir_in_scope(self, *_a, **_k):

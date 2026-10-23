@@ -49,7 +49,7 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
     monkeypatch.setattr(worker, "Admission", lambda _: object())
     monkeypatch.setattr(worker, "Publication", lambda transport, filesystem: object())
     monkeypatch.setattr(worker, "RunGitTransport", lambda _: object())
-    monkeypatch.setattr(worker, "BoundTools", lambda _: object())
+    monkeypatch.setattr(worker, "build_bound_tools", lambda _admission, _engine: object())
     monkeypatch.setattr(
         worker,
         "build_worker_version_engine_container",

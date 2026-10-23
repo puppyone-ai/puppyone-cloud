@@ -11,9 +11,10 @@ from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
+from src.version_engine.bootstrap.dependencies import get_repo_manager
+from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 _table_repository = None
-_table_service = None
 
 
 def get_table_repository() -> TableRepositorySupabase:
@@ -23,13 +24,11 @@ def get_table_repository() -> TableRepositorySupabase:
     return _table_repository
 
 
-def get_table_service() -> TableService:
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-
-    return TableService(
-        repo=get_table_repository(),
-        repo_manager=build_worker_version_engine_container().repo_manager,
-    )
+def get_table_service(
+    repo: TableRepositorySupabase = Depends(get_table_repository),
+    repo_manager: VersionRepoManager = Depends(get_repo_manager),
+) -> TableService:
+    return TableService(repo=repo, repo_manager=repo_manager)
 
 
 def require_table_action(action: ProjectAction) -> Callable[..., Table]:

@@ -327,3 +327,47 @@ separate final-schema acceptance. Hosted migration is an explicit later release
 operation, not application startup, schema-only deployment or CI side effect.
 See the [local retirement acceptance record](../../backend/openspec/changes/retire-project-root-engine/acceptance.md)
 for checks, replacement test coverage and release limits.
+
+## Process resources and operation reads
+
+The process composition root supplies `VersionEngineContainer`. Search, Tool,
+Table and request routes inject this container; a request-scoped service never
+caches another request's grant. Embedding/vector clients reuse their existing
+process providers. Worker composition injects those resources explicitly.
+
+```text
+process clients / VersionEngineContainer
+              |
+              v
+protocol admission -> explicit grant + target
+              |
+              v
+file_operations/queries -> one operation-owned read session
+              |
+              v
+NativeTreeReader -> admitted ref snapshot / read pin -> PG + immutable S3
+
+infra/execution: cooperative cancellation, deadlines and worker join
+workspace:      separate VM connections and live filesystem
+write_engine:   existing checked publication, CAS and durable results
+```
+
+CLI and shared filesystem reads use `run_read`: bounded admission, a blocking
+worker outside the event loop, then one snapshot covering path checks, traversal,
+content and revision. Defaults are 8 running reads, 32 waiting and a 10-second
+queue wait per event loop, configurable through `FILE_READ_*`. These are local
+read admission budgets, not the system's global concurrency or S3 limits.
+Existing synchronous Web read routes retain FastAPI's threadpool execution;
+History retains its bounded graph/read model. Download rechecks the signed
+principal and holds one read pin through ZIP streaming and disconnect cleanup.
+
+`infra/execution/context.py` contains only cancellation/deadline state.
+`runner.py` joins blocking work before lease/file cleanup; `run_cleanup` is
+reserved for mandatory release, even after cancellation. The old `owned_work`
+module only re-exports the same implementation for existing integrations.
+A read pin is not a database transaction held during S3 I/O. Workspace SSH and
+durable task ledgers retain their existing owners.
+
+The accepted cross-domain lifecycle diagram and adoption contract are maintained
+in `puppy-issues:document/puppyone/architecture/06-data-access-contracts.md`.
+Verification: `backend/openspec/changes/refactor-operation-lifetimes/verification.md`.

@@ -17,15 +17,12 @@ from fastapi import HTTPException
 from starlette.responses import StreamingResponse
 
 from src.config import settings
-from src.version_engine.infrastructure.owned_work import (
-    MAX_SECONDS,
-    Execution,
-    checkpoint,
-    current_execution,
-)
-from src.version_engine.infrastructure.owned_work import run_owned as run_owned
+from src.infra.execution.context import MAX_SECONDS, Execution, checkpoint, current_execution
+from src.infra.execution.runner import run_cleanup, run_owned
 from src.version_engine.storage.git_pack_limits import (
     MAX_OBJECT_BYTES as MAX_OBJECT_BYTES,
+)
+from src.version_engine.storage.git_pack_limits import (
     MAX_OBJECTS as MAX_OBJECTS,
 )
 
@@ -139,7 +136,7 @@ class ObjectGitResponse(OwnedGitResponse):
             async with asyncio.timeout(MAX_SECONDS):
                 await StreamingResponse.__call__(self, scope, receive, send)
         finally:
-            await run_owned(self.close)
+            await run_cleanup(self.close)
 
 
 def run_git(command, *, env, directory, timeout, input=None, stdin=None, stdout=subprocess.PIPE):

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from contextlib import aclosing, suppress
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.storage.io_budget import physical_io_credit
 from src.version_engine.storage.object_stream import call_owned, join_owned
 

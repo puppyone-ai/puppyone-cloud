@@ -128,11 +128,7 @@ def _snapshot(character: str) -> HistoryGraphSnapshot:
 
 @pytest.mark.parametrize("cancel_all", [False, True])
 def test_shared_build_cancellation_observes_subscribers(cancel_all):
-    from src.version_engine.infrastructure.owned_work import (
-        Execution,
-        checkpoint,
-        current_execution,
-    )
+    from src.infra.execution.context import Execution, checkpoint, current_execution
 
     cache = HistoryGraphCache()
     started, proceed = Event(), Event()

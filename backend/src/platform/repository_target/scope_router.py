@@ -9,10 +9,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.common_schemas import ApiResponse
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
 from src.platform.authorization.models import ProjectAction
-from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.models import RepositoryScope
+from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.schemas import (
     ScopeAutoSuggestOut,
     ScopeIn,
@@ -20,6 +21,7 @@ from src.platform.repository_target.schemas import (
     ScopePatch,
 )
 from src.platform.repository_target.scope_service import ScopeService, get_scope_service
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 router = APIRouter(
     prefix="/projects/{project_id}/scopes",
@@ -154,12 +156,11 @@ def delete_scope(
 def auto_suggest_scopes(
     authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.CONTENT_READ)),
     service: ScopeService = Depends(get_scope_service),
+    ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
 ):
     """Reads the current version tree's top-level folders and returns those
     not already covered by an existing scope as proposed scope candidates."""
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-
-    ops = build_worker_version_engine_container().product_operations().for_grant(authorized.grant)
+    ops = ops.for_grant(authorized.grant)
     try:
         entries = ops.list_dir(str(authorized.project.id), "")
     except Exception:

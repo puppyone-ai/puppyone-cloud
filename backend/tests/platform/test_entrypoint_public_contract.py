@@ -335,6 +335,17 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in waiting["paths"].items():
         assert expected["contract"]["paths"][name] == change["before"]
         expected["contract"]["paths"][name] = change["after"]
+    # The shared History API was already merged at bc8714ec. Preserve the
+    # historical fixtures and record only its exact reviewed wire delta.
+    history = json.loads(Path(__file__).with_name("shared_history_contract_delta.json").read_text())
+    assert set(history["paths"]) == {
+        "/api/v1/content/{project_id}/commits", "/api/v1/content/{project_id}/commit-detail",
+    }
+    assert set(history["schemas"]) == {"FileVersionInfo", "ApiResponse_FileVersionInfo_"}
+    for category, changes in history.items():
+        for name, change in changes.items():
+            assert expected["contract"][category].get(name) == change["before"]
+            expected["contract"][category][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

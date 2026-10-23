@@ -5,7 +5,6 @@ import logging
 from uuid import uuid4
 
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
-from src.platform.access.adapters.git.workspace_transport import RunGitTransport
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
@@ -15,20 +14,33 @@ from src.platform.access.adapters.agent.runtime.control.workspace import (
 )
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.access.adapters.agent.runtime.execution.tools import BoundTools
-from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
+from src.platform.access.adapters.git.workspace_transport import RunGitTransport
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
 from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 logger = logging.getLogger(__name__)
 
 
 _DEFAULT_OWNER = object()
+
+
+def build_bound_tools(admission, engine):
+    from src.infra.llm.dependencies import get_embedding_service
+    from src.infra.search.dependencies import get_search_service
+    from src.infra.supabase.dependencies import get_supabase_client
+    from src.infra.turbopuffer.dependencies import get_turbopuffer_search_service
+
+    search = get_search_service(admission.authorization, engine.product_operations(),
+                                get_supabase_client(), get_embedding_service(),
+                                get_turbopuffer_search_service())
+    return BoundTools(admission, search)
 
 
 async def serve(*, workbench_owner=_DEFAULT_OWNER):
@@ -46,7 +58,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
     publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
     billing = get_runtime_metering_service()
-    bound_tools = BoundTools(admission)
+    bound_tools = build_bound_tools(admission, engine)
     worker_id = str(uuid4())
     active = set()
     shared_first = False

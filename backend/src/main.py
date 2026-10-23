@@ -292,9 +292,9 @@ def _init_scope_sandbox_reaper(app: FastAPI) -> None:
     shutdown can stop both durable reaper loops cleanly."""
     if not getattr(settings, "SCOPE_SANDBOX_REAPER_ENABLED", False):
         return
+    from src.platform.access.adapters.ssh.service import get_ssh_access_service
     from src.platform.workspace.execution.reaper import start_execution_reaper
     from src.platform.workspace.scopes.reaper import start_reaper
-    from src.platform.access.adapters.ssh.service import get_ssh_access_service
 
     service = get_ssh_access_service().workspace
     task, stop_event = start_reaper(
@@ -744,9 +744,12 @@ def create_app() -> FastAPI:
 
     # Register exception handlers
     exception_handler_start = time.time()
+    from src.exception_handler import execution_capacity_handler
+    from src.infra.execution.admission import ExecutionCapacityError
+    app.add_exception_handler(ExecutionCapacityError, execution_capacity_handler)
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore
-    from src.platform.workspace.errors import WorkspaceError
     from src.platform.access.adapters.api.workbench_router import workspace_error_handler
+    from src.platform.workspace.errors import WorkspaceError
 
     app.add_exception_handler(WorkspaceError, workspace_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore

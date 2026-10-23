@@ -50,7 +50,7 @@ async def test_native_request_limits_reject_before_spooling_or_running_git(
 
 @pytest.mark.parametrize("cancelled", [False, True], ids=["deadline", "disconnect"])
 def test_snapshot_progress_stops_expensive_reads_after_owned_execution_ends(cancelled):
-    from src.version_engine.infrastructure.owned_work import Execution, current_execution
+    from src.infra.execution.context import Execution, current_execution
     from src.version_engine.read.repository_snapshot import RepositorySnapshot
 
     # Health and graph walks use this same snapshot progress callback. They
@@ -72,7 +72,7 @@ def test_snapshot_progress_stops_expensive_reads_after_owned_execution_ends(canc
 
 @pytest.mark.asyncio
 async def test_disconnected_caller_stops_owned_work_before_releasing_its_scope():
-    from src.version_engine.infrastructure.owned_work import checkpoint
+    from src.infra.execution.context import checkpoint
 
     exited = threading.Event()
 

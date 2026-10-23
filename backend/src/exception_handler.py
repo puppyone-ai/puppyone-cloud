@@ -118,3 +118,10 @@ def generic_exception_handler(request: Request, exc: Exception):
     if rid:
         resp.headers["X-Request-Id"] = rid
     return resp
+
+
+def execution_capacity_handler(request: Request, exc):
+    return http_exception_handler(request, StarletteHTTPException(
+        status_code=503, detail={"code": "file_reads_busy", "message": str(exc)},
+        headers={"Retry-After": "1"},
+    ))

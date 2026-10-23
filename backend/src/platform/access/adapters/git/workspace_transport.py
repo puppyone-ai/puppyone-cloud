@@ -110,4 +110,4 @@ class RunGitTransport:
                     }
                 finally:
                     if hasattr(response, "close"):
-                        await run_owned(response.close)
+                        await run_cleanup(response.close)
