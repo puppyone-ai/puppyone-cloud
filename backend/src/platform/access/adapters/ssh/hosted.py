@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-import asyncssh
-
-from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.access.composition import build_workbench_service
+from src.platform.access.credential_repository import SshCredentialRepository
+from src.platform.access.credentials import normalize_ssh_public_key
+from src.platform.access.grants import GrantService
+from src.platform.access.sessions import AccessSessions
 from src.platform.authorization.models import ProjectAction
 from src.platform.workspace.connections import WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
@@ -18,75 +19,58 @@ from .config import ssh_settings
 
 def public_key(value):
     try:
-        key = asyncssh.import_public_key(value)
-        # Public keys only; never accept authorized_keys options or certificates.
-        if key.get_algorithm() != "ssh-ed25519":
-            raise ValueError("An Ed25519 public key is required")
-        return key.export_public_key().decode().strip()
-    except (ValueError, asyncssh.KeyImportError) as exc:
+        return normalize_ssh_public_key(value)
+    except ValueError as exc:
         raise WorkspaceError(422, {"code": "ssh_ed25519_public_key_required"}) from exc
 
 
-class SshGrantRepository:
-    def __init__(self, client=None):
-        self.client = client if client is not None else get_supabase_client()
+# Existing callers keep their import while persistence belongs to shared Access.
+SshGrantRepository = SshCredentialRepository
 
-    def create(self, row):
-        return self.client.table("workspace_ssh_grants").insert(row).execute().data[0]
 
-    def get(self, identity):
-        rows = (
-            self.client.table("workspace_ssh_grants")
-            .select("*")
-            .eq("id", identity)
-            .limit(1)
-            .execute()
-            .data
-        )
-        return rows[0] if rows else None
+def ssh_endpoint(config=None):
+    import re
 
-    def consume(self, identity):
-        return self.client.rpc("workspace_ssh_grant_consume", {"p_id": identity}).execute().data
-
-    def revoke(self, identity, user, project):
-        return (
-            self.client.table("workspace_ssh_grants")
-            .update({"revoked_at": datetime.now(UTC).isoformat()})
-            .eq("id", identity)
-            .eq("user_id", user)
-            .eq("project_id", project)
-            .execute()
-            .data
-        )
+    config = config or ssh_settings()
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}", config.public_host):
+        raise WorkspaceError(503, {"code": "workspace_ssh_not_configured"})
+    try:
+        key = public_key(config.public_host_key)
+    except WorkspaceError as exc:
+        raise WorkspaceError(503, {"code": "workspace_ssh_not_configured"}) from exc
+    return {
+        "host": config.public_host,
+        "port": config.public_port,
+        "host_public_key": key,
+        "known_hosts": (
+            f"{config.public_host} {key}"
+            if config.public_port == 22
+            else f"[{config.public_host}]:{config.public_port} {key}"
+        ),
+    }
 
 
 class HostedSshAccess:
-    def __init__(self, workspace, grants=None, connections=None, config=None):
+    def __init__(
+        self, workspace, grants=None, connections=None, config=None, authority=None, sessions=None
+    ):
         self.workspace = workspace
         self.grants = grants or SshGrantRepository()
         self.connections = connections or WorkspaceConnections(workspace)
         self.config = config or ssh_settings()
+        self.authority = authority
+        self.sessions = sessions
 
     def endpoint(self):
-        import re
+        return ssh_endpoint(self.config)
 
-        config = self.config
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}", config.public_host):
-            raise WorkspaceError(503, {"code": "workspace_ssh_not_configured"})
-        try:
-            key = public_key(config.public_host_key)
-        except WorkspaceError as exc:
-            raise WorkspaceError(503, {"code": "workspace_ssh_not_configured"}) from exc
-        return {
-            "host": config.public_host,
-            "port": config.public_port,
-            "host_public_key": key,
-            "known_hosts": (
-                f"{config.public_host} {key}"
-                if config.public_port == 22
-                else f"[{config.public_host}]:{config.public_port} {key}"
-            ),
-        }
+    def lifecycle(self):
+        # Legacy tests/clients do not instantiate new storage until it is needed.
+        if self.authority is None:
+            self.authority = GrantService()
+        if self.sessions is None:
+            self.sessions = AccessSessions()
+        return self.authority, self.sessions
 
     async def issue(self, user, project, generation, key, ttl):
         endpoint = self.endpoint()
@@ -128,10 +112,22 @@ class HostedSshAccess:
             not grant
             or grant.get("revoked_at")
             or (unused and grant.get("used_at"))
-            or datetime.fromisoformat(grant["expires_at"].replace("Z", "+00:00"))
-            <= datetime.now(UTC)
+            or (
+                (unused or not grant.get("access_grant_id"))
+                and datetime.fromisoformat(grant["expires_at"].replace("Z", "+00:00"))
+                <= datetime.now(UTC)
+            )
         ):
             raise PermissionError("SSH grant unavailable")
+        if grant.get("access_grant_id"):
+            authority, _ = self.lifecycle()
+            await authority.authorize(
+                grant["access_grant_id"],
+                "ssh",
+                session=None if unused else identity,
+                project=grant["project_id"],
+                workbench=grant["workbench_id"],
+            )
         await self.connections.authorize(
             grant["user_id"], grant["project_id"], grant["workbench_id"], grant["generation"]
         )
@@ -149,14 +145,19 @@ class HostedSshAccess:
     async def open(self, identity):
         grant = await self.validate(identity, unused=True)
         await asyncio.to_thread(self.grants.consume, identity)
-        async with self.connections.open(
-            identity,
-            grant["user_id"],
-            grant["project_id"],
-            grant["workbench_id"],
-            grant["generation"],
-        ) as connection:
-            yield connection
+        try:
+            async with self.connections.open(
+                identity,
+                grant["user_id"],
+                grant["project_id"],
+                grant["workbench_id"],
+                grant["generation"],
+            ) as connection:
+                yield connection
+        finally:
+            if grant.get("access_grant_id"):
+                _, sessions = self.lifecycle()
+                await sessions.finish_unallocated(identity)
 
     async def renew(self, connection, shell):
         async with asyncio.timeout(10):

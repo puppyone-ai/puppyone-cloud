@@ -691,6 +691,9 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
 
     app.include_router(hosted_ssh_router)
+    from src.platform.access.lifecycle_router import router as access_lifecycle_router
+
+    app.include_router(access_lifecycle_router)
     from src.platform.access.adapters.api.workbench_router import router as workbench_router
 
     app.include_router(workbench_router)

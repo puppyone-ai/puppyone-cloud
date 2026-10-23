@@ -404,3 +404,34 @@ async def test_new_owner_reaps_lost_gateway_connection(live):
             encoding=None,
         )
         assert result.exit_status == 0
+
+
+async def test_registered_external_agent_real_shell_and_parent_revocation(live):
+    """External identity reaches the owner's exact VM, then loses its live shell."""
+    from src.platform.access.grant_repository import AccessRepository, GrantRepository
+    from src.platform.access.grants import GrantService
+    from src.platform.access.sessions import AccessSessions
+    from tests.agent.runtime.test_access_lifecycle import command, issue as issue_registered, setup_access
+
+    db_client = live.service.grants.client
+    live.service.authority = GrantService(GrantRepository(db_client))
+    live.service.sessions = AccessSessions(AccessRepository(db_client))
+    context = await asyncio.to_thread(setup_access, live.db, live.args, workspace=live.row)
+    ticket, _, _ = await asyncio.to_thread(
+        issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+    )
+    grant = {**ticket, "username": ticket["id"]}
+    async with await connect(live, grant) as conn:
+        proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding=None)
+        async with asyncio.timeout(20):
+            assert await proc.stdout.readline() == b"ready\n"
+        assert await read_file(live, "registered.txt") == b"registered"
+        await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
+                                id=context["grant"], project_id=context["project"], state="revoked")
+        async with asyncio.timeout(25):
+            await proc.wait_closed()
+    await until_released(live, ticket["id"])
+    row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
+    assert row["state"] == "closed" and row["registration_id"] == context["registration"]
+    with pytest.raises(asyncssh.PermissionDenied):
+        await connect(live, grant)

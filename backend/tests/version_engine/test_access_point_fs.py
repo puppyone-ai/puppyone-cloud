@@ -111,7 +111,7 @@ def _patch_auth(monkeypatch, scope_path: str = ""):
     )
     monkeypatch.setattr(
         cli_context, "resolve_access_point",
-        lambda _key: (
+        lambda _key, *, channel="cli": (
             "project-id",
             {
                 "agent": "test-ap",

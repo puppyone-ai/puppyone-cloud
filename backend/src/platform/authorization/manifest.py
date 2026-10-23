@@ -358,3 +358,25 @@ PROJECT_ROUTE_ACTIONS = {
     for key, contract in PROJECT_ROUTE_AUTHORIZATION.items()
     if contract.plane is AuthorizationPlane.HUMAN_PROJECT
 }
+
+
+# Shared access lifecycle: verified human management and separate connector proof.
+PROJECT_ROUTE_AUTHORIZATION.update({
+    (method, "/api/v1/projects/{project_id}/access/" + suffix): _human(ProjectAction.CREDENTIAL_MANAGE)
+    for method, suffix in (
+        ("POST", "invitations"), ("GET", "{collection}"),
+        ("POST", "requests/{request_id}/decision"),
+        ("DELETE", "invitations/{invitation_id}"),
+        ("PATCH", "grants/{grant_id}"), ("DELETE", "sessions/{session_id}"),
+    )
+})
+PROJECT_ROUTE_AUTHORIZATION.update({
+    (method, "/api/v1/access/" + suffix): _owner("access.registration_owner")
+    for method, suffix in (
+        ("POST", "registrations"), ("GET", "registrations"),
+        ("GET", "registrations/{registration_id}/grants"),
+        ("PATCH", "registrations/{registration_id}"),
+        ("PUT", "registrations/{registration_id}/credential"), ("POST", "requests"),
+    )
+})
+PROJECT_ROUTE_AUTHORIZATION[("POST", "/api/v1/access/credentials/renew")] = _runtime("access.registration_renewal")

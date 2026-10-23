@@ -52,6 +52,7 @@ async def _resolve_auth(
     project_id, auth = await asyncio.to_thread(
         resolve_access_point,
         _normalize_access_key(x_access_key),
+        channel="cli",
     )
 
     bound_identity = auth.get("_user_identity", "")

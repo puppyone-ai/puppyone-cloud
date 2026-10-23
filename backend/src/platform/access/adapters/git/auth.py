@@ -168,8 +168,10 @@ async def resolve_canonical_git_auth(
 
     runtime_grant = RuntimeGrant(
         principal=RuntimePrincipal(
-            principal_id=credential_id,
+            principal_id=resolved.get("registration_id") or credential_id,
             credential_kind="git_http_token",
+            credential_id=credential_id,
+            access_grant_id=resolved.get("access_grant_id"),
         ),
         target=target,
         repository_view=repository_view,
