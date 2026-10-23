@@ -34,7 +34,10 @@ from .port import (
 class FlyRuntimeProvider:
     name = "fly"
     capabilities = RuntimeCapabilities(
-        recovery_backend=None, file_retention="volume", preserves_processes=False
+        recovery_backend=None,
+        file_retention="volume",
+        preserves_processes=False,
+        connection_preparation=True,
     )
 
     def __init__(self, *, client=None):
@@ -390,6 +393,25 @@ class FlyRuntimeProvider:
     async def running_connection(self, host):
         row = await self.attach(host)
         return RuntimeConnection(resource_identity(host.resource), row.get("private_ip"))
+
+    async def prepare_connection(self, host):
+        """Prepare our private route while the lifecycle owner starts compute.
+
+        This handle proves identity, not readiness. The consumer must still wait
+        for the durable checking_files phase and verify the current boot/epoch.
+        """
+        with workspace_stage("connection.prepare_inspect"):
+            row = await self.inspect(host.resource)
+        if row["state"] not in {"stopped", "suspended", "starting", "started"}:
+            raise WorkerDisconnected("Fly workbench transition is not ready for preparation")
+        transport = await acquire_transport(
+            host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
+        )
+        try:
+            await transport.ssh_connections().prepare(host.resource, row.get("private_ip"))
+            return RuntimeConnection(resource_identity(host.resource), row.get("private_ip"))
+        finally:
+            transport.release()
 
     async def pause_resource(self, host):
         row = await self.inspect(host.resource)

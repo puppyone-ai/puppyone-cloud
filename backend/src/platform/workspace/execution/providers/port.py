@@ -23,6 +23,7 @@ class RuntimeCapabilities:
     file_retention: str = "provider-snapshot"
     preserves_processes: bool = True
     files_require_compute: bool = True
+    connection_preparation: bool = False
 
 
 def resource_identity(resource: dict) -> str:
@@ -101,6 +102,7 @@ class RuntimeProvider(Protocol):
         self, host: Any, resource: dict, connection: RuntimeConnection | None
     ) -> None: ...
     async def running_connection(self, host: Any) -> RuntimeConnection: ...
+    async def prepare_connection(self, host: Any) -> RuntimeConnection: ...
     async def pause_resource(self, host: Any) -> RuntimeTransition: ...
 
 

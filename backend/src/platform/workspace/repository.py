@@ -42,6 +42,17 @@ class WorkbenchRepository:
             binding=binding,
         )
 
+    def begin_open(self, row):
+        return self.command(
+            "begin_open",
+            workbench=row["id"],
+            generation=row["generation"],
+            user=row["user_id"],
+            project=row["project_id"],
+            binding=row["binding"],
+            deadline=row["open_deadline"],
+        )
+
     def transition(self, row, state, resource=None):
         return self.command(
             "transition",
@@ -127,6 +138,26 @@ class WorkbenchRepository:
             if (
                 getattr(exc, "code", None) == "P0001"
                 and getattr(exc, "message", None) == "agent_context_changed"
+            ):
+                pass
+            else:
+                raise
+        else:
+            raise RuntimeError("Workspace opening contract did not reject an absent identity")
+        try:
+            self.command(
+                "begin_open",
+                workbench=None,
+                generation=None,
+                user=None,
+                project=None,
+                binding=None,
+                deadline=None,
+            )
+        except Exception as exc:
+            if (
+                getattr(exc, "code", None) == "22023"
+                and getattr(exc, "message", None) == "workbench_open_claim_invalid"
             ):
                 return
             raise

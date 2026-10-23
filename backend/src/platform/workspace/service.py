@@ -211,6 +211,7 @@ class WorkbenchService(WorkbenchAdmission):
     async def close(self):
         from .execution.providers.registry import close_provider_transports
 
+        await self.opening.observers.close()
         await self.channels.close()
         await close_provider_transports()
 

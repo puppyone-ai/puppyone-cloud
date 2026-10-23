@@ -1,6 +1,6 @@
 # Workspace opening verification
 
-Status: local implementation and measurements verified; integration/activation recorded below.
+Status: implementation integrated; Qubits database released; local API and worker activated. Remote application deployment and production SLO acceptance are not claimed.
 Date: 2026-10-23.
 
 ## Ownership and request budget
@@ -38,3 +38,14 @@ These are sample percentiles, **not a production SLO acceptance**. Resume uses l
 ## Database merge admission
 
 Read-only inspection of Qubits found 54 applied versions, ending at `20261023010000`. The complete missing set is the preceding committed `20261023020000` plus this change's `20261023030000`; there are no unexplained older gaps. Both are additive, independent SQL with no new data-migration prerequisite. Entire pending chain and populated upgrade were tested locally. Hosted SQL must run through Qubits CI/CD before activating the new local backend. No remote application deployment is requested.
+
+## Integration and activation
+
+- Backend implementation `accefcf6` merged through [PR 1408](https://github.com/puppyone-ai/puppyone-cloud/pull/1408) into Qubits as `df504964`. Required branch checks passed; the optional Supabase Preview check did not pass and is not used as target deployment evidence.
+- [Deploy Database to Qubits, run 39929659325](https://github.com/puppyone-ai/puppyone-cloud/actions/runs/39929659325) succeeded. A subsequent read-only target-ledger inspection confirmed both `20261023020000` and `20261023030000` applied.
+- Local canonical backend fast-forwarded to the merged implementation. All 17 pre-existing modified files remained byte-for-byte unchanged. The local supervisor reloaded API and worker on 2026-10-23 at 17:13 Asia/Singapore; the API completed startup and `/health` returned `status: ready`.
+- Desktop implementation integrated as `93de9e3a`; 36 integration cases passed in the canonical checkout. The existing Electron/Vite development session uses that checkout.
+- After backend integration, 50 focused SSH, preflight, consumer-readiness and security tests passed in the canonical checkout using the running services' Python environment.
+- Additional release checks: 262 database release regression tests passed (20 skipped); 17 PostgREST/RPC contract tests passed; 35 focused tests passed in the actual local runtime environment. Correct-source migration lint checked 14 artifacts and policy checked both pending SQL paths.
+- Canonical architecture documentation was updated in `puppy-issues/document` with backend and desktop source provenance. Its validator passed across 433 Markdown documents, retaining 25 pre-existing cross-repository link warnings. Those documentation edits remain uncommitted alongside existing user edits.
+- Warm timings observed before the 17:13 reload belonged to the earlier runtime's already-warm connection. They must not be attributed to this implementation. The measured results above come from the explicitly described acceptance/probe environments.

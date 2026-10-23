@@ -202,7 +202,7 @@ class FlySSHConnections:
             sock.close()
             raise
 
-    async def open(self, resource, address, command, *, epoch=None):
+    async def _reserve(self, resource, address):
         if resource.get("app") != self.app:
             raise PermissionError("Fly SSH application mismatch")
         try:
@@ -226,6 +226,28 @@ class FlySSHConnections:
             entry.users += 1
             if self.sweeper is None:
                 self.sweeper = asyncio.create_task(self._sweep())
+        return entry
+
+    async def prepare(self, resource, address):
+        """Only prepare credentials and route; never SSH into stopped compute."""
+        entry = await self._reserve(resource, address)
+        try:
+            async with entry.lock:
+                if entry.proxy and entry.proxy.returncode is not None:
+                    await entry.close()
+                try:
+                    async with asyncio.TaskGroup() as group:
+                        group.create_task(self.credentials())
+                        group.create_task(self._proxy(entry, address))
+                except BaseException:
+                    await entry.close()
+                    raise
+        finally:
+            entry.users -= 1
+            entry.used = time.monotonic()
+
+    async def open(self, resource, address, command, *, epoch=None):
+        entry = await self._reserve(resource, address)
         try:
             async with entry.lock:
                 if entry.proxy and entry.proxy.returncode is not None:

@@ -175,12 +175,11 @@ class WorkbenchLifecycle:
             return
         if original["state"] == "pausing":
             return  # The same lifecycle's maintenance finishes pause before wake.
-        claimed = await asyncio.to_thread(self.repository.acquire, original, original["binding"])
+        with workspace_stage("opening.claim"):
+            claimed = await asyncio.to_thread(self.repository.begin_open, original)
         if not claimed["acquired"]:
             return
         row = claimed["workbench"]
-        phase = "allocating" if row["state"] == "allocating" else "connecting"
-        await self.progress(row, phase)
 
         async def heartbeat():
             while True:
@@ -192,10 +191,10 @@ class WorkbenchLifecycle:
 
         async def start():
             async with asyncio.timeout(remaining):
-                await self.preflight(row)
-                _, grant = await asyncio.to_thread(
-                    self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
+                grant = self.service.authorization.authorize_facts(
+                    claimed["facts"], row["project_id"], row["user_id"], ProjectAction.AGENT_RUN
                 )
+                await self.preflight(row)
                 return await self._start(row, grant)
 
         operation, heartbeat_task = asyncio.create_task(start()), asyncio.create_task(heartbeat())

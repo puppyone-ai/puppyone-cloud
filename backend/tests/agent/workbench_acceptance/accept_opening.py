@@ -71,8 +71,7 @@ async def test_opening_latency(entry, monkeypatch):
                     row = response.json()
                     while row["state"] != "running" or row["operation"]["pending"]:
                         assert not row["operation"]["error"], row
-                        await asyncio.sleep(1)
-                        response = await http.get(root)
+                        response = await http.get(root, params={"wait_seconds": 20})
                         assert response.status_code == 200, response.text
                         result = response.json()
                         row = result["workspace"]
@@ -89,12 +88,17 @@ async def test_opening_latency(entry, monkeypatch):
             row, elapsed, _ = await open_root()
             receipt["initial_clone_ms"] = elapsed
             api = entry.app.state.workbench_service
-            for mode, count in [("warm", 10), ("reconnect", 5), ("resume", 3)]:
+            for mode, count in [
+                ("warm", 10),
+                ("reconnect", 5),
+                ("resume", 3),
+                ("cold_transport_resume", 3),
+            ]:
                 samples = []
                 for _ in range(count):
                     if mode != "warm":
                         await api.channels.invalidate(row["id"])
-                    if mode == "resume":
+                    if mode in {"resume", "cold_transport_resume"}:
                         current = await asyncio.to_thread(api.repository.get, row["id"])
                         claimed = await asyncio.to_thread(
                             api.repository.lifecycle_claim, current, suspend=True
@@ -103,6 +107,10 @@ async def test_opening_latency(entry, monkeypatch):
                         await worker.lifecycle.pause(claimed["workbench"])
                         paused = await asyncio.to_thread(api.repository.get, row["id"])
                         assert paused["state"] == "paused"
+                        if mode == "cold_transport_resume":
+                            # Drop only this fixture process's caches. Production
+                            # API/worker transports live in different processes.
+                            await provider.shutdown_transports()
                     row, elapsed, polls = await open_root()
                     samples.append(elapsed)
                     print(

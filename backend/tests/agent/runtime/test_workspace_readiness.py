@@ -32,6 +32,7 @@ def lifecycle(state="paused"):
         activity=Mock(return_value=row),
         get=Mock(return_value=row),
         acquire=Mock(return_value={"acquired": True, "workbench": row}),
+        begin_open=Mock(return_value={"acquired": True, "workbench": row, "facts": {}}),
     )
     provider = SimpleNamespace(
         name="third",
@@ -42,6 +43,7 @@ def lifecycle(state="paused"):
     )
     service = SimpleNamespace(
         repository=repository,
+        authorization=Mock(),
         context=Mock(return_value=({"revision": {}}, object())),
         transport=Mock(),
         filesystem=Mock(),
