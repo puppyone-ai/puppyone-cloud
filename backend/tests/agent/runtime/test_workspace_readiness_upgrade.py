@@ -11,13 +11,20 @@ from tests.agent.runtime.test_workbench_ownership import call, transition
 pytestmark = pytest.mark.integration
 
 
-def test_populated_upgrade_preserves_running_and_pausing_resources():
+@pytest.mark.parametrize(
+    "migration",
+    [
+        "20261023010000_workspace_readiness_operations.sql",
+        "20261023040000_consolidate_workspace_open_admission.sql",
+    ],
+)
+def test_populated_upgrade_preserves_running_and_pausing_resources(migration):
     module_spec = importlib.util.spec_from_file_location(
         "readiness_pg", ROOT / "scripts/testing/native_postgres.py"
     )
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
-    candidate = ROOT / "supabase/migrations/20261023010000_workspace_readiness_operations.sql"
+    candidate = ROOT / "supabase/migrations" / migration
     previous = sorted(p.name for p in candidate.parent.glob("*.sql") if p.name < candidate.name)[-1]
     with module.native_postgres(through=previous) as cluster:
         db = Database(cluster["url"])
@@ -65,11 +72,22 @@ def test_populated_upgrade_preserves_running_and_pausing_resources():
             if state == "paused":
                 row = transition(db, row, "paused")
             rows.append(row)
+        if "consolidate" in migration:
+            rows[1] = call(
+                db,
+                "request_open",
+                workbench=rows[1]["id"],
+                user=user,
+                project=project,
+                binding=rows[1]["binding"],
+                revision=revision,
+            )
         db.sql(candidate.read_text())
         for before in rows:
             after = db.row(f"SELECT * FROM cloud_workbenches WHERE id='{before['id']}'")
             assert {key: after[key] for key in before} == before
-            assert not after["open_requested"] and after["operation_error"] is None
+            assert after["operation_error"] is None
+            assert after["open_requested"] == before.get("open_requested", False)
         pending = call(
             db,
             "request_open",

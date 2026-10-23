@@ -49,11 +49,12 @@ class FileOperation(BaseModel):
 async def status(
     project_id: str,
     response: Response,
+    wait_seconds: int = Query(default=0, ge=0, le=20),
     user=Depends(get_current_user),
     service=Depends(get_workbench_service),
 ):
     response.headers["Cache-Control"] = "no-store"
-    row, root = await service.opening.status(user.user_id, project_id)
+    row, root = await service.opening.status(user.user_id, project_id, wait_seconds=wait_seconds)
     return {"workspace": public_workbench(row), **(root or {})}
 
 

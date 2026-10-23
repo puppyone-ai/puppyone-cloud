@@ -158,6 +158,17 @@ def test_opening_preflight_only_accepts_the_expected_database_rejection(code, me
         side_effect=APIError({"code": code, "message": message, "details": None, "hint": None})
     )
     if accepted:
+        repo.command.side_effect = [
+            APIError({"code": code, "message": message, "details": None, "hint": None}),
+            APIError(
+                {
+                    "code": "22023",
+                    "message": "workbench_open_claim_invalid",
+                    "details": None,
+                    "hint": None,
+                }
+            ),
+        ]
         repo.verify_opening_contract()
     else:
         with pytest.raises(APIError):

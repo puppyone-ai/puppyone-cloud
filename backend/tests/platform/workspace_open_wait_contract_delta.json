@@ -1,0 +1,9 @@
+{
+  "paths": {
+    "/api/v1/projects/{project_id}/workbench": {
+      "before": "6c1850122225a4eb85a3d68a570678ba4106db202dc23afb4ee4d4eb2cede735",
+      "after": "8fe4d78ec98c1460980cec97b89e1cb4cfe00bc7f752981a70e0fa2cd80fdb8f"
+    }
+  },
+  "schemas": {}
+}

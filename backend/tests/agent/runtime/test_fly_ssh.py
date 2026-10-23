@@ -67,6 +67,54 @@ def connection():
 
 
 @pytest.mark.asyncio
+async def test_route_preparation_overlaps_credentials_without_opening_ssh():
+    pool = FlySSHConnections("owned", "token", "fly", {})
+    credential_started, route_started = asyncio.Event(), asyncio.Event()
+
+    async def credentials():
+        credential_started.set()
+        await route_started.wait()
+
+    async def proxy(entry, _):
+        route_started.set()
+        await credential_started.wait()
+
+    pool.credentials, pool._proxy = credentials, proxy
+    pool._connect = AsyncMock()
+    try:
+        await asyncio.wait_for(pool.prepare({"app": "owned"}, "fdaa::1"), 1)
+        pool._connect.assert_not_awaited()
+        entry = next(iter(pool.entries.values()))
+        assert entry.users == 0 and entry.ssh is None
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_canceled_preparation_releases_capacity_and_partial_proxy():
+    pool = FlySSHConnections("owned", "token", "fly", {})
+    started = asyncio.Event()
+    proxy = SimpleNamespace(returncode=None, stdin=SimpleNamespace(close=Mock()), wait=AsyncMock())
+
+    async def route(entry, _):
+        entry.proxy = proxy
+        started.set()
+        await asyncio.Event().wait()
+
+    pool._proxy, pool.credentials = route, AsyncMock()
+    task = asyncio.create_task(pool.prepare({"app": "owned"}, "fdaa::1"))
+    try:
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        proxy.stdin.close.assert_called_once()
+        assert next(iter(pool.entries.values())).users == 0
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
 async def test_concurrent_channels_share_one_ssh_connection_and_idle_eviction(monkeypatch):
     pool = FlySSHConnections("owned", "token", "fly", {}, limit=1)
     opened = []

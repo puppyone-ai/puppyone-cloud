@@ -120,6 +120,22 @@ def request(case, **values):
     }
 
 
+async def test_bounded_status_wait_never_creates_an_opening(entry):
+    path = f"/api/v1/projects/{entry.project}/workbench"
+    for wait in (-1, 21, "unbounded"):
+        result = await entry.http.get(path, params={"wait_seconds": wait})
+        assert result.status_code == 422
+    result = await entry.http.get(path, params={"wait_seconds": 20})
+    assert result.status_code == 200 and result.json() == {"workspace": None}
+    assert result.headers["cache-control"] == "no-store"
+    assert (
+        entry.postgres.sql(
+            f"SELECT count(*) FROM cloud_workbenches WHERE project_id='{entry.project}'"
+        )
+        == "0"
+    )
+
+
 def assert_no_run_or_session_resource(case):
     for table in ("agent_runs", "agent_session_workspaces"):
         assert (

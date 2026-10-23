@@ -327,6 +327,14 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & ssh[category].keys()
         expected["contract"][category].update(ssh[category])
+    waiting = json.loads(
+        Path(__file__).with_name("workspace_open_wait_contract_delta.json").read_text()
+    )
+    assert set(waiting["paths"]) == {"/api/v1/projects/{project_id}/workbench"}
+    assert waiting["schemas"] == {}
+    for name, change in waiting["paths"].items():
+        assert expected["contract"]["paths"][name] == change["before"]
+        expected["contract"]["paths"][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

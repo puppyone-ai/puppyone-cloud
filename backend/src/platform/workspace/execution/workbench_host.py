@@ -216,7 +216,7 @@ class WorkbenchChannels:
                         await self._discard(entry)
 
     @asynccontextmanager
-    async def borrow(self, row):
+    async def borrow(self, row, *, connection=None):
         if self.closed:
             raise WorkerDisconnected("Workspace channel pool is closed")
         key = self.key(row)
@@ -259,7 +259,10 @@ class WorkbenchChannels:
                     entry.channel = self.factory(row, purpose="files")
                     try:
                         with workspace_stage("connection.open", reason=reason):
-                            await entry.channel.connect()
+                            if connection is None:
+                                await entry.channel.connect()
+                            else:
+                                await entry.channel.connect(connection)
                     except BaseException:
                         await self._discard(entry)
                         raise
