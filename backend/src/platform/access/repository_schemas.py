@@ -298,6 +298,7 @@ class FileVersionInfo(BaseModel):
     who: str = ""
     message: str = ""
     changes: list[VersionCommitChange] = Field(default_factory=list)
+    changes_loaded: bool = True
     conflicts: list[dict] = Field(default_factory=list)
     root_hash: str = ""
     scope_hash: str = ""

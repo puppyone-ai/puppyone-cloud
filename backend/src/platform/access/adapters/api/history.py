@@ -11,24 +11,11 @@ from __future__ import annotations
 import json as _json
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
 from src.common_schemas import ApiResponse
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
-from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
-from src.platform.authorization.service import AuthorizationService
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.version_engine.admission.validation import validate_path
-from src.version_engine.bootstrap.dependencies import (
-    get_history_graph_service,
-    get_product_operation_adapter,
-    get_repo_manager,
-    get_version_admin_service,
-)
-from src.version_engine.domain.errors import VersionEngineError
 from src.platform.access.adapters.api.helpers import display_git_path
 from src.platform.access.repository_schemas import (
     DiffResponse,
@@ -38,11 +25,25 @@ from src.platform.access.repository_schemas import (
     VersionHistoryRef,
     VersionHistoryResponse,
 )
+from src.platform.auth.dependencies import get_current_user
+from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.version_engine.admission.validation import validate_path
+from src.version_engine.bootstrap.dependencies import (
+    get_history_graph_service,
+    get_product_operation_adapter,
+    get_repo_manager,
+    get_version_admin_service,
+)
+from src.version_engine.domain.errors import VersionEngineError
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_changes import normalize_history_changes
 from src.version_engine.read.history_graph import HistoryGraphService
 from src.version_engine.read.history_models import (
+    HistoryCommitUnavailableError,
     HistoryCursorError,
     HistoryGraphTooLargeError,
     HistoryRefsUnavailableError,
@@ -80,6 +81,10 @@ async def get_project_head(
 )
 async def get_commits(
     project_id: str,
+    request: Request,
+    summary: bool = Query(
+        False, description="Return commit summaries; load changed paths on demand"
+    ),
     path: str = Query(None, description="File path (omit for project-level history)"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
     since_commit_id: str = Query(
@@ -138,6 +143,8 @@ async def get_commits(
                 limit=limit,
                 cursor=cursor,
                 grant=grant,
+                summary=summary,
+                cancel_when=request.is_disconnected,
             )
         except HistoryCursorError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -180,6 +187,7 @@ async def get_commits(
             parent_ids=e.get("parent_ids") or [],
             who=e.get("who", ""),
             message=e.get("message", ""),
+            changes_loaded=e.get("changes_loaded", True),
             changes=normalize_history_changes(
                 [{**c, "path": display_git_path(c["path"])} for c in e.get("changes", [])]
             ),
@@ -212,6 +220,33 @@ async def get_commits(
             total=total,
         )
     )
+
+
+@history_router.get("/{project_id}/commit-detail", response_model=ApiResponse[FileVersionInfo])
+async def get_commit_detail(
+    project_id: str,
+    request: Request,
+    commit_id: str = Query(..., pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"),
+    history_graph: HistoryGraphService = Depends(get_history_graph_service),
+    authorization: AuthorizationService = Depends(get_authorization_service),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    grant = await run_in_threadpool(
+        authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
+    )
+    try:
+        entry = await history_graph.get_detail(
+            project_id,
+            commit_id,
+            grant=grant,
+            cancel_when=request.is_disconnected,
+        )
+    except HistoryCommitUnavailableError as exc:
+        raise HTTPException(status_code=404, detail="Commit is not in the current history") from exc
+    entry["changes"] = normalize_history_changes(
+        [{**c, "path": display_git_path(c["path"])} for c in entry["changes"]]
+    )
+    return ApiResponse.success(data=FileVersionInfo(**entry))
 
 
 @history_router.get(

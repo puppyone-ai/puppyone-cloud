@@ -227,6 +227,9 @@ class CachedStorageBackend(StorageBackend):
     def publication_project_id(self) -> str | None:
         return self._inner.publication_project_id
 
+    def snapshot_reader(self, snapshot):
+        return self._inner.snapshot_reader(snapshot)
+
     def pinned_reader(self, snapshot):
         return self._inner.pinned_reader(snapshot)
 
@@ -539,18 +542,12 @@ class S3StorageBackend(StorageBackend):
             raise ValueError("native publication requires the canonical object namespace")
         return self._project_id
 
-    def pinned_reader(self, snapshot):
+    def snapshot_reader(self, snapshot):
         from src.version_engine.storage.pinned_reader import PinnedObjectReader
 
         if snapshot.project_id != self.publication_project_id:
-            raise StorageWriteError("pinned reader Project mismatch")
+            raise StorageWriteError("snapshot reader Project mismatch")
         snapshot.check_live()
-        rows = snapshot.control.call(
-            "get_version_pinned_object_locations",
-            p_project_id=snapshot.project_id,
-            p_actor=snapshot.actor,
-            p_pin_id=snapshot.pin,
-        )
         reader = S3StorageBackend(
             self._s3,
             self._project_id,
@@ -558,12 +555,34 @@ class S3StorageBackend(StorageBackend):
             io_strategy=self._io_strategy,
             require_immutable_chunks=True,
         )
-        locations = {}
-        for row in rows:
+        return PinnedObjectReader(reader, snapshot)
+
+    def pinned_reader(self, snapshot):
+        from src.version_engine.storage.pinned_reader import PinnedObjectReader
+
+        if snapshot.project_id != self.publication_project_id:
+            raise StorageWriteError("pinned reader Project mismatch")
+        snapshot.check_live()
+        reader = S3StorageBackend(
+            self._s3,
+            self._project_id,
+            supabase=self._supabase,
+            io_strategy=self._io_strategy,
+            require_immutable_chunks=True,
+        )
+        from src.version_engine.infrastructure.supabase.object_location_repository import (
+            ObjectLocationRepository,
+        )
+        from src.version_engine.storage.pinned_locations import PinnedLocations
+
+        def decode(row):
             location = ObjectLocation(row["pack_key"], row["offset_bytes"], row["size_bytes"])
             reader._validate_location(location)
-            locations[row["object_id"]] = location
-        reader._pinned_locations = locations
+            return location
+
+        reader._pinned_locations = PinnedLocations(
+            ObjectLocationRepository(snapshot).pages(), decode
+        )
         return PinnedObjectReader(reader, snapshot)
 
     def durable_readback(self):

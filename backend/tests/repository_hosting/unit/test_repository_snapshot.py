@@ -31,6 +31,8 @@ def fixture():
     control = SimpleNamespace(begin_read=begin, release=lambda *_: calls.append("release"),
                               renew=lambda *_: calls.append("renew"))
     backend = SimpleNamespace(publication_project_id="p", get_durable=get)
+    backend.snapshot_reader = lambda snapshot: backend
+    backend.pinned_reader = lambda snapshot: backend
     return wire, calls, objects, control, backend
 
 

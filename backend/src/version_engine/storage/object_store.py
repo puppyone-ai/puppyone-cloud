@@ -29,6 +29,10 @@ class StorageBackend(abc.ABC):
         """Namespace binding when the backend addresses multiple Projects."""
         return None
 
+    def snapshot_reader(self, snapshot):
+        """Reusable physical reads under an admitted pin; never publication proof."""
+        return self
+
     def pinned_reader(self, snapshot):
         """Optional bounded bulk metadata read; filesystem backends need none."""
         return self
@@ -100,6 +104,10 @@ class FileSystemBackend(StorageBackend):
 
     def _path_for(self, h: str) -> Path:
         return self.dir / h[:2] / h[2:]
+
+    def snapshot_reader(self, snapshot):
+        """Reusable physical reads under an admitted pin; never publication proof."""
+        return self
 
     def pinned_reader(self, snapshot):
         return self.durable_readback()

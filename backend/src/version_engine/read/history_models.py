@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 
+class HistoryCommitUnavailableError(ValueError):
+    """The requested commit is not reachable from current admitted refs."""
+
+
 class HistoryCursorError(ValueError):
     """The client supplied an invalid or incompatible History cursor."""
 
@@ -49,6 +53,10 @@ class HistoryGraphSnapshot:
     positions: Mapping[str, int]
     nodes: Mapping[str, GraphCommit]
     unreadable_commit_ids: tuple[str, ...]
+    refs: tuple[HistoryRef, ...] = ()
+    roots: tuple[str, ...] = ()
+    head: str = ""
+    root_hash: str = ""
 
     @property
     def cache_weight(self) -> int:
