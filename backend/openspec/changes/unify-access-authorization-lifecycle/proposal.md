@@ -21,8 +21,10 @@ authorized; publication and hosted migration are separate operations.
 - Attach Hosted SSH to renewable parent authorization and exact Workspace
   execution identity; preserve its existing short-lived entry point.
 - Enforce repository grant revocation at credential resolution and publication.
-- Expose authenticated management and client renewal APIs. UI, a distributable
-  connector and a full MCP OAuth authorization server are separate client work.
+- Expose authenticated management and client renewal APIs. The user's follow-up
+  on 2026-10-23 also authorizes the CLI registration/renewal connector and the
+  invitation, approval and revocation UI using this same authority.
+- Keep a full MCP OAuth authorization server separate from connector renewal.
 - Preserve the explicit unsupported MCP native-Scope response; permission
   refactoring does not implement repository Scope or live MCP filesystem tools.
 

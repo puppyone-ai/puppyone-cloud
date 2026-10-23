@@ -95,6 +95,13 @@ async def registration_state(
     return await service.change_state(user, str(registration_id), payload.state)
 
 
+@router.get("/access/registrations/{registration_id}/requests")
+async def registered_requests(
+    registration_id: UUID, user=Depends(verified_user), service=Depends(registration_service)
+):
+    return await service.requests(user, str(registration_id))
+
+
 @router.put("/access/registrations/{registration_id}/credential")
 async def reset_registration_key(
     registration_id: UUID,
@@ -129,7 +136,7 @@ async def list_access(
     user=Depends(verified_user),
     service=Depends(grant_service),
 ):
-    return await service.manage(collection, user, project_id)
+    return await service.inspect(collection, user, project_id)
 
 
 @router.post("/projects/{project_id}/access/requests/{request_id}/decision")

@@ -327,6 +327,24 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & ssh[category].keys()
         expected["contract"][category].update(ssh[category])
+    lifecycle = json.loads(Path(__file__).with_name("access_lifecycle_contract_delta.json").read_text())
+    assert set(lifecycle["paths"]) == {
+        "/api/v1/access/registrations",
+        "/api/v1/access/registrations/{registration_id}",
+        "/api/v1/access/registrations/{registration_id}/credential",
+        "/api/v1/access/registrations/{registration_id}/grants",
+        "/api/v1/access/registrations/{registration_id}/requests",
+        "/api/v1/access/requests", "/api/v1/access/credentials/renew",
+        "/api/v1/projects/{project_id}/access/invitations",
+        "/api/v1/projects/{project_id}/access/{collection}",
+        "/api/v1/projects/{project_id}/access/requests/{request_id}/decision",
+        "/api/v1/projects/{project_id}/access/invitations/{invitation_id}",
+        "/api/v1/projects/{project_id}/access/grants/{grant_id}",
+        "/api/v1/projects/{project_id}/access/sessions/{session_id}",
+    }
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & lifecycle[category].keys()
+        expected["contract"][category].update(lifecycle[category])
     assert contract(app.openapi()) == expected["contract"]
 
 

@@ -27,6 +27,12 @@ class RegistrationService:
     async def grants(self, user, identity):
         return await asyncio.to_thread(self.repository.command, "grants", user, id=identity)
 
+    async def requests(self, user, identity):
+        return await asyncio.to_thread(
+            self.repository.call, "access_inspect", user=user,
+            collection="requests", registration=identity,
+        )
+
     async def change_state(self, user, identity, state):
         return await asyncio.to_thread(
             self.repository.command, "state", user, id=identity, state=state

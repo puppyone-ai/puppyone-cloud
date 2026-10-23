@@ -118,6 +118,30 @@ def issue(db, context, *, channel="git", request=None, next_key=None, secret=Non
     return json.loads(result), next_key, token
 
 
+def test_management_reads_are_owned_and_do_not_disclose_credentials(postgres, submitted):
+    args, _ = submitted
+    context = setup_access(postgres, args)
+    requests = call(postgres, "access_inspect", user=context["guest"],
+                    collection="requests", registration=context["registration"])
+    assert requests[0]["grant_id"] == context["grant"]
+    assert requests[0]["registration_name"] == "External Agent"
+    assert requests[0]["capabilities"] == ["repository.read", "repository.write"]
+    for collection in ["requests", "invitations", "grants", "sessions"]:
+        rows = call(postgres, "access_inspect", user=context["owner"],
+                    collection=collection, project=context["project"])
+        assert "key_hash" not in json.dumps(rows)
+        assert context["secret"] not in json.dumps(rows)
+    with pytest.raises(RuntimeError, match="access_denied"):
+        call(postgres, "access_inspect", user=context["owner"],
+             collection="requests", registration=context["registration"])
+    with pytest.raises(RuntimeError, match="access_denied"):
+        call(postgres, "access_inspect", user=context["guest"],
+             collection="grants", project=context["project"])
+    with pytest.raises(RuntimeError, match="access_denied"):
+        call(postgres, "access_inspect", user=context["guest"],
+             collection="grants", registration=context["registration"])
+
+
 @pytest.mark.parametrize("channel", ["git", "cli", "mcp"])
 def test_durable_registration_protocol_credentials_and_current_revocation(
     postgres, submitted, channel

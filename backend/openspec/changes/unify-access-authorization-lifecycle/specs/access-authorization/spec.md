@@ -38,3 +38,27 @@ native Scope operations SHALL remain explicitly unavailable.
 - **WHEN** the additive lifecycle migration is applied to existing credentials
 - **THEN** they do not acquire durable delegation or new resources
 - **AND** existing SSH and repository admission continue to enforce their original limits.
+
+### Requirement: Recoverable registered client connection
+The CLI SHALL retain its registered identity across connections, journal each
+renewal before sending it, serialize concurrent rotations, and verify the SSH
+host key obtained from the authenticated service.
+
+#### Scenario: A renewal reply is lost
+- **WHEN** the service rotates a key but the client does not receive the reply
+- **THEN** the next command retries the identical journaled request before issuing another
+- **AND** no renewal secret or SSH private key appears in command output or arguments.
+
+### Requirement: Explicit invitation and approval interface
+The Access UI SHALL expose approval, suspension, revocation and disconnection
+through the common lifecycle APIs. Invitation URLs SHALL authorize only an
+application from an authenticated owner of the selected registered client.
+
+#### Scenario: Account or Project changes during issuance
+- **WHEN** an invitation response arrives after the user's context has changed
+- **THEN** the previous context's invitation is not displayed in the new context.
+
+#### Scenario: The recipient opens an invitation
+- **WHEN** the recipient selects one of their registered Agents and applies
+- **THEN** the owner can inspect the requested target and decide its duration
+- **AND** browser code never receives the Agent's renewal credential.

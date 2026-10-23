@@ -375,6 +375,7 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     for method, suffix in (
         ("POST", "registrations"), ("GET", "registrations"),
         ("GET", "registrations/{registration_id}/grants"),
+        ("GET", "registrations/{registration_id}/requests"),
         ("PATCH", "registrations/{registration_id}"),
         ("PUT", "registrations/{registration_id}/credential"), ("POST", "requests"),
     )

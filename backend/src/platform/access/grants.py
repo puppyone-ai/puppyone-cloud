@@ -27,6 +27,15 @@ class GrantService:
         values["key_hash"] = access_token_hash(request.secret.get_secret_value())
         return await self.manage("invite", user, project, **values)
 
+    async def inspect(self, collection, user, project):
+        await asyncio.to_thread(
+            self.authorization.authorize, project, user, ProjectAction.CREDENTIAL_MANAGE
+        )
+        return await asyncio.to_thread(
+            self.repository.call, "access_inspect", user=user,
+            collection=collection, project=project,
+        )
+
     async def request(self, user, request):
         return await asyncio.to_thread(
             self.repository.command,

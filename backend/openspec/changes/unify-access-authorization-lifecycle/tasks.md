@@ -9,4 +9,9 @@
 
 ## Remaining acceptance
 
+- [ ] Add checked request-status and human-readable management reads.
+- [ ] Ship durable CLI registration, invitation application, crash-safe renewal and pinned SSH connection.
+- [ ] Add invitation/approval/revocation UI in the existing Access feature and recipient portal.
+- [ ] Verify client recovery, UI isolation, SQL authorization and complete SSH acceptance; update canonical documentation.
+
 - [ ] Run the registered-Agent real SSH/VM scenario once the local Docker start failure is resolved, or with an explicitly configured disposable Fly fixture. See `verification.md`; local SQL/HTTP success is not live-provider acceptance.
