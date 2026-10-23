@@ -19,6 +19,7 @@ from .errors import access_failure
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
 from .execution.timing import workspace_stage
 from .execution.worker_port import WorkerDisconnected, WorkerLost
+from .opening import awaiting_files
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,14 @@ class WorkbenchLifecycle:
                 raise ValueError("Workspace capabilities required")
             provider.validate(binding["artifact"], (row or {}).get("resource"))
             async with self.preflight_lock:
-                if not connected and time.monotonic() >= self.checked_until:
+                # Existing resources are authenticated and checked by inspect /
+                # resume itself. App/image preflight is only an allocation check;
+                # repeating it in HTTP and worker adds no authorization fence.
+                if (
+                    not connected
+                    and not (row or {}).get("resource")
+                    and time.monotonic() >= self.checked_until
+                ):
                     async with asyncio.timeout(20):
                         await provider.preflight(binding["artifact"])
                     self.checked_until = time.monotonic() + 30
@@ -145,6 +153,11 @@ class WorkbenchLifecycle:
                     raise WorkspaceUnavailable(
                         row["operation_error"], retryable=row.get("operation_retryable", False)
                     )
+                if awaiting_files(row):
+                    row, _ = await self.service.opening.prepare(
+                        run["user_id"], run["project_id"], row["generation"]
+                    )
+                    break
                 await asyncio.sleep(0.25)
                 row = await asyncio.to_thread(self.repository.get, row["id"])
             await self.check(row)
@@ -199,7 +212,11 @@ class WorkbenchLifecycle:
             code, retryable = failure(exc)
             self.checked_until = 0
             current = await asyncio.to_thread(self.repository.get, row["id"])
-            if current and current["operation_id"] == row["operation_id"]:
+            if (
+                current
+                and current.get("open_requested")
+                and current["operation_id"] == row["operation_id"]
+            ):
                 with suppress(Exception):
                     await asyncio.to_thread(
                         self.repository.progress, current, "failed", code, retryable
@@ -320,27 +337,28 @@ class WorkbenchLifecycle:
                 row["project_id"], current, frame, base=host.resource["git_base"]
             )
 
-        host.git_handler = exchange
-        await host._open_control()
-        await self.progress(row, "connecting")
-        capability = await host.control("capabilities")
-        validate_runtime(capability.get("runtime"))
-        if capability.get("workbench_lifecycle") != 1:
-            raise RuntimeError("Workspace artifact does not implement lifecycle initialization")
         if row["state"] == "allocating":
+            host.git_handler = exchange
+            await host._open_control()
+            await self.progress(row, "connecting")
+            capability = await host.control("capabilities")
+            validate_runtime(capability.get("runtime"))
+            if capability.get("workbench_lifecycle") != 1:
+                raise RuntimeError("Workspace artifact does not implement lifecycle initialization")
             await self.progress(row, "initializing")
             await host.control("initialize", host.resource["initialization"])
-        else:
-            await host.control("ready")
+        # Resume is proved by the file service's hello + real root read, on the
+        # consuming connection. Do not create two disposable worker SSH channels.
         await self.progress(row, "checking_files")
-        # Ready includes the actual native file service, not merely a running VM.
-        ready_row = {**row, "resource": host.resource}
-        await self.ready(ready_row)
-        # Recheck authority before accepting work after a potentially long clone.
-        await asyncio.to_thread(
-            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
-        )
-        return await asyncio.to_thread(self.repository.ready, row, host.resource)
+        if not row.get("is_default"):
+            # Automation is consumed in its worker, so its file connection is
+            # already owned by that consumer; there is no HTTP handoff.
+            await self.ready({**row, "resource": host.resource})
+            await asyncio.to_thread(
+                self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
+            )
+            return await asyncio.to_thread(self.repository.ready, row, host.resource)
+        return row
 
     async def _preserve_failed_start(self, row):
         host = self.channel_factory(row)

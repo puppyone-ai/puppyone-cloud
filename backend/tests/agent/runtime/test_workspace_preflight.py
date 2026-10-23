@@ -32,13 +32,20 @@ async def test_preflight_proves_provider_and_both_database_contracts_without_wri
     absent = "00000000-0000-0000-0000-000000000000"
     authorization.load_project_facts.assert_called_once_with(absent, absent)
     workspace.pending.assert_called_once_with("fly")
+    workspace.verify_opening_contract.assert_called_once_with()
     workspace.request_open.assert_not_called()
     provider.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "stage", ["provider_connection", "project_authorization_database", "workspace_database"]
+    "stage",
+    [
+        "provider_connection",
+        "project_authorization_database",
+        "workspace_database",
+        "workspace_readiness_database",
+    ],
 )
 async def test_preflight_names_the_failing_boundary_without_sdk_text(dependencies, stage):
     provider, authorization, workspace = dependencies
@@ -46,6 +53,7 @@ async def test_preflight_names_the_failing_boundary_without_sdk_text(dependencie
         "provider_connection": provider.preflight,
         "project_authorization_database": authorization.load_project_facts,
         "workspace_database": workspace.pending,
+        "workspace_readiness_database": workspace.verify_opening_contract,
     }[stage]
     operation.side_effect = httpx.ConnectError("https://secret@host/?private=customer")
     with pytest.raises(preflight.PreflightFailure) as caught:

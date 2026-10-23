@@ -30,6 +30,23 @@ class FlyTransport:
         self.cli, self.process = cli, None
         self.lock = asyncio.Lock()
         self.users, self.idle_task = 0, None
+        self.ssh = None
+
+    def ssh_connections(self):
+        if self.ssh is None:
+            from src.config import settings
+
+            from .fly_ssh import FlySSHConnections
+
+            self.ssh = FlySSHConnections(
+                self.app,
+                self.token,
+                self.cli,
+                self.env,
+                limit=settings.CLOUD_AGENT_FILE_CHANNEL_LIMIT,
+                idle_seconds=settings.CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS,
+            )
+        return self.ssh
 
     async def acquire(self):
         async with self.lock:
@@ -86,6 +103,9 @@ class FlyTransport:
                 await self.close()
 
     async def close(self):
+        if self.ssh is not None:
+            await self.ssh.close()
+            self.ssh = None
         if self.process:
             if self.process.stdin:
                 self.process.stdin.close()

@@ -42,6 +42,7 @@ BEGIN
         'public.cloud_workbench_connection_update(uuid,uuid,text)',
         'public.workspace_ssh_grant_consume(uuid)',
         'public.cloud_workbench_context(uuid,text)',
+        'public.cloud_workbench_finish_open(uuid,uuid,bigint,uuid,bigint,jsonb,jsonb)',
         'public.cloud_workbench_default(uuid,text,jsonb)',
         'public.cloud_workbench_automation(uuid,text,uuid,jsonb)',
         'public.cloud_workbench_activity(uuid,uuid,uuid,text,jsonb,boolean)',

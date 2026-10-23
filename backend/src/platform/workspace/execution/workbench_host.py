@@ -40,6 +40,7 @@ class WorkbenchChannel(ControlChannel):
         )
         self.resource.update(resource)
         self.compute_epoch = row.get("compute_epoch")
+        self.admitted_row = json.loads(json.dumps(row))
         self.attached = True
         self.subscribers = set()
         self.watch_lock = asyncio.Lock()

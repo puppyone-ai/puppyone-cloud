@@ -163,6 +163,11 @@ def test_populated_upgrade_preserves_workbench_and_existing_occupants(postgres, 
         assert connection["resource"]["resource_id"] == row["resource"]["resource_id"]
         update(scratch, connection, "stop")
         update(scratch, connection, "release")
+        # The deployed contract follows the entire candidate chain. The
+        # preservation assertions above isolate this migration's own upgrade.
+        for path in sorted(candidate.parent.glob("*.sql")):
+            if path.name > candidate.name:
+                scratch.sql(module.product_migration_sql(path))
         scratch.sql((ROOT / "supabase/tests/_support/cloud_agent_contracts.inc").read_text())
     finally:
         postgres.sql(f"DROP DATABASE {database} WITH (FORCE)")

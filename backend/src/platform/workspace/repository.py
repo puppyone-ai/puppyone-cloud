@@ -98,6 +98,40 @@ class WorkbenchRepository:
             resource=resource,
         )
 
+    def finish_open(self, row, revision):
+        return self.command(
+            "finish_open",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+            operation=row["operation_id"],
+            epoch=row["compute_epoch"],
+            resource=row["resource"],
+            revision=revision,
+        )
+
+    def verify_opening_contract(self):
+        """Probe the exact RPC signature with a guaranteed rejected, absent identity."""
+        try:
+            self.command(
+                "finish_open",
+                workbench=None,
+                generation=None,
+                version=None,
+                operation=None,
+                epoch=None,
+                resource=None,
+                revision=None,
+            )
+        except Exception as exc:
+            if (
+                getattr(exc, "code", None) == "P0001"
+                and getattr(exc, "message", None) == "agent_context_changed"
+            ):
+                return
+            raise
+        raise RuntimeError("Workspace opening contract did not reject an absent identity")
+
     def expire_open(self, row):
         return self.command("expire_open", workbench=row["id"], deadline=row["open_deadline"])
 

@@ -44,6 +44,10 @@ async def check():
             # This RPC exists only after the durable-open migration. It does not
             # claim or wake any workspace and is safe in a release health probe.
             await asyncio.to_thread(WorkbenchRepository().pending, provider.name)
+            stage = "workspace_readiness_database"
+            # Null revision fails before row locks or writes. Missing functions,
+            # changed signatures and transport failures must block activation.
+            await asyncio.to_thread(WorkbenchRepository().verify_opening_contract)
         return dict(
             provider=provider.name,
             artifact=artifact,

@@ -41,6 +41,7 @@ class FlyRuntimeProvider:
         self.client = client
         self._owned_client = None
         self._transport = None
+        self._ssh_lease = None
 
     def validate(self, artifact, resource=None):
         self._path(resource or {"app": settings.CLOUD_AGENT_FLY_APP})
@@ -253,6 +254,7 @@ class FlyRuntimeProvider:
         if row["state"] != "started":
             raise WorkerDisconnected("Workbench lifecycle must wake the Fly Machine")
         host.attached = True
+        return row
 
     async def resume(self, host):
         row = await self.inspect(host.resource)
@@ -292,12 +294,13 @@ class FlyRuntimeProvider:
             raise WorkerDisconnected("Workbench lifecycle must wake the Fly Machine")
         if row["config"]["image"] != host.artifact:
             raise PermissionError("Fly workbench artifact mismatch")
-        host.connection = RuntimeConnection(resource_identity(resource))
+        host.connection = RuntimeConnection(resource_identity(resource), row.get("private_ip"))
 
     async def open_channel(self, host):
         if getattr(host, "connection", None) is None:
             host.connection = await self.running_connection(host)
         host.connection.validate(host.resource)
+        connection = host.connection
         # Fly's started event is earlier than our firewall/mount initialization.
         # Only this boot's root-written receipt admits a control process.
         command = [
@@ -311,29 +314,23 @@ class FlyRuntimeProvider:
         ]
         if self._transport is not None:
             await self.close_channel(host)
+            host.connection = connection
         with workspace_stage("connection.agent_acquire"):
             self._transport = await acquire_transport(
                 host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
             )
-        env = self._transport.env
-        host.process = await asyncio.create_subprocess_exec(
-            settings.CLOUD_AGENT_FLY_CLI,
-            "ssh",
-            "console",
-            "--quiet",
-            "--app",
-            host.resource["app"],
-            "--machine",
-            host.resource["resource_id"],
-            "--user",
-            "root",
-            "--command",
-            shlex.join(command),
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            self._ssh_lease = await self._transport.ssh_connections().open(
+                host.resource,
+                host.connection.handle,
+                shlex.join(command),
+                epoch=getattr(host, "compute_epoch", None),
+            )
+            host.process = self._ssh_lease.process
+        except BaseException:
+            self._transport.release()
+            self._transport = None
+            raise
         read_process(host)
 
     async def open_service(self, host, service):
@@ -353,6 +350,9 @@ class FlyRuntimeProvider:
         try:
             await close_process(host)
         finally:
+            if self._ssh_lease is not None:
+                self._ssh_lease.release()
+                self._ssh_lease = None
             host.connection = None
             await self.aclose()
             if self._transport is not None:
@@ -388,8 +388,8 @@ class FlyRuntimeProvider:
                 pass
 
     async def running_connection(self, host):
-        await self.attach(host)
-        return RuntimeConnection(resource_identity(host.resource))
+        row = await self.attach(host)
+        return RuntimeConnection(resource_identity(host.resource), row.get("private_ip"))
 
     async def pause_resource(self, host):
         row = await self.inspect(host.resource)

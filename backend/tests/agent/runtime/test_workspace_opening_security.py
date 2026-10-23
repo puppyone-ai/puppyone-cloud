@@ -39,6 +39,15 @@ async def test_disconnected_running_workspace_still_checks_provider():
     owner.check.assert_awaited_once_with(row)
 
 
+@pytest.mark.asyncio
+async def test_existing_resource_needs_binding_validation_not_duplicate_allocation_preflight():
+    owner, row, provider = lifecycle("paused")
+    row["resource"] = {"resource_id": "existing"}
+    await owner.preflight(row)
+    provider.validate.assert_called_once_with("pinned", row["resource"])
+    provider.preflight.assert_not_awaited()  # actual resume/inspect still authenticates with Fly
+
+
 def service():
     row = dict(
         id="default",

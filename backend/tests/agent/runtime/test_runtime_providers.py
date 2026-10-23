@@ -323,11 +323,11 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
         stdout=SimpleNamespace(read=AsyncMock(return_value=b"")),
         stderr=SimpleNamespace(read=AsyncMock(return_value=b"")),
     )
-    spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     from src.platform.workspace.execution.providers.fly_transport import FlyTransport
 
-    transport = FlyTransport("backend-only", "fly")
+    transport = FlyTransport("backend-only", "fly", binding["app"])
+    lease = SimpleNamespace(process=process, release=Mock())
+    transport.ssh = SimpleNamespace(open=AsyncMock(return_value=lease))
     transport.users = 1
     monkeypatch.setattr(
         "src.platform.workspace.execution.providers.fly.acquire_transport",
@@ -337,14 +337,15 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     provider.inspect = AsyncMock(side_effect=AssertionError("repeated management lookup"))
     host = SimpleNamespace(
         resource=binding,
-        connection=RuntimeConnection(resource_identity(binding)),
+        connection=RuntimeConnection(resource_identity(binding), "fdaa::1"),
         control_command=lambda: ["node", "controller.mjs"],
         _output=AsyncMock(),
         _disconnected=AsyncMock(),
         queue=asyncio.Queue(),
     )
     await provider.open_channel(host)
-    env = spawn.call_args.kwargs["env"]
+    env = transport.env
+    assert transport.ssh.open.call_args.args[:2] == (binding, "fdaa::1")
     assert env["FLY_API_TOKEN"] == "backend-only"
     assert env["FLY_AGENT_ISOLATED"] == env["FLY_WIREGUARD_TOKEN_MODE"] == "1"
     directory = Path(env["FLY_CONFIG_DIR"])
@@ -356,3 +357,4 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     transport.idle_task.cancel()
     transport.directory.cleanup()
     assert host.connection is None
+    lease.release.assert_called_once()

@@ -47,9 +47,14 @@ class FileOperation(BaseModel):
 
 @router.get("")
 async def status(
-    project_id: str, user=Depends(get_current_user), service=Depends(get_workbench_service)
+    project_id: str,
+    response: Response,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
 ):
-    return {"workspace": public_workbench(await service.current(user.user_id, project_id))}
+    response.headers["Cache-Control"] = "no-store"
+    row, root = await service.opening.status(user.user_id, project_id)
+    return {"workspace": public_workbench(row), **(root or {})}
 
 
 @router.post("")

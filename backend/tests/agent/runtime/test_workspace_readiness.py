@@ -22,6 +22,7 @@ def lifecycle(state="paused"):
         generation="generation",
         compute_epoch=1,
         operation_id="operation",
+        open_requested=True,
         state=state,
         open_deadline=(datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
         binding={"provider": "third", "artifact": "pinned"},

@@ -13,8 +13,10 @@ from src.platform.workspace.execution.workbench_host import WorkbenchChannel, Wo
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
 
+from .admission import AdmissionSnapshots
 from .errors import WorkspaceError
 from .lifecycle import WorkbenchLifecycle, meter_id
+from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
 
 
@@ -24,10 +26,16 @@ class WorkbenchAdmission:
     def __init__(self, repository=None, authorization=None):
         self.repository = repository or WorkbenchRepository()
         self.authorization = authorization or build_authorization_service()
+        self.snapshots = AdmissionSnapshots()
 
     def context(self, user, project, action):
-        context = self.repository.context(user, project)
-        grant = self.authorization.authorize_facts(context["facts"], project, user, action)
+        try:
+            context = self.repository.context(user, project)
+            grant = self.authorization.authorize_facts(context["facts"], project, user, action)
+        except Exception:
+            self.snapshots.discard(user, project)
+            raise
+        self.snapshots.put(user, project, context)
         return context, grant
 
     def admit(self, context, identity=None):
@@ -79,6 +87,7 @@ class WorkbenchService(WorkbenchAdmission):
             limit=settings.CLOUD_AGENT_FILE_CHANNEL_LIMIT,
         )
         self.lifecycle = WorkbenchLifecycle(self)
+        self.opening = WorkspaceOpening(self)
 
     async def current(self, user, project):
         context, _ = await asyncio.to_thread(
@@ -162,6 +171,32 @@ class WorkbenchService(WorkbenchAdmission):
 
     @asynccontextmanager
     async def files(self, user, project, generation, *, write=False, watch=False):
+        cached = self.snapshots.get(user, project) if not watch else None
+        row = (cached or {}).get("workbench")
+        if row and row["state"] == "running" and row["generation"] == generation:
+            action = ProjectAction.CONTENT_WRITE if write else ProjectAction.CONTENT_READ
+            try:
+                self.authorization.authorize_facts(cached["facts"], project, user, action)
+            except Exception:
+                cached = None
+            if cached:
+                try:
+                    with workspace_stage("files.admission_activity"):
+                        row = await asyncio.to_thread(
+                            self.repository.activity, row, cached["revision"], write=write
+                        )
+                except Exception as exc:
+                    self.snapshots.discard(user, project)
+                    if getattr(exc, "code", None) != "P0001" or "agent_context_changed" not in str(
+                        exc
+                    ):
+                        raise
+                    # Revision changed: load fresh facts, never use the old grant.
+                else:
+                    await self.billing.check_session(meter_id(row))
+                    async with self.channels.borrow(row) as host:
+                        yield host
+                    return
         with workspace_stage("files.admission"):
             row, context = await self.bound(user, project, generation, write=write)
         if not watch:
@@ -220,7 +255,9 @@ class WorkbenchService(WorkbenchAdmission):
                 )
             # A response is never handed to a newly-revoked or replaced reader.
             with workspace_stage("files.response_authorization"):
-                await self.bound(user, project, generation, write=write)
+                current, _ = await self.bound(user, project, generation, write=write)
+                if not same_runtime(channel.admitted_row, current):
+                    raise WorkerDisconnected("Workspace changed during file operation")
             return result
 
     async def events(self, user, project, generation):
