@@ -5,4 +5,4 @@
 - [x] Extract owned execution and bound interactive reads.
 - [x] Reuse operation read sessions across composed file reads.
 - [x] Verify authorization, cancellation, consistency and existing regression suites.
-- [ ] Integrate locally and record implementation/acceptance evidence.
+- [x] Integrate locally and record implementation/acceptance evidence (runtime activation blocked by the test database HTTP dependency; see verification).

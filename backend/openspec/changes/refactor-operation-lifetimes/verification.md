@@ -1,6 +1,6 @@
 # Operation lifecycle verification
 
-Status: locally tested candidate; runtime activation recorded below after integration.
+Status: implemented, locally regression-tested and integrated into qubits; runtime activation blocked by the test database HTTP dependency.
 
 Baseline: `bc8714ec`, plus the canonical workstation's pre-existing uncommitted changes (preserved separately during development).
 
@@ -26,3 +26,12 @@ OpenSpec CLI is not installed in this environment. Proposal/design/tasks and req
 - Structural OpenSpec checks passed; CLI unavailable, so no `openspec validate` success is claimed.
 
 The implementation does not certify every pre-existing synchronous call in every domain as optimized. This change closes the repeated process-engine construction in the listed request dependencies, composes CLI/shared-filesystem reads into one lifetime, and fixes download ownership. Long indexing pipelines, whole-history diff algorithms and other independent business operations retain their separate budgets and acceptance work. Web synchronous reads retain FastAPI threadpool execution; new queue settings apply to `run_read` consumers, not all backend traffic.
+
+## Local integration and runtime activation
+
+- Local `qubits` fast-forwarded to `5f2d6b17`. Autostash restored all 17 pre-existing modified files; their final bytes and complete diff match the tested candidate exactly. Only this task's isolated worktree/branch was removed after that check.
+- Supervisor detected the source change and restarted its API/worker group. Its existing workspace preflight exceeded 40 seconds and exited. A restart using the same command and unchanged `.env` reproduced the timeout; the local API is therefore not currently listening on port 9090.
+- Read-only diagnostics: Fly provider preflight passed in 1.033 seconds. The authorization, workspace-pending and workspace-contract database checks each exceeded the diagnostic 15-second bound.
+- Without credentials, the same Supabase HTTP endpoint returned 401 in 0.808 seconds direct / 1.575 seconds through the existing proxy. Raw authenticated HTTP requests bypassing the application and Supabase SDK timed out: empty `projects` select 8.672 seconds; absent-identity authorization RPC 8.671 seconds; proxy empty select 8.618 seconds.
+- This isolates the current activation blocker to authenticated test-environment PostgREST requests. It does not establish whether the remote cause is a database lock, connection pool or platform failure. No database mutation, migration, remote restart or authorization bypass was performed.
+- Local functional regression success and source integration are complete. Live service/desktop acceptance remains blocked until that external dependency responds; do not claim the backend is running or a hosted deployment succeeded.
