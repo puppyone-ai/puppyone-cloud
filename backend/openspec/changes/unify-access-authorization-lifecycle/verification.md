@@ -1,89 +1,104 @@
 # Verification
 
 > Date: 2026-10-23
-> Candidate branch: `codex/unified-access-lifecycle`
-> Refreshed target: `qubits@4deda12e`
-> Scope: local backend acceptance; no hosted migration, deployment or remote push
+> Backend/Web source: `ad5d6fc8`, branch `codex/unified-access-lifecycle`
+> CLI source: `puppyone-cli@79c9f79`, branch `codex/unified-access-client`
+> Target baseline: `qubits@4deda12e`
+> Scope: local regression and disposable real Fly acceptance; no hosted migration, deployment, remote Git push or npm publication
 
 ## Accepted
 
-- 572 tests passed in the combined authority, credential, Git/CLI/SSH component,
-  database-release, HTTP, populated-upgrade and Workspace suite. One additional
-  real SQL/Python policy-snapshot test passed: 573 distinct tests total.
-- PostgreSQL 17 applies the entire current migration chain. The populated upgrade
-  additionally applies this candidate over preexisting Projects, credentials,
-  Workspaces and active connections, proves transactional rollback, preserves old
-  data, and proves legacy admission does not gain a parent grant.
-- Native local PostgREST runs the actual authenticated registration -> invitation
-  -> application -> approval -> credential-rotation HTTP workflow. No production
-  database or user file is used. Responses and invalid requests redact secrets.
-- Parallel renewal retries produce one credential and one successor key. Single
-  session admission admits one winner. Publication's current-authority locks
-  serialize with grant revocation. Revoked, expired, cross-channel and wrong
-  Workspace requests fail closed. Registration deletion cannot turn an existing
-  managed connection into an unmanaged connection.
-- SSH session leases outlive login tickets only while their parent remains valid.
-  Revocation and disconnect retain Workspace occupancy until stop acknowledgement;
-  durable approval permits reconnect without another approval.
-- New issuance is disabled by default during mixed-version rollout. Anonymous
-  registration, private-key input, read-only native Shell and protocol confusion
-  are denied. Existing human membership/Billing authority stays separate.
-- Ruff passes for new lifecycle modules, shared policy, SSH service and new tests.
-  OpenSpec strict validation and database migration policy pass.
+- Required backend regression: **3,617 passed, 953 skipped, 450 deselected**.
+  Command: `NOTIFICATIONS_REDIS_URL='' python -m pytest -q -m 'not integration and not network and not e2e'`.
+  Local sockets/process inspection required an unsandboxed test invocation;
+  restricted-environment failures were retained and not counted as passes.
+- Real PostgreSQL 17/PostgREST lifecycle, Workspace connections and populated
+  upgrade: **34 passed**. Full current migration chain applies. Approval,
+  concurrent renewal, single-session admission, publication/revocation locking,
+  deletion fences, parent expiry, request inspection and legacy admission pass.
+- Web Workspace regression: **357 tests passed in 47 files**. Includes explicit
+  application, approval duration, revocation, late-response identity changes,
+  canonical endpoint and navigation ownership checks. TypeScript check passes.
+- Standalone CLI `npm test` passes, including **8 new client tests** for private
+  persistence, interrupted registration, lost renewal replies, cross-process
+  exclusion, recovery, origin binding, secret redaction and stock OpenSSH keys.
+- Ruff, strict OpenSpec validation and database artifact/policy checks pass.
+- Ego browser fixture verified invitation creation, approval and revocation.
+  At 340px viewport width, document and panel have no horizontal overflow;
+  button text uses the existing 13px scale. Screenshot capture timed out, so
+  no screenshot-based visual acceptance is claimed. The fixture has no live
+  account credentials. The isolated browser space was closed.
 
-The SQL/HTTP suite can run independently of Docker:
+SQL/HTTP replay from `backend/`:
 
 ```bash
-# Optional on macOS: point to an installed native PostgREST executable.
 PUPPYONE_TEST_POSTGREST_BIN=/path/to/postgrest python -m pytest -q \
   tests/agent/runtime/test_access_lifecycle.py \
   tests/agent/runtime/test_workspace_connections.py \
   tests/agent/runtime/test_workspace_consumer_sql.py
 ```
 
-## Not accepted as live-provider evidence
+## Real Fly acceptance
 
-The existing Docker SSH acceptance suite plus the new registered-Agent scenario
-was attempted. Docker left the disposable VM container in `Created`; `docker
-start` did not return. The suite was interrupted and its test container cleaned
-up. The earlier Docker PostgREST launcher also timed out; using native PostgREST
-completed all SQL/HTTP tests. Unrelated running containers were not restarted.
+Both cases passed using the existing SSH-capable artifact recorded in
+`backend/tests/agent/workbench_acceptance/hosted-ssh-20261023-receipt.json`:
 
-`tests/agent/runtime/test_hosted_ssh_live.py::test_registered_external_agent_real_shell_and_parent_revocation`
-is implemented but its real VM execution is **not passed** in this environment.
-No Fly/E2B provider acceptance or hosted readiness is inferred from local results.
-The existing test supports an explicitly configured disposable Fly acceptance.
+| Case | Result | Setup | Execution | Cleanup |
+| --- | --- | ---: | ---: | ---: |
+| Registered external Agent, live Editor file read, parent revocation | Passed | 34.86s | 14.11s | 21.87s |
+| Standalone CLI registration → invitation → application → approval → renewal → stock SSH → revoke | Passed | 37.45s | 6.85s | 21.63s |
+
+These are whole scenario timings, not steady-state I/O benchmarks. The second
+case executes the CLI checkout's real client/store/connector modules against an
+owned HTTP listener, real SQL and the production SSH gateway. Its Shell writes
+an uncommitted file; the Editor API reads that same content. Revocation denies
+another renewal. The first case additionally proves active-Shell disconnection.
+Login identities and billing are fixture inputs. Hosted JWT, deployed gateway,
+model calls, billing and Git publication are outside this acceptance.
+
+Replay requires `CLOUD_AGENT_TEST_SSH_PROVIDER=fly`, `CLOUD_AGENT_TEST_FLY=1`, the
+usual Fly app/token/CLI settings, and the pinned artifact above. For the CLI
+case also set `PUPPYONE_TEST_CLI_ROOT` to the standalone candidate checkout.
+Run `tests/agent/runtime/test_hosted_ssh_live.py` with either
+`::test_registered_external_agent_real_shell_and_parent_revocation` or
+`::test_cli_invitation_approval_and_stock_ssh`.
+
+Failed attempts are not hidden: local Docker stalled before VM start; the
+workstation's configured older Fly artifact lacked `workspace_shell` and was
+correctly rejected; two CLI-case attempts hit provider SSH login timeouts during
+fixture setup. A new image upload was rejected by automatic approval review.
+No upload workaround was used: the previously published compatible artifact was
+found in the repository receipt and reused unchanged. Final cases passed and
+fixtures verified Machine/Volume cleanup. Independent inventory afterward found
+zero Machines using the acceptance image and three other Machines untouched.
+Existing workspace configuration and the workstation's `.env` were not changed.
 
 ## Activation and limits
 
-Apply these three additive migrations in order, then upgrade every API replica
-and SSH gateway before setting `ACCESS_LIFECYCLE_ENABLED=true`:
+Apply four additive migrations in order, upgrade every API replica and SSH
+gateway, then enable `ACCESS_LIFECYCLE_ENABLED=true`:
 
 - `20261023040000_expand_access_authority.sql`
 - `20261023041000_expand_access_lifecycle.sql`
 - `20261023042000_access_protocol_fences.sql`
+- `20261023043000_access_management_reads.sql`
 
-Old replicas must be drained before new credentials are issued. Once issuance
-has started, rolling back application code requires disabling issuance and
-revoking/draining managed credentials and sessions; old code cannot enforce the
-new parent or audience contract. Do not roll back additive schema in place.
+Drain old replicas before issuing managed credentials. Application rollback
+requires disabling issuance and revoking/draining managed credentials/sessions;
+old code cannot enforce the new parent/audience contract. Do not roll back the
+additive schema in place. Enable a compatible `workspace_shell` runtime for SSH.
+Publish the CLI candidate separately; no npm package was released here.
 
-The backend implements verified-user-owned registrations, optional Organization
-binding, temporary/indefinite grants and single-session SSH grants. Delegation
-still depends on the approver's current authority. Independent Organization
-service-principal delegation, ownership transfer, guest onboarding, invitation
-UI and a shipped auto-renewing connector are not implemented here.
+The Web Access panel and recipient portal are implemented; Desktop approval UI,
+verified guest onboarding, independent Organization delegation/ownership transfer
+and a full MCP OAuth server remain separate work. Native MCP filesystem tools
+still return 501. Repository Scope views, path-isolated Bash and read-only native
+Shell are not enabled by this authorization change.
 
-Renewal keys expire after 90 days without use; successful rotation renews that
-window. A verified owner can reset a key without changing registration identity.
-Clients persist the next secret and request ID before renewal and retry exactly
-that request after a lost response. A mismatched replay suspends the registration
-and invalidates renewal keys and already-issued protocol credentials; owner reset
-plus resume is required. Owner key reset also retires earlier protocol proofs.
-
-SSH targets an already-running exact private Workspace. Issuance does not create
-or wake a VM. The exchange is a Puppyone connector API, not a complete MCP OAuth
-authorization server. Native MCP filesystem resolution remains explicitly 501;
-Workspace MCP tools, subdirectory isolation and read-only native Shell remain
-unsupported. Existing legacy credentials are not automatically migrated into
-long-lived grants.
+SSH targets an already-running exact Workspace. Issuance does not create/wake a
+VM. Renewal keys expire after 90 inactive days; protocol proofs last at most an
+hour and never outlive their parent. The CLI journals and serializes exchanges;
+owner recovery resets an unrecoverable journal/key without changing identity.
+Per-connection SSH renewal is automatic; `access credential` exports Git/CLI/MCP
+proof on demand into a private file, not a background protocol proxy. Legacy
+credentials are not silently converted into long-lived grants.

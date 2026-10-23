@@ -28,6 +28,14 @@ locks. Revocation records state and a durable event atomically, denies future
 admission immediately, and closes active sessions through the existing cleanup
 owner; finite leases bound disconnected workers. Completed writes are not undone.
 
-Tests use isolated PostgreSQL and production adapters. No hosted deployment,
-remote customer data, real mail or existing Fly machines are needed for this
-permission refactor's local acceptance.
+Web features and the standalone CLI call the same checked management APIs.
+The browser holds only an invitation/application; the CLI owns private renewal
+state. Invitation origins cannot redirect credentials to another API. The CLI
+serializes rotations and writes an atomic recovery journal before exchange.
+Routes compose the UI and own navigation; existing Access panel ownership stays
+unchanged. Providers do not gain an authorization implementation.
+
+Tests use isolated PostgreSQL and production adapters. Real Fly acceptance uses
+disposable workspaces and an already-published compatible runtime image. It does
+not require a hosted migration, remote customer data, mail, changing existing
+Fly Machines, or publishing the candidate package.

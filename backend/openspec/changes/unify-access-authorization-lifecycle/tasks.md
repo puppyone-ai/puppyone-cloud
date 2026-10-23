@@ -7,11 +7,11 @@
 - [x] Verify policy, protocol, real SQL races, populated upgrade and existing regressions.
 - [x] Update canonical architecture and record exact acceptance and deployment boundaries.
 
-## Remaining acceptance
+## Client and product acceptance
 
-- [ ] Add checked request-status and human-readable management reads.
-- [ ] Ship durable CLI registration, invitation application, crash-safe renewal and pinned SSH connection.
-- [ ] Add invitation/approval/revocation UI in the existing Access feature and recipient portal.
-- [ ] Verify client recovery, UI isolation, SQL authorization and complete SSH acceptance; update canonical documentation.
+- [x] Add checked request-status and human-readable management reads.
+- [x] Implement durable CLI registration, invitation application, crash-safe renewal and pinned SSH connection; package publication remains separate.
+- [x] Add invitation/approval/revocation UI in the existing Web Access feature and recipient portal.
+- [x] Verify client recovery, UI isolation, SQL authorization and complete SSH acceptance; update canonical documentation.
 
-- [ ] Run the registered-Agent real SSH/VM scenario once the local Docker start failure is resolved, or with an explicitly configured disposable Fly fixture. See `verification.md`; local SQL/HTTP success is not live-provider acceptance.
+- [x] Run registered-Agent and standalone CLI scenarios against disposable real Fly workspaces using the previously published compatible image. See `verification.md` for the exact scope, failed attempts and cleanup.
