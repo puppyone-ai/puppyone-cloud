@@ -161,7 +161,7 @@ def test_durable_registration_protocol_credentials_and_current_revocation(
 def test_rotation_retry_and_reuse_detection_require_owner_reset(postgres, submitted):
     context = setup_access(postgres, submitted[0])
     request = str(uuid4())
-    receipt, next_key, _ = issue(postgres, context, request=request)
+    receipt, next_key, token = issue(postgres, context, request=request)
     assert issue(postgres, context, request=request, next_key=next_key)[0] == receipt
     reused, _, _ = issue(postgres, context)
     assert reused["error"] == "access_credential_reused"
@@ -180,6 +180,7 @@ def test_rotation_retry_and_reuse_detection_require_owner_reset(postgres, submit
         state="active",
     )
     assert issue(postgres, context, secret=next_key)[0]["error"] == "access_invalid_credential"
+    assert call(postgres, "resolve_access_git_credential", key_hash=token, channel="git") is None
     replacement = uuid4().hex * 2
     command(
         postgres,

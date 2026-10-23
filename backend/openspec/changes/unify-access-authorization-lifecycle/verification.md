@@ -78,7 +78,8 @@ Renewal keys expire after 90 days without use; successful rotation renews that
 window. A verified owner can reset a key without changing registration identity.
 Clients persist the next secret and request ID before renewal and retry exactly
 that request after a lost response. A mismatched replay suspends the registration
-and invalidates renewal keys; owner reset plus resume is required.
+and invalidates renewal keys and already-issued protocol credentials; owner reset
+plus resume is required. Owner key reset also retires earlier protocol proofs.
 
 SSH targets an already-running exact private Workspace. Issuance does not create
 or wake a VM. The exchange is a Puppyone connector API, not a complete MCP OAuth

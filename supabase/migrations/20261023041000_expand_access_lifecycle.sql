@@ -2,6 +2,21 @@ BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='2min';
 
+-- Reset/reuse must retire issued proofs as well as the renewal key: resuming
+-- the identity must not make an attacker's already-issued tokens valid again.
+CREATE FUNCTION public.access_revoke_registration_credentials(p_registration uuid)
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+ UPDATE public.access_registration_credentials SET state='revoked'
+ WHERE registration_id=p_registration AND state<>'revoked';
+ UPDATE public.access_surface_credentials SET status='revoked',revoked_at=clock_timestamp()
+ WHERE status='active' AND access_grant_id IN
+   (SELECT id FROM public.access_grants WHERE registration_id=p_registration);
+ UPDATE public.workspace_ssh_grants SET revoked_at=clock_timestamp()
+ WHERE revoked_at IS NULL AND access_grant_id IN
+   (SELECT id FROM public.access_grants WHERE registration_id=p_registration);
+$$;
+REVOKE ALL ON FUNCTION public.access_revoke_registration_credentials(uuid) FROM PUBLIC,anon,authenticated,service_role;
+
 CREATE FUNCTION public.access_registration_command(p_action text,p_user uuid,p_payload jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE r public.access_registrations; identity uuid := (p_payload->>'id')::uuid;
@@ -44,7 +59,7 @@ BEGIN
      RAISE EXCEPTION 'access_denied' USING ERRCODE='42501'; END IF;
    IF EXISTS(SELECT 1 FROM public.access_registration_credentials WHERE registration_id=identity
      AND state='active' AND key_hash=p_payload->>'key_hash') THEN RETURN to_jsonb(r); END IF;
-   UPDATE public.access_registration_credentials SET state='revoked' WHERE registration_id=identity AND state<>'revoked';
+   PERFORM public.access_revoke_registration_credentials(identity);
    INSERT INTO public.access_registration_credentials(id,registration_id,key_hash,expires_at)
    VALUES(gen_random_uuid(),identity,p_payload->>'key_hash',clock_timestamp()+interval '90 days');
    UPDATE public.access_sessions SET state='stopping' WHERE registration_id=identity AND state='active';
@@ -65,7 +80,7 @@ BEGIN
    UPDATE public.access_sessions SET state='stopping' WHERE registration_id=identity AND state='active';
  END IF;
  IF next_state='revoked' THEN
-   UPDATE public.access_registration_credentials SET state='revoked' WHERE registration_id=identity AND state<>'revoked';
+   PERFORM public.access_revoke_registration_credentials(identity);
  END IF;
  INSERT INTO public.access_lifecycle_events(registration_id,actor_user_id,event)
  VALUES(identity,p_user,'registration.'||next_state);
@@ -227,7 +242,7 @@ BEGIN
      RETURN k.receipt-'_request';
    END IF;
    UPDATE public.access_registrations SET state='suspended',revision=revision+1,updated_at=clock_timestamp() WHERE id=r.id;
-   UPDATE public.access_registration_credentials SET state='revoked' WHERE registration_id=r.id AND state<>'revoked';
+   PERFORM public.access_revoke_registration_credentials(r.id);
    UPDATE public.access_sessions SET state='stopping' WHERE registration_id=r.id AND state='active';
    INSERT INTO public.access_lifecycle_events(registration_id,event) VALUES(r.id,'registration.credential_reused');
    RETURN jsonb_build_object('error','access_credential_reused');
