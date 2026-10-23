@@ -20,10 +20,13 @@ from src.platform.access.adapters.agent.config.dependencies import (
     get_verified_agent,
     get_writable_agent,
     require_agent_read_query,
+    require_agent_read_grant,
     require_agent_manage_body,
 )
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.service import AuthorizationService
+from src.platform.authorization.models import ProjectGrant
+from src.platform.access.adapters.agent.config.metadata import read_path_metadata
 from src.platform.access.adapters.agent.config.models import Agent
 from src.platform.access.adapters.agent.config.schemas import (
     AgentCreate,
@@ -106,7 +109,7 @@ def _to_agent_out(
     description="Get the list of Agents for a specified project",
 )
 def list_agents(
-    project_id: str = Depends(require_agent_read_query),
+    grant: ProjectGrant = Depends(require_agent_read_grant),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
     ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
@@ -115,20 +118,13 @@ def list_agents(
     # caller is a member of project_id BEFORE any agent data is read.
     # SECURITY (M-1): pass viewer_user_id so private agents owned by other
     # users in the same org are filtered out of the response.
-    agents = service.list_agents(project_id, viewer_user_id=current_user.user_id)
+    agents = service.list_agents(grant.project_id, viewer_user_id=current_user.user_id)
 
     # PERFORMANCE (P-5): batch-resolve every bash_access path once instead of
     # forcing the client to issue a second N-fan-out round trip
     # (fetchNodeInfoBatch).
     paths = {b.path for a in agents for b in a.bash_accesses if b.path is not None}
-    node_info: dict[str, dict] = {}
-    for p in paths:
-        try:
-            entry = ops.stat(project_id, p)
-        except Exception:
-            entry = None
-        if entry:
-            node_info[p] = {"name": entry.name, "type": entry.type}
+    node_info = read_path_metadata(ops, grant, paths)
 
     return ApiResponse.success(
         data=[_to_agent_out(a, node_info=node_info) for a in agents],

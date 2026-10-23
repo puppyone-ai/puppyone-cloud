@@ -1,0 +1,21 @@
+{
+  "paths": {
+    "removed": {
+      "/internal/nodes/create": "2f6f0a7fa2b615b591c62c5e646d90c2dd890c66b252322e58ea905c6473ee21",
+      "/internal/nodes/list": "f462ebe72d8077b8bb756de9145c221ef501a1f18538d2551c3e80e8eec2b738",
+      "/internal/nodes/move": "59d476dc141764484ff3046a40b021cbe5d1b247e14a8ce35d55d503cf9b3c84",
+      "/internal/nodes/read": "e540a62dd94c270b35994c5046ff745eea8cc68ee901bab869daad9dc0dbae21",
+      "/internal/nodes/rename": "f7248abdd84c321a71ee3f4cae0fa5ac5060930bd975ce5f6f766c95f621118c",
+      "/internal/nodes/resolve-path": "cb3b691f3067dad96650d02bb0b7d8c6ef18a9614e40aa3c0eb9773527412fd2",
+      "/internal/nodes/rm": "c429f9763797432a422d68816159d87133a88fb5521248516158493c7d5b597b",
+      "/internal/nodes/write": "f7fb3f7e090d860e377556ed1a652d4c00cfc1eebc0af062ce2598d4dc1d117a"
+    },
+    "added": {},
+    "changed": {}
+  },
+  "schemas": {
+    "removed": {},
+    "added": {},
+    "changed": {}
+  }
+}

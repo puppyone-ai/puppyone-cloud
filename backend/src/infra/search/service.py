@@ -7,20 +7,20 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from src.exceptions import ErrorCode, NotFoundException
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.infra.chunking.config import ChunkingConfig
 from src.infra.chunking.repository import ChunkRepository, ensure_chunks_for_pointer
 from src.infra.chunking.schemas import Chunk
 from src.infra.chunking.service import ChunkingService, iter_large_string_nodes_for_chunking
+from src.infra.execution.runner import run_owned
 from src.infra.llm.embedding_service import EmbeddingService
 from src.infra.s3.service import S3Service
+from src.infra.search.source import IndexSource, open_index_source
 from src.infra.turbopuffer.schemas import TurbopufferRow
 from src.infra.turbopuffer.service import TurbopufferSearchService
-from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseFactory
 from src.utils.logger import log_error, log_info
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.read.tree_reader import VersionEntry
 
 
@@ -156,13 +156,6 @@ class SearchService:
         self._tp = turbopuffer_service or TurbopufferSearchService()
         self._write_lease_factory = write_lease_factory
 
-    def _ensure_project_access(self, *, project_id: str, user_id: str) -> None:
-        if not self.authorization.allows(project_id, user_id, ProjectAction.CONTENT_READ):
-            raise NotFoundException(
-                f"Project not found: {project_id}",
-                code=ErrorCode.NOT_FOUND,
-            )
-
     @staticmethod
     def build_namespace(*, project_id: str, path: str) -> str:
         return f"project_{project_id}_path_{path}"
@@ -196,8 +189,12 @@ class SearchService:
         user_id: str,
         json_path: str,
     ) -> SearchIndexStats:
-        async with self._write_lease_factory(project_id, "search.index_scope"):
+        async with (
+            open_index_source(self._ops, self.authorization, project_id, user_id) as source,
+            self._write_lease_factory(project_id, "search.index_scope"),
+        ):
             return await self._index_scope_admitted(
+                source=source,
                 project_id=project_id,
                 path=path,
                 user_id=user_id,
@@ -207,6 +204,7 @@ class SearchService:
     async def _index_scope_admitted(
         self,
         *,
+        source: IndexSource,
         project_id: str,
         path: str,
         user_id: str,
@@ -217,22 +215,19 @@ class SearchService:
         """
         t0 = time.perf_counter()
         scope_pointer = _normalize_json_pointer(json_path)
-        self._ensure_project_access(project_id=project_id, user_id=user_id)
         log_info(
             f"[index_scope] start: project_id={project_id} path={path} json_path='{json_path}'"
         )
 
         # 1) Read scope data (from version ObjectStore)
         t1 = time.perf_counter()
-        content_bytes = await asyncio.to_thread(
-            self._ops.for_user(project_id, user_id).read_file, project_id, path
-        )
+        content_bytes = await source.content(path)
         import json as _json_mod
 
         try:
             full_data = _json_mod.loads(content_bytes.decode("utf-8"))
-        except Exception:
-            full_data = {}
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"Invalid JSON index source: {path}") from exc
         scope_data = _extract_by_pointer(full_data, scope_pointer)
         log_info(
             f"[index_scope] step1_get_scope_data: path={path} elapsed_ms={int((time.perf_counter() - t1) * 1000)}"
@@ -240,7 +235,7 @@ class SearchService:
 
         # 2) Extract large string nodes (json_pointer must be "absolute pointer")
         t2 = time.perf_counter()
-        nodes = await asyncio.to_thread(
+        nodes = await run_owned(
             lambda: list(
                 iter_large_string_nodes_for_chunking(
                     self._chunking_service,
@@ -264,7 +259,7 @@ class SearchService:
         t3 = time.perf_counter()
         all_chunks: list[Chunk] = []
         for i, n in enumerate(nodes):
-            ensured = await asyncio.to_thread(
+            ensured = await run_owned(
                 ensure_chunks_for_pointer,
                 repo=self._chunk_repo,
                 service=self._chunking_service,
@@ -330,6 +325,7 @@ class SearchService:
         log_info(
             f"[index_scope] step5_turbopuffer_write_start: path={path} rows_count={len(upsert_rows)}"
         )
+        await source.check_live()
         async with self._write_lease_factory(project_id, "search.index_scope"):
             await self._tp.write(
                 namespace,
@@ -344,7 +340,7 @@ class SearchService:
         t6 = time.perf_counter()
         for c, doc_id in zip(all_chunks, doc_ids, strict=True):
             try:  # noqa: SIM105 -- Keep the best-effort indexing boundary explicit.
-                await asyncio.to_thread(
+                await run_owned(
                     lambda cid=int(c.id), did=doc_id: (
                         self._chunk_repo._client.table("chunks")
                         .update(
@@ -481,8 +477,12 @@ class SearchService:
         s3_service: S3Service,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> FolderIndexStats:
-        async with self._write_lease_factory(project_id, "search.index_folder"):
+        async with (
+            open_index_source(self._ops, self.authorization, project_id, user_id) as source,
+            self._write_lease_factory(project_id, "search.index_folder"),
+        ):
             return await self._index_folder_admitted(
+                source=source,
                 project_id=project_id,
                 folder_path=folder_path,
                 user_id=user_id,
@@ -493,6 +493,7 @@ class SearchService:
     async def _index_folder_admitted(
         self,
         *,
+        source: IndexSource,
         project_id: str,
         folder_path: str,
         user_id: str,
@@ -503,14 +504,11 @@ class SearchService:
         Index all indexable files in a folder for vector search.
         """
         t0 = time.perf_counter()
-        self._ensure_project_access(project_id=project_id, user_id=user_id)
         log_info(f"[index_folder] start: project_id={project_id} folder_path={folder_path}")
 
         # 1) Get all indexable descendants
         t1 = time.perf_counter()
-        all_entries = await asyncio.to_thread(
-            self._ops.for_user(project_id, user_id).list_tree, project_id, folder_path
-        )
+        all_entries = await source.entries(folder_path)
         indexable_files = [e for e in all_entries if e.type in ("json", "markdown")]
         total_files = len(indexable_files)
         log_info(
@@ -543,6 +541,7 @@ class SearchService:
             try:
                 t_file = time.perf_counter()
                 stats = await self._index_file_node(
+                    source=source,
                     file_node=file_node,
                     namespace=namespace,
                     s3_service=s3_service,
@@ -563,7 +562,7 @@ class SearchService:
                 # Call progress callback if provided
                 if progress_callback:
                     try:
-                        progress_callback(indexed_files, total_files)
+                        await run_owned(progress_callback, indexed_files, total_files)
                     except Exception as e:
                         log_error(f"[index_folder] progress_callback error: {e}")
 
@@ -572,8 +571,8 @@ class SearchService:
                     f"[index_folder] file_error: file_path={file_node.path} "
                     f"name={file_node.name} error={e}"
                 )
-                # Continue with other files even if one fails
-                continue
+                # A failed source/embedding/write must not report partial success.
+                raise
 
         log_info(
             f"[index_folder] done: folder_path={folder_path} "
@@ -592,6 +591,7 @@ class SearchService:
     async def _index_file_node(
         self,
         *,
+        source: IndexSource,
         file_node: VersionEntry,
         namespace: str,
         s3_service: S3Service,
@@ -606,12 +606,7 @@ class SearchService:
         is_markdown = file_node.type == "markdown"
         is_json = file_node.type == "json"
 
-        try:
-            content_bytes = self._ops.for_user(project_id, user_id).read_file(
-                project_id, file_node.path
-            )
-        except Exception:
-            content_bytes = None
+        content_bytes = await source.content(file_node.path)
 
         if is_json:
             if content_bytes:
@@ -619,10 +614,10 @@ class SearchService:
 
                 try:
                     content_data = _json_mod.loads(content_bytes.decode("utf-8"))
-                except Exception:
-                    content_data = {}
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise ValueError(f"Invalid JSON index source: {file_node.path}") from exc
             else:
-                content_data = {}
+                raise ValueError(f"Empty JSON index source: {file_node.path}")
             scope_pointer = ""
         elif is_markdown:
             if content_bytes:
@@ -639,7 +634,7 @@ class SearchService:
         t2 = time.perf_counter()
         if is_json:
             # For JSON, extract large string nodes
-            nodes = await asyncio.to_thread(
+            nodes = await run_owned(
                 lambda: list(
                     iter_large_string_nodes_for_chunking(
                         self._chunking_service,
@@ -659,7 +654,7 @@ class SearchService:
                 nodes = []
 
         log_info(
-            f"[_index_file_node] extract_nodes: file={file_node.id} nodes={len(nodes)} "
+            f"[_index_file_node] extract_nodes: file={file_node.path} nodes={len(nodes)} "
             f"elapsed_ms={int((time.perf_counter() - t2) * 1000)}"
         )
 
@@ -671,7 +666,7 @@ class SearchService:
         all_chunks: list[Chunk] = []
         file_id = file_node.path
         for n in nodes:
-            ensured = await asyncio.to_thread(
+            ensured = await run_owned(
                 ensure_chunks_for_pointer,
                 repo=self._chunk_repo,
                 service=self._chunking_service,
@@ -730,6 +725,7 @@ class SearchService:
                 }
             )
 
+        await source.check_live()
         async with self._write_lease_factory(project_id, "search.index_folder"):
             await self._tp.write(
                 namespace,
@@ -744,7 +740,7 @@ class SearchService:
         # 6) Update chunks table with turbopuffer info (best-effort)
         for c, doc_id in zip(all_chunks, doc_ids, strict=True):
             try:  # noqa: SIM105 -- Keep the best-effort indexing boundary explicit.
-                await asyncio.to_thread(
+                await run_owned(
                     lambda cid=int(c.id), did=doc_id: (
                         self._chunk_repo._client.table("chunks")
                         .update(

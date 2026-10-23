@@ -150,6 +150,14 @@ class AuthorizationService:
             cache[cache_key] = grant  # type: ignore[assignment]
         return grant
 
+    def authorize_fresh(self, project_id, user_id, action) -> ProjectGrant:
+        """Revalidate a long operation without inheriting an HTTP facts cache."""
+        token = project_access_cache_var.set(None)
+        try:
+            return self.authorize(project_id, user_id, action)
+        finally:
+            project_access_cache_var.reset(token)
+
     def authorize(
         self,
         project_id: str,

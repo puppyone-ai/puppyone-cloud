@@ -209,14 +209,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("DELETE", "/api/v1/projects/{project_id}/git-credentials/{credential_id}"): _owner("git_credential.owner"),
 
     # Delegated internal human calls.
-    ("POST", "/internal/nodes/resolve-path"): _human(ProjectAction.CONTENT_READ),
-    ("GET", "/internal/nodes/list"): _human(ProjectAction.CONTENT_READ),
-    ("GET", "/internal/nodes/read"): _human(ProjectAction.CONTENT_READ),
-    ("PUT", "/internal/nodes/write"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/create"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/rm"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/rename"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/move"): _human(ProjectAction.CONTENT_WRITE),
     ("GET", "/internal/table/{table_id}"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/internal/tables/{table_id}/context-schema"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/internal/tables/{table_id}/context-data"): _human(ProjectAction.CONTENT_READ),

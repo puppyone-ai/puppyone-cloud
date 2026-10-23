@@ -2,44 +2,9 @@
   "_contract": "Exact source reference review inventory, not a runtime network budget or security proof. New files/aliases/references/counts require review; remove stale entries. See openspec/changes/refactor-operation-lifetimes/entrypoint-audit.md.",
   "known_gaps": [
     {
-      "path": "internal/router.py",
-      "function": "read_node_content",
-      "reason": "Duplicate acting-user authorization; stat/content can use different snapshots; synchronous I/O in async handler."
-    },
-    {
-      "path": "internal/router.py",
-      "function": "resolve_node_path",
-      "reason": "Duplicate authorization and synchronous I/O in async handler."
-    },
-    {
-      "path": "internal/router.py",
-      "function": "list_node_children",
-      "reason": "Duplicate authorization and synchronous I/O in async handler."
-    },
-    {
-      "path": "infra/search/service.py",
-      "function": "SearchService._index_file_node",
-      "reason": "Per-file authorization and one-shot snapshot inside folder indexing loop."
-    },
-    {
-      "path": "infra/search/service.py",
-      "function": "SearchService._index_folder_admitted",
-      "reason": "Listing snapshot is separate from indexed content; for_user evaluated before thread offload."
-    },
-    {
-      "path": "infra/search/service.py",
-      "function": "SearchService._index_scope_admitted",
-      "reason": "Access check followed by for_user; for_user evaluated before thread offload."
-    },
-    {
       "path": "platform/project/dashboard_router.py",
       "function": "_compute_node_counts",
       "reason": "Mounted resource dashboard passes unbound ops; head and tree also use separate snapshots."
-    },
-    {
-      "path": "platform/access/adapters/agent/config/router.py",
-      "function": "list_agents",
-      "reason": "Unbound adapter stat in a path loop; broad exception hides missing grant."
     },
     {
       "path": "platform/access/identity_router.py",
@@ -144,21 +109,13 @@
       "infra/data_migrations/release/backup.py": {
         "create_backup::destination.stat": 1
       },
-      "infra/search/service.py": {
-        "SearchService._index_file_node::self._ops.for_user(project_id, user_id).read_file": 1,
-        "SearchService._index_folder_admitted::self._ops.for_user(project_id, user_id).list_tree": 1,
-        "SearchService._index_scope_admitted::self._ops.for_user(project_id, user_id).read_file": 1
+      "infra/search/source.py": {
+        "IndexSource.check_live::read.get_head_commit_id": 1,
+        "IndexSource.content::read.read_file": 1,
+        "IndexSource.entries::read.list_tree": 1
       },
-      "internal/router.py": {
-        "list_node_children::ops.list_dir": 1,
-        "read_node_content::ops.list_dir": 1,
-        "read_node_content::ops.read_file": 1,
-        "read_node_content::ops.stat": 1,
-        "remove_node::commands.ops.stat": 1,
-        "resolve_node_path::ops.stat": 1
-      },
-      "platform/access/adapters/agent/config/router.py": {
-        "list_agents::ops.stat": 1
+      "platform/access/adapters/agent/config/metadata.py": {
+        "read_path_metadata::read.stat": 1
       },
       "platform/access/adapters/agent/runtime/execution/tools.py": {
         "BoundTools.execute::read.stat": 1

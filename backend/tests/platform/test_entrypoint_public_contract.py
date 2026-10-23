@@ -346,6 +346,17 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, change in changes.items():
             assert expected["contract"][category].get(name) == change["before"]
             expected["contract"][category][name] = change["after"]
+    internal_nodes = json.loads(
+        Path(__file__).with_name("internal_nodes_retirement_contract_delta.json").read_text()
+    )
+    assert set(internal_nodes["paths"]["removed"]) == {
+        f"/internal/nodes/{action}"
+        for action in ("resolve-path", "list", "read", "write", "create", "rm", "rename", "move")
+    }
+    assert internal_nodes["schemas"] == {"removed": {}, "added": {}, "changed": {}}
+    assert internal_nodes["paths"]["added"] == internal_nodes["paths"]["changed"] == {}
+    for name, digest in internal_nodes["paths"]["removed"].items():
+        assert expected["contract"]["paths"].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 
