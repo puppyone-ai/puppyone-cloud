@@ -5,7 +5,7 @@ import logging
 from uuid import uuid4
 
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
-from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
+from src.platform.access.adapters.git.workspace_transport import RunGitTransport
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
@@ -15,14 +15,14 @@ from src.platform.access.adapters.agent.runtime.control.workspace import (
 )
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.access.adapters.agent.runtime.execution.tools import BoundTools
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.pi_worker import PiWorker
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
     admission = Admission(repository)
     engine = build_worker_version_engine_container(probe=True)
     if workbench_owner is _DEFAULT_OWNER:
-        from src.platform.scope_sandbox.workbench_service import build_workbench_service
+        from src.platform.access.composition import build_workbench_service
 
         workbench_owner = build_workbench_service(engine=engine)
     filesystem = SandboxFilesystem()
@@ -133,7 +133,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
 
 
 if __name__ == "__main__":
-    from src.platform.scope_sandbox.execution.preflight import main as preflight
+    from src.platform.workspace.execution.preflight import main as preflight
     from src.utils.logging_setup import setup_logging
 
     setup_logging()

@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from src.platform.scope_sandbox.workbench_service import build_workbench_service
+from src.platform.workspace.execution.providers.registry import runtime_provider
+from src.platform.access.composition import build_workbench_service
 from tests.agent.workbench_acceptance.accept_e2b import cleanup_owned as cleanup_e2b
 from tests.agent.workbench_acceptance.accept_fly import cleanup_owned
 from tests.agent.workbench_acceptance.accept_production_entry import (

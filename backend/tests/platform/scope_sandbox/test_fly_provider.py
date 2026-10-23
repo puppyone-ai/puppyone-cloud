@@ -7,8 +7,8 @@ import json
 import httpx
 import pytest
 
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider
-from src.platform.scope_sandbox.provider import SandboxSpec, SandboxState
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider
+from src.platform.workspace.scopes.provider import SandboxSpec, SandboxState
 
 
 def _provider(handler):

@@ -292,11 +292,11 @@ def _init_scope_sandbox_reaper(app: FastAPI) -> None:
     shutdown can stop both durable reaper loops cleanly."""
     if not getattr(settings, "SCOPE_SANDBOX_REAPER_ENABLED", False):
         return
-    from src.platform.scope_sandbox.execution.reaper import start_execution_reaper
-    from src.platform.scope_sandbox.reaper import start_reaper
-    from src.platform.scope_sandbox.service import get_scope_sandbox_service
+    from src.platform.workspace.execution.reaper import start_execution_reaper
+    from src.platform.workspace.scopes.reaper import start_reaper
+    from src.platform.access.adapters.ssh.service import get_ssh_access_service
 
-    service = get_scope_sandbox_service()
+    service = get_ssh_access_service().workspace
     task, stop_event = start_reaper(
         service,
         interval_s=settings.SCOPE_SANDBOX_REAPER_INTERVAL_S,
@@ -671,7 +671,7 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
-    from src.platform.workspace.router import router as workspace_router
+    from src.platform.access.adapters.api.workspace_router import router as workspace_router
 
     app.include_router(workspace_router, prefix="/api/v1", tags=["workspace"])
     from src.platform.synchronize.public_router import router as synchronize_public_router
@@ -685,10 +685,13 @@ def create_app() -> FastAPI:
 
     app.include_router(synchronize_github_router)
     app.include_router(synchronize_github_webhook_router)
-    from src.platform.scope_sandbox.router import router as scope_sandbox_router
+    from src.platform.access.adapters.ssh.router import router as scope_sandbox_router
 
     app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
-    from src.platform.scope_sandbox.workbench_router import router as workbench_router
+    from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
+
+    app.include_router(hosted_ssh_router)
+    from src.platform.access.adapters.api.workbench_router import router as workbench_router
 
     app.include_router(workbench_router)
     from src.platform.auth.router import router as auth_router
@@ -742,6 +745,10 @@ def create_app() -> FastAPI:
     # Register exception handlers
     exception_handler_start = time.time()
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore
+    from src.platform.workspace.errors import WorkspaceError
+    from src.platform.access.adapters.api.workbench_router import workspace_error_handler
+
+    app.add_exception_handler(WorkspaceError, workspace_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore
     app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore
     app.add_exception_handler(Exception, generic_exception_handler)  # type: ignore

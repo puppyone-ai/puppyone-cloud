@@ -19,7 +19,7 @@ from src.config import settings
 from src.platform.access.adapters.agent.runtime import worker as dispatcher
 from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 from src.platform.authorization.factory import build_authorization_service
-from src.platform.scope_sandbox.workbench_service import build_workbench_service
+from src.platform.access.composition import build_workbench_service
 from tests.agent.runtime.test_supervisor import BashModel
 from tests.agent.workbench_acceptance.accept_production_entry import request
 

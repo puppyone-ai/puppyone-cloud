@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from src.platform.scope_sandbox.provider import SandboxState
-from src.platform.scope_sandbox.registry import SandboxSession
-from src.platform.scope_sandbox.policy import (
+from src.platform.workspace.scopes.provider import SandboxState
+from src.platform.workspace.scopes.registry import SandboxSession
+from src.platform.workspace.scopes.policy import (
     SessionDecision,
     SessionPolicyConfig,
     adaptive_stop_timeout,

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannels
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.execution.workbench_host import WorkbenchChannels
+from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 pytestmark = pytest.mark.asyncio
 
@@ -134,8 +134,8 @@ async def test_dead_reader_reconnects_before_next_operation(pool):
 
 
 async def test_watch_backlog_cannot_block_responses_or_other_subscribers():
-    from src.platform.scope_sandbox.execution.control_channel import ControlChannel
-    from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannel
+    from src.platform.workspace.execution.control_channel import ControlChannel
+    from src.platform.workspace.execution.workbench_host import WorkbenchChannel
 
     channel = object.__new__(WorkbenchChannel)
     channel.purpose, channel.generation = "files", "generation"
@@ -164,7 +164,7 @@ async def test_revocation_while_waiting_does_not_disclose_changed_paths():
 
     from fastapi import HTTPException
 
-    from src.platform.scope_sandbox.workbench_service import WorkbenchService
+    from src.platform.workspace.service import WorkbenchService
 
     queue = asyncio.Queue()
     waiting = asyncio.Event()
@@ -203,7 +203,7 @@ async def test_revocation_while_waiting_does_not_disclose_changed_paths():
 
 
 async def test_subscriptions_share_watch_and_release_only_the_last_listener():
-    from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannel
+    from src.platform.workspace.execution.workbench_host import WorkbenchChannel
 
     channel = object.__new__(WorkbenchChannel)
     channel.subscribers, channel.watch_lock = set(), asyncio.Lock()
@@ -222,7 +222,7 @@ async def test_watch_admission_does_not_register_workspace_activity():
     from contextlib import asynccontextmanager
     from unittest.mock import Mock
 
-    from src.platform.scope_sandbox.workbench_service import WorkbenchService
+    from src.platform.workspace.service import WorkbenchService
 
     @asynccontextmanager
     async def borrow(binding):

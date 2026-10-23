@@ -1,0 +1,9 @@
+{
+  "paths": {
+    "/api/v1/projects/{project_id}/workbench/ssh-grants": "fd5b1fd62cfb230b574664e54a1a855fb41134733264931dc6feca0cff17a635",
+    "/api/v1/projects/{project_id}/workbench/ssh-grants/{grant_id}": "0bb970bbb1554cd98848bca185320ba297ac8e48ca3a523b551901e181fe8b96"
+  },
+  "schemas": {
+    "SshGrantRequest": "55466335c49ab2861f38e8e2b4a0959a8870f31525239c9b6204c95948739902"
+  }
+}

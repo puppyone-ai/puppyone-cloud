@@ -3,7 +3,7 @@
 import pytest
 
 from src.config import Settings, settings
-from src.platform.scope_sandbox.execution.service import _create_sandbox_impl
+from src.platform.workspace.execution.service import _create_sandbox_impl
 
 
 def hosted(**values):

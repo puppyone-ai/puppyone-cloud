@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from src.platform.scope_sandbox.reaper import reaper_loop, run_reaper_once
+from src.platform.workspace.scopes.reaper import reaper_loop, run_reaper_once
 
 
 class _FakeManager:

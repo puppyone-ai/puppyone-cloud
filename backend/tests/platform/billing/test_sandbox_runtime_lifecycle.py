@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.platform.scope_sandbox.execution.service import SandboxService
+from src.platform.workspace.execution.service import SandboxService
 
 
 class _Meter:

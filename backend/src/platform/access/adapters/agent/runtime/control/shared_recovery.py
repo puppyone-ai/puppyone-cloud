@@ -1,7 +1,7 @@
 """Recover conversation progress, never rewind a shared computer's live files."""
 
 from src.platform.access.adapters.agent.runtime.execution.port import ExecutionPort
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
+from src.platform.workspace.filesystem.port import FilesystemPort
 
 
 class SharedRecovery:

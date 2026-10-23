@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport, RunPublication
+from src.platform.access.adapters.git.workspace_transport import RunGitTransport, RunPublication
 from src.version_engine.read.ref_metadata import GitBranchBase
 from src.version_engine.write_engine.ref_transaction import RefEdit, RefState
 

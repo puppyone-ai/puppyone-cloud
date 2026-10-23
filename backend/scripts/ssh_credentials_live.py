@@ -30,10 +30,10 @@ def _load_key() -> None:
 
 _load_key()
 
-from src.platform.scope_sandbox import ssh_credentials as sc  # noqa: E402
-from src.platform.scope_sandbox.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
-from src.platform.scope_sandbox.provider import SandboxSpec  # noqa: E402
-from src.platform.scope_sandbox.ssh_e2b import (  # noqa: E402
+from src.platform.workspace.scopes import ssh_credentials as sc  # noqa: E402
+from src.platform.workspace.scopes.e2b_provider import E2BProvider, SdkE2BClient  # noqa: E402
+from src.platform.workspace.scopes.provider import SandboxSpec  # noqa: E402
+from src.platform.workspace.scopes.ssh_e2b import (  # noqa: E402
     DEFAULT_FORWARD_PORT,
     provision_e2b_ssh,
 )

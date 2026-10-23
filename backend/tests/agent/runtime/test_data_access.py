@@ -426,7 +426,7 @@ async def test_real_pi_answers_file_question_using_offline_find_and_read(
     from collections import Counter
 
     from src.platform.project.write_lease import ProjectWriteLease
-    from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+    from src.platform.workspace.execution.pi_worker import PiWorker
 
     c = prepared
     files = {"alpha.md": b"first knowledge note", "beta.md": b"second", "gamma.md": b"third"}
@@ -672,7 +672,7 @@ async def test_writing_run_uses_one_push_and_bounded_object_reservations(
     import json
     from collections import Counter
 
-    from src.platform.scope_sandbox.execution.pi_worker import PiWorker
+    from src.platform.workspace.execution.pi_worker import PiWorker
     from tests.agent.runtime.test_supervisor import BashModel, approve_to_completion
 
     c = prepared

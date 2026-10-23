@@ -18,6 +18,8 @@ OLD_MODULES = (
     "src.repo", "src.version_engine.entrypoints.git",
     "src.version_engine.adapters.git", "src.version_engine.scoped_fs",
     "src.internal.mcp_runtime",
+    "src.platform.scope_sandbox",
+    "src.platform.workspace.router",
 ) + tuple(
     f"src.version_engine.entrypoints.http.{name}"
     for name in (
@@ -62,6 +64,13 @@ def test_entrypoints_never_import_sibling_lifecycle_implementations():
 
 def test_repository_api_dependencies_remain_one_way():
     boundaries = (
+        ("platform/workspace", ("src.platform.access", "fastapi", "starlette")),
+        ("platform/access/adapters/ssh", (
+            "src.platform.workspace.execution.providers",
+            "src.platform.workspace.scopes.factory",
+            "src.platform.workspace.scopes.manager",
+            "e2b", "docker",
+        )),
         ("version_engine", ("src.platform.access.adapters", "src.platform.access.filesystem")),
         ("platform/repository_target", (
             "src.platform.access.adapters", "src.platform.access.credentials",

@@ -17,8 +17,8 @@ from src.exceptions import AppException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.entitlements.dependencies import get_entitlement_service
-from src.platform.scope_sandbox.router import _guard_long_lived_runtime_metering, router
-from src.platform.scope_sandbox.service import ConnectInfo, get_scope_sandbox_service
+from src.platform.access.adapters.ssh.router import _guard_long_lived_runtime_metering, router
+from src.platform.access.adapters.ssh.service import ConnectInfo, get_ssh_access_service
 from tests.authorization_fakes import authorization_for, install_authorization
 
 
@@ -82,7 +82,7 @@ def _app(service: _FakeService) -> FastAPI:
     )
     install_authorization(app, authorization_for("proj-1"))
     app.dependency_overrides[get_entitlement_service] = lambda: _FakeEntitlementService()
-    app.dependency_overrides[get_scope_sandbox_service] = lambda: service
+    app.dependency_overrides[get_ssh_access_service] = lambda: service
     return app
 
 

@@ -6,9 +6,9 @@ import types
 
 import pytest
 
-from src.platform.scope_sandbox.e2b_provider import E2BProvider
-from src.platform.scope_sandbox.factory import build_provider, provider_from_settings
-from src.platform.scope_sandbox.fly_provider import FlyMachinesProvider
+from src.platform.workspace.scopes.e2b_provider import E2BProvider
+from src.platform.workspace.scopes.factory import build_provider, provider_from_settings
+from src.platform.workspace.scopes.fly_provider import FlyMachinesProvider
 
 
 def test_build_fly_provider():
@@ -55,13 +55,13 @@ def test_unknown_provider_raises():
 
 
 def test_build_session_store_memory():
-    from src.platform.scope_sandbox.factory import build_session_store
-    from src.platform.scope_sandbox.registry import InMemorySandboxSessionStore
+    from src.platform.workspace.scopes.factory import build_session_store
+    from src.platform.workspace.scopes.registry import InMemorySandboxSessionStore
     assert isinstance(build_session_store("memory"), InMemorySandboxSessionStore)
 
 
 def test_build_session_store_unknown_raises():
-    from src.platform.scope_sandbox.factory import build_session_store
+    from src.platform.workspace.scopes.factory import build_session_store
     with pytest.raises(ValueError):
         build_session_store("redis")
 

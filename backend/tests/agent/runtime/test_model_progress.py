@@ -12,12 +12,12 @@ from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun
 from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.managed_ai.contracts import InferenceRun, ModelChunk
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 
 def supervisor():
@@ -138,7 +138,7 @@ async def test_model_end_delivery_is_not_silenced_or_skipped(monkeypatch, cleanu
 
 @pytest.mark.asyncio
 async def test_sandbox_send_deadline_includes_lock_contention(monkeypatch):
-    import src.platform.scope_sandbox.execution.control_channel as module
+    import src.platform.workspace.execution.control_channel as module
 
     monkeypatch.setattr(module, "SEND_TIMEOUT", 0.01)
     value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())
@@ -150,7 +150,7 @@ async def test_sandbox_send_deadline_includes_lock_contention(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sandbox_send_has_bounded_provider_timeout(monkeypatch):
-    import src.platform.scope_sandbox.execution.control_channel as module
+    import src.platform.workspace.execution.control_channel as module
 
     monkeypatch.setattr(module, "SEND_TIMEOUT", 0.01)
     value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())
@@ -232,7 +232,7 @@ async def test_output_replay_deduplicates_but_missing_frame_is_not_silent():
 
 @pytest.mark.asyncio
 async def test_fragmented_output_enforces_each_frame_not_the_combined_read(monkeypatch):
-    from src.platform.scope_sandbox.execution import control_channel
+    from src.platform.workspace.execution import control_channel
 
     monkeypatch.setattr(control_channel, "MAX_FRAME", 96)
     value = PiWorker("execution", "project", provider="e2b", store=InMemoryExecutionSessionStore())

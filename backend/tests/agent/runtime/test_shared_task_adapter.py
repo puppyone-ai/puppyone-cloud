@@ -8,10 +8,10 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.scope_sandbox.execution.providers.port import RuntimeConnection, resource_identity
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.execution.providers.port import RuntimeConnection, resource_identity
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.workbench_task import WorkbenchTask
+from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 pytestmark = pytest.mark.asyncio
 

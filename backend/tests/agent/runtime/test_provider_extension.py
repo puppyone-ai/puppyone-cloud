@@ -9,15 +9,15 @@ from uuid import uuid4
 import pytest
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.providers import registry
-from src.platform.scope_sandbox.execution.providers.port import (
+from src.platform.workspace.execution.providers import registry
+from src.platform.workspace.execution.providers.port import (
     RuntimeCapabilities,
     RuntimeConnection,
     RuntimeTransition,
     resource_identity,
 )
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.platform.scope_sandbox.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 
 
 @pytest.mark.asyncio
@@ -140,8 +140,8 @@ async def test_incompatible_supplier_is_rejected_before_allocation():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from src.platform.scope_sandbox.execution.runtime_contract import WorkspaceUnavailable
-    from src.platform.scope_sandbox.workbench_service import WorkbenchService
+    from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
+    from src.platform.workspace.service import WorkbenchService
 
     row = dict(
         id="workspace",

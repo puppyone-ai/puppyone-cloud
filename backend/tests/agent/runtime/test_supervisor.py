@@ -15,16 +15,16 @@ from src.platform.access.adapters.agent.runtime.control.publication import Publi
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.service import AgentService
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, ModelChunk
 from src.platform.project.write_lease import ProjectWriteLease
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-from src.platform.access.adapters.agent.runtime.control.git_transport import RunGitTransport
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.access.adapters.git.workspace_transport import RunGitTransport
 from tests.agent.runtime.workspace_assertions import recovery_file, recovery_git
 
 pytestmark = pytest.mark.integration
@@ -538,7 +538,7 @@ async def test_failed_provider_allocation_resolves_before_recovery(prepared, mon
         return []
 
     monkeypatch.setattr(PiWorker, "create", rejected)
-    from src.platform.scope_sandbox.execution.providers.e2b import E2BRuntimeProvider
+    from src.platform.workspace.execution.providers.e2b import E2BRuntimeProvider
 
     async def resolve(_provider, resource):
         return await absent(resource)

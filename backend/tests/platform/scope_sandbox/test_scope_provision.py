@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.platform.scope_sandbox.scope_provision import (
+from src.platform.workspace.scopes.scope_provision import (
     DEFAULT_WORKDIR,
     provision_scope_steps,
 )

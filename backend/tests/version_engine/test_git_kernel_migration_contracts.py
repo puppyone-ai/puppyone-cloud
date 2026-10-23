@@ -61,7 +61,7 @@ ACTIVE_RUNTIME_SCAN_ROOTS = (
     "backend/src/platform/access/adapters/cli",
     "backend/src/platform/access/adapters/git",
     "backend/src/platform/access/adapters/mcp_endpoint",
-    "backend/src/platform/access/adapters/agent/runtime/control/git_transport.py",
+    "backend/src/platform/access/adapters/git/workspace_transport.py",
     "backend/src/platform/access/filesystem",
     "backend/src/platform/access/identity_router.py",
     "backend/src/platform/access/identity_schemas.py",

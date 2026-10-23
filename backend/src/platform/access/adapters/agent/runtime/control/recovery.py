@@ -1,7 +1,7 @@
 """Link conversation/receipts to immutable provider recovery material."""
 
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
-from src.platform.scope_sandbox.execution.worker_port import WorkspaceWorker
+from src.platform.workspace.filesystem.port import FilesystemPort
+from src.platform.workspace.execution.worker_port import WorkspaceWorker
 
 
 class Recovery:

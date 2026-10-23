@@ -7,7 +7,7 @@ import pytest
 
 from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 
 
 def state():

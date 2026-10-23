@@ -318,6 +318,15 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & workbench[category].keys()
         expected["contract"][category].update(workbench[category])
+    ssh = json.loads(Path(__file__).with_name("hosted_ssh_contract_delta.json").read_text())
+    assert set(ssh["paths"]) == {
+        "/api/v1/projects/{project_id}/workbench/ssh-grants",
+        "/api/v1/projects/{project_id}/workbench/ssh-grants/{grant_id}",
+    }
+    assert set(ssh["schemas"]) == {"SshGrantRequest"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & ssh[category].keys()
+        expected["contract"][category].update(ssh[category])
     assert contract(app.openapi()) == expected["contract"]
 
 

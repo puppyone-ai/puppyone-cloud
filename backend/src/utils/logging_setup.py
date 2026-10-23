@@ -46,7 +46,7 @@ class InterceptHandler(logging.Handler):
         # arbitrary third-party LogRecord extras must not reach JSON logs.
         metrics = {
             key: getattr(record, key)
-            for key in ("agent_performance", "agent_api_performance")
+            for key in ("agent_performance", "agent_api_performance", "dependency_failure", "workspace_performance")
             if hasattr(record, key)
         }
         logger.bind(**metrics).opt(depth=depth, exception=record.exc_info).log(

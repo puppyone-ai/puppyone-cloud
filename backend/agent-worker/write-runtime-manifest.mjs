@@ -17,5 +17,5 @@ async function visit(directory) {
 await visit(root);
 await writeFile(new URL('./runtime-manifest.json', import.meta.url), JSON.stringify({
   runtime_protocol: 1, file_protocol: 1,
-  capabilities: ['workspace_lifecycle', 'native_files', 'file_watch'], build_id: hash.digest('hex')
+  capabilities: ['workspace_lifecycle', 'native_files', 'file_watch', 'workspace_shell'], build_id: hash.digest('hex')
 }) + '\n');

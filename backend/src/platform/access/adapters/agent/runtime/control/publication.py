@@ -7,9 +7,9 @@ from src.platform.access.adapters.agent.runtime.control.workspace import (
     require_full_project,
     workspace_state,
 )
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemPort
+from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.project.write_lease import ProjectWriteLease
-from src.platform.access.adapters.agent.runtime.control.git_transport import RunPublication
+from src.platform.access.adapters.git.workspace_transport import RunPublication
 from src.version_engine.read.ref_metadata import GitBranchBase
 
 

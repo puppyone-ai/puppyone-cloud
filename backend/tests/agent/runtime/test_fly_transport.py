@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.platform.scope_sandbox.execution.providers.fly_transport import (
+from src.platform.workspace.execution.providers.fly_transport import (
     acquire_transport,
     close_transports,
 )

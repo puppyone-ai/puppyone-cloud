@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.platform.scope_sandbox.ssh_e2b import (
+from src.platform.workspace.scopes.ssh_e2b import (
     DEFAULT_FORWARD_PORT,
     DEFAULT_SSH_PORT,
     SSHD_CONFIG_PATH,

@@ -8,7 +8,7 @@ import pytest
 
 from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 
 pytestmark = pytest.mark.asyncio
 
@@ -82,8 +82,8 @@ async def test_pending_publication_is_not_reclassified_or_replayed():
 async def test_provider_reconnect_deduplicates_replayed_control_and_tool_frames():
     import json
 
-    from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-    from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
+    from src.platform.workspace.execution.pi_worker import PiWorker
+    from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 
     worker = PiWorker(
         "execution", "project", provider="docker", store=InMemoryExecutionSessionStore()
@@ -102,9 +102,9 @@ async def test_provider_reconnect_deduplicates_replayed_control_and_tool_frames(
 async def test_control_disconnect_fails_pending_command_without_timeout():
     import asyncio
 
-    from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-    from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
-    from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
+    from src.platform.workspace.execution.pi_worker import PiWorker
+    from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+    from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
     worker = PiWorker(
         "execution", "project", provider="docker", store=InMemoryExecutionSessionStore()

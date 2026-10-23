@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.filesystem.port import FilesystemError
-from src.platform.access.adapters.agent.runtime.filesystem.sandbox import SandboxFilesystem
+from src.platform.workspace.filesystem.port import FilesystemError
+from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 
 pytestmark = pytest.mark.asyncio
 

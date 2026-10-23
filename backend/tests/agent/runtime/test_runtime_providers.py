@@ -7,15 +7,15 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from src.platform.workspace.errors import WorkspaceError
 
 from src.config import settings
 from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.providers.fly import FlyRuntimeProvider
-from src.platform.scope_sandbox.execution.providers.registry import runtime_provider
-from src.platform.scope_sandbox.execution.worker_port import WorkerDisconnected
-from src.platform.scope_sandbox.workbench_service import WorkbenchAdmission
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.providers.fly import FlyRuntimeProvider
+from src.platform.workspace.execution.providers.registry import runtime_provider
+from src.platform.workspace.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.service import WorkbenchAdmission
 
 
 def test_interactive_chat_cannot_attach_an_automation_workspace():
@@ -23,7 +23,7 @@ def test_interactive_chat_cannot_attach_an_automation_workspace():
     repository = SimpleNamespace(get=Mock(return_value=row))
     admission = WorkbenchAdmission(repository=repository, authorization=Mock())
     context = SimpleNamespace(user_id="user", project_id="project")
-    with pytest.raises(HTTPException) as rejected:
+    with pytest.raises(WorkspaceError) as rejected:
         admission.admit(context, "automation-workspace")
     assert rejected.value.status_code == 409
     assert rejected.value.detail["code"] == "interactive_workspace_required"
@@ -310,7 +310,7 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     from pathlib import Path
     from unittest.mock import AsyncMock
 
-    from src.platform.scope_sandbox.execution.providers.port import (
+    from src.platform.workspace.execution.providers.port import (
         RuntimeConnection,
         resource_identity,
     )
@@ -323,28 +323,29 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
         stdout=SimpleNamespace(read=AsyncMock(return_value=b"")),
         stderr=SimpleNamespace(read=AsyncMock(return_value=b"")),
     )
-    spawn = AsyncMock(return_value=process)
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    from src.platform.scope_sandbox.execution.providers.fly_transport import FlyTransport
+    from src.platform.workspace.execution.providers.fly_transport import FlyTransport
 
-    transport = FlyTransport("backend-only", "fly")
+    transport = FlyTransport("backend-only", "fly", binding["app"])
+    lease = SimpleNamespace(process=process, release=Mock())
+    transport.ssh = SimpleNamespace(open=AsyncMock(return_value=lease))
     transport.users = 1
     monkeypatch.setattr(
-        "src.platform.scope_sandbox.execution.providers.fly.acquire_transport",
+        "src.platform.workspace.execution.providers.fly.acquire_transport",
         AsyncMock(return_value=transport),
     )
     provider = FlyRuntimeProvider()
     provider.inspect = AsyncMock(side_effect=AssertionError("repeated management lookup"))
     host = SimpleNamespace(
         resource=binding,
-        connection=RuntimeConnection(resource_identity(binding)),
+        connection=RuntimeConnection(resource_identity(binding), "fdaa::1"),
         control_command=lambda: ["node", "controller.mjs"],
         _output=AsyncMock(),
         _disconnected=AsyncMock(),
         queue=asyncio.Queue(),
     )
     await provider.open_channel(host)
-    env = spawn.call_args.kwargs["env"]
+    env = transport.env
+    assert transport.ssh.open.call_args.args[:2] == (binding, "fdaa::1")
     assert env["FLY_API_TOKEN"] == "backend-only"
     assert env["FLY_AGENT_ISOLATED"] == env["FLY_WIREGUARD_TOKEN_MODE"] == "1"
     directory = Path(env["FLY_CONFIG_DIR"])
@@ -356,3 +357,4 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     transport.idle_task.cancel()
     transport.directory.cleanup()
     assert host.connection is None
+    lease.release.assert_called_once()

@@ -10,8 +10,9 @@ from src.exceptions import (
     ErrorCode,
     NotFoundException,
     PermissionException,
-    ServiceUnavailableException,
 )
+from src.infra.dependency_diagnostics import dependency_failure
+from src.platform.authorization.failures import authorization_unavailable
 from src.platform.authorization.models import (
     ROLE_CAPABILITIES,
     GrantSource,
@@ -140,11 +141,10 @@ class AuthorizationService:
                 extra={
                     "project_ref": redacted_project_ref(project_id),
                     "error_type": type(exc).__name__,
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
                 },
             )
-            raise ServiceUnavailableException(
-                "Project authorization is temporarily unavailable"
-            ) from exc
+            raise authorization_unavailable(exc) from exc
 
         if cache is not None:
             cache[cache_key] = grant  # type: ignore[assignment]
@@ -231,11 +231,13 @@ class AuthorizationService:
             # while distinguishing dependency outage from an empty result.
             _logger.warning(
                 "project_authorization_batch_facts_unavailable",
-                extra={"error_type": type(exc).__name__, "candidate_count": len(projects)},
+                extra={
+                    "error_type": type(exc).__name__,
+                    "candidate_count": len(projects),
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
+                },
             )
-            raise ServiceUnavailableException(
-                "Project authorization is temporarily unavailable"
-            ) from exc
+            raise authorization_unavailable(exc) from exc
         accessible: list[tuple[Any, ProjectGrant]] = []
         for project in projects:
             project_id = str(project.id)
@@ -277,11 +279,10 @@ class AuthorizationService:
                 extra={
                     "error_type": type(exc).__name__,
                     "candidate_count": len(normalized),
+                    "dependency_failure": dependency_failure(exc, "project_authorization_database"),
                 },
             )
-            raise ServiceUnavailableException(
-                "Project authorization is temporarily unavailable"
-            ) from exc
+            raise authorization_unavailable(exc) from exc
         allowed: list[str] = []
         for project_id in normalized:
             facts = facts_by_id.get(project_id)

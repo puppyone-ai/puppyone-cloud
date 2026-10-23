@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.platform.scope_sandbox import ssh_credentials
-from src.platform.scope_sandbox.manager import ScopeSandboxManager
-from src.platform.scope_sandbox.provider import (
+from src.platform.workspace.scopes import ssh_credentials
+from src.platform.workspace.scopes.manager import ScopeSandboxManager
+from src.platform.workspace.scopes.provider import (
     ConnectionInfo,
     ProviderCapabilities,
     SandboxInfo,
@@ -18,8 +18,10 @@ from src.platform.scope_sandbox.provider import (
     SandboxSpec,
     SandboxState,
 )
-from src.platform.scope_sandbox.registry import InMemorySandboxSessionStore
-from src.platform.scope_sandbox.service import ScopeSandboxService
+from src.platform.workspace.scopes.registry import InMemorySandboxSessionStore
+from src.platform.workspace.scopes.service import ScopeSandboxService
+from src.platform.access.adapters.ssh.service import SshAccessService
+from src.platform.access.adapters.git.locator import canonical_git_url
 
 
 @dataclass
@@ -110,6 +112,7 @@ def _service(provider: FakeProvider):
     store = InMemorySandboxSessionStore()
     svc = ScopeSandboxService(
         store=store,
+        git_locator=canonical_git_url,
         scope_lookup=lambda sid: SCOPE if sid == SCOPE.id else None,
         manager_factory=lambda name: ScopeSandboxManager(
             provider, store, bootstrap=svc._make_bootstrap(),
@@ -120,7 +123,7 @@ def _service(provider: FakeProvider):
         git_credential_issuer=lambda *_args: "secret-git-token-value",
         write_lease_factory=_NoopLease,
     )
-    return svc
+    return SshAccessService(svc)
 
 
 async def _connect(svc, user="u1", now=0.0):
@@ -226,7 +229,7 @@ async def test_reap_sweeps_per_provider():
     prov = FakeProvider(tcp_ingress=False)
     svc = _service(prov)
     await _connect(svc, user="u1", now=0)
-    summary = await svc.reap(now=0)
+    summary = await svc.workspace.reap(now=0)
     # the connected session is swept under its provider's manager and kept
     # (connected_users pins it RUNNING)
     assert summary.kept == 1 and summary.stopped == 0

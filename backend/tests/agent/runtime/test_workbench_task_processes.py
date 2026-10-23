@@ -12,8 +12,8 @@ from uuid import uuid4
 import pytest
 
 from src.config import settings
-from src.platform.scope_sandbox.execution.pi_worker import PiWorker
-from src.platform.scope_sandbox.execution.store import InMemoryExecutionSessionStore
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from tests.agent.runtime.test_pi_worker import completion, config
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -71,7 +71,7 @@ async def read_marker(stream, marker):
 
 @pytest.mark.parametrize("end_action", ["stop", "finalize", "disconnect"])
 async def test_ending_one_real_agent_preserves_other_agent_pty_preview_and_files(end_action):
-    from src.platform.scope_sandbox.execution.workbench_task import WorkbenchTask
+    from src.platform.workspace.execution.workbench_task import WorkbenchTask
 
     owner = PiWorker(
         str(uuid4()),

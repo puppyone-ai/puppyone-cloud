@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-23",
+  "real_test_database": {
+    "scope": "Read-only existing running workspace; configured Supabase and real Fly; service status plus root read, excludes Desktop project lookup/render and HTTP middleware",
+    "samples": {
+      "warm": {
+        "count": 10,
+        "p50_seconds": 2.388,
+        "sample_p95_seconds": 3.927,
+        "seconds": [
+          2.083,
+          2.116,
+          2.146,
+          2.327,
+          2.388,
+          2.431,
+          2.601,
+          2.655,
+          3.044,
+          3.927
+        ]
+      },
+      "reconnect": {
+        "count": 5,
+        "p50_seconds": 5.804,
+        "sample_p95_seconds": 8.733,
+        "seconds": [
+          5.053,
+          5.688,
+          5.804,
+          6.697,
+          8.733
+        ]
+      }
+    }
+  },
+  "owned_http_acceptance": {
+    "workload": "authenticated local HTTP; owned local PG/S3; real Fly; separate worker/API file pools",
+    "samples": {
+      "warm": {
+        "count": 10,
+        "p50_ms": 469.66,
+        "p95_ms": 857.99,
+        "max_ms": 857.99,
+        "milliseconds": [
+          557.16,
+          462.57,
+          461.96,
+          480.05,
+          469.66,
+          857.99,
+          506.56,
+          470.0,
+          465.75,
+          454.3
+        ]
+      },
+      "reconnect": {
+        "count": 5,
+        "p50_ms": 3309.09,
+        "p95_ms": 4468.2,
+        "max_ms": 4468.2,
+        "milliseconds": [
+          3676.39,
+          3141.34,
+          4468.2,
+          3013.69,
+          3309.09
+        ]
+      },
+      "resume": {
+        "count": 3,
+        "p50_ms": 13033.01,
+        "p95_ms": 17540.64,
+        "max_ms": 17540.64,
+        "milliseconds": [
+          13033.01,
+          12510.23,
+          17540.64
+        ]
+      }
+    },
+    "initial_clone_ms": 56112.83,
+    "result": "passed",
+    "cleanup": "owned Machines absent; Volumes deleted (absent or pending_destroy)"
+  },
+  "interpretation": "Sample percentiles, not production SLO acceptance; resume uses local PG/S3; billing disabled. No user workspace was stopped."
+}
