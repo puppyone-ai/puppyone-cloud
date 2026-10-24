@@ -1,6 +1,5 @@
 """Real Git pack reads with counted storage transports (not hosted latency)."""
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -62,19 +61,17 @@ def test_history_pack_downloaded_once_and_warm_graph_downloads_nothing(packed):
     history = HistoryGraphService(manager, cursor_codec=HistoryCursorCodec("budget-test"))
     s3.download_file_keys.clear()
     db.select_calls = 0
-    first = asyncio.run(history.get_page("proj", limit=80, grant=grant("proj"), summary=True))
+    first = history.get_page("proj", limit=80, grant=grant("proj"), summary=True)
     assert len(first.entries) == 2
     assert len(s3.download_file_keys) == 1
     assert db.select_calls == 0
     assert rpc == ["begin", "locations", "release"]
     rpc.clear()
     s3.download_file_keys.clear()
-    warm = asyncio.run(history.get_page("proj", limit=80, grant=grant("proj"), summary=True))
+    warm = history.get_page("proj", limit=80, grant=grant("proj"), summary=True)
     assert warm == first
     assert s3.download_file_keys == [] and rpc == ["begin", "release"]
-    detail = asyncio.run(
-        history.get_detail("proj", first.entries[0]["commit_id"], grant=grant("proj"))
-    )
+    detail = history.get_detail("proj", first.entries[0]["commit_id"], grant=grant("proj"))
     assert detail["changes"] == [{"path": "file", "op": "modified"}]
     assert s3.download_file_keys == []  # Shared immutable disk pack, fresh admitted detail.
     assert not pins
