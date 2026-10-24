@@ -142,7 +142,11 @@ class WorkbenchLifecycle:
             "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
         }
         return await run_blocking(
-            self.repository.request_open, row, binding, context["revision"]
+            self.repository.request_open,
+            row,
+            binding,
+            context["revision"],
+            settings.AGENT_WORKER_POOL,
         )
 
     async def ensure_running(self, run, row, *, base=None):
@@ -230,7 +234,13 @@ class WorkbenchLifecycle:
             await asyncio.gather(operation, heartbeat_task, return_exceptions=True)
             await self.billing.detach_session(meter_id(row))
 
-    async def serve(self):
+    async def serve(self, *, stop=None, grace=0):
+        """Execute this pool's pending open requests until ``stop`` is set.
+
+        After stop, in-flight operations get ``grace`` seconds; cancellation
+        leaves the durable intent for a successor after its operation lease.
+        """
+
         async def run(row):
             try:
                 await self.execute(row)
@@ -241,12 +251,14 @@ class WorkbenchLifecycle:
                 logger.exception("workbench_dispatch_failed", extra={"workbench_id": row["id"]})
 
         try:
-            while True:
+            while stop is None or not stop.is_set():
                 try:
                     # Failed credentials are recorded on the claimed operation;
                     # they must not strand every pending request in the queue.
                     provider = self.providers(None)
-                    for row in await run_blocking(self.repository.pending, provider.name):
+                    for row in await run_blocking(
+                        self.repository.pending, provider.name, settings.AGENT_WORKER_POOL
+                    ):
                         if row["id"] not in self.active and len(self.active) < 4:
                             task = asyncio.create_task(run(row))
                             self.active[row["id"]] = task
@@ -260,6 +272,8 @@ class WorkbenchLifecycle:
                     logger.exception("workbench_provider_preflight_failed")
                     await asyncio.sleep(5)
                 await asyncio.sleep(0.5)
+            if self.active and grace > 0:
+                await asyncio.wait(list(self.active.values()), timeout=grace)
         finally:
             tasks = list(self.active.values())
             for task in tasks:
@@ -409,7 +423,9 @@ class WorkbenchLifecycle:
 
     async def reap(self):
         provider = await self.preflight()
-        for row in await run_blocking(self.repository.due, provider.name):
+        for row in await run_blocking(
+            self.repository.due, provider.name, settings.AGENT_WORKER_POOL
+        ):
             if row.get("open_requested") and row["state"] != "pausing":
                 continue
             owned = None

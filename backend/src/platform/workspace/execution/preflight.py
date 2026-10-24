@@ -44,7 +44,9 @@ async def check():
             stage = "workspace_database"
             # This RPC exists only after the durable-open migration. It does not
             # claim or wake any workspace and is safe in a release health probe.
-            await run_blocking(WorkbenchRepository().pending, provider.name)
+            await run_blocking(
+                WorkbenchRepository().pending, provider.name, settings.AGENT_WORKER_POOL
+            )
             stage = "workspace_readiness_database"
             # Null revision fails before row locks or writes. Missing functions,
             # changed signatures and transport failures must block activation.

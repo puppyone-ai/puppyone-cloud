@@ -20,6 +20,7 @@ from src.platform.access.adapters.agent.runtime.persistence.commands import RunR
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
 from tests.agent.runtime.test_workbench_attachment import shared_submit
 from tests.agent.runtime.test_workbench_task_leases import release, running, task
+from tests.agent.runtime.conftest import claimant
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -46,7 +47,7 @@ async def shared_case(postgres, submitted, control_api, request):
         postgres.sql(f"UPDATE cloud_workbenches SET state='{request.param}' WHERE id='{wb['id']}'")
         wb = postgres.row(f"SELECT * FROM cloud_workbenches WHERE id='{wb['id']}'")
     shared_submit(postgres, args, wb)
-    run = repo.claim_workbench_run(worker=str(uuid4()))
+    run = repo.claim_workbench_run(worker=claimant(str(uuid4())))
     tasks = SharedTaskRepository(control_api)
     base = {
         "generation": str(uuid4()),
@@ -176,7 +177,7 @@ async def shared_case(postgres, submitted, control_api, request):
 async def test_existing_supervisor_executes_shared_run_without_vm_side_effects(shared_case):
     case = shared_case
     other = shared_submit(case.postgres, case.args, case.wb)
-    other = case.repo.claim_workbench_run(worker="other")
+    other = case.repo.claim_workbench_run(worker=claimant("other"))
     untouched = task(case.postgres, other, case.wb)
     await case.supervisor().run_claim(case.run)
     final = case.repo.get(case.run["id"])
@@ -234,7 +235,7 @@ async def test_takeover_quiesces_predecessor_before_allocating_new_uid(shared_ca
     case.postgres.sql(
         f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
     )
-    current = case.repo.claim_workbench_run(worker="takeover")
+    current = case.repo.claim_workbench_run(worker=claimant("takeover"))
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "succeeded"
     assert case.stopped == [old["execution_id"], current["execution_id"]]
@@ -250,10 +251,11 @@ async def test_cleanup_failure_is_durable_and_terminal_retry_only_cleans_own_tas
     assert final["state"] == "succeeded"  # Confirmed publication is not undone by cleanup.
     assert final["snapshot"]["resource_retained"] is True
     assert len(case.tasks.active(case.run)) == 1
+    # Retained cleanup is retried once its backoff (dispatch_after) elapses.
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{final['id']}'"
+        f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second',dispatch_after=clock_timestamp()-interval '1 second' WHERE id='{final['id']}'"
     )
-    current = case.repo.claim_workbench_run(worker="cleanup")
+    current = case.repo.claim_workbench_run(worker=claimant("cleanup"))
     case.stop_error.clear()
     await case.supervisor().run_claim(current)
     assert len(case.starts) == 1
@@ -277,7 +279,7 @@ async def test_unknown_tool_does_not_replay_or_restore_shared_files(shared_case)
     case.postgres.sql(
         f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
     )
-    current = case.repo.claim_workbench_run(worker="unknown")
+    current = case.repo.claim_workbench_run(worker=claimant("unknown"))
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "outcome_unknown"
     assert case.starts == []
@@ -312,7 +314,7 @@ async def test_known_failed_run_continues_conversation_without_a_filesystem_copy
     assert first["publication"] is None
     case.fail_after_tool.clear()
     shared_submit(case.postgres, case.args, case.wb, session=first["session_id"])
-    following = case.repo.claim_workbench_run(worker="next-message")
+    following = case.repo.claim_workbench_run(worker=claimant("next-message"))
     await case.supervisor().run_claim(following)
     assert case.repo.get(following["id"])["state"] == "succeeded"
     assert case.starts[-1]["entries"] == first["checkpoint"]["state"]["entries"]
@@ -361,7 +363,7 @@ async def test_publication_retry_keeps_original_candidate_and_skips_model_and_gi
     case.postgres.sql(
         f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
     )
-    current = case.repo.claim_workbench_run(worker="publish-retry")
+    current = case.repo.claim_workbench_run(worker=claimant("publish-retry"))
     await case.supervisor().run_claim(current)
     assert case.repo.get(current["id"])["state"] == "succeeded"
     assert case.starts[0]["finalize_only"] is True
@@ -379,7 +381,7 @@ async def test_fenced_coordinator_cannot_discover_or_stop_successor(shared_case)
     case.postgres.sql(
         f"UPDATE agent_runs SET lease_until=clock_timestamp()-interval '1 second' WHERE id='{case.run['id']}'"
     )
-    current = case.repo.claim_workbench_run(worker="new-owner")
+    current = case.repo.claim_workbench_run(worker=claimant("new-owner"))
     release(case.postgres, current, old)
     successor = task(case.postgres, current, case.wb)
     await SharedTasks(case.tasks, case.owner, worker_factory=case.TaskWorker).close(case.run)

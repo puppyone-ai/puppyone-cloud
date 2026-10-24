@@ -423,6 +423,12 @@ class Settings(BaseSettings):
     CLOUD_AGENT_CONTEXT_WINDOW: int = Field(default=131072, ge=16384, le=2000000)
     CLOUD_AGENT_MAX_MODEL_CALLS: int = Field(default=32, ge=1, le=100)
     CLOUD_AGENT_CONCURRENCY: int = Field(default=4, ge=1, le=32)
+    # Work admitted by this deployment runs only on workers of the same pool. A
+    # local stack sharing a hosted database must use its own pool (dev-<name>).
+    AGENT_WORKER_POOL: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    # A stopping worker lets active Runs continue this long, then hands them off.
+    # The platform's SIGTERM-to-SIGKILL window must be longer.
+    CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS: int = Field(default=20, ge=0, le=600)
     # Docker sandbox dedicated temp directory; only needed when containerized backend controls host Docker
     SANDBOX_TMPDIR: str | None = None
     # Sandbox file download concurrency

@@ -17,9 +17,11 @@ authorizes a Project, selects Git refs, or interprets Loop messages.
 ``store`` records unretained ephemeral provider resources and ``reaper`` stops
 idle ones through each provider's ``cleanup``. ``resources`` destroys and
 verifies a resource known only by id (Project deletion); ``legacy_scope``
-retires machines left by the removed Scope Sandbox product.
+retires machines left by the removed Scope Sandbox product. ``bindings``
+proves this process's configuration can operate a persisted binding.
 """
 
+from .bindings import require_binding
 from .errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
 from .port import (
     RESOURCE_POOLS,
@@ -53,6 +55,7 @@ __all__ = [
     "default_provider",
     "destroy_resource",
     "durable_execution_store",
+    "require_binding",
     "resource_absent",
     "resource_identity",
     "run_execution_reaper_once",

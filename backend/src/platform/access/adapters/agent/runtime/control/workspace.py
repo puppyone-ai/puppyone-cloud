@@ -5,6 +5,7 @@ import logging
 
 from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.workspace.execution.worker_port import WorkerLost
+from src.config import settings
 from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
@@ -105,10 +106,15 @@ class SessionWorkspace:
         await self.transition(run, "retired")
 
 
-async def reap_workspaces(repository, lifecycle):
-    """Bounded indexed claims. Repeated kill is safe; uncertain ACK stays owned."""
+async def reap_workspaces(repository, lifecycle, *, pool=None):
+    """Bounded indexed claims. Repeated kill is safe; uncertain ACK stays owned.
+
+    Only Session workspaces of this worker's pool are retired.
+    """
     retired = 0
-    for row in await run_blocking(repository.workspace_due):
+    for row in await run_blocking(
+        repository.workspace_due, pool=pool or settings.AGENT_WORKER_POOL
+    ):
         try:
             if row["resource"]:
                 await lifecycle.cleanup(row["resource"])

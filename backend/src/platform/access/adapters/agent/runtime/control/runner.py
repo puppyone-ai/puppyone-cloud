@@ -12,7 +12,7 @@ from src.platform.access.adapters.agent.runtime.control.checkpoints import Check
 from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun, ExecutionLease
 from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
 from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
-from src.platform.access.adapters.agent.runtime.control.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.ports import BindingCapability, RunStore
 from src.platform.access.adapters.agent.runtime.control.publication import PublicationRejected
 from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
 from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
@@ -22,11 +22,16 @@ from src.platform.access.adapters.agent.runtime.control.tool_results import (
     tool_denial,
     tool_error,
 )
+from src.platform.access.adapters.agent.runtime.dispatch import (
+    INCAPABLE_CODES,
+    MAX_DISPATCH_ATTEMPTS,
+)
 from src.platform.access.adapters.agent.runtime.execution.port import BoundToolPort, ExecutionPort
 from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopProtocolError
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
+from src.platform.sandbox import WorkspaceUnavailable
 from src.platform.workspace.execution.worker_port import WorkerLifecycle, WorkerLost
 from src.infra.execution.runner import run_blocking
 
@@ -51,8 +56,10 @@ class RunSupervisor:
         bound_tools: BoundToolPort | None = None,
         workspace=None,
         shared_tasks=None,
+        capability: BindingCapability | None = None,
     ):
         self.repo, self.admission, self.publication = repository, admission, publication
+        self.capability = capability
         self.inference, self.billing = inference, billing
         self.checkpoints = checkpoints or Checkpoints()
         if workspace is not None and shared_tasks is not None:
@@ -221,6 +228,7 @@ class RunSupervisor:
         flusher = asyncio.create_task(self.text_flush_loop())
         models = asyncio.create_task(self.watch_models())
         outcome = None
+        incapable = None
         try:
             done, _ = await asyncio.wait(
                 {heartbeat, operation, flusher, models}, return_when=asyncio.FIRST_COMPLETED
@@ -236,6 +244,13 @@ class RunSupervisor:
             outcome = (exc.state, exc.code)
         except PublicationRejected:
             outcome = ("failed", "publication_rejected")
+        except WorkspaceUnavailable as exc:
+            if exc.code in INCAPABLE_CODES:
+                # Configuration, not the task: another worker of the pool may serve it.
+                incapable = exc.code
+            else:
+                logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
+                outcome = ("failed", exc.code)
         except Exception:
             logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
             outcome = ("failed", "execution_failed")
@@ -246,6 +261,8 @@ class RunSupervisor:
             for task in (heartbeat, operation, flusher, models, *self.models.values()):
                 with suppress(asyncio.CancelledError, Exception):
                     await task
+        if incapable:
+            outcome = await self.hand_back(run, incapable)
         if outcome:
             current = await run_blocking(self.repo.get, run["id"])
             if (
@@ -273,8 +290,67 @@ class RunSupervisor:
                 outcome = ("conflict", "publication_reconciled")
             elif (self.run["publication"] or {}).get("status") == "failed":
                 outcome = ("failed", "publication_reconciled")
-            retained = not await self.preserve_resources()
+            if incapable:
+                # This worker cannot operate the Run's compute: record what
+                # exists for a capable worker instead of touching the provider.
+                retained = await self.holds_resources()
+            else:
+                retained = not await self.preserve_resources()
             await self.finish(outcome[0], outcome[1], retain_resource=retained)
+
+    async def hand_back(self, run, code):
+        """Release a Run this worker cannot serve; returns an outcome once exhausted.
+
+        Release is lease expiry without the wait: the successor's takeover rules
+        apply and this worker never claims the Run again. An active Run fails
+        as no_capable_worker on the MAX_DISPATCH_ATTEMPTS-th incapable worker;
+        terminal cleanup is never abandoned.
+        """
+        if self.shared_tasks and self.worker:
+            with suppress(Exception):
+                await self.worker.stop()
+        current = await run_blocking(self.repo.get, run["id"])
+        if (
+            not current
+            or current["execution_id"] != run["execution_id"]
+            or current["fence"] != run["fence"]
+        ):
+            return None
+        attempts = current.get("dispatch_attempts", 0) + 1
+        details = {"run_id": run["id"], "code": code, "dispatch_attempts": attempts}
+        if attempts >= MAX_DISPATCH_ATTEMPTS and current["state"] not in TERMINAL:
+            logger.error("cloud_agent_no_capable_worker", extra=details)
+            return ("failed", "no_capable_worker")
+        (logger.error if attempts >= MAX_DISPATCH_ATTEMPTS else logger.warning)(
+            "cloud_agent_run_released", extra=details
+        )
+        await run_blocking(self.repo.release_execution, current, reason="worker_incapable")
+        return None
+
+    async def holds_resources(self):
+        """Whether compute is recorded for this Run, without provider I/O."""
+        if self.shared_tasks:
+            return bool(await run_blocking(self.shared_tasks.repository.active, self.run))
+        executions = await run_blocking(self.repo.executions, self.run["id"])
+        return any(execution["resource"] for execution in executions)
+
+    async def require_capability(self):
+        """Prove this worker can operate the Run's persisted compute before acting.
+
+        An unbound Run is always servable: this worker allocates it with its
+        own configuration. Raises WorkspaceUnavailable otherwise.
+        """
+        if self.capability is None:
+            return
+        if self.shared_tasks:
+            row = await self.shared_tasks.workbench(self.run)
+            if row["state"] != "retired" and row.get("binding"):
+                # The workspace lifecycle operates only the deployment default.
+                await self.capability(row["binding"], row.get("resource"), default_only=True)
+            return
+        row = await run_blocking(self.repo.workspace, self.run["session_id"])
+        if row and row.get("binding"):
+            await self.capability(row["binding"], row.get("resource"))
 
     async def preserve_resources(self):
         """Quiesce before copying. Storage outages transfer cleanup to the run
@@ -340,6 +416,7 @@ class RunSupervisor:
         return saved
 
     async def execute(self):
+        await self.require_capability()
         if self.run["state"] in TERMINAL:
             saved = await self.preserve_resources()
             await self.finish(

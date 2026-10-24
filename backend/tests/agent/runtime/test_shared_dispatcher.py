@@ -29,7 +29,9 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
         claim_workbench_run=lambda **_: claim("shared", shared),
     )
     owner = (
-        SimpleNamespace(reap=AsyncMock(), lifecycle=SimpleNamespace(serve=release.wait))
+        SimpleNamespace(
+            reap=AsyncMock(), lifecycle=SimpleNamespace(serve=lambda **_: release.wait())
+        )
         if enabled
         else None
     )

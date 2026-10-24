@@ -425,7 +425,7 @@ async def test_approval_survives_destroyed_worker_and_new_execution(prepared):
         await task
     await first.worker.stop()
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     claimed = case.repo.rpc("claim", worker="replacement")
     assert claimed["execution_id"] != case.run["execution_id"]
@@ -477,7 +477,7 @@ async def test_completed_tool_receipt_recovers_before_manifest_ack(prepared, mon
     await first.worker.stop()
     monkeypatch.setattr(case.repo, "complete_tool", original)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     next_run = case.repo.rpc("claim", worker="receipt-recovery")
     model = ModelFixture()
@@ -503,7 +503,7 @@ async def test_unknown_tool_is_not_replayed(prepared, monkeypatch):
         await approve_to_completion(case, asyncio.create_task(first.run_claim(case.run)))
     assert case.repo.tools(case.run["id"])[0]["state"] == "executing"
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     next_run = case.repo.rpc("claim", worker="unknown-recovery")
     model = ModelFixture()
@@ -579,7 +579,7 @@ async def test_checkpoint_outage_retains_workspace_until_retry(prepared, monkeyp
     outage = False
     monkeypatch.setattr(case.checkpoints, "save", save)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     await case.supervisor().run_claim(case.repo.rpc("claim", worker="storage-recovered"))
     completed = case.repo.get(case.run["id"])
@@ -634,7 +634,7 @@ async def test_pause_failure_retries_confirmed_publication(prepared, monkeypatch
     assert case.repo.get(case.run["id"])["publication"]["status"] == "committed"
     monkeypatch.setattr(PiWorker, "pause", pause)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     await case.supervisor().run_claim(case.repo.rpc("claim", worker="cleanup-recovered"))
     assert case.repo.get(case.run["id"])["state"] == "succeeded"
@@ -1141,7 +1141,7 @@ async def test_native_settled_model_recovers_without_running_model_again(
     await first.worker.stop()
     monkeypatch.setattr(case.repo, method, original)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     model = ModelFixture()
     await case.supervisor(model=model).run_claim(case.repo.rpc("claim", worker="settled-recovery"))
@@ -1184,7 +1184,7 @@ async def test_native_storage_outage_after_commit_retains_exact_commit_until_dur
         read_case(case, "result.txt")
     monkeypatch.setattr(case.checkpoints, "save", save)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     model = ModelFixture()
     await case.supervisor(model=model).run_claim(case.repo.rpc("claim", worker="storage-returned"))
@@ -1225,7 +1225,7 @@ async def test_native_model_error_checkpoint_never_becomes_success_after_crash(
     await first.worker.stop()
     monkeypatch.setattr(case.repo, "write", original)
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     replacement = ModelFixture()
     await case.supervisor(model=replacement).run_claim(
@@ -1332,7 +1332,7 @@ async def test_model_stream_interruption_does_not_duplicate_partial_text(prepare
         await task
     await first.worker.stop()
     case.postgres.sql(
-        f"UPDATE agent_runs SET lease_until=now()-interval '1 second' WHERE id='{case.run['id']}'"
+        f"UPDATE agent_runs SET lease_until=now()-interval '1 second',dispatch_after=now()-interval '1 second' WHERE id='{case.run['id']}'"
     )
     model = ModelFixture()
     model.calls = 1

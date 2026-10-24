@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from src.exceptions import DatabaseSchemaOutdatedException, NotFoundException
 from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
 from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
+from tests.agent.runtime.conftest import claimant
 from tests.agent.runtime.test_supervisor import ModelFixture
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
 
@@ -57,9 +58,25 @@ async def test_named_operations_have_real_http_budgets(prepared):
     same, report = measured("replay", lambda: c.service.submit(c.user, request))
     assert same["id"] == run["id"]
     assert report["attempts"] == 1, report
-    claim, report = measured("claim", lambda: c.repo.claim_run(worker="budget"))
+    claim, report = measured("claim", lambda: c.repo.claim_run(worker=claimant("budget")))
     assert claim["id"] == run["id"]
     assert report["attempts"] == 1, report
+
+
+@pytest.mark.asyncio
+async def test_api_admits_runs_into_its_own_worker_pool(prepared, monkeypatch):
+    from src.config import settings
+
+    c = prepared
+    c.postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE id='{c.run['id']}'")
+    monkeypatch.setattr(settings, "AGENT_WORKER_POOL", "dev-api-admission")
+    request = SubmitRun(project_id=c.project, agent_id=c.agent, request_id=uuid4(), prompt="Pool")
+    run = c.service.submit(c.user, request)
+    stored = c.repo.get(run["id"])
+    assert (stored["worker_pool"], stored["runtime_contract"]) == ("dev-api-admission", 1)
+    assert "dispatch" not in stored["policy"]
+    claim = c.repo.claim_run(worker=claimant("local", pool="dev-api-admission"))
+    assert claim["id"] == run["id"]
 
 
 @pytest.mark.asyncio
