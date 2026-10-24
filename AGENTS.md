@@ -151,6 +151,7 @@ backend/
 │   │   ├── organization/      #   Org management & member invitations
 │   │   ├── project/           #   Project CRUD & members & dashboard
 │   │   ├── profile/           #   User profile & onboarding status
+│   │   ├── sandbox/           #   Pluggable compute providers (Fly/E2B/Docker) behind RuntimeProvider
 │   │   ├── workspace/         #   Workspace management
 │   │   └── analytics/         #   Usage analytics
 │   │
@@ -162,7 +163,6 @@ backend/
 │   │   ├── chunking/          #   Text chunking
 │   │   ├── security/          #   Security module (AES-256-GCM)
 │   │   ├── scheduler/         #   Scheduled tasks (APScheduler)
-│   │   ├── sandbox/           #   Sandbox runtime (Docker/E2B execution engine)
 │   │   ├── turbopuffer/       #   Turbopuffer vector DB client
 │   │   └── mcp_health.py      #   Remote MCP transport health probe only
 │   ├── ingest/                # File ingestion ETL (MineRU + LLM)
@@ -468,7 +468,7 @@ sandbox/
 └── test-data.json     # Sample test data
 ```
 
-Both the frontend (`app/api/sandbox/route.ts`) and backend (`src/infra/sandbox/`) integrate with sandboxes; the backend also supports E2B cloud sandboxes.
+Both the frontend (`app/api/sandbox/route.ts`) and backend (`src/platform/sandbox/`) integrate with sandboxes; the backend provider layer supports Fly, E2B and local Docker.
 
 ---
 

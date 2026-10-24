@@ -13,6 +13,9 @@ Layout rules (enforced by tests/platform/test_entrypoint_architecture.py):
 
 A provider owns compute lifecycle and channel transport; it never owns a Run,
 authorizes a Project, selects Git refs, or interprets Loop messages.
+
+``store`` records unretained ephemeral provider resources and ``reaper`` stops
+idle ones through each provider's ``cleanup``.
 """
 
 from .errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
@@ -24,12 +27,16 @@ from .port import (
     RuntimeTransition,
     resource_identity,
 )
+from .reaper import run_execution_reaper_once, start_execution_reaper
 from .registry import PROVIDERS, close_provider_transports, default_provider, runtime_provider
+from .store import ExecutionSession, ExecutionSessionStore, durable_execution_store
 from .timing import workspace_event, workspace_stage
 
 __all__ = [
     "PROVIDERS",
     "SEND_TIMEOUT",
+    "ExecutionSession",
+    "ExecutionSessionStore",
     "RuntimeCapabilities",
     "RuntimeConnection",
     "RuntimeProvider",
@@ -39,8 +46,11 @@ __all__ = [
     "WorkspaceUnavailable",
     "close_provider_transports",
     "default_provider",
+    "durable_execution_store",
     "resource_identity",
+    "run_execution_reaper_once",
     "runtime_provider",
+    "start_execution_reaper",
     "workspace_event",
     "workspace_stage",
 ]

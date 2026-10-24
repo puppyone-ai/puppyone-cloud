@@ -294,7 +294,7 @@ def _init_scope_sandbox_reaper(app: FastAPI) -> None:
     if not getattr(settings, "SCOPE_SANDBOX_REAPER_ENABLED", False):
         return
     from src.platform.access.adapters.ssh.service import get_ssh_access_service
-    from src.platform.workspace.execution.reaper import start_execution_reaper
+    from src.platform.sandbox import start_execution_reaper
     from src.platform.workspace.scopes.reaper import start_reaper
 
     service = get_ssh_access_service().workspace

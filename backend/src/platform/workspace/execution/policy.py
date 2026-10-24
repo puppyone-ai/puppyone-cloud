@@ -1,10 +1,7 @@
-"""Shared command-safety policy for every sandbox execution mode (ISSUE-009).
+"""Shared command-safety policy for sandbox command execution (ISSUE-009).
 
-Both the sandbox HTTP endpoint (``connectors/sandbox_endpoint``) and the agent
-bash tool (``connectors/agent``) route execution through
-``SandboxService.exec``.  Enforcing the forbidden-pattern blacklist here — at
-the single choke point — prevents per-caller policy drift, where one entry path
-(the agent tool) historically skipped the validation the endpoint applied.
+It was the single choke point for the retired ``SandboxService.exec`` path.
+Its remaining caller is the Scope Sandbox SSH forced-command wrapper.
 
 This is a defense-in-depth layer only. A regex blacklist is trivially evadable
 (``$IFS``, encoding, variable splicing); the decisive isolation control is the

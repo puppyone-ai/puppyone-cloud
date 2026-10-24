@@ -219,9 +219,6 @@
         "etl_postprocess_job::commands.ops.read_file": 1,
         "etl_postprocess_job::commands.ops.stat": 1
       },
-      "platform/workspace/execution/service.py": {
-        "SandboxService.read_file::self._impl.read_file": 1
-      },
       "platform/workspace/project_cleanup.py": {
         "ProjectHostCleanupPort._read_view_metadata_bytes::metadata_path.stat": 1
       },

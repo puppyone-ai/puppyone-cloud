@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from src.platform.sandbox.port import RuntimeConnection, resource_identity
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.workbench_task import WorkbenchTask
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 

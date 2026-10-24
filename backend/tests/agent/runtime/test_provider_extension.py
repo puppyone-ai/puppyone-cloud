@@ -16,7 +16,7 @@ from src.platform.sandbox.port import (
     RuntimeTransition,
     resource_identity,
 )
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 
 

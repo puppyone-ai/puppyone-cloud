@@ -10,8 +10,7 @@ from contextlib import suppress
 
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.instrumentation import database_stage
-from src.platform.sandbox import runtime_provider
-from src.platform.workspace.execution.store import ExecutionSession, durable_execution_store
+from src.platform.sandbox import ExecutionSession, durable_execution_store, runtime_provider
 from src.platform.workspace.execution.worker_port import WorkerLost
 
 from .control_channel import ControlChannel

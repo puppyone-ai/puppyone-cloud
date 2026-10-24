@@ -23,7 +23,7 @@ from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, ModelChunk
 from src.platform.project.write_lease import ProjectWriteLease
 from src.platform.workspace.execution.pi_worker import PiWorker
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.access.adapters.git.workspace_transport import RunGitTransport
 from tests.agent.runtime.workspace_assertions import recovery_file, recovery_git
 

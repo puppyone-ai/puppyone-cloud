@@ -9,8 +9,8 @@ import pytest
 
 from src.config import settings
 from src.platform.managed_ai.contracts import InferenceRun, ModelChunk
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.pi_worker import PiWorker
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from tests.agent.runtime.test_supervisor import (
     ModelFixture,
     approve_to_completion,

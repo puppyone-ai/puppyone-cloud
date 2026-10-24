@@ -88,8 +88,6 @@ ignore = [
 # run_blocking). New modules get ASYNC230/ASYNC240 without exception.
 "src/infra/file_processing/mineru/client.py" = ["ASYNC230", "ASYNC240"]
 "src/platform/access/adapters/ssh/gateway.py" = ["ASYNC240"]
-"src/platform/workspace/execution/docker_sandbox.py" = ["ASYNC230", "ASYNC240"]
-"src/platform/workspace/execution/file_utils.py" = ["ASYNC230", "ASYNC240"]
 "src/platform/sandbox/providers/fly/transport.py" = ["ASYNC240"]
 "src/ingest/router.py" = ["E402"]
 

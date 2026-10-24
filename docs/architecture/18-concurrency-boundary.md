@@ -87,8 +87,7 @@ a lost `ProjectWriteLease` cancels its owner's `Execution` (threads) or task
   Engine except listed async edges.
 - `test_async_database_boundary.py`: no inline Supabase `.execute()` in coroutines.
 - ruff `ASYNC` (ASYNC230/240 are temporarily ignored per file for the SSH
-  gateway, Fly transport, sandbox file transfer and MinerU client, listed in
-  `pyproject.toml`).
+  gateway, Fly transport and MinerU client, listed in `pyproject.toml`).
 - Runtime: the lag monitor runs everywhere; staging can also set
   `PYTHONASYNCIODEBUG=1` (every callback slower than 100 ms is logged through
   the intercepted stdlib logger; debug mode has overhead).
