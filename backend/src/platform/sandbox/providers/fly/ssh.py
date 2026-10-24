@@ -18,10 +18,11 @@ from pathlib import Path
 import asyncssh
 import httpx
 
-from ..timing import workspace_stage
-from ..worker_port import WorkerDisconnected
-from .fly_certificate import import_user_certificate
-from .port import resource_identity
+from src.platform.sandbox.errors import WorkerDisconnected
+from src.platform.sandbox.port import resource_identity
+from src.platform.sandbox.timing import workspace_stage
+
+from .certificate import import_user_certificate
 
 
 @dataclass

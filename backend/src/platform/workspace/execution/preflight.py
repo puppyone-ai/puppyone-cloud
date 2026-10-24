@@ -12,9 +12,9 @@ from src.config import settings
 from src.infra.dependency_diagnostics import dependency_failure, network_environment
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.repository import AuthorizationRepository
+from src.platform.sandbox import runtime_provider
 
 from ..repository import WorkbenchRepository
-from .providers.registry import runtime_provider
 from .runtime_contract import FILE_PROTOCOL, RUNTIME_PROTOCOL
 
 

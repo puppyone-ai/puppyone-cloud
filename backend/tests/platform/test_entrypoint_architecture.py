@@ -65,8 +65,20 @@ def test_entrypoints_never_import_sibling_lifecycle_implementations():
 def test_repository_api_dependencies_remain_one_way():
     boundaries = (
         ("platform/workspace", ("src.platform.access", "fastapi", "starlette")),
+        ("platform/sandbox", (
+            "src.platform.access", "src.platform.workspace", "fastapi", "starlette",
+        )),
+        ("platform/sandbox/providers/fly", (
+            "src.platform.sandbox.providers.e2b", "src.platform.sandbox.providers.docker",
+        )),
+        ("platform/sandbox/providers/e2b", (
+            "src.platform.sandbox.providers.fly", "src.platform.sandbox.providers.docker",
+        )),
+        ("platform/sandbox/providers/docker", (
+            "src.platform.sandbox.providers.fly", "src.platform.sandbox.providers.e2b",
+        )),
         ("platform/access/adapters/ssh", (
-            "src.platform.workspace.execution.providers",
+            "src.platform.sandbox",
             "src.platform.workspace.scopes.factory",
             "src.platform.workspace.scopes.manager",
             "e2b", "docker",
@@ -109,6 +121,35 @@ def test_repository_api_dependencies_remain_one_way():
                 if any(module == name or module.startswith(name + ".") for name in forbidden)
             )
     assert not violations
+
+
+def test_sandbox_providers_are_reached_only_through_the_sandbox_package():
+    sandbox = SRC / "platform" / "sandbox"
+    internal = "src.platform.sandbox.providers"
+    violations = [
+        (str(path.relative_to(SRC)), module)
+        for path in SRC.rglob("*.py")
+        if sandbox not in path.parents
+        for module in imports(path)
+        if module == internal or module.startswith(internal + ".")
+    ]
+    assert not violations
+
+
+def test_every_sandbox_provider_folder_is_registered():
+    from importlib import import_module
+
+    from src.platform.sandbox import PROVIDERS
+
+    folders = {
+        path.name
+        for path in (SRC / "platform" / "sandbox" / "providers").iterdir()
+        if path.is_dir() and (path / "__init__.py").exists()
+    }
+    assert folders == set(PROVIDERS)
+    for name, (module, factory) in PROVIDERS.items():
+        assert module == f".providers.{name}"
+        assert hasattr(import_module(module, package="src.platform.sandbox"), factory)
 
 
 def test_version_notification_route_is_mounted_from_access():

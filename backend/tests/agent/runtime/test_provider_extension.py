@@ -9,8 +9,8 @@ from uuid import uuid4
 import pytest
 
 from src.config import settings
-from src.platform.workspace.execution.providers import registry
-from src.platform.workspace.execution.providers.port import (
+from src.platform.sandbox import registry
+from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
     RuntimeTransition,

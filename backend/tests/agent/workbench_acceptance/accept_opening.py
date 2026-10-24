@@ -15,7 +15,7 @@ import pytest
 
 from src.config import settings
 from src.platform.access.composition import build_workbench_service
-from src.platform.workspace.execution.providers.fly import FlyRuntimeProvider
+from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from tests.agent.workbench_acceptance.accept_fly import cleanup_owned
 from tests.agent.workbench_acceptance.accept_io import summary
 from tests.agent.workbench_acceptance.accept_production_entry import (

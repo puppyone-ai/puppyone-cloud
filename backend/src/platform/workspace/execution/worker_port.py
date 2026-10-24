@@ -3,15 +3,12 @@
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+# Provider failures are owned by the sandbox layer; re-exported for existing callers.
+from src.platform.sandbox import WorkerDisconnected, WorkerLost
+
+__all__ = ["Row", "WorkerDisconnected", "WorkerLifecycle", "WorkerLost", "WorkspaceWorker"]
+
 Row = dict[str, Any]
-
-
-class WorkerLost(RuntimeError):
-    """Provider no longer has an unconfirmed filesystem to preserve."""
-
-
-class WorkerDisconnected(ConnectionError):
-    """Transport loss does not prove the provider's working copy is gone."""
 
 
 class WorkspaceWorker(Protocol):

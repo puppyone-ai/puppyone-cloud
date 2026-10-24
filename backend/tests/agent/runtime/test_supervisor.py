@@ -538,7 +538,7 @@ async def test_failed_provider_allocation_resolves_before_recovery(prepared, mon
         return []
 
     monkeypatch.setattr(PiWorker, "create", rejected)
-    from src.platform.workspace.execution.providers.e2b import E2BRuntimeProvider
+    from src.platform.sandbox.providers.e2b.provider import E2BRuntimeProvider
 
     async def resolve(_provider, resource):
         return await absent(resource)

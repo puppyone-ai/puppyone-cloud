@@ -16,12 +16,8 @@ from uuid import UUID
 import httpx
 
 from src.config import settings
-from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
-
-from ..runtime_contract import WorkspaceUnavailable
-from ..timing import workspace_stage
-from .fly_transport import acquire_transport, close_transports
-from .port import (
+from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
+from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
     RuntimeTransition,
@@ -29,6 +25,9 @@ from .port import (
     read_process,
     resource_identity,
 )
+from src.platform.sandbox.timing import workspace_stage
+
+from .transport import acquire_transport, close_transports
 
 
 class FlyRuntimeProvider:

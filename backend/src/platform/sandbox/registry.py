@@ -7,9 +7,9 @@ from src.config import settings
 from .port import RuntimeProvider
 
 PROVIDERS = {
-    "docker": (".docker", "DockerRuntimeProvider"),
-    "e2b": (".e2b", "E2BRuntimeProvider"),
-    "fly": (".fly", "FlyRuntimeProvider"),
+    "docker": (".providers.docker", "DockerRuntimeProvider"),
+    "e2b": (".providers.e2b", "E2BRuntimeProvider"),
+    "fly": (".providers.fly", "FlyRuntimeProvider"),
 }
 
 

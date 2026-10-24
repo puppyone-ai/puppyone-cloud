@@ -11,9 +11,10 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from src.platform.sandbox import workspace_event, workspace_stage
+
 from .control_channel import ControlChannel
 from .runtime_contract import validate_runtime
-from .timing import workspace_event, workspace_stage
 from .worker_port import WorkerDisconnected
 
 

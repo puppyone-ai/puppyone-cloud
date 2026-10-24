@@ -14,7 +14,7 @@ from uuid import UUID
 import pytest
 
 from src.config import settings
-from src.platform.workspace.execution.providers.fly import FlyRuntimeProvider
+from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
 )

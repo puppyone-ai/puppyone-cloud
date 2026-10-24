@@ -12,9 +12,10 @@ import weakref
 from contextlib import suppress
 from pathlib import Path
 
-from ..timing import workspace_stage
-from ..worker_port import WorkerDisconnected
-from .fly_agent import create_directory, isolated_environment, managed_environment
+from src.platform.sandbox.errors import WorkerDisconnected
+from src.platform.sandbox.timing import workspace_stage
+
+from .agent import create_directory, isolated_environment, managed_environment
 
 _pools = weakref.WeakKeyDictionary()
 
@@ -36,7 +37,7 @@ class FlyTransport:
         if self.ssh is None:
             from src.config import settings
 
-            from .fly_ssh import FlySSHConnections
+            from .ssh import FlySSHConnections
 
             self.ssh = FlySSHConnections(
                 self.app,

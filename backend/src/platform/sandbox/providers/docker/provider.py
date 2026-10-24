@@ -3,9 +3,8 @@
 import asyncio
 import json
 
-from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
-
-from .port import (
+from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost
+from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
     RuntimeTransition,

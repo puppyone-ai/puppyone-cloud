@@ -6,9 +6,8 @@ import time
 from contextlib import suppress
 
 from src.config import settings
-from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
-
-from .port import (
+from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost
+from src.platform.sandbox.port import (
     SEND_TIMEOUT,
     RuntimeCapabilities,
     RuntimeConnection,
@@ -34,7 +33,7 @@ class E2BRuntimeProvider:
     async def preflight(self, artifact):
         from e2b import AsyncSandbox
 
-        from ..runtime_contract import WorkspaceUnavailable
+        from src.platform.sandbox.errors import WorkspaceUnavailable
 
         self.validate(artifact)
         try:

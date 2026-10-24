@@ -15,10 +15,10 @@ from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
+from src.platform.sandbox import workspace_stage
 
 from .errors import access_failure
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
-from .execution.timing import workspace_stage
 from .execution.worker_port import WorkerDisconnected, WorkerLost
 from .opening import awaiting_files
 

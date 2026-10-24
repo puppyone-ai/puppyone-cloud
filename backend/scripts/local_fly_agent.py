@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from src.platform.workspace.execution.providers.fly_agent import (
+from src.platform.sandbox.providers.fly.agent import (
     MANAGED_AGENT,
     create_directory,
     identity,

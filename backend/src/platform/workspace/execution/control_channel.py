@@ -12,9 +12,8 @@ from uuid import uuid4
 
 from src.config import settings
 from src.infra.supabase.instrumentation import database_stage
+from src.platform.sandbox import SEND_TIMEOUT, runtime_provider
 
-from .providers.port import SEND_TIMEOUT
-from .providers.registry import runtime_provider
 from .worker_port import WorkerDisconnected
 
 MAX_FRAME = 192 * 1024 * 1024

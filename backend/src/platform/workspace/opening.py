@@ -11,9 +11,9 @@ import time
 from datetime import UTC, datetime
 
 from src.infra.execution.runner import run_blocking
+from src.platform.sandbox import workspace_event, workspace_stage
 
 from .errors import WorkspaceError
-from .execution.timing import workspace_event, workspace_stage
 from .execution.worker_port import WorkerDisconnected
 from .opening_wait import OpeningObservers
 

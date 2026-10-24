@@ -1,16 +1,14 @@
 """The runtime handshake is shared by every sandbox provider."""
 
-from .worker_port import WorkerDisconnected
+# Owned by the sandbox layer; re-exported for existing callers.
+from src.platform.sandbox import WorkspaceUnavailable
+
+__all__ = ["FILE_PROTOCOL", "REQUIRED_CAPABILITIES", "RUNTIME_PROTOCOL", "WorkspaceUnavailable",
+           "validate_runtime"]
 
 RUNTIME_PROTOCOL = 1
 FILE_PROTOCOL = 1
 REQUIRED_CAPABILITIES = {"workspace_lifecycle", "native_files", "file_watch"}
-
-
-class WorkspaceUnavailable(WorkerDisconnected):
-    def __init__(self, code, *, retryable=False):
-        super().__init__(code)
-        self.code, self.retryable = code, retryable
 
 
 def validate_runtime(value):
