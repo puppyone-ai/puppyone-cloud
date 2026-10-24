@@ -266,6 +266,15 @@ following infrastructure contract:
   and the release journal remains in PostgreSQL. Raw diagnostics stay private
   in the temporary directory and are deleted with it; only the sanitized
   release result is retained as a GitHub artifact.
+- For environments with a Fly sandbox: environment variables
+  `CLOUD_AGENT_FLY_APP`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and
+  `RAILWAY_SANDBOX_IMAGE_SERVICES`, and secrets `CLOUD_AGENT_FLY_TOKEN` (registry
+  push) and `RAILWAY_TOKEN` (a project token scoped to that one Railway
+  environment). The `sandbox_image` job publishes and pins the image before any
+  application deployment; without `RAILWAY_TOKEN` it publishes and reports that
+  nothing was pinned. Environments without `CLOUD_AGENT_FLY_APP` skip it.
+- GitHub environment deployment-branch policies limit each environment's secrets
+  to its protected branches.
 - Disabled independent Railway and Supabase schema deployment bindings. The
   shared workflow is the only normal schema writer; its full coordinator owns
   data cutovers and configured application deployment.
