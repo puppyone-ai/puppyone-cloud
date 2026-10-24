@@ -4,7 +4,7 @@
 > Owner: Puppyone Cloud Version Engine
 > Date: 2026-10-23
 > Source: `puppyone-cloud@af7d53b47771292da6cac3a8cebf842406683494` plus the local candidate
-> Release state: implemented locally; hosted migration and full push acceptance pending
+> Release state: merged to qubits; hosted SQL migration verified; full push acceptance pending
 
 ## Measured complete capacity transaction
 
@@ -97,11 +97,18 @@ and trigger replacement with no new table, data rewrite or Contract prerequisite
 The isolated release candidate on that refreshed base also passed the same
 focused suite: 124 passed, 1,650 deselected, zero skipped, runner exit 0
 (84.16 seconds). Schema security/policy checks passed 14 tests.
-Hosted activation remains pending the protected branch's post-merge workflow.
+Hosted activation completed through [PR #1405](https://github.com/puppyone-ai/puppyone-cloud/pull/1405),
+merge `b2b84e97ed92f2ea581a9adc52e8199a50635c2f`.
+[Database release 39821341448](https://github.com/puppyone-ai/puppyone-cloud/actions/runs/39821341448)
+completed successfully, including migration and verification. Application deployment
+was explicitly skipped. A separate read-only audit confirmed all 53 migrations,
+no pending versions, zero old per-object authorization triggers, one statement
+object-budget trigger and three private helpers with no application-role execute
+privilege. Local backend `/health` returned HTTP 200. Full push acceptance remains
+unmeasured after this migration.
 
 ## Remaining work outside this slice
 
-- Apply/verify the new SQL through the environment's migration release workflow.
 - Measure a successful real upload after migration, including S3 and final publication.
 - Consolidate redundant route/discovery DB requests.
 - Distinguish known pre-publication failures from lost final-commit acknowledgements.

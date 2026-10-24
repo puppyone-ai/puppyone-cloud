@@ -743,21 +743,27 @@ class S3StorageBackend(StorageBackend):
                 for oid, (_, offset, _, packed_size) in pack.objects.items()]
         evidence = PreparedReadback(max_bytes=max(0, context.readbacks.MAX_BYTES - context.readbacks.bytes)) if context.readbacks else None
         if evidence is not None:
-            for oid in pack.objects:
-                checkpoint()
-                if context.progress:
-                    context.progress()
-                evidence.verify_raw(oid, *pack.get(oid))
+            with trace_phase("git.pack.evidence", objects=len(pack.objects)):
+                for oid in pack.objects:
+                    checkpoint()
+                    if context.progress:
+                        context.progress()
+                    evidence.verify_raw(oid, *pack.get(oid))
 
         async def persist():
-            io_id = await self._async_reserve_capacity(facts, paged=True)
+            with trace_phase("git.pack.capacity", objects=len(facts)):
+                io_id = await self._async_reserve_capacity(facts, paged=True)
             physical = self._physical_s3()
             with operation_io_budget(self._active_io_strategy().write_concurrency):
-                await upload_pack(physical, key, pack.path, progress=context.progress)
-                await verify_pack(physical, key, expected_size=pack.path.stat().st_size,
-                                  expected_digest=pack.digest, progress=context.progress)
-                await self._async_upsert_object_locations(rows, paged=True)
-            await self._async_settle_capacity(io_id)
+                with trace_phase("git.pack.upload", bytes=pack.path.stat().st_size):
+                    await upload_pack(physical, key, pack.path, progress=context.progress)
+                with trace_phase("git.pack.readback"):
+                    await verify_pack(physical, key, expected_size=pack.path.stat().st_size,
+                                      expected_digest=pack.digest, progress=context.progress)
+                with trace_phase("git.pack.locations", objects=len(rows)):
+                    await self._async_upsert_object_locations(rows, paged=True)
+            with trace_phase("git.pack.settle"):
+                await self._async_settle_capacity(io_id)
 
         _run_async(persist())
         if evidence is not None:

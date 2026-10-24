@@ -658,6 +658,10 @@ class Settings(BaseSettings):
     # Preserve the environment name; zero never disables the finite work cap.
     GIT_MAX_EXPANDED_BYTES: int = Field(default=8 * 1024**3, gt=0, le=8 * 1024**3)
     GIT_SUBPROCESS_TIMEOUT_SECONDS: int = 300  # per git invocation
+    # Admission is local to each Python process, including retained responses.
+    # Size against aggregate CPU/RAM/scratch across all processes and replicas.
+    # Read at startup; changing this setting requires restarting the workers.
+    GIT_MAX_CONCURRENT_OPERATIONS: int = Field(default=2, gt=0)
 
     VERSION_OBJECT_GC_ENABLED: bool = False
     VERSION_OBJECT_GC_DRY_RUN: bool = True

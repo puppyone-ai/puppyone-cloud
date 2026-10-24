@@ -10,9 +10,11 @@ from fastapi.responses import Response
 from src.platform.access.adapters.git.execution import ObjectGitResponse, checkpoint
 from src.platform.access.adapters.git.native_fetch import FetchRequest, fetch_chunks
 from src.platform.access.adapters.git.native_wire import (
+    ReceiveProbe,
     advertisement,
     ls_refs,
     receive_commands,
+    receive_request,
     upload_packets,
     version,
 )
@@ -108,7 +110,18 @@ class NativeGitRepository:
         admitted_actor(grant, self.project_id, write=True)
         outcomes = {}
         with request_path.open("rb") as handle:
-            edits, capabilities = receive_commands(handle, self.format)
+            request = receive_request(handle, self.format)
+            if isinstance(request, ReceiveProbe):
+                if publication is not None:
+                    raise ValueError("Publication requires ref updates")
+                # An authenticated transport probe is not a publication attempt.
+                # Do not allocate a snapshot, ingest objects or consume its ID.
+                return Response(
+                    b"",
+                    media_type="application/x-git-receive-pack-result",
+                    headers={"Cache-Control": "no-cache"},
+                )
+            edits, capabilities = request.edits, request.capabilities
             if initial_attempt is not None:
                 initial_attempt = str(uuid.UUID(initial_attempt))
                 # The extension identifies one immutable initial-main attempt.

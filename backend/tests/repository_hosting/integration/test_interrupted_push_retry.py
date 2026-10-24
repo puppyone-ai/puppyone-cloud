@@ -6,6 +6,7 @@ Both initial and incremental publication use the same service/SQL contract.
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from random import Random
 from threading import Barrier
 
 import pytest
@@ -28,6 +29,54 @@ from tests.repository_hosting.integration.test_ref_transaction_service import (
 
 pytestmark = pytest.mark.hosting_live
 publisher = publisher_fixture
+
+
+@pytest.mark.parametrize(("incremental", "initial_header"), [
+    (False, False), (False, True), (True, False),
+], ids=["initial-stock-git", "initial-desktop", "incremental-stock-git"])
+def test_chunked_push_probe_never_consumes_a_publication(
+    publisher, monkeypatch, incremental, initial_header
+):
+    _, auth, backend, service, git, first, prepare = publisher
+    if incremental:
+        assert request(service, first, prepare)["status"] == "committed"
+    candidate = git.commit({"large": Random(7).randbytes(128 * 1024)})
+    durable_before = set(backend.all_hashes())
+    transactions_before = auth.count("version_ref_transactions")
+    attempt = str(uuid.uuid4())
+    endpoint = NativeGitEndpoint(service, grant(auth.project), None)
+    monkeypatch.setattr(router, "_git_receive_max_body_bytes", lambda _: 128 * 1024**2)
+    app = FastAPI()
+    transfers = []
+
+    @app.get("/repo.git/info/refs")
+    def info(service: str):
+        return endpoint.info_refs(service)
+
+    @app.post("/repo.git/git-receive-pack")
+    async def rpc(http_request: Request):
+        body = await http_request.body()
+        probe = body == b"0000"
+        transfers.append((probe, http_request.headers.get("transfer-encoding")))
+        response = await router._native_rpc(
+            endpoint, http_request, upload=False, project_id=auth.project
+        )
+        if probe:
+            assert response.body == b""
+            assert auth.count("version_ref_transactions") == transactions_before
+            assert set(backend.all_hashes()) == durable_before
+            assert service.control.result(auth.project, "user:fixture-user", attempt) is None
+        return response
+
+    options = ["-c", f"http.extraHeader=X-PuppyOne-Initial-Attempt: {attempt}"] if initial_header else []
+    with _serve_git_app(app) as address:
+        git.run(*options, "-c", "http.postBuffer=65536", "push", address + "/repo.git", "main")
+    assert transfers == [(True, None), (False, "chunked")]
+    assert auth.count("version_ref_transactions") == transactions_before + 1
+    assert auth.state()["oid"] == candidate
+    assert service.control.snapshot(auth.project)["ref_sequence"] == (2 if incremental else 1)
+    if initial_header:
+        assert service.control.result(auth.project, "user:fixture-user", attempt)["status"] == "committed"
 
 
 @pytest.mark.parametrize(("incremental", "initial_header"), [

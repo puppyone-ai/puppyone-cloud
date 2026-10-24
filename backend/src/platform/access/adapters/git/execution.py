@@ -33,7 +33,8 @@ MAX_GRAPH_BYTES = 256 * 1024**2
 MAX_NATIVE_GRAPH_BYTES = settings.GIT_MAX_EXPANDED_BYTES
 MAX_REFS = 10_000
 MAX_DISK_BYTES = 768 * 1024**2
-_slots = threading.BoundedSemaphore(2)
+MAX_CONCURRENT_OPERATIONS = settings.GIT_MAX_CONCURRENT_OPERATIONS
+_slots = threading.BoundedSemaphore(MAX_CONCURRENT_OPERATIONS)
 
 
 @contextmanager
