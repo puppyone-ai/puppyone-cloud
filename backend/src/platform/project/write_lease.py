@@ -9,6 +9,7 @@ relational state and starts object cleanup.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from contextvars import ContextVar, Token
@@ -19,6 +20,7 @@ from uuid import uuid4
 from fastapi import Depends, Request
 
 from src.exceptions import AppException, ErrorCode
+from src.infra.execution.context import Execution, current_execution
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.bootstrap.container import VersionEngineContainer
@@ -118,6 +120,15 @@ class ProjectWriteLeaseRepository:
 
 
 class ProjectWriteLease:
+    """Renewable Project write admission, usable as ``with`` or ``async with``.
+
+    Async owners renew from a task and are cancelled when the claim is lost.
+    Synchronous owners (storage code in worker threads) renew from a daemon
+    thread; a lost claim cancels the owner's cooperative ``Execution`` because
+    a thread cannot be interrupted. Either way, exit releases the claim and
+    reports a lost lease as a retryable 503.
+    """
+
     def __init__(
         self,
         project_id: str,
@@ -147,6 +158,9 @@ class ProjectWriteLease:
         self.holder_id = f"writer:{uuid4()}"
         self._heartbeat: asyncio.Task[None] | None = None
         self._owner: asyncio.Task[Any] | None = None
+        self._heartbeat_thread: threading.Thread | None = None
+        self._stop_heartbeat = threading.Event()
+        self._owner_execution: Execution | None = None
         self._lost_error: Exception | None = None
         self._context_token: Token[tuple[ProjectWriteLease, ...]] | None = None
         self._reused = False
@@ -167,13 +181,13 @@ class ProjectWriteLease:
             "initialization_worker": self.initialization_worker,
         }
 
-    async def __aenter__(self) -> ProjectWriteLease:
-        active = _active_project_leases.get()
+    def _reuse_live_claim(self) -> bool:
         if self.reuse_active and active_project_write_lease(self.project_id) is not None:
             self._reused = True
-            return self
-        outcome = await run_blocking(
-            self.repository.acquire,
+        return self._reused
+
+    def _acquire(self) -> dict[str, Any]:
+        return self.repository.acquire(
             project_id=self.project_id,
             lease_id=self.lease_id,
             holder_id=self.holder_id,
@@ -183,6 +197,9 @@ class ProjectWriteLease:
             initialization_actor=self.initialization_actor,
             initialization_worker=self.initialization_worker,
         )
+
+    def _activate(self, outcome: dict[str, Any]) -> None:
+        """Admit in the owner's context (never a worker's copied context)."""
         result = str(outcome.get("outcome") or "")
         if result == "unavailable":
             raise AppException(
@@ -193,35 +210,64 @@ class ProjectWriteLease:
             )
         if result not in {"acquired", "replayed"}:
             raise RuntimeError(f"Project write lease was not acquired: {result or 'missing'}")
-        self._owner = asyncio.current_task()
         self._active = True
-        live = tuple(lease for lease in active if lease.is_active)
+        live = tuple(lease for lease in _active_project_leases.get() if lease.is_active)
         self._context_token = _active_project_leases.set((*live, self))
+
+    def _renew_interval(self) -> float:
+        interval = self.heartbeat_interval_seconds
+        if interval is None:
+            interval = min(60, max(10, self.ttl_seconds // 3))
+        return interval
+
+    def _renew(self) -> None:
+        renewed = self.repository.renew(
+            lease_id=self.lease_id,
+            holder_id=self.holder_id,
+            ttl_seconds=self.ttl_seconds,
+        )
+        if not renewed:
+            raise RuntimeError("Project write lease was lost")
+
+    def _mark_lost(self, exc: Exception) -> None:
+        # Mutate the shared claim first. Child tasks/threads holding a copied
+        # ContextVar see the invalidation immediately.
+        self._lost_error = exc
+        self._active = False
+
+    def _release(self) -> None:
+        self.repository.release(lease_id=self.lease_id, holder_id=self.holder_id)
+
+    def _close_context(self) -> None:
+        if self._context_token is not None:
+            _active_project_leases.reset(self._context_token)
+        if self._lost_error is not None:
+            raise AppException(
+                code=ErrorCode.REPOSITORY_STORAGE_UNAVAILABLE,
+                status_code=503,
+                message="Project write admission lease was lost",
+                details={"code": "project_write_lease_lost", "retryable": True},
+            ) from self._lost_error
+
+    # ── Async owners ──
+
+    async def __aenter__(self) -> ProjectWriteLease:
+        if self._reuse_live_claim():
+            return self
+        self._activate(await run_blocking(self._acquire))
+        self._owner = asyncio.current_task()
         self._heartbeat = asyncio.create_task(self._renew_loop())
         return self
 
     async def _renew_loop(self) -> None:
         try:
             while True:
-                interval = self.heartbeat_interval_seconds
-                if interval is None:
-                    interval = min(60, max(10, self.ttl_seconds // 3))
-                await asyncio.sleep(interval)
-                renewed = await run_blocking(
-                    self.repository.renew,
-                    lease_id=self.lease_id,
-                    holder_id=self.holder_id,
-                    ttl_seconds=self.ttl_seconds,
-                )
-                if not renewed:
-                    raise RuntimeError("Project write lease was lost")
+                await asyncio.sleep(self._renew_interval())
+                await run_blocking(self._renew)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._lost_error = exc
-            # Mutate the shared claim before cancellation. Child tasks holding
-            # a copied ContextVar see the invalidation immediately.
-            self._active = False
+            self._mark_lost(exc)
             if self._owner is not None:
                 self._owner.cancel()
 
@@ -238,31 +284,55 @@ class ProjectWriteLease:
             self._heartbeat.cancel()
             with suppress(asyncio.CancelledError):
                 await self._heartbeat
-        release_task = asyncio.create_task(
-            run_blocking(
-                self.repository.release,
-                lease_id=self.lease_id,
-                holder_id=self.holder_id,
-            )
-        )
         try:
-            try:
-                await asyncio.shield(release_task)
-            except asyncio.CancelledError:
-                # Releasing is a safety boundary.  Do not let cancellation
-                # orphan the thread while the context appears closed.
-                await release_task
-                raise
+            # Releasing is a safety boundary: run_blocking joins the release
+            # thread even if this exit is cancelled.
+            await run_blocking(self._release)
         finally:
-            if self._context_token is not None:
-                _active_project_leases.reset(self._context_token)
-            if self._lost_error is not None:
-                raise AppException(
-                    code=ErrorCode.REPOSITORY_STORAGE_UNAVAILABLE,
-                    status_code=503,
-                    message="Project write admission lease was lost",
-                    details={"code": "project_write_lease_lost", "retryable": True},
-                ) from self._lost_error
+            self._close_context()
+        return False
+
+    # ── Synchronous owners (worker threads) ──
+
+    def __enter__(self) -> ProjectWriteLease:
+        if self._reuse_live_claim():
+            return self
+        self._activate(self._acquire())
+        self._owner_execution = current_execution.get()
+        self._heartbeat_thread = threading.Thread(
+            target=self._renew_thread,
+            name=f"project-write-lease:{self.operation}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+        return self
+
+    def _renew_thread(self) -> None:
+        while not self._stop_heartbeat.wait(self._renew_interval()):
+            try:
+                self._renew()
+            except Exception as exc:
+                self._mark_lost(exc)
+                if self._owner_execution is not None:
+                    self._owner_execution.cancelled.set()
+                return
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        if self._reused:
+            return False
+        self._active = False
+        self._stop_heartbeat.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join()
+        try:
+            self._release()
+        finally:
+            self._close_context()
         return False
 
 

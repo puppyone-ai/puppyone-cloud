@@ -348,3 +348,61 @@ async def test_access_key_git_read_is_resolved_then_leased(monkeypatch) -> None:
     await dependency.aclose()
 
     assert events == [("project-1", "git.post")]
+
+
+def test_synchronous_owner_renews_from_a_thread_and_releases_once() -> None:
+    import time
+
+    repository = LeaseRepositoryStub()
+    lease = ProjectWriteLease(
+        "project-1",
+        "s3.put_object",
+        repository=repository,
+        heartbeat_interval_seconds=0.01,
+        reuse_active=False,
+    )
+    with lease:
+        assert active_project_write_lease("project-1") is lease
+        with ProjectWriteLease("project-1", "nested", repository=repository) as nested:
+            assert nested is not lease and len(repository.acquired) == 1
+        deadline = time.monotonic() + 2
+        while len(repository.renewed) < 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+    renewals = len(repository.renewed)
+    time.sleep(0.05)
+    assert len(repository.renewed) == renewals  # heartbeat stopped with the claim
+    assert active_project_write_lease("project-1") is None
+    assert len(repository.released) == 1
+
+
+def test_synchronous_owner_lost_claim_cancels_its_execution() -> None:
+    import time
+
+    from src.infra.execution.context import Execution, checkpoint, current_execution
+
+    repository = LeaseRepositoryStub(renew=False)
+    execution = Execution()
+    token = current_execution.set(execution)
+    try:
+        with (
+            pytest.raises(AppException) as caught,
+            ProjectWriteLease(
+                "project-1",
+                "s3.put_object",
+                repository=repository,
+                heartbeat_interval_seconds=0.01,
+                reuse_active=False,
+            ) as lease,
+        ):
+            deadline = time.monotonic() + 2
+            while lease.is_active:
+                assert time.monotonic() < deadline
+                time.sleep(0.005)
+            with pytest.raises(RuntimeError, match="cancelled"):
+                checkpoint()  # cooperative work stops; a thread cannot be killed
+    finally:
+        current_execution.reset(token)
+    assert caught.value.details["code"] == "project_write_lease_lost"
+    assert execution.cancelled.is_set()
+    assert len(repository.released) == 1
