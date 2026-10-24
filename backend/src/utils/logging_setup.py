@@ -25,6 +25,17 @@ def _env_str(name: str, default: str) -> str:
     return default if raw is None or not raw.strip() else raw.strip()
 
 
+# LogRecord extras kept in structured logs. Each must be a bounded report.
+REPORT_FIELDS = (
+    "agent_performance",
+    "agent_api_performance",
+    "agent_dispatch",
+    "dependency_failure",
+    "worker_stats",
+    "workspace_performance",
+)
+
+
 class InterceptHandler(logging.Handler):
     """Redirect standard-library logging records to Loguru."""
 
@@ -41,14 +52,11 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        # These reports contain bounded operation names/counts/timings, never
-        # request payloads. Preserve them across the stdlib -> Loguru bridge;
+        # These reports contain bounded operation names/counts/timings and
+        # internal identifiers (Run, worker, pool), never request payloads or
+        # credentials. Preserve them across the stdlib -> Loguru bridge;
         # arbitrary third-party LogRecord extras must not reach JSON logs.
-        metrics = {
-            key: getattr(record, key)
-            for key in ("agent_performance", "agent_api_performance", "dependency_failure", "workspace_performance")
-            if hasattr(record, key)
-        }
+        metrics = {key: getattr(record, key) for key in REPORT_FIELDS if hasattr(record, key)}
         logger.bind(**metrics).opt(depth=depth, exception=record.exc_info).log(
             level, record.getMessage()
         )

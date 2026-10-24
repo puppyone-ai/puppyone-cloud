@@ -285,22 +285,6 @@ def _init_provider_registry() -> None:
         )
 
 
-def _init_sandbox_reaper(app: FastAPI) -> None:
-    """Start the sandbox reaper: idle unretained executions and legacy Scope machines.
-
-    It is enabled by default and mandatory in hosted deployments so crashed
-    workers cannot orphan paid provider resources. Stored on app.state so
-    shutdown can stop the durable reaper loop cleanly."""
-    if not settings.SANDBOX_REAPER_ENABLED:
-        return
-    from src.platform.sandbox import start_sandbox_reaper
-
-    app.state.sandbox_execution_reaper = start_sandbox_reaper(
-        interval_s=settings.SANDBOX_REAPER_INTERVAL_S,
-    )
-    log_info(f"🧹 Sandbox reaper started (every {settings.SANDBOX_REAPER_INTERVAL_S}s)")
-
-
 def _init_runtime_billing_reaper(app: FastAPI) -> None:
     if settings.RUNTIME_METERING_MODE == "disabled":
         return
@@ -478,7 +462,8 @@ async def app_lifespan(app: FastAPI):
     await _init_scheduler()
     await _init_file_ingest()
     _init_provider_registry()
-    _init_sandbox_reaper(app)
+    # Machine lifecycle and provider reclamation belong to the worker's sandbox
+    # module (src.platform.workspace.sandbox_worker), not to the API.
     _init_entitlement_provisioner(app)
     _init_seat_proposal_worker(app)
     _init_runtime_billing_reaper(app)
@@ -496,14 +481,6 @@ async def app_lifespan(app: FastAPI):
     log_info("")
 
     yield
-    execution_reaper = getattr(app.state, "sandbox_execution_reaper", None)
-    if execution_reaper is not None:
-        task, stop_event = execution_reaper
-        stop_event.set()
-        try:
-            await task
-        except Exception as e:
-            log_error(f"Sandbox reaper shutdown error: {e}")
     runtime_billing_reaper = getattr(app.state, "runtime_billing_reaper", None)
     if runtime_billing_reaper is not None:
         task, stop_event = runtime_billing_reaper

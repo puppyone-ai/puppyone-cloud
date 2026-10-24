@@ -46,6 +46,16 @@ def failure(exc):
     return "workbench_connection_unavailable", True
 
 
+def pending_snapshot(rows):
+    """(count, age of the oldest request in seconds) for a pending-open listing."""
+    now = datetime.now(UTC)
+    ages = []
+    for row in rows:
+        with suppress(KeyError, TypeError, ValueError):
+            ages.append((now - datetime.fromisoformat(row["updated_at"])).total_seconds())
+    return len(rows), round(max(ages, default=0.0), 1)
+
+
 class WorkbenchLifecycle:
     def __init__(self, service):
         self.service = service
@@ -60,6 +70,8 @@ class WorkbenchLifecycle:
         self.checked_until = 0
         self.preflight_lock = asyncio.Lock()
         self.active = {}
+        # Last poll of this pool's open queue: (pending requests, oldest age in seconds).
+        self.pending_snapshot = (0, 0.0)
 
     def context(self, *args):
         return self.service.context(*args)
@@ -256,9 +268,11 @@ class WorkbenchLifecycle:
                     # Failed credentials are recorded on the claimed operation;
                     # they must not strand every pending request in the queue.
                     provider = self.providers(None)
-                    for row in await run_blocking(
+                    rows = await run_blocking(
                         self.repository.pending, provider.name, settings.AGENT_WORKER_POOL
-                    ):
+                    )
+                    self.pending_snapshot = pending_snapshot(rows)
+                    for row in rows:
                         if row["id"] not in self.active and len(self.active) < 4:
                             task = asyncio.create_task(run(row))
                             self.active[row["id"]] = task

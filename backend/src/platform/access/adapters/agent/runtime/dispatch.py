@@ -89,12 +89,16 @@ def _build() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def worker_identity(provider: str) -> WorkerIdentity:
-    """A new identity per process; a restart is a different worker."""
+def worker_identity(provider: str, *, service: str = "worker") -> WorkerIdentity:
+    """A new identity per process; a restart is a different worker.
+
+    ``service`` names the modules this process runs (e.g. ``worker:agent+sandbox``),
+    not the deployment's SERVICE_ROLE, which a shared .env may set to ``api``.
+    """
     return WorkerIdentity(
         id=str(uuid4()),
         pool=settings.AGENT_WORKER_POOL,
-        service=_bounded(os.environ.get("SERVICE_ROLE") or "agent_worker"),
+        service=_bounded(service),
         environment=_bounded(os.environ.get("RAILWAY_ENVIRONMENT_NAME") or settings.APP_ENV),
         host=_bounded(os.environ.get("RAILWAY_REPLICA_ID") or socket.gethostname()),
         build=_bounded(_build()),
