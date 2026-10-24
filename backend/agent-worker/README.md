@@ -54,6 +54,16 @@ brace-expansion 5.0.12 into those exact locations. It does not patch Pi source.
 Production image configuration should use the built registry digest. Docker
 resolves and records its immutable image ID before allocating each execution.
 
+Hosted Fly images are published by the environment release workflow
+(`.github/workflows/_environment-release.yml`, job `sandbox_image`) on every
+protected push: it runs the module tests, builds the image, refuses it unless the
+runtime manifest matches `runtime_contract.py`, pushes it to
+`registry.fly.io/<app>:build-<build_id>` (an existing content tag is reused) and
+pins `CLOUD_AGENT_FLY_IMAGE` (`registry@sha256:...`) on the environment's
+`RAILWAY_SANDBOX_IMAGE_SERVICES`. Application deployment waits for this job and
+applies the pin; existing workspaces keep the artifact they were bound to. To roll
+back, pin the previous digest on the same services and redeploy them.
+
 ## Knowledge repository workspace
 
 For a native full Project, admission fixes the repository generation, selected
