@@ -465,7 +465,11 @@ async def app_lifespan(app: FastAPI):
     log_info("🚀 ContextBase API starting...")
     log_info("=" * 80)
 
+    from src.infra.execution.process import start_process_concurrency
     from src.version_engine.bootstrap.container import build_version_engine_container
+
+    # One shared worker-thread capacity for run_blocking and def routes.
+    app.state.process_concurrency = start_process_concurrency()
 
     # Probe external storage at non-debug process boot so production fails fast
     # on misconfigured S3/Supabase. Local development/test runs often use partial
@@ -551,7 +555,10 @@ async def app_lifespan(app: FastAPI):
         if service := getattr(app.state, "workbench_service", None):
             await service.close()
     finally:
-        await _shutdown_services()
+        try:
+            await _shutdown_services()
+        finally:
+            await app.state.process_concurrency.stop()
 
 
 def create_app() -> FastAPI:

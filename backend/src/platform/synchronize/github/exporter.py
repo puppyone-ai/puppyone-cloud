@@ -26,10 +26,10 @@ a follow-up).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
 from datetime import UTC, datetime
 
 from src.exceptions import AppException
+from src.infra.execution.runner import await_owned
 from src.platform.project.write_lease import (
     ProjectWriteLease,
     ProjectWriteLeaseFactory,
@@ -63,7 +63,7 @@ async def export_to_branch(
         f"repo={owner}/{repo} branch={target_branch} trigger={triggered_by}"
     )
 
-    return await _await_true_completion(
+    return await await_owned(
         _export_with_write_lease(
             binding=binding,
             target_branch=target_branch,
@@ -132,7 +132,7 @@ async def _export_after_admission(
 
     api = GithubApi(oauth["access_token"])
     try:
-        return await _await_true_completion(
+        return await await_owned(
             _do_export_with_failure_recording(
                 api=api,
                 binding=binding,
@@ -147,7 +147,7 @@ async def _export_after_admission(
             )
         )
     finally:
-        await _await_true_completion(api.aclose())
+        await await_owned(api.aclose())
 
 
 async def _do_export_with_failure_recording(
@@ -192,24 +192,6 @@ async def _do_export_with_failure_recording(
             binding_id,
             f"unexpected: {exc}",
         )
-
-
-async def _await_true_completion[T](awaitable: Awaitable[T]) -> T:
-    """Delay cancellation until an external or threaded operation is done."""
-
-    future = asyncio.ensure_future(awaitable)
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError as cancelled:
-        # A second cancellation must not make the lease appear released while
-        # the shielded GitHub/to_thread work is still running.
-        while not future.done():
-            try:
-                await asyncio.shield(future)
-            except asyncio.CancelledError:
-                continue
-        future.result()
-        raise cancelled
 
 
 async def _do_export(

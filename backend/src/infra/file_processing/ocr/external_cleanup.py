@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from src.infra.execution.runner import await_owned
 from src.infra.file_processing.mineru.config import mineru_config
 from src.infra.file_processing.ocr.base import (
     OCRProvider,
@@ -26,23 +27,6 @@ from src.infra.file_processing.ocr.base import (
 
 _SAFE_OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _SAFE_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-
-
-async def _await_cleanup_boundary(awaitable):
-    """Wait for cleanup to really finish before propagating cancellation."""
-
-    task = asyncio.create_task(awaitable)
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError as cancelled:
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-        if not task.cancelled():
-            task.result()
-        raise cancelled
 
 
 class ProjectETLTaskSource(Protocol):
@@ -297,7 +281,7 @@ class ExternalIngestCleanup:
         deleted_cache_ids: list[str] = []
         for task_id in cache_task_ids:
             try:
-                if await _await_cleanup_boundary(
+                if await await_owned(
                     asyncio.to_thread(self.cache.delete, task_id)
                 ):
                     deleted_cache_ids.append(task_id)
@@ -315,7 +299,7 @@ class ExternalIngestCleanup:
 
         for task_id in cache_task_ids:
             try:
-                if await _await_cleanup_boundary(
+                if await await_owned(
                     asyncio.to_thread(self.cache.exists, task_id)
                 ):
                     errors.append(f"MineRU cache still exists for {task_id}")
@@ -524,7 +508,7 @@ class ExternalIngestCleanup:
                 detail=f"no cancellation adapter registered for {handle.provider}",
             )
         try:
-            result = await _await_cleanup_boundary(
+            result = await await_owned(
                 provider.cancel_external_job(handle.task_id)
             )
         except Exception as exc:

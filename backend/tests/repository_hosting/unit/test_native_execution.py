@@ -79,9 +79,10 @@ def test_snapshot_progress_stops_expensive_reads_after_owned_execution_ends(canc
 async def test_disconnected_caller_stops_owned_work_before_releasing_its_scope():
     from src.infra.execution.context import checkpoint
 
-    exited = threading.Event()
+    started, exited = threading.Event(), threading.Event()
 
     def worker():
+        started.set()
         try:
             while True:
                 checkpoint()
@@ -90,7 +91,9 @@ async def test_disconnected_caller_stops_owned_work_before_releasing_its_scope()
             exited.set()
 
     async def disconnected():
-        return True
+        # The client leaves while the worker runs (an already-disconnected
+        # client may legitimately never start it).
+        return started.is_set()
 
     with pytest.raises(RuntimeError, match="cancelled"):
         await run_owned(worker, cancel_when=disconnected)

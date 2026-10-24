@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     DEBUG: bool | None = None
     VERSION: str = "0.0.3"
 
+    # Concurrency boundary (docs/architecture/18-concurrency-boundary.md).
+    # Worker threads per Python process for every blocking call made from async
+    # code (run_blocking) plus FastAPI def routes/dependencies; shared limit.
+    # Replica capacity is roughly this times WEB_CONCURRENCY. Read at start-up.
+    BLOCKING_THREAD_LIMIT: int = Field(default=40, gt=0, le=512)
+    # Log a warning when the event loop is stalled longer than this; 0 disables.
+    EVENT_LOOP_LAG_WARN_MS: int = Field(default=250, ge=0)
+    # Bounded process-wide pool for Version Engine object fan-out (parallel S3
+    # reads/writes inside one storage call). Never borrows request threads.
+    VERSION_STORAGE_IO_THREADS: int = Field(default=8, gt=0, le=64)
+
     # Local storage configuration, mostly using Supabase now
     DATA_PATH: Path = Path("./data")
     STORAGE_TYPE: Literal["json", "db", "supabase"] = "supabase"

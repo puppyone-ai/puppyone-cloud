@@ -12,6 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 
+from src.infra.execution.runner import run_blocking
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.write_engine.trace import trace_mark, trace_phase
 
@@ -78,12 +79,7 @@ async def join_owned(tasks):
 
 
 async def call_owned(function, *args):
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await join_owned([task])
-        raise
+    return await run_blocking(function, *args)
 
 
 async def write_object_stream(

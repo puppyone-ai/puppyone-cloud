@@ -1,6 +1,5 @@
 """S3 storage service core business logic"""
 
-import asyncio
 import copy
 import logging
 import re
@@ -12,6 +11,8 @@ from typing import TypeVar
 import boto3
 from botocore.exceptions import ClientError
 
+from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.s3.config import s3_settings
 from src.infra.s3.exceptions import (
     S3Error,
@@ -81,6 +82,10 @@ class S3Service:
             retries={"max_attempts": 5, "mode": "adaptive"},
             connect_timeout=60,
             read_timeout=300,
+            # Every thread that may call S3 at once gets a pooled connection:
+            # request threads plus the Version Engine storage I/O pool.
+            max_pool_connections=settings.BLOCKING_THREAD_LIMIT
+            + settings.VERSION_STORAGE_IO_THREADS,
             # Disable SSL verification (if using self-signed certificates or dev environment)
             # Note: Production should use valid SSL certificates
             # verify=False
@@ -161,28 +166,13 @@ class S3Service:
             raise S3OperationError("single-attempt mutation has uncertain retry history")
 
     async def _run_sync(self, func: Callable[..., T], *args, **kwargs) -> T:
-        """
-        Wrap a synchronous function for async execution.
+        """Run one boto3 call through the shared blocking boundary.
 
-        Args:
-            func: Synchronous function
-            *args: Positional arguments
-            **kwargs: Keyword arguments
-
-        Returns:
-            Function execution result
+        boto3 work in a thread cannot be cancelled: the surrounding Project
+        lease stays alive until the physical I/O stops, then cancellation
+        propagates to the request/worker.
         """
-        task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # boto3 work in a thread cannot be cancelled. Keep the surrounding
-            # Project lease alive until the physical I/O actually stops, then
-            # propagate cancellation to the request/worker.
-            try:
-                await task
-            finally:
-                raise
+        return await run_blocking(func, *args, **kwargs)
 
     @asynccontextmanager
     async def _project_write_guard(self, key: str, operation: str):

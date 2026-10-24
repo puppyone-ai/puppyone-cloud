@@ -21,25 +21,9 @@ from src.platform.workspace.scopes.provider import SandboxState
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
 )
+from src.infra.execution.runner import await_owned
 
 _logger = logging.getLogger("puppyone.project_deletion")
-
-
-async def _await_cleanup_boundary(awaitable):
-    """Do not abandon a destructive provider operation on cancellation."""
-
-    task = asyncio.create_task(awaitable)
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError as cancelled:
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-        if not task.cancelled():
-            task.result()
-        raise cancelled
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,11 +232,11 @@ class ProjectExternalResourceCleaner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _stdout, stderr = await _await_cleanup_boundary(process.communicate())
+            _stdout, stderr = await await_owned(process.communicate())
             if process.returncode != 0 and b"no such container" not in stderr.lower():
                 raise RuntimeError("Unable to remove Project execution container")
             return
-        await _await_cleanup_boundary(self._provider(provider_name).destroy(resource_id))
+        await await_owned(self._provider(provider_name).destroy(resource_id))
 
     async def _sandbox_absent(self, resource: dict[str, str]) -> bool:
         provider_name = resource["provider"]
@@ -265,8 +249,8 @@ class ProjectExternalResourceCleaner:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            return await _await_cleanup_boundary(process.wait()) != 0
-        status = await _await_cleanup_boundary(self._provider(provider_name).status(resource_id))
+            return await await_owned(process.wait()) != 0
+        status = await await_owned(self._provider(provider_name).status(resource_id))
         return status.state is SandboxState.DESTROYED
 
 

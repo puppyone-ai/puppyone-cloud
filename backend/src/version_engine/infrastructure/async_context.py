@@ -2,38 +2,26 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
+
+from src.infra.execution.runner import await_owned, run_blocking, run_cleanup
 
 
 async def enter_sync_context_off_loop(cm) -> Any:
     """Enter ``cm`` in a worker without leaking it when the caller cancels."""
 
-    enter_task = asyncio.create_task(asyncio.to_thread(cm.__enter__))
-    try:
-        return await asyncio.shield(enter_task)
-    except asyncio.CancelledError:
-        # A thread keeps running after its awaiting task is cancelled. If it
-        # acquired the context, release it before propagating cancellation.
-        try:
-            value = await enter_task
-        except BaseException:
-            pass
-        else:
-            await asyncio.to_thread(cm.__exit__, None, None, None)
-        raise
+    async def release(_value) -> None:
+        # The thread acquired the context after the caller left: release it.
+        await run_cleanup(cm.__exit__, None, None, None)
+
+    return await await_owned(run_blocking(cm.__enter__), release=release)
 
 
 async def _exit_sync_context_off_loop(cm, exc_info: tuple) -> bool:
-    exit_task = asyncio.create_task(asyncio.to_thread(cm.__exit__, *exc_info))
-    try:
-        return bool(await asyncio.shield(exit_task))
-    except asyncio.CancelledError:
-        # Context release is mandatory even if disconnect/shutdown cancels the
-        # request while __exit__ is waiting for its worker turn.
-        await exit_task
-        raise
+    # Context release is mandatory even if disconnect/shutdown cancels the
+    # request while __exit__ is waiting for its worker turn.
+    return bool(await run_cleanup(cm.__exit__, *exc_info))
 
 
 @asynccontextmanager

@@ -29,6 +29,7 @@ from src.platform.workspace.provider import (
     WorkspaceProvider,
 )
 from src.utils.logger import log_debug, log_info
+from src.infra.execution.runner import await_owned
 
 
 class APFSWorkspaceProvider(WorkspaceProvider):
@@ -91,7 +92,7 @@ class APFSWorkspaceProvider(WorkspaceProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await _communicate_to_completion(proc)
+            _, stderr = await await_owned(proc.communicate())
 
             if proc.returncode != 0:
                 # APFS clone failed (may not be on an APFS volume), fall back to regular copy
@@ -180,24 +181,6 @@ def _iter_visible_files(directory: str):
             if not fname.startswith("."):
                 abs_path = os.path.join(root, fname)
                 yield abs_path, os.path.relpath(abs_path, directory)
-
-
-async def _communicate_to_completion(
-    process: asyncio.subprocess.Process,
-) -> tuple[bytes, bytes]:
-    """Do not orphan a clone subprocess when the request is cancelled."""
-
-    task = asyncio.create_task(process.communicate())
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError as cancelled:
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-        task.result()
-        raise cancelled
 
 
 def _collect_modified(workspace_path: str, lower_path: str) -> dict[str, str]:

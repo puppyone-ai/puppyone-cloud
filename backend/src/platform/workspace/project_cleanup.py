@@ -7,7 +7,6 @@ verify the Project has no remaining deterministic workspace/cache state.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -18,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from src.infra.execution.runner import await_owned, run_blocking
 from src.platform.workspace.paths import (
     absolute_path,
     project_child,
@@ -283,18 +283,13 @@ class ProjectHostCleanupPort:
         """Delete a snapshot and wait for real filesystem work on cancellation."""
 
         self._validate_configured_snapshot(snapshot)
-        task = asyncio.create_task(asyncio.to_thread(self._delete_sync, snapshot))
-        try:
-            result = await asyncio.shield(task)
-        except asyncio.CancelledError as cancelled:
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    continue
-            task.result()
+
+        async def forget_after_cancellation(_result) -> None:
             self._forget_project_workspaces(snapshot.project_id)
-            raise cancelled
+
+        result = await await_owned(
+            run_blocking(self._delete_sync, snapshot), release=forget_after_cancellation
+        )
         forgotten = self._forget_project_workspaces(snapshot.project_id)
         return ProjectHostDeletionResult(
             deleted_paths=result[0],

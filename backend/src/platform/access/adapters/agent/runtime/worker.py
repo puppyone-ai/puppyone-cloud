@@ -4,6 +4,7 @@ import asyncio
 import logging
 from uuid import uuid4
 
+from src.infra.execution.process import start_process_concurrency
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
@@ -105,6 +106,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
                 logger.exception("cloud_agent_workspace_reaper_failed")
             await asyncio.sleep(30)
 
+    concurrency = start_process_concurrency()
     lifecycle = asyncio.create_task(workbench_owner.lifecycle.serve()) if workbench_owner else None
     reaper = asyncio.create_task(retire_idle())
     try:
@@ -140,8 +142,11 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        if owns_workbench:
-            await workbench_owner.close()
+        try:
+            if owns_workbench:
+                await workbench_owner.close()
+        finally:
+            await concurrency.stop()
 
 
 if __name__ == "__main__":

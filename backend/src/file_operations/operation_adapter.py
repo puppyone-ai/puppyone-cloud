@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from src.file_operations.queries import ProductQueries, open_query_session
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
 from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.read.native_tree_reader import open_tree_read
@@ -130,16 +131,8 @@ class ProductOperationAdapter(ProductQueries):
             return result
         admitted_actor(grant, project_id, write=True)
         async with (write_lease_factory or ProjectWriteLease)(project_id, "product.native"):
-            worker = asyncio.create_task(
-                asyncio.to_thread(writer.apply, grant, splice=splice, **request)
-            )
-            try:
-                return await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                try:
-                    await worker
-                finally:
-                    raise
+            # The lease outlives the publication thread even if we are cancelled.
+            return await run_blocking(writer.apply, grant, splice=splice, **request)
 
     def get_project_write_state(self, project_id, user_id):
         bound = self.for_user(project_id, user_id)
