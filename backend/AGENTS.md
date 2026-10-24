@@ -327,7 +327,7 @@ Nixpacks 也会触发 Python 检测并尝试默认安装流程，把上面的 bu
 
 - **分层架构**: Router → Service → ProductOperationAdapter/NativeTreeReader
 - **依赖注入**: FastAPI Depends
-- **全异步**: 所有 I/O 使用 async/await
+- **同步核心、异步边缘**: repository / Version Engine / 存储 / `S3Service` 只写普通 `def`；路由和依赖默认 `def`，只有 WebSocket、SSE、只有 async 版本的客户端才用 `async def`；async 代码调用阻塞操作只走 `run_blocking` / `run_owned`（`src/infra/execution/runner.py`）；只有进程入口可以创建事件循环。详见 `../docs/architecture/18-concurrency-boundary.md`
 - **路径标识**: 文件以 path（如 "docs/readme.md"）标识，不使用 UUID
 - **命名**: 文件 snake_case.py，类 PascalCase，函数/变量 snake_case
 - **路由前缀**: 业务 API 在 /api/v1，内部 API 在 /internal

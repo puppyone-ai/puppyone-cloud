@@ -44,9 +44,10 @@ The shared boto3 client pool is sized to `BLOCKING_THREAD_LIMIT` plus the
 storage I/O pool so threads do not queue for connections.
 
 Nested fan-out never borrows request tokens: Version Engine storage uses one
-bounded process-wide pool (`VERSION_STORAGE_IO_THREADS`) for parallel object
-reads/writes. A request thread waiting for storage futures therefore cannot
-deadlock the request pool.
+bounded process-wide pool (`VERSION_STORAGE_IO_THREADS`, default 16) for parallel
+object reads/writes. `parallel_each` lets the caller work through the items while
+helpers join in and cancels helpers that never started, so neither a request
+thread nor a nested pool task ever waits on queued work.
 
 ## Timeouts
 
@@ -72,7 +73,7 @@ context propagation are preserved with threads and `threading` primitives.
   import in repositories and the Version Engine data path (async edges listed
   explicitly); no `async def` route/dependency without real asynchronous work;
   no inline Supabase `.execute()` in coroutines (existing).
-- Ruff `ASYNC` rules.
+- Ruff `ASYNC` rules (ASYNC230/240 ignored per file where local file I/O is pending).
 - Runtime: an event-loop lag monitor (`EVENT_LOOP_LAG_WARN_MS`) logs stalls in
   every environment; staging can additionally set `PYTHONASYNCIODEBUG=1`, which
   logs any callback slower than 100 ms through the intercepted stdlib logger.

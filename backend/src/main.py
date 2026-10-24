@@ -246,11 +246,12 @@ async def _init_file_ingest() -> None:
         log_info("📄 Initializing File Ingest service...")
         from pathlib import Path
 
+        from src.infra.execution.runner import run_blocking
         from src.platform.upload.dependencies import get_etl_service
 
         file_ingest_service = await get_etl_service()
-        Path(".mineru_cache").mkdir(parents=True, exist_ok=True)
-        Path(".etl_rules").mkdir(parents=True, exist_ok=True)
+        for directory in (".mineru_cache", ".etl_rules"):
+            await run_blocking(Path(directory).mkdir, parents=True, exist_ok=True)
         await file_ingest_service.start()
         file_ingest_duration = time.time() - file_ingest_init_start
         log_info(

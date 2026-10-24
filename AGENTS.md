@@ -180,7 +180,7 @@ backend/
 
 - **Layered architecture**: `Router → Service → Repository (Supabase)` three-tier separation
 - **Dependency injection**: Use FastAPI `Depends` to inject Service and Repository
-- **Fully async**: All I/O operations use `async/await`
+- **Synchronous core, async edges**: repositories, Version Engine, storage and `S3Service` are plain `def`; routes/dependencies are `def` unless they do real async work (WebSocket, SSE, async-only clients). Async code calls blocking work only through `run_blocking`/`run_owned` (`src/infra/execution/runner.py`); event loops are created only in process entry points. See [`docs/architecture/18-concurrency-boundary.md`](docs/architecture/18-concurrency-boundary.md)
 - **Pydantic models**: All request/response defined with Pydantic schemas
 - **Naming conventions**: Files `snake_case.py`, classes `PascalCase`, functions/variables `snake_case`
 - **DB table naming**: New tables use **plural snake_case** (e.g. `projects`, `access_surfaces`, `version_transactions`). Deferred physical legacy names may appear only through `backend/src/version_engine/infrastructure/supabase/db_names.py`.

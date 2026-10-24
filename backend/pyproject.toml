@@ -68,7 +68,8 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "BLE"]
+# ASYNC: blocking calls inside coroutines (docs/architecture/18-concurrency-boundary.md).
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "BLE", "ASYNC"]
 ignore = [
     "E501",     # line too long — handled by formatter
     "B008",     # Depends() in defaults — standard FastAPI pattern
@@ -77,11 +78,22 @@ ignore = [
     "RUF001",   # ambiguous unicode chars (emoji in log messages)
     "RUF002",   # ambiguous unicode in docstrings (multiplication sign etc.)
     "RUF003",   # ambiguous unicode in comments (Chinese punctuation)
+    "ASYNC109", # timeout parameters on async provider APIs are an interface choice
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "D", "BLE001"]
+"tests/*" = ["S101", "D", "BLE001", "ASYNC"]  # tests block on purpose (stall probes)
 "src/platform/upload/worker.py" = ["E402"]
+# Pending: local file I/O still runs inside these coroutines (move it behind
+# run_blocking). New modules get ASYNC230/ASYNC240 without exception.
+"src/infra/file_processing/mineru/client.py" = ["ASYNC230", "ASYNC240"]
+"src/platform/access/adapters/ssh/gateway.py" = ["ASYNC240"]
+"src/platform/workspace/apfs_provider.py" = ["ASYNC240"]
+"src/platform/workspace/execution/docker_sandbox.py" = ["ASYNC230", "ASYNC240"]
+"src/platform/workspace/execution/file_utils.py" = ["ASYNC230", "ASYNC240"]
+"src/platform/workspace/execution/providers/fly_transport.py" = ["ASYNC240"]
+"src/platform/workspace/fallback_provider.py" = ["ASYNC240"]
+"src/platform/workspace/overlayfs_provider.py" = ["ASYNC230", "ASYNC240"]
 "src/ingest/router.py" = ["E402"]
 
 [tool.ruff.format]
