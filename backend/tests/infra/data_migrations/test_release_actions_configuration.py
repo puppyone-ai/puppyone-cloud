@@ -112,7 +112,8 @@ def test_workflow_keeps_credentials_after_ci_and_out_of_public_artifacts():
     workflow = yaml.safe_load((ROOT / ".github/workflows/_environment-release.yml").read_text())
     jobs = workflow["jobs"]
     release = jobs["release"]
-    assert release["needs"] == "database"
+    # Application deployment waits for the database stage and the pinned sandbox image.
+    assert release["needs"] == ["database", "sandbox_image"]
     assert release["runs-on"] == "ubuntu-24.04"
     assert release["environment"] == "${{ inputs.environment }}"
     steps = release["steps"]
@@ -129,3 +130,25 @@ def test_workflow_keeps_credentials_after_ci_and_out_of_public_artifacts():
     assert "GITHUB_EVENT_NAME" in admission
     assert "refs/heads/qubits:push" in admission
     assert "refs/heads/main:push" in admission
+
+
+def test_sandbox_image_job_uses_only_image_credentials_after_ci():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/_environment-release.yml").read_text())["jobs"]
+    image = jobs["sandbox_image"]
+    assert image["needs"] == "admission"  # Admission waits for candidate CI.
+    assert image["environment"] == "${{ inputs.environment }}"
+    assert image["runs-on"] == "ubuntu-24.04"
+    steps = image["steps"]
+    assert all("continue-on-error" not in step for step in steps)
+    assert "PUPPYONE_RELEASE_CONFIG" not in str(image)
+    assert not any(step.get("uses", "").startswith("actions/upload-artifact@") for step in steps)
+    # Every step after detection is disabled for environments without a Fly sandbox.
+    assert steps[0]["id"] == "config"
+    assert all(step.get("if") == "steps.config.outputs.enabled == 'true'" for step in steps[1:])
+    publish = steps[-1]
+    assert set(publish["env"]) == {
+        "FLY_API_TOKEN", "FLY_APP", "RAILWAY_TOKEN", "RAILWAY_PROJECT_ID",
+        "RAILWAY_ENVIRONMENT_ID", "RAILWAY_SANDBOX_IMAGE_SERVICES",
+    }
+    assert "--password-stdin" in publish["run"] and "docker logout" in publish["run"]
+    assert "sandbox_image_release.py" in publish["run"]
