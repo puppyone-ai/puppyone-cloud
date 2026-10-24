@@ -253,7 +253,7 @@ async def _queue_sync_run(
     return _queued_run_result(connection=connection, run=run, created=True)
 
 
-async def get_project_sync_status(
+def get_project_sync_status(
     project_id: str = Query(..., description=_PROJECT_ID_DESC),
     service: SynchronizeService = Depends(get_synchronize_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -463,7 +463,7 @@ def list_connections(
     return ApiResponse.success(data=[_sync_resp(c) for c in connections])
 
 
-async def delete_connection(
+def delete_connection(
     connection_id: str,
     service: SynchronizeService = Depends(get_synchronize_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -486,7 +486,7 @@ async def delete_connection(
     return ApiResponse.success(message="Integration connection deleted")
 
 
-async def update_connection(
+def update_connection(
     connection_id: str,
     body: SynchronizeBindingUpdate,
     service: SynchronizeService = Depends(get_synchronize_service),
@@ -546,7 +546,7 @@ async def update_connection(
     return ApiResponse.success(data=_sync_resp(refreshed))
 
 
-async def update_connection_trigger(
+def update_connection_trigger(
     connection_id: str,
     body: SynchronizeTriggerUpdate,
     service: SynchronizeService = Depends(get_synchronize_service),

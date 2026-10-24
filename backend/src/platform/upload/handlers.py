@@ -1615,7 +1615,7 @@ async def complete_upload_batch(
 
 
 @router.post("/upload/abort", response_model=UploadAbortResponse)
-async def abort_upload(
+def abort_upload(
     request: UploadAbortRequest,
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
@@ -1635,7 +1635,7 @@ async def abort_upload(
 
     if request.upload_id:
         try:
-            await run_blocking(s3_service.abort_multipart_upload, request.s3_key, request.upload_id)
+            s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
         except Exception as e:
             # The most common reason this fails is "already aborted/
             # completed", which is fine — we still want to flag the task
@@ -1651,12 +1651,8 @@ async def abort_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await run_blocking(
-                upload_repo.mark_item_cancelled,
-                str(task.task_id),
-                "Upload aborted by client",
-            )
-            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
+            upload_repo.mark_item_cancelled(str(task.task_id), "Upload aborted by client")
+            upload_repo.refresh_job_from_items(upload_job_id)
 
     return UploadAbortResponse(task_id=str(task.task_id), cancelled=True)
 

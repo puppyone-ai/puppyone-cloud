@@ -200,6 +200,7 @@ class SchedulerService:
                 id="sync-run-reaper",
                 name="Integration Sync Run Lease Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         if settings.IMPORT_JOB_REAPER_ENABLED:
@@ -211,6 +212,7 @@ class SchedulerService:
                 id="import-job-reaper",
                 name="One-Time Import Job Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         if settings.UPLOAD_JOB_REAPER_ENABLED:
@@ -222,6 +224,7 @@ class SchedulerService:
                 id="upload-job-reaper",
                 name="Upload Job Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         log_info(f"✅ APScheduler started with {scheduler_settings.max_workers} workers")

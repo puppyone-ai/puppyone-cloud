@@ -9,7 +9,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from src.content.table.dependencies import get_table_service
 from src.exceptions import AppException
-from src.infra.execution.runner import run_blocking
 from src.infra.search.dependencies import get_search_service
 from src.infra.search.schemas import SearchToolQueryInput, SearchToolQueryResponse
 from src.infra.supabase.dependencies import get_supabase_repository
@@ -130,7 +129,7 @@ router.include_router(
     summary="Upsert organization entitlement snapshot",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def upsert_organization_entitlements(
+def upsert_organization_entitlements(
     payload: EntitlementUpsert,
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
 ):
@@ -146,7 +145,7 @@ async def upsert_organization_entitlements(
     summary="Verify user can manage organization billing",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def verify_billing_organization_access(
+def verify_billing_organization_access(
     org_id: str,
     user_id: str = Query(..., description="Authenticated user id requesting billing changes"),
 ):
@@ -174,8 +173,8 @@ async def verify_billing_organization_access(
     summary="Read non-financial organization billing facts for reconciliation",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def get_billing_organization_facts(org_id: str):
-    facts = await run_blocking(BillingFactsService().get, org_id)
+def get_billing_organization_facts(org_id: str):
+    facts = BillingFactsService().get(org_id)
     return {"ok": True, "data": facts.model_dump(mode="json")}
 
 
@@ -185,7 +184,7 @@ async def get_billing_organization_facts(org_id: str):
     description="Get table metadata by table_id (excluding data content)",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def get_table_metadata(
+def get_table_metadata(
     table_id: str, request: Request, table_service=Depends(get_table_service)
 ):
     table = table_service.get_by_id(table_id)
@@ -213,7 +212,7 @@ async def get_table_metadata(
     description="Get structure by table_id + json_path (JSON Pointer), excluding actual values",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def get_table_context_schema(
+def get_table_context_schema(
     table_id: str,
     request: Request,
     json_path: str = Query(default="", description="Mount point JSON Pointer path"),
@@ -240,7 +239,7 @@ async def get_table_context_schema(
     description="Get data by table_id + json_path; if query is provided, performs JMESPath query on the data",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def get_table_context_data(
+def get_table_context_data(
     table_id: str,
     request: Request,
     json_path: str = Query(default="", description="Mount point JSON Pointer path"),
@@ -448,7 +447,7 @@ async def search_tool(
     description="External consumers call this to get Sandbox endpoint mounts, runtime, and other configuration before execution",
     dependencies=[Depends(verify_internal_secret)],
 )
-async def get_sandbox_endpoint_by_key(access_key: str = Body(..., embed=True)):
+def get_sandbox_endpoint_by_key(access_key: str = Body(..., embed=True)):
     from src.platform.access.adapters.sandbox_endpoint.repository import SandboxEndpointRepository
 
     repo = SandboxEndpointRepository()

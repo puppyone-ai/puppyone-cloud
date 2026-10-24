@@ -323,7 +323,7 @@ def get_connection(
     return ApiResponse.success(data=_enrich([row], sb)[0], message="Access connection found")
 
 
-async def delete_connection(
+def delete_connection(
     connection_id: str = Path(...),
     current_user: CurrentUser = Depends(get_current_user),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -632,7 +632,7 @@ def _create_sandbox(payload: contracts.AccessSurfaceConfigure) -> contracts.Acce
     )
 
 
-async def create_connection(
+def create_connection(
     payload: contracts.AccessSurfaceConfigure,
     current_user: CurrentUser = Depends(get_current_user),
     entitlement_service: EntitlementService = Depends(get_entitlement_service),

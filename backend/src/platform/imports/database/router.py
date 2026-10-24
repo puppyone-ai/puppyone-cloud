@@ -63,12 +63,12 @@ async def create_source(
         raise HTTPException(status_code=400, detail="Database source setup failed") from exc
 
 
-async def list_sources(project_id: str, user: CurrentUser, service: DatabaseImportService):
+def list_sources(project_id: str, user: CurrentUser, service: DatabaseImportService):
     sources = service.list_connections(project_id, user.user_id)
     return ApiResponse.success(data=[_source_to_response(source) for source in sources])
 
 
-async def delete_source(source_id: str, user: CurrentUser, service: DatabaseImportService):
+def delete_source(source_id: str, user: CurrentUser, service: DatabaseImportService):
     service.delete_connection(source_id, user.user_id)
     return ApiResponse.success(message="Database source deleted")
 

@@ -200,12 +200,12 @@ def update_organization(
 
 
 @router.delete("/{org_id}", response_model=ApiResponse[None])
-async def delete_organization(
+def delete_organization(
     org_id: str,
     org_service: OrganizationService = Depends(get_org_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    await run_blocking(org_service.delete, org_id, current_user.user_id)
+    org_service.delete(org_id, current_user.user_id)
     return ApiResponse.success(message="Organization deleted")
 
 

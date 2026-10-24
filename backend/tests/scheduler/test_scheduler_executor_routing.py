@@ -61,6 +61,8 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
     monkeypatch.setattr(scheduler_module.settings, "VERSION_OBJECT_GC_ENABLED", True)
     monkeypatch.setattr(scheduler_module.settings, "VERSION_INTEGRITY_SCAN_ENABLED", True)
     monkeypatch.setattr(scheduler_module.settings, "SHADOW_SNAPSHOT_REAPER_ENABLED", True)
+    for flag in ("SYNC_RUN_REAPER_ENABLED", "IMPORT_JOB_REAPER_ENABLED", "UPLOAD_JOB_REAPER_ENABLED"):
+        monkeypatch.setattr(scheduler_module.settings, flag, True)
 
     service = scheduler_module.SchedulerService()
     await service.start()
@@ -100,9 +102,13 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
     # Scheduled pulls enqueue through arq's async client on the API loop.
     assert "executor" not in jobs_by_id["sync:conn-1"][1]
 
+    # Synchronous jobs (database reapers included) never run on the API loop.
     for job_id in [
         "version-object-gc",
         "version-object-integrity-scan",
+        "sync-run-reaper",
+        "import-job-reaper",
+        "upload-job-reaper",
         "agent-1",
     ]:
         assert jobs_by_id[job_id][1]["executor"] == "threadpool"

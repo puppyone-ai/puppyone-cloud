@@ -123,7 +123,7 @@ async def complete_workspace(
 
 
 @router.get("/{agent_id}/status", response_model=ApiResponse[WorkspaceStatusResponse])
-async def workspace_status(
+def workspace_status(
     agent_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     authorization: AuthorizationService = Depends(get_authorization_service),

@@ -138,24 +138,24 @@ async def create_synchronize_binding(body: SynchronizeBindingCreate, service: Se
 
 
 @router.patch("/bindings/{synchronize_binding_id}", response_model=ApiResponse[SynchronizeBinding])
-async def update_synchronize_binding(synchronize_binding_id: str, body: SynchronizeBindingUpdate,
+def update_synchronize_binding(synchronize_binding_id: str, body: SynchronizeBindingUpdate,
         service: Service, registry: Registry, authorization: Authorization, current_user: User):
-    return _reply(await operations.update_connection(connection_id=synchronize_binding_id,
+    return _reply(operations.update_connection(connection_id=synchronize_binding_id,
         body=body,
         service=service, registry=registry, authorization=authorization, current_user=current_user), _binding)
 
 
 @router.delete("/bindings/{synchronize_binding_id}", response_model=ApiResponse)
-async def delete_synchronize_binding(synchronize_binding_id: str, service: Service,
+def delete_synchronize_binding(synchronize_binding_id: str, service: Service,
         authorization: Authorization, current_user: User):
-    return await operations.delete_connection(connection_id=synchronize_binding_id, service=service,
+    return operations.delete_connection(connection_id=synchronize_binding_id, service=service,
         authorization=authorization, current_user=current_user)
 
 
 @router.patch("/bindings/{synchronize_binding_id}/trigger", response_model=ApiResponse)
-async def update_synchronize_trigger(synchronize_binding_id: str, body: SynchronizeTriggerUpdate,
+def update_synchronize_trigger(synchronize_binding_id: str, body: SynchronizeTriggerUpdate,
         service: Service, authorization: Authorization, current_user: User):
-    return await operations.update_connection_trigger(connection_id=synchronize_binding_id,
+    return operations.update_connection_trigger(connection_id=synchronize_binding_id,
         body=body, service=service,
         authorization=authorization, current_user=current_user)
 
@@ -203,8 +203,8 @@ def list_failed_synchronize_runs(project_id: str, service: Service, authorizatio
 
 
 @router.get("/status", response_model=ApiResponse[SynchronizeStatus])
-async def get_synchronize_status(project_id: str, service: Service, authorization: Authorization, current_user: User):
-    return _reply(await operations.get_project_sync_status(project_id=project_id, service=service,
+def get_synchronize_status(project_id: str, service: Service, authorization: Authorization, current_user: User):
+    return _reply(operations.get_project_sync_status(project_id=project_id, service=service,
         authorization=authorization, current_user=current_user),
         lambda data: SynchronizeStatus(**_dict(data)))
 

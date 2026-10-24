@@ -6,7 +6,7 @@ from src.platform.workspace.service import WorkbenchService
 from src.version_engine.bootstrap.dependencies import get_version_engine_container
 
 
-async def get_workbench_service(request: Request, engine=Depends(get_version_engine_container)):
+def get_workbench_service(request: Request, engine=Depends(get_version_engine_container)):
     service = getattr(request.app.state, "workbench_service", None)
     if service is None:
         service = build_workbench_service(engine=engine)

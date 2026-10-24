@@ -107,3 +107,76 @@ def test_event_loops_are_created_only_in_process_entry_points():
     assert entry_point_violations == [], "entry points create loops only in main():\n" + "\n".join(
         entry_point_violations
     )
+
+
+# Coroutine handlers that do no I/O at all: they must answer even while the
+# shared worker-thread pool is saturated.
+_PURE_ASYNC_HANDLERS = {
+    ("main.py", "live_check"),
+    ("main.py", "health_check"),
+}
+_ROUTE_DECORATORS = (".get", ".post", ".put", ".patch", ".delete", ".head", ".options", ".api_route")
+
+
+def _own_nodes(function):
+    nested = set()
+    for node in ast.walk(function):
+        if node is not function and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        ):
+            nested.update(id(inner) for inner in ast.walk(node))
+    return [node for node in ast.walk(function) if id(node) not in nested]
+
+
+def _does_async_work(function: ast.AsyncFunctionDef) -> bool:
+    for node in _own_nodes(function):
+        if isinstance(node, (ast.AsyncFor, ast.AsyncWith)):
+            return True
+        if isinstance(node, ast.Await):
+            call = node.value
+            if not (isinstance(call, ast.Call) and ast.unparse(call.func) == "run_blocking"):
+                return True
+    # A nested async generator is a streaming response body (SSE, downloads).
+    return any(
+        isinstance(node, ast.AsyncFunctionDef)
+        and any(isinstance(inner, (ast.Yield, ast.YieldFrom)) for inner in ast.walk(node))
+        for node in ast.walk(function)
+        if node is not function
+    )
+
+
+def _dependency_names(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and ast.unparse(node.func) in {"Depends", "Security"}
+            and node.args
+            and isinstance(node.args[0], (ast.Name, ast.Attribute))
+        ):
+            target = node.args[0]
+            yield target.attr if isinstance(target, ast.Attribute) else target.id
+
+
+def test_blocking_only_routes_and_dependencies_are_plain_functions():
+    files = list(_python_files())
+    dependencies = {name for _path, tree in files for name in _dependency_names(tree)}
+    violations = []
+    for path, tree in files:
+        relative = path.relative_to(SOURCE).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            is_route = any(
+                isinstance(decorator, ast.Call)
+                and ast.unparse(decorator.func).endswith(_ROUTE_DECORATORS)
+                for decorator in node.decorator_list
+            )
+            is_dependency = node.name in dependencies and node.col_offset == 0
+            if not (is_route or is_dependency) or (relative, node.name) in _PURE_ASYNC_HANDLERS:
+                continue
+            if not _does_async_work(node):
+                violations.append(f"{relative}:{node.lineno} {node.name}")
+    assert violations == [], (
+        "a handler/dependency that only blocks is a plain def (FastAPI runs it in "
+        "the shared thread pool):\n" + "\n".join(violations)
+    )

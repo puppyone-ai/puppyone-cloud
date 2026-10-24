@@ -58,13 +58,13 @@ async def create_source(
     response_model=ApiResponse[list[ImportDatabaseSource]],
     dependencies=[strict_query("project_id")],
 )
-async def list_sources(
+def list_sources(
     project_id: str = Query(min_length=1),
     user: CurrentUser = Depends(get_current_user),
     service: DatabaseImportService = Depends(get_database_import_service),
 ):
     return _reply(
-        await operations.list_sources(project_id, user, service),
+        operations.list_sources(project_id, user, service),
         lambda rows: [_source(row) for row in rows],
     )
 
@@ -74,7 +74,7 @@ async def list_sources(
     response_model=ApiResponse[ImportDatabaseSource],
     dependencies=[strict_query()],
 )
-async def get_source(
+def get_source(
     import_database_source_id: str = Path(min_length=1),
     user: CurrentUser = Depends(get_current_user),
     service: DatabaseImportService = Depends(get_database_import_service),
@@ -86,12 +86,12 @@ async def get_source(
 @router.delete(
     "/{import_database_source_id}", response_model=ApiResponse, dependencies=[strict_query()]
 )
-async def delete_source(
+def delete_source(
     import_database_source_id: str = Path(min_length=1),
     user: CurrentUser = Depends(get_current_user),
     service: DatabaseImportService = Depends(get_database_import_service),
 ):
-    return _reply(await operations.delete_source(import_database_source_id, user, service))
+    return _reply(operations.delete_source(import_database_source_id, user, service))
 
 
 @router.get(

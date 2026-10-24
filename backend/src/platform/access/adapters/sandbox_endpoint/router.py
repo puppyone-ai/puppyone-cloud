@@ -248,7 +248,7 @@ def regenerate_key(
     response_model=ApiResponse[dict],
     summary="Execute command in Sandbox endpoint",
 )
-async def exec_command(
+def exec_command(
     endpoint_id: str,
     payload: dict,
     x_access_key: str = Header(..., alias="X-Access-Key"),

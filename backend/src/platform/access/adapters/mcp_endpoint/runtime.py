@@ -171,7 +171,7 @@ async def _filter_search_results_through_scoped_fs(
 
 
 @router.post("/tools")
-async def list_runtime_tools(payload: RuntimeToolsRequest):
+def list_runtime_tools(payload: RuntimeToolsRequest):
     runtime = resolve_mcp_runtime(payload.api_key)
     ctx = runtime.context
     tools = build_mcp_tool_definitions(
