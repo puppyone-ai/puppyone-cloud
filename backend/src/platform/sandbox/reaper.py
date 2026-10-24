@@ -9,13 +9,12 @@ Only providers with a bounded provider-side lifetime are reaped here. Fly
 records lack the app and volume identity that ``cleanup`` requires, so they stay
 owned by the Workspace lifecycle reapers.
 
-The same loop retires machines left by the removed Scope Sandbox product
-(``legacy_scope``).
+The worker's sandbox module runs these passes (``reclamation_passes``) together
+with retirement of machines left by the removed Scope Sandbox (``legacy_scope``).
 """
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 from src.infra.execution.runner import run_blocking
@@ -87,24 +86,16 @@ async def run_execution_reaper_once(
     return stopped
 
 
-def start_sandbox_reaper(*, interval_s: int = 60):
-    stop_event = asyncio.Event()
+def reclamation_passes():
+    """Named, independent reclamation passes; the worker's sandbox module runs them.
 
-    async def loop() -> None:
-        while not stop_event.is_set():
-            # Independent passes: one failing never skips the other. A transient
-            # provider/DB failure must not kill the loop; durable rows retry.
-            for name, reap in (
-                ("SandboxExecutionReaper", run_execution_reaper_once),
-                ("LegacyScopeSandbox", retire_legacy_scope_sandboxes_once),
-            ):
-                try:
-                    await reap()
-                except Exception as exc:
-                    log_warning(f"[{name}] pass failed; will retry: {exc}")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=max(1, interval_s))
-            except TimeoutError:
-                continue
+    Names resolve at call time so a pass can be replaced in tests.
+    """
 
-    return asyncio.create_task(loop()), stop_event
+    async def execution():
+        return await run_execution_reaper_once()
+
+    async def legacy():
+        return await retire_legacy_scope_sandboxes_once()
+
+    return [("ephemeral_execution_reaper", execution), ("legacy_scope_retirement", legacy)]

@@ -32,7 +32,7 @@ from .port import (
     RuntimeTransition,
     resource_identity,
 )
-from .reaper import run_execution_reaper_once, start_sandbox_reaper
+from .reaper import reclamation_passes, run_execution_reaper_once
 from .registry import PROVIDERS, close_provider_transports, default_provider, runtime_provider
 from .resources import destroy_resource, resource_absent
 from .store import ExecutionSession, ExecutionSessionStore, durable_execution_store
@@ -55,12 +55,12 @@ __all__ = [
     "default_provider",
     "destroy_resource",
     "durable_execution_store",
+    "reclamation_passes",
     "require_binding",
     "resource_absent",
     "resource_identity",
     "run_execution_reaper_once",
     "runtime_provider",
-    "start_sandbox_reaper",
     "workspace_event",
     "workspace_stage",
 ]

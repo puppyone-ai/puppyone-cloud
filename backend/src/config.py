@@ -429,6 +429,12 @@ class Settings(BaseSettings):
     # A stopping worker lets active Runs continue this long, then hands them off.
     # The platform's SIGTERM-to-SIGKILL window must be longer.
     CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS: int = Field(default=20, ge=0, le=600)
+    # Modules this worker process runs: "agent" claims and supervises Runs;
+    # "sandbox" is the only owner of machine lifecycle. One service runs both;
+    # separate services of the same image each run one.
+    WORKER_ROLES: str = Field(
+        default="agent,sandbox", pattern=r"^(agent|sandbox)(,(agent|sandbox))?$"
+    )
     # Docker sandbox dedicated temp directory; only needed when containerized backend controls host Docker
     SANDBOX_TMPDIR: str | None = None
     # Sandbox file download concurrency

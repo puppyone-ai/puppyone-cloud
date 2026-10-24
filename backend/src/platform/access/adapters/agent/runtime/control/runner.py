@@ -60,6 +60,8 @@ class RunSupervisor:
     ):
         self.repo, self.admission, self.publication = repository, admission, publication
         self.capability = capability
+        # How this supervision ended, for worker statistics: state and code.
+        self.outcome = None
         self.inference, self.billing = inference, billing
         self.checkpoints = checkpoints or Checkpoints()
         if workspace is not None and shared_tasks is not None:
@@ -249,10 +251,14 @@ class RunSupervisor:
                 # Configuration, not the task: another worker of the pool may serve it.
                 incapable = exc.code
             else:
-                logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
+                logger.exception(
+                    "cloud_agent_execution_failed", extra={"agent_dispatch": {"run_id": run["id"]}}
+                )
                 outcome = ("failed", exc.code)
         except Exception:
-            logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
+            logger.exception(
+                "cloud_agent_execution_failed", extra={"agent_dispatch": {"run_id": run["id"]}}
+            )
             outcome = ("failed", "execution_failed")
         finally:
             for task in (heartbeat, operation, flusher, models, *self.models.values()):
@@ -319,12 +325,13 @@ class RunSupervisor:
         attempts = current.get("dispatch_attempts", 0) + 1
         details = {"run_id": run["id"], "code": code, "dispatch_attempts": attempts}
         if attempts >= MAX_DISPATCH_ATTEMPTS and current["state"] not in TERMINAL:
-            logger.error("cloud_agent_no_capable_worker", extra=details)
+            logger.error("cloud_agent_no_capable_worker", extra={"agent_dispatch": details})
             return ("failed", "no_capable_worker")
         (logger.error if attempts >= MAX_DISPATCH_ATTEMPTS else logger.warning)(
-            "cloud_agent_run_released", extra=details
+            "cloud_agent_run_released", extra={"agent_dispatch": details}
         )
         await run_blocking(self.repo.release_execution, current, reason="worker_incapable")
+        self.outcome = {"state": "released", "code": code}
         return None
 
     async def holds_resources(self):
@@ -922,3 +929,4 @@ class RunSupervisor:
                 snapshot=snapshot,
                 cleaned=bool(completed_execution or workspace_released),
             )
+        self.outcome = {"state": state, "code": code}

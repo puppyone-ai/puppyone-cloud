@@ -30,13 +30,14 @@ builder = "NIXPACKS"
 # - Upload Worker (completion / file ETL / OCR): SERVICE_ROLE=upload_worker
 # - Import Worker (one-shot external imports): SERVICE_ROLE=import_worker
 # - Synchronize Worker (generic + GitHub pulls): SERVICE_ROLE=synchronize_worker
-# - Cloud Agent supervisor: SERVICE_ROLE=agent_worker
+# - Worker (agent + sandbox modules): SERVICE_ROLE=agent_worker
 # - MCP Server (AI Agent protocol): SERVICE_ROLE=mcp_server
 #
 # Environment variables:
 # - SERVICE_ROLE: api | agent_worker | upload_worker | import_worker | synchronize_worker | mcp_server
 # - API service sets MCP_SERVER_URL to the MCP Server service URL
-# - Cloud Agent supervisor: SERVICE_ROLE=agent_worker
+# - agent_worker: WORKER_ROLES selects its modules (agent, sandbox; default both)
+#   so the same image can run them as separate services
 # - MCP Server service sets MAIN_SERVICE_URL to the API service URL
 # - API and MCP Server services share INTERNAL_API_SECRET
 # - agent_worker is exec'd so SIGTERM reaches it: it stops claiming, finishes

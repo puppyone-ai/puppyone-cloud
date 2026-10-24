@@ -66,7 +66,10 @@ async def test_failed_or_unverified_destruction_keeps_the_row_live(monkeypatch):
     assert {row["state"] for row in sessions.rows.values()} == {"running"}
 
 
-async def test_sandbox_reaper_runs_both_passes_even_when_one_fails(monkeypatch):
+async def test_sandbox_module_runs_both_reclamation_passes_even_when_one_fails(monkeypatch):
+    from src.config import settings
+    from src.platform.workspace.sandbox_worker import SandboxModule
+
     calls = []
     both = asyncio.Event()
 
@@ -80,9 +83,18 @@ async def test_sandbox_reaper_runs_both_passes_even_when_one_fails(monkeypatch):
 
     monkeypatch.setattr(reaper, "run_execution_reaper_once", execution)
     monkeypatch.setattr(reaper, "retire_legacy_scope_sandboxes_once", legacy)
+    monkeypatch.setattr(settings, "SANDBOX_REAPER_ENABLED", True)
+    assert [name for name, _ in reaper.reclamation_passes()] == [
+        "ephemeral_execution_reaper",
+        "legacy_scope_retirement",
+    ]
 
-    task, stop = reaper.start_sandbox_reaper(interval_s=60)
+    module = SandboxModule(None, pool="default")
+    stop = asyncio.Event()
+    task = asyncio.create_task(module.serve(stop=stop))
     await asyncio.wait_for(both.wait(), timeout=5)
     stop.set()
     await asyncio.wait_for(task, timeout=5)
     assert calls == ["execution", "legacy"]
+    assert module.failed == {"ephemeral_execution_reaper": 1}
+    assert module.completed == {"legacy_scope_retirement": 1}
