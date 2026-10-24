@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -16,7 +15,6 @@ from src.platform.access.adapters.api.workbench_router import (
 from src.platform.access.adapters.ssh.service import SshAccessService
 from src.platform.auth.dependencies import get_current_user
 from src.platform.workspace.errors import WorkspaceError
-from src.platform.workspace.local_service import LocalWorkspaceService
 from src.platform.workspace.scopes.service import WorkspaceConnection
 
 
@@ -71,44 +69,3 @@ async def test_ssh_adapter_only_uses_workspace_connection_api():
     workspace.revoke.assert_awaited_once_with(
         project_id="project", scope_id="scope", user_id="user"
     )
-
-
-async def test_local_completion_cannot_cross_project_or_clean_another_workspace():
-    provider = Mock()
-    provider.get_workspace_info.return_value = SimpleNamespace(project_id="other")
-    provider.detect_changes = AsyncMock()
-    provider.cleanup = AsyncMock()
-    commands = SimpleNamespace(bulk_write=AsyncMock())
-    with pytest.raises(WorkspaceError) as rejected:
-        await LocalWorkspaceService(provider).complete("project", "agent", commands)
-    assert rejected.value.status_code == 403
-    provider.detect_changes.assert_not_awaited()
-    provider.cleanup.assert_not_awaited()
-    commands.bulk_write.assert_not_awaited()
-
-
-async def test_local_completion_publishes_native_bytes_and_cleans_after_success():
-    provider = Mock()
-    provider.get_workspace_info.return_value = SimpleNamespace(project_id="project")
-    provider.detect_changes = AsyncMock(
-        return_value=SimpleNamespace(
-            modified={"text.md": "你好", "binary": b"\x00\xff"},
-            deleted=["old"],
-        )
-    )
-    provider.cleanup = AsyncMock()
-    commands = SimpleNamespace(
-        bulk_write=AsyncMock(
-            return_value=SimpleNamespace(
-                result=SimpleNamespace(commit_id="commit", conflicts=0, merged=False),
-            )
-        )
-    )
-    result = await LocalWorkspaceService(provider).complete("project", "agent", commands)
-    assert (result.total_files, result.committed, result.conflict_count) == (3, 2, 0)
-    assert commands.bulk_write.await_args.args == (
-        "project",
-        {"text.md": "你好".encode(), "binary": b"\x00\xff"},
-    )
-    assert commands.bulk_write.await_args.kwargs["deleted"] == ["old"]
-    provider.cleanup.assert_awaited_once_with("agent")

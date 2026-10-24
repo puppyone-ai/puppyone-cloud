@@ -180,7 +180,6 @@ def test_shared_dtos_contain_no_entrypoint_lifecycle_or_workspace_state():
     from src.provider._base import ProviderSpec
     from src.provider import schemas
     from src.platform.synchronize.models import SynchronizeBinding
-    from src.platform.workspace.sync_models import SyncResult
 
     for retired in ("Sync", "SyncResult", "NodeSyncMeta", "SyncProjectRequest", "SyncProjectResponse"):
         assert not hasattr(schemas, retired)
@@ -190,7 +189,6 @@ def test_shared_dtos_contain_no_entrypoint_lifecycle_or_workspace_state():
         item.name for item in fields(ProviderSpec)
     }
     assert SynchronizeBinding.__module__ == "src.platform.synchronize.models"
-    assert SyncResult.__module__ == "src.platform.workspace.sync_models"
 
 
 def test_moved_upload_contracts_repository_and_policy_are_domain_owned():

@@ -679,9 +679,6 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
-    from src.platform.access.adapters.api.workspace_router import router as workspace_router
-
-    app.include_router(workspace_router, prefix="/api/v1", tags=["workspace"])
     from src.platform.synchronize.public_router import router as synchronize_public_router
 
     app.include_router(synchronize_public_router, prefix="/api/v1")

@@ -461,12 +461,8 @@ class Settings(BaseSettings):
     SCOPE_SANDBOX_REAPER_ENABLED: bool = True
     SCOPE_SANDBOX_REAPER_INTERVAL_S: int = 120
 
-    # Workspace Provider configuration
-    # - "auto": Auto-detect platform (macOS -> APFS Clone, Linux -> OverlayFS, other -> full copy)
-    # - "apfs": Force APFS Clone (macOS only)
-    # - "overlayfs": Force OverlayFS (Linux only)
-    # - "fallback": Force full copy
-    WORKSPACE_PROVIDER: str = "auto"
+    # Root of legacy host-local Agent workspace directories (lower/, workspaces/).
+    # Nothing creates them any more; Project deletion still scrubs leftovers.
     WORKSPACE_BASE_DIR: str = "/tmp/contextbase"
     # These paths contain only reconstructable, authorization-fenced derived
     # state. "persistent" is allowed for local/self-hosted experimentation but

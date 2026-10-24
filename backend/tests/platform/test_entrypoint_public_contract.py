@@ -357,6 +357,25 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     assert internal_nodes["paths"]["added"] == internal_nodes["paths"]["changed"] == {}
     for name, digest in internal_nodes["paths"]["removed"].items():
         assert expected["contract"]["paths"].pop(name) == digest
+    # The host-local Agent workspace had no callers and is retired exactly;
+    # Hosted Workspaces under /projects/{project_id}/workbench are unchanged.
+    local_workspace = json.loads(
+        Path(__file__).with_name("local_workspace_retirement_contract_delta.json").read_text()
+    )
+    assert set(local_workspace["paths"]["removed"]) == {
+        "/api/v1/workspace/create",
+        "/api/v1/workspace/{agent_id}/complete",
+        "/api/v1/workspace/{agent_id}/status",
+    }
+    assert set(local_workspace["schemas"]["removed"]) == {
+        "CreateWorkspaceRequest", "CreateWorkspaceResponse", "CompleteWorkspaceResponse",
+        "WorkspaceStatusResponse", "ApiResponse_CreateWorkspaceResponse_",
+        "ApiResponse_CompleteWorkspaceResponse_", "ApiResponse_WorkspaceStatusResponse_",
+    }
+    for category in ("paths", "schemas"):
+        assert local_workspace[category]["added"] == local_workspace[category]["changed"] == {}
+        for name, digest in local_workspace[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 

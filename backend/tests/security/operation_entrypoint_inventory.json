@@ -17,11 +17,6 @@
       "reason": "Stat and JSON content use separate snapshots; any content read error becomes empty JSON before write."
     },
     {
-      "path": "platform/workspace/sync_worker.py",
-      "function": "SyncWorker.sync_project",
-      "reason": "Legacy local provider: N+2 one-shot snapshots; catches read errors and still returns ok. Not Fly SSH workspace materialization."
-    },
-    {
       "path": "platform/access/adapters/agent/sandbox_session.py",
       "function": "prepare_sandbox_data",
       "reason": "No caller found; legacy helper has per-file snapshots and swallowed errors. Do not enable unchanged."
@@ -76,9 +71,6 @@
       },
       "platform/synchronize/github/importer.py": {
         "_do_import::build_worker_version_engine_container": 1
-      },
-      "platform/workspace/sync_worker.py": {
-        "SyncWorker._get_ops::build_worker_version_engine_container": 1
       },
       "version_engine/bootstrap/dependencies.py": {
         "build_request_version_engine_container::build_version_engine_container": 1,
@@ -232,11 +224,6 @@
       },
       "platform/workspace/project_cleanup.py": {
         "ProjectHostCleanupPort._read_view_metadata_bytes::metadata_path.stat": 1
-      },
-      "platform/workspace/sync_worker.py": {
-        "SyncWorker.sync_project::ops.get_head_commit_id": 1,
-        "SyncWorker.sync_project::ops.list_tree": 1,
-        "SyncWorker.sync_project::ops.read_file": 1
       },
       "tool/service.py": {
         "ToolService.get_path_with_access_check::self._ops.for_grant(grant).stat": 1

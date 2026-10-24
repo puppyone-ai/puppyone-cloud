@@ -218,11 +218,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/internal/tools/{tool_id}/search"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/api/v1/nodes/project-audit-logs"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/nodes/{path:path}/audit-logs"): _human(ProjectAction.HISTORY_READ),
-
-    # Remote Agent workspaces.
-    ("POST", "/api/v1/workspace/create"): _human(ProjectAction.AGENT_RUN),
-    ("POST", "/api/v1/workspace/{agent_id}/complete"): _human(ProjectAction.CONTENT_WRITE),
-    ("GET", "/api/v1/workspace/{agent_id}/status"): _human(ProjectAction.AGENT_READ),
 })
 
 PROJECT_ROUTE_AUTHORIZATION.update({
