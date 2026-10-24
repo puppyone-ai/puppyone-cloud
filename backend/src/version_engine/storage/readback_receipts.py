@@ -7,6 +7,7 @@ the prepared S3 writer promotes facts after readback, index ACK and settlement.
 
 import hashlib
 import json
+import threading
 
 from src.version_engine.write_engine.git_object_format import decode_object, hash_object
 from src.version_engine.write_engine.git_object_graph import object_edges
@@ -45,10 +46,13 @@ class ReadbackReceipts:
 
 
 class PreparedReadback:
+    """Readback evidence for one ingestion; batches verify on parallel threads."""
+
     def __init__(self, *, max_bytes=ReadbackReceipts.MAX_BYTES):
         self.records = {}
         self.bytes = 0
         self.max_bytes = max_bytes
+        self._lock = threading.Lock()
 
     def verify(self, oid, loose):
         kind, body = decode_object(loose)
@@ -65,20 +69,22 @@ class PreparedReadback:
         record = VerifiedObject(kind, len(body), digest, edges)
         # Include space for placement metadata; no object bytes are retained.
         size = len(json.dumps([oid, kind, len(body), digest, edges]).encode()) + 512
-        if (size <= 2 * 1024**2 and self.bytes + size <= self.max_bytes
-                and len(self.records) < ReadbackReceipts.MAX_OBJECTS):
-            self.records[oid] = (record, None, size)
-            self.bytes += size
+        with self._lock:  # the byte/object budget is shared by all batch threads
+            if (size <= 2 * 1024**2 and self.bytes + size <= self.max_bytes
+                    and len(self.records) < ReadbackReceipts.MAX_OBJECTS):
+                self.records[oid] = (record, None, size)
+                self.bytes += size
         return kind, len(body)
 
     def placements(self, rows):
-        for row in rows:
-            oid = row["object_id"]
-            if oid in self.records:
-                record, _, size = self.records[oid]
-                self.records[oid] = (record, (
-                    row["pack_key"], row["offset_bytes"], row["size_bytes"],
-                ), size)
+        with self._lock:
+            for row in rows:
+                oid = row["object_id"]
+                if oid in self.records:
+                    record, _, size = self.records[oid]
+                    self.records[oid] = (record, (
+                        row["pack_key"], row["offset_bytes"], row["size_bytes"],
+                    ), size)
 
     def finish(self):
         if any(placement is None for _, placement, _ in self.records.values()):

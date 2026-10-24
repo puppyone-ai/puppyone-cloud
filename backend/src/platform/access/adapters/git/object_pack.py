@@ -6,7 +6,7 @@ import zlib
 
 from dulwich.index import validate_path_element_hfs, validate_path_element_ntfs
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.storage.git_pack import GitPack
 from src.version_engine.write_engine.git_object_format import decode_tree
 

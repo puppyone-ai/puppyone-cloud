@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -16,6 +15,7 @@ from src.file_operations.upload_policy import (
 from src.file_operations.upload_policy import (
     path_has_blocked_segment,
 )
+from src.infra.execution.runner import run_blocking
 from src.platform.access.repository_schemas import (
     CopyRequest,
     MkdirRequest,
@@ -213,7 +213,7 @@ async def upload_file(
     _assert_not_excluded(rel_path, scope)
     _assert_upload_policy(rel_path)
 
-    per_file_max_bytes = await asyncio.to_thread(
+    per_file_max_bytes = await run_blocking(
         _upload_max_bytes_for_project,
         project_id,
     )

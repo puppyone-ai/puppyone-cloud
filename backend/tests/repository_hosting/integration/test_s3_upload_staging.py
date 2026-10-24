@@ -100,9 +100,9 @@ async def test_private_staging_does_not_replace_existing_canonical_bytes(
         assert ref.hash == oid and ref.size == len(raw)
         assert ref.content == raw
         if resident == "absent":
-            assert not await s3.file_exists(destination)
+            assert not s3.file_exists(destination)
         else:
-            assert await s3.download_file(destination) == body
+            assert s3.download_file(destination) == body
         assert (
             pg.value(f"SELECT row_to_json(p) FROM public.projects p WHERE id={literal(project)}")
             == before

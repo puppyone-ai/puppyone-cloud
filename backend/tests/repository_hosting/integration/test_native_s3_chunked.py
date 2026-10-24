@@ -13,7 +13,7 @@ import pytest
 
 from src.version_engine.derived.object_gc import run_git_object_gc
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
-from src.version_engine.storage.backends.s3 import S3StorageBackend, _run_async
+from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.storage.publication import ClosureVerifier
 from src.version_engine.write_engine.git_object_format import encode_object
@@ -45,10 +45,8 @@ def test_native_chunked_publication_survives_late_different_chunk_boundaries(pub
     before = auth.state()
     # Model previously issued old-part PUTs completing after the newer ACK,
     # without their manifest completing. No location-index write is performed.
-    _run_async(
-        old_producer._async_upload_physical_objects(
-            [item for item in pending if item[2] != "application/json"]
-        )
+    old_producer._upload_physical_objects(
+        [item for item in pending if item[2] != "application/json"]
     )
     fresh = S3StorageBackend(
         s3,
@@ -77,13 +75,13 @@ def test_native_gc_removes_immutable_chunk_orphan_and_keeps_published_closure(pu
         location.pack_key.removeprefix("chunked:"),
         location.size_bytes,
     )
-    assert all(_run_async(s3.file_exists(key)) for key in keys)
+    assert all(s3.file_exists(key) for key in keys)
     before = service.control.snapshot(auth.project)
     repo = VersionRepoManager(s3, db).get_gc_repo(auth.project)
     result = run_git_object_gc(repo, dry_run=False, retention_seconds=0)
     assert not result.errors and not result.sweep_skipped_for_safety
     assert result.deleted_count == 1 and result.deleted_sample == [orphan]
-    assert all(not _run_async(s3.file_exists(key)) for key in keys)
+    assert all(not s3.file_exists(key) for key in keys)
     after = service.control.snapshot(auth.project)
     assert after["refs"] == before["refs"] and after["ref_sequence"] == before["ref_sequence"]
     assert after["gc_token"] is None
@@ -110,7 +108,7 @@ def test_native_gc_retains_fence_without_any_delete_for_invalid_manifest(
     if fault == "invalid-json":
         raw = b"not JSON"
     else:
-        manifest = json.loads(_run_async(s3.download_file(key)))
+        manifest = json.loads(s3.download_file(key))
         manifest["chunks"][-1]["key"] = manifest["chunks"][-1]["key"].replace(
             auth.project, "foreign-project"
         )
@@ -118,7 +116,7 @@ def test_native_gc_retains_fence_without_any_delete_for_invalid_manifest(
         key = (
             key.rsplit("manifest-", 1)[0] + "manifest-" + hashlib.sha256(raw).hexdigest() + ".json"
         )
-    _run_async(s3.upload_file(key, raw, content_type="application/json"))
+    s3.upload_file(key, raw, content_type="application/json")
     # Owner-injected corrupt metadata in an owned synthetic repository, not a
     # permission granted to the runtime principal or an end-user write path.
     pg.sql(
@@ -128,9 +126,9 @@ def test_native_gc_retains_fence_without_any_delete_for_invalid_manifest(
     deletions = []
     original_delete = s3.delete_file
 
-    async def observe_delete(key):
+    def observe_delete(key):
         deletions.append(key)
-        return await original_delete(key)
+        return original_delete(key)
 
     monkeypatch.setattr(s3, "delete_file", observe_delete)
     before = service.control.snapshot(auth.project)

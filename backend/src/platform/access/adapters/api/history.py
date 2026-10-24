@@ -12,10 +12,10 @@ import json as _json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.concurrency import run_in_threadpool
 
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.infra.execution.runner import run_blocking, run_owned
 from src.platform.access.adapters.api.helpers import display_git_path
 from src.platform.access.repository_schemas import (
     DiffResponse,
@@ -61,16 +61,15 @@ async def get_project_head(
     current_user: CurrentUser = Depends(get_current_user),
     repo_manager: VersionRepoManager = Depends(get_repo_manager),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     from src.platform.access.adapters.api.repository_management import read_native_head
-    from src.version_engine.infrastructure.owned_work import run_owned
 
     native = await run_owned(read_native_head, repo_manager, grant)
     if native is not None:
         return ApiResponse.success(data=native)
-    head = await version_admin.for_grant(grant).get_project_head_commit_id(project_id)
+    head = await run_owned(version_admin.for_grant(grant).get_project_head_commit_id, project_id)
     return ApiResponse.success(data={"project_id": project_id, "head_commit_id": head})
 
 
@@ -112,7 +111,7 @@ async def get_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
@@ -138,7 +137,8 @@ async def get_commits(
     unreadable_commit_ids: list[str] = []
     if graph_mode:
         try:
-            page = await history_graph.get_page(
+            page = await run_owned(
+                history_graph.get_page,
                 project_id,
                 limit=limit,
                 cursor=cursor,
@@ -173,7 +173,8 @@ async def get_commits(
         graph_health = page.graph_health
         unreadable_commit_ids = list(page.unreadable_commit_ids)
     else:
-        entries, head_commit_id, root_hash = await version_admin.get_history_view(
+        entries, head_commit_id, root_hash = await run_owned(
+            version_admin.get_history_view,
             project_id=project_id,
             path=validate_path(path) if path else None,
             limit=limit,
@@ -231,11 +232,12 @@ async def get_commit_detail(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     try:
-        entry = await history_graph.get_detail(
+        entry = await run_owned(
+            history_graph.get_detail,
             project_id,
             commit_id,
             grant=grant,
@@ -262,18 +264,18 @@ async def get_commit_content(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
 
     clean_path = validate_path(path)
     try:
-        content = await version_admin.get_commit_content(project_id, clean_path, commit_id)
+        content = await run_owned(version_admin.get_commit_content, project_id, clean_path, commit_id)
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    return await run_in_threadpool(
+    return await run_blocking(
         _format_commit_content, clean_path, commit_id, content, preview_bytes
     )
 
@@ -337,13 +339,15 @@ async def diff_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
 
     try:
-        changes = await version_admin.compute_diff(project_id, from_commit_id, to_commit_id)
+        changes = await run_owned(
+            version_admin.compute_diff, project_id, from_commit_id, to_commit_id
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except VersionEngineError as e:
@@ -380,7 +384,7 @@ async def rollback(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_WRITE
     )
     ops = ProductOperationAdapter(repo_manager).for_grant(grant)

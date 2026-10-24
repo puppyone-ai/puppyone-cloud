@@ -15,6 +15,7 @@ from src.platform.synchronize.github.repository import (
 from src.platform.synchronize.github import public_schemas as contracts
 from src.provider.github.client import GithubApi
 from src.utils.logger import log_info
+from src.infra.execution.runner import run_blocking
 
 
 class GithubSyncNotFound(Exception):
@@ -48,7 +49,7 @@ class GithubSyncService:
             "auto_pull": payload.auto_pull,
             "webhook_secret": payload.webhook_secret,
         }
-        row = await self._bindings.upsert(project_id, body)
+        row = await run_blocking(self._bindings.upsert, project_id, body)
         log_info(
             f"[GithubIntegration] connect project={project_id} "
             f"repo={payload.github_repo_owner}/{payload.github_repo_name} "
@@ -58,7 +59,7 @@ class GithubSyncService:
 
     async def update(self, project_id: str,
                      payload: contracts.SynchronizeGithubBindingUpdate) -> contracts.SynchronizeGithubBinding:
-        existing = await self._bindings.get_by_project(project_id)
+        existing = await run_blocking(self._bindings.get_by_project, project_id)
         if not existing:
             raise GithubSyncNotFound(project_id)
         merged = {**existing}
@@ -68,7 +69,7 @@ class GithubSyncService:
             raise ValueError(
                 "auto_pull requires a webhook_secret to verify deliveries"
             )
-        row = await self._bindings.upsert(project_id, {
+        row = await run_blocking(self._bindings.upsert, project_id, {
             k: merged[k] for k in (
                 "oauth_connection_id", "github_repo_owner", "github_repo_name",
                 "default_branch", "auto_pull", "webhook_secret",
@@ -77,13 +78,13 @@ class GithubSyncService:
         return _row_to_status(row)
 
     async def disconnect(self, project_id: str) -> bool:
-        existed = await self._bindings.delete_by_project(project_id)
+        existed = await run_blocking(self._bindings.delete_by_project, project_id)
         if existed:
             log_info(f"[GithubIntegration] disconnect project={project_id}")
         return existed
 
     async def status(self, project_id: str) -> contracts.SynchronizeGithubBinding | None:
-        row = await self._bindings.get_by_project(project_id)
+        row = await run_blocking(self._bindings.get_by_project, project_id)
         return _row_to_status(row) if row else None
 
     # ── repo discovery (for the UI picker) ────────
@@ -150,7 +151,7 @@ class GithubSyncService:
     async def pull(
         self, project_id: str, payload: contracts.SynchronizeGithubPull,
     ) -> contracts.SynchronizeGithubResult:
-        binding = await self._bindings.get_by_project(project_id)
+        binding = await run_blocking(self._bindings.get_by_project, project_id)
         if not binding:
             raise GithubSyncNotFound(project_id)
         binding_id = binding["id"]
@@ -164,7 +165,7 @@ class GithubSyncService:
     async def push(
         self, project_id: str, payload: contracts.SynchronizeGithubPush,
     ) -> contracts.SynchronizeGithubResult:
-        binding = await self._bindings.get_by_project(project_id)
+        binding = await run_blocking(self._bindings.get_by_project, project_id)
         if not binding:
             raise GithubSyncNotFound(project_id)
         binding_id = binding["id"]
@@ -179,10 +180,10 @@ class GithubSyncService:
 
     async def list_sync_log(self, project_id: str, *,
                             limit: int = 50, offset: int = 0) -> contracts.SynchronizeGithubLogs:
-        binding = await self._bindings.get_by_project(project_id)
+        binding = await run_blocking(self._bindings.get_by_project, project_id)
         if not binding:
             raise GithubSyncNotFound(project_id)
-        rows, total = await self._sync_log.list_recent(
+        rows, total = await run_blocking(self._sync_log.list_recent,
             binding["id"], limit=limit, offset=offset,
         )
         return contracts.SynchronizeGithubLogs(

@@ -94,7 +94,7 @@ async def cancel_ingest_task(
 
 
 @router.get("/health")
-async def get_ingest_health(
+def get_ingest_health(
     response: Response,
     etl_service: ETLService = Depends(get_etl_service),
 ):
@@ -139,7 +139,7 @@ from src.platform.upload.processing_schemas import (
 
 
 @router.get("/rules", response_model=ETLRuleListResponse)
-async def list_rules(
+def list_rules(
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
     limit: int = Query(50, ge=1, le=100, description="Maximum number of rules"),
     offset: int = Query(0, ge=0, description="Number of rules to skip"),
@@ -178,7 +178,7 @@ async def list_rules(
 
 
 @router.post("/rules", response_model=ETLRuleResponse, status_code=201)
-async def create_rule(
+def create_rule(
     request: ETLRuleCreateRequest,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):
@@ -214,7 +214,7 @@ async def create_rule(
 
 
 @router.get("/rules/{rule_id}", response_model=ETLRuleResponse)
-async def get_rule(
+def get_rule(
     rule_id: int,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):
@@ -238,7 +238,7 @@ async def get_rule(
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
-async def delete_rule(
+def delete_rule(
     rule_id: int,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):

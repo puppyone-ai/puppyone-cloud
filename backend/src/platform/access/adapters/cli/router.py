@@ -52,13 +52,13 @@ async def semantics(
 
 
 @router.post("/admin/object-integrity", response_model=ApiResponse)
-async def retired_object_repair():
+def retired_object_repair():
     raise HTTPException(status_code=410, detail="Physical object repair is an operator task")
 
 
 @router.post("/admin/fs-index/rebuild", response_model=ApiResponse)
 @router.post("/admin/text-index/rebuild", response_model=ApiResponse)
-async def rebuild_native_index():
+def rebuild_native_index():
     raise HTTPException(
         status_code=410, detail="Native indexes rebuild automatically from ref changes"
     )

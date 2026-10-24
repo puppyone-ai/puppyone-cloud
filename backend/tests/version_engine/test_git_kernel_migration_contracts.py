@@ -214,8 +214,7 @@ def _git_rev_list_objects(git_dir: Path, root: str, *, exclude: str = "") -> set
     return {line.split(maxsplit=1)[0].decode("ascii") for line in out.splitlines() if line}
 
 
-@pytest.mark.asyncio
-async def test_object_batch_writes_one_bundle_with_location_index() -> None:
+def test_object_batch_writes_one_bundle_with_location_index() -> None:
     blob_id, blob_loose = encode_object("blob", b"hello\n")
     tree_id, tree_loose = encode_object("tree", encode_tree([]))
     commit_id, commit_loose = encode_object(
@@ -231,17 +230,17 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
             self.download_range_keys: list[str] = []
             self.file_exists_keys: list[str] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.uploads[key] = content
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             self.download_file_keys.append(key)
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             self.download_range_keys.append(key)
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
@@ -249,7 +248,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             self.file_exists_keys.append(key)
             return key in self.uploads
 
@@ -309,7 +308,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     supabase = _FakeSupabase()
     backend = S3StorageBackend(s3, "proj", supabase=supabase)
 
-    await backend.async_put_many(
+    backend.put_objects(
         {
             blob_id: blob_loose,
             tree_id: tree_loose,
@@ -336,7 +335,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     assert cold_backend.get(blob_id) == blob_loose
     assert cold_backend.get(tree_id) == tree_loose
     assert cold_backend.get(commit_id) == commit_loose
-    blob_slice, blob_total = await cold_backend.async_get_range(blob_id, start=1, limit=6)
+    blob_slice, blob_total = cold_backend.get_range(blob_id, start=1, limit=6)
     assert blob_total == len(blob_loose)
     assert blob_slice == blob_loose[1:7]
     assert s3.download_file_keys == []
@@ -356,8 +355,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     assert s3.file_exists_keys == []
 
 
-@pytest.mark.asyncio
-async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> None:
+def test_object_batch_chunks_large_objects_below_storage_object_cap() -> None:
     rng = random.Random(0)
     large_id, large_loose = encode_object(
         "blob",
@@ -370,26 +368,26 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
             self.uploads: dict[str, bytes] = {}
             self.upload_sizes: list[int] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.upload_sizes.append(len(content))
             if len(content) > 4096:
                 raise AssertionError(f"physical S3 object too large: {len(content)}")
             self.uploads[key] = content
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             content = self.uploads[key]
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             return key in self.uploads
 
     class _FakeTable:
@@ -452,7 +450,7 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
         ),
     )
 
-    await backend.async_put_many(
+    backend.put_objects(
         {
             large_id: large_loose,
             small_id: small_loose,
@@ -470,7 +468,7 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
     cold_backend = S3StorageBackend(s3, "proj", supabase=supabase)
     assert cold_backend.get(large_id) == large_loose
     assert cold_backend.get(small_id) == small_loose
-    large_slice, large_total = await cold_backend.async_get_range(large_id, 10, 25)
+    large_slice, large_total = cold_backend.get_range(large_id, 10, 25)
     assert large_total == len(large_loose)
     assert large_slice == large_loose[10:35]
 
@@ -485,24 +483,24 @@ def test_s3_backend_only_reads_and_writes_canonical_namespace() -> None:
             self.uploads: dict[str, bytes] = {deferred_key: loose}
             self.uploaded_keys: list[str] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.uploads[key] = content
             self.uploaded_keys.append(key)
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             content = self.uploads[key]
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             return key in self.uploads
 
     s3 = _FakeS3()
@@ -608,7 +606,7 @@ async def test_upload_staging_keeps_private_bytes_until_admitted_publication(
             self.client = _Client()
             self.uploads: dict[str, bytes] = {}
 
-        async def download_file_stream(self, key: str, chunk_size: int):
+        def download_file_stream(self, key: str, chunk_size: int):
             from src.infra.s3.exceptions import S3FileNotFoundError
 
             if key == source_key:
@@ -619,10 +617,10 @@ async def test_upload_staging_keeps_private_bytes_until_admitted_publication(
             else:
                 raise S3FileNotFoundError(key)
 
-        async def object_exists(self, key: str) -> bool:
+        def object_exists(self, key: str) -> bool:
             return key in self.uploads
 
-        async def upload_file(self, key: str, content: bytes, content_type: str | None = None):
+        def upload_file(self, key: str, content: bytes, content_type: str | None = None):
             assert content_type == "application/octet-stream"
             self.uploads[key] = content
 
@@ -668,7 +666,7 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
             # CopyObject finalize would have left behind.
             self.uploads: dict[str, bytes] = {dst_key: raw}
 
-        async def download_file_stream(self, key, chunk_size):
+        def download_file_stream(self, key, chunk_size):
             if key == source_key:
                 yield raw
             elif key in self.uploads:
@@ -676,10 +674,10 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
             else:
                 raise S3FileNotFoundError(key)
 
-        async def object_exists(self, key):
+        def object_exists(self, key):
             return key in self.uploads
 
-        async def get_file_metadata(self, key):
+        def get_file_metadata(self, key):
             if key not in self.uploads:
                 raise S3FileNotFoundError(key)
             data = self.uploads[key]
@@ -693,7 +691,7 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
                 metadata={},
             )
 
-        async def upload_file(self, key, content, content_type=None):
+        def upload_file(self, key, content, content_type=None):
             self.uploads[key] = content
 
     s3 = _FakeS3()
@@ -1018,8 +1016,12 @@ def test_legacy_mcp_and_sandbox_runtime_packages_are_retired() -> None:
     assert "INSERT INTO public.access_surfaces" in migration
     assert "DROP TABLE IF EXISTS public.mcps CASCADE" in migration
 
+    # Sandbox sessions are durable and shared by every worker; there is no
+    # process-local session store to select any more.
     config = (BACKEND_ROOT / "src/config.py").read_text(encoding="utf-8")
-    assert 'SCOPE_SANDBOX_STORE: Literal["memory", "supabase"] = "supabase"' in config
+    assert "SCOPE_SANDBOX_STORE" not in config
+    store = (BACKEND_ROOT / "src/platform/sandbox/store.py").read_text(encoding="utf-8")
+    assert "return SupabaseExecutionSessionStore()" in store
 
 
 def test_mcp_transport_has_one_backend_runtime_and_one_binding_store() -> None:

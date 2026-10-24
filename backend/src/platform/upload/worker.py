@@ -32,6 +32,7 @@ from src.platform.upload.jobs import (
     etl_ocr_job,
     etl_postprocess_job,
 )
+from src.infra.execution.process import start_process_concurrency
 from src.infra.file_processing.ocr import get_ocr_provider
 from src.platform.upload.state.repository import ETLStateRepositoryRedis
 from src.platform.upload.tasks.repository import ETLTaskRepositorySupabase
@@ -43,6 +44,7 @@ async def startup(ctx: dict) -> None:
     """
     Initialize services for ETL jobs.
     """
+    ctx["process_concurrency"] = start_process_concurrency()
     # ========== ETL Services ==========
     ctx["s3_service"] = S3Service()
     ctx["llm_service"] = LLMService()
@@ -67,6 +69,8 @@ async def shutdown(ctx: dict) -> None:
     """
     Cleanup on worker shutdown.
     """
+    if concurrency := ctx.pop("process_concurrency", None):
+        await concurrency.stop()
     logger.info("ETL ARQ worker shutdown")
 
 

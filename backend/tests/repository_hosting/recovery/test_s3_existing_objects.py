@@ -5,7 +5,6 @@ This is an existing-data compatibility contract, not proof of a future schema
 migration or real S3 durability.
 """
 
-import asyncio
 from types import SimpleNamespace
 
 import boto3
@@ -22,16 +21,16 @@ pytestmark = pytest.mark.hosting_component
 
 
 class EmulatedS3Service:
-    """S3Service's async boundary using boto3 against the moto emulator."""
+    """S3Service's synchronous boundary using boto3 against the moto emulator."""
 
     def __init__(self, client):
         self.client = client
         self.bucket = "hosting-isolated-test"
 
-    async def upload_file(self, key, data, content_type="application/octet-stream"):
+    def upload_file(self, key, data, content_type="application/octet-stream"):
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
 
-    async def download_file(self, key):
+    def download_file(self, key):
         try:
             return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
         except ClientError as exc:
@@ -39,7 +38,7 @@ class EmulatedS3Service:
                 raise ObjectNotFoundError(key) from exc
             raise
 
-    async def file_exists(self, key):
+    def file_exists(self, key):
         try:
             self.client.head_object(Bucket=self.bucket, Key=key)
             return True
@@ -48,10 +47,10 @@ class EmulatedS3Service:
                 return False
             raise
 
-    async def delete_file(self, key):
+    def delete_file(self, key):
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
-    async def list_files(self, prefix="", max_keys=1000, continuation_token=None):
+    def list_files(self, prefix="", max_keys=1000, continuation_token=None):
         args = dict(Bucket=self.bucket, Prefix=prefix, MaxKeys=max_keys)
         if continuation_token:
             args["ContinuationToken"] = continuation_token
@@ -93,13 +92,13 @@ def store(s3, project="old-project"):
 def test_persisted_user_bytes_survive_fresh_reader_and_new_write(s3, body):
     oid = hash_object("blob", body)
     key = f"version/old-project/objects/{oid[:2]}/{oid[2:]}"
-    asyncio.run(s3.upload_file(key, encode_object("blob", body)[1]))
+    s3.upload_file(key, encode_object("blob", body)[1])
     assert store(s3).get_object(oid) == ("blob", body)
     new_id = store(s3).put_blob(b"next write")
     reopened = store(s3)
     assert reopened.get_object(oid) == ("blob", body)
     assert reopened.get_object(new_id) == ("blob", b"next write")
-    assert asyncio.run(s3.download_file(key)) == encode_object("blob", body)[1]
+    assert s3.download_file(key) == encode_object("blob", body)[1]
 
 
 def test_same_hash_in_another_project_does_not_grant_access(s3):
@@ -112,7 +111,7 @@ def test_same_hash_in_another_project_does_not_grant_access(s3):
 def test_corrupt_existing_key_is_never_returned_as_valid_data(s3):
     oid = store(s3).put_blob(b"original")
     key = f"version/old-project/objects/{oid[:2]}/{oid[2:]}"
-    asyncio.run(s3.upload_file(key, encode_object("blob", b"wrong")[1]))
+    s3.upload_file(key, encode_object("blob", b"wrong")[1])
     with pytest.raises(ObjectNotFoundError):
         store(s3).get_object(oid)
     # A retry must repair corrupt dedup data, not skip because the key exists.
@@ -129,7 +128,7 @@ def test_s3_outage_is_not_misclassified_as_missing_data(s3, monkeypatch):
     oid = store(s3).put_blob(b"must stay readable after outage")
     original = s3.download_file
 
-    async def unavailable(*args, **kwargs):
+    def unavailable(*args, **kwargs):
         raise TimeoutError("injected S3 timeout")
 
     monkeypatch.setattr(s3, "download_file", unavailable)

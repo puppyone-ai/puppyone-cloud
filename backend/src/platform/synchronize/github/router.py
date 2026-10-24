@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Query, Request
 
 from src.common_schemas import ApiResponse
+from src.infra.execution.runner import run_blocking
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -53,7 +54,7 @@ _manage_user = _project_user(ProjectAction.SYNCHRONIZE_MANAGE)
 
 
 async def _require_owned_github_oauth(oauth_connection_id: int, user: CurrentUser):
-    oauth = await OAuthRepository().get_by_id(oauth_connection_id)
+    oauth = await run_blocking(OAuthRepository().get_by_id, oauth_connection_id)
     if oauth is None or oauth.user_id != user.user_id or oauth.provider != "github":
         raise HTTPException(404, detail=_DETAIL_OAUTH_NOT_FOUND)
 

@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Depends, Header, HTTPException
 from postgrest.exceptions import APIError
 
 from src.common_schemas import ApiResponse
 from src.file_operations.commands import VersionWriteCommandService
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
-from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
-from src.platform.authorization.service import AuthorizationService
-from src.version_engine.bootstrap.dependencies import get_version_write_command_service
-from src.version_engine.domain.errors import StorageWriteError
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.api.helpers import display_git_path
 from src.platform.access.repository_schemas import (
     BulkWriteRequest,
@@ -24,6 +16,13 @@ from src.platform.access.repository_schemas import (
     RemoveRequest,
     WriteFileRequest,
 )
+from src.platform.auth.dependencies import get_current_user
+from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.version_engine.bootstrap.dependencies import get_version_write_command_service
+from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.write_engine.engine import ConcurrentMutationError
 from src.version_engine.write_engine.errors import NativeRevisionConflictError
 
@@ -50,7 +49,7 @@ def _native_rpc_error(exc):
 async def _native_write(project_id, body, commands, current_user, authorization, operation):
     # Replay needs current read authority, not a new write entitlement. New
     # publication subsequently checks CONTENT_WRITE and the live SQL actor.
-    grant = await asyncio.to_thread(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_READ
     )
     try:
@@ -63,7 +62,7 @@ async def _native_write(project_id, body, commands, current_user, authorization,
                 with commands.ops.open_read(project_id, grant) as reader:
                     return reader.get_read_revision(project_id)
 
-            base = await asyncio.to_thread(capture)
+            base = await run_blocking(capture)
             request_key, byte_paths = str(uuid.uuid4()), None
         else:
             base, request_key, byte_paths = (

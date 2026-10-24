@@ -25,11 +25,10 @@ a follow-up).
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable
 from datetime import UTC, datetime
 
 from src.exceptions import AppException
+from src.infra.execution.runner import await_owned, run_blocking
 from src.platform.project.write_lease import (
     ProjectWriteLease,
     ProjectWriteLeaseFactory,
@@ -63,7 +62,7 @@ async def export_to_branch(
         f"repo={owner}/{repo} branch={target_branch} trigger={triggered_by}"
     )
 
-    return await _await_true_completion(
+    return await await_owned(
         _export_with_write_lease(
             binding=binding,
             target_branch=target_branch,
@@ -132,7 +131,7 @@ async def _export_after_admission(
 
     api = GithubApi(oauth["access_token"])
     try:
-        return await _await_true_completion(
+        return await await_owned(
             _do_export_with_failure_recording(
                 api=api,
                 binding=binding,
@@ -147,7 +146,7 @@ async def _export_after_admission(
             )
         )
     finally:
-        await _await_true_completion(api.aclose())
+        await await_owned(api.aclose())
 
 
 async def _do_export_with_failure_recording(
@@ -194,24 +193,6 @@ async def _do_export_with_failure_recording(
         )
 
 
-async def _await_true_completion[T](awaitable: Awaitable[T]) -> T:
-    """Delay cancellation until an external or threaded operation is done."""
-
-    future = asyncio.ensure_future(awaitable)
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError as cancelled:
-        # A second cancellation must not make the lease appear released while
-        # the shielded GitHub/to_thread work is still running.
-        while not future.done():
-            try:
-                await asyncio.shield(future)
-            except asyncio.CancelledError:
-                continue
-        future.result()
-        raise cancelled
-
-
 async def _do_export(
     *,
     api: GithubApi,
@@ -228,10 +209,10 @@ async def _do_export(
     binding_id = binding["id"]
 
     # 1. List the version scope's current contents.
-    files, head = await asyncio.to_thread(_read_native_export, project_id, user_id)
+    files, head = await run_blocking(_read_native_export, project_id, user_id)
     if not files:
         msg = "version scope is empty — nothing to export"
-        await sync_log.record(
+        await run_blocking(sync_log.record,
             binding_id,
             direction="outbound",
             status="failed",
@@ -296,7 +277,7 @@ async def _do_export(
     )
 
     files_changed = len(tree_entries)
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="outbound",
         status="success",
@@ -304,7 +285,7 @@ async def _do_export(
         version_commit_id=head,
         files_changed=files_changed,
     )
-    await binding_repo.update_watermark(
+    await run_blocking(binding_repo.update_watermark,
         binding_id,
         last_pushed_sha=new_git_sha,
         last_pushed_at=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -329,7 +310,7 @@ async def _record_failure(
     binding_id: str,
     error: str,
 ) -> SynchronizeGithubResult:
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="outbound",
         status="failed",

@@ -23,6 +23,7 @@ from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDa
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.auth.service import AuthService
 from src.platform.project.write_lease import ProjectWriteLease
+from tests.agent.runtime.conftest import claimant
 from tests.agent.runtime.test_data_access import FileQuestionModel
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
 from tests.repository_hosting.harness.http_server import _serve_git_app
@@ -87,7 +88,7 @@ async def test_desktop_renders_real_worker_file_answers_and_restores_session(
 
     async def dispatch():
         while not stop.is_set():
-            run = await asyncio.to_thread(c.repo.claim_run, worker="desktop-acceptance")
+            run = await asyncio.to_thread(c.repo.claim_run, worker=claimant("desktop-acceptance"))
             if run is None:
                 await asyncio.sleep(1)
                 continue

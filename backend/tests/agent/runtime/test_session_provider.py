@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.config import settings
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.pi_worker import PiWorker
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.worker_port import WorkerLost
 
 

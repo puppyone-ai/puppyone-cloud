@@ -1,12 +1,11 @@
 """Repository for ``synchronize_github_bindings`` and ``synchronize_github_logs`` tables.
 
-Thin async wrapper over the Supabase client — keeps SQL/JSON shape
+Synchronous wrapper over the Supabase client — keeps SQL/JSON shape
 out of the service layer. Mirrors the pattern used by
 ``src/platform/access/model_repository.py``.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Optional
 
 from src.infra.supabase.client import SupabaseClient
@@ -23,8 +22,8 @@ class GithubSyncRepository:
 
     # ── reads ─────────────────────────────────────
 
-    async def get_by_project(self, project_id: str) -> Optional[dict]:
-        return await asyncio.to_thread(self._get_by_project_sync, project_id)
+    def get_by_project(self, project_id: str) -> Optional[dict]:
+        return self._get_by_project_sync(project_id)
 
     def _get_by_project_sync(self, project_id: str) -> Optional[dict]:
         resp = (
@@ -37,8 +36,8 @@ class GithubSyncRepository:
         rows = resp.data or []
         return rows[0] if rows else None
 
-    async def get_by_id(self, binding_id: str) -> Optional[dict]:
-        return await asyncio.to_thread(self._get_by_id_sync, binding_id)
+    def get_by_id(self, binding_id: str) -> Optional[dict]:
+        return self._get_by_id_sync(binding_id)
 
     def _get_by_id_sync(self, binding_id: str) -> Optional[dict]:
         resp = (
@@ -51,10 +50,10 @@ class GithubSyncRepository:
         rows = resp.data or []
         return rows[0] if rows else None
 
-    async def find_by_repo(self, owner: str, name: str) -> list[dict]:
+    def find_by_repo(self, owner: str, name: str) -> list[dict]:
         """Webhook reverse-lookup: GitHub identifies the source repo
         by owner+name; we have to find which projects bind to it."""
-        return await asyncio.to_thread(self._find_by_repo_sync, owner, name)
+        return self._find_by_repo_sync(owner, name)
 
     def _find_by_repo_sync(self, owner: str, name: str) -> list[dict]:
         resp = (
@@ -68,13 +67,13 @@ class GithubSyncRepository:
 
     # ── writes ────────────────────────────────────
 
-    async def upsert(self, project_id: str, payload: dict) -> dict:
+    def upsert(self, project_id: str, payload: dict) -> dict:
         """Create-or-update — used by the connect endpoint. Hits the
         UNIQUE(project_id) constraint on insert, so we manually update
         if a row already exists rather than relying on Supabase's
         upsert which is awkward with the surrogate UUID PK.
         """
-        return await asyncio.to_thread(self._upsert_sync, project_id, payload)
+        return self._upsert_sync(project_id, payload)
 
     def _upsert_sync(self, project_id: str, payload: dict) -> dict:
         existing = self._get_by_project_sync(project_id)
@@ -97,7 +96,7 @@ class GithubSyncRepository:
             raise RuntimeError("github_sync_binding insert returned no row")
         return rows[0]
 
-    async def update_watermark(
+    def update_watermark(
         self, binding_id: str, *,
         last_pulled_sha: Optional[str] = None,
         last_pulled_at: Optional[str] = None,
@@ -114,15 +113,13 @@ class GithubSyncRepository:
         }
         if not update:
             return
-        await asyncio.to_thread(
-            self._update_sync, binding_id, update,
-        )
+        self._update_sync(binding_id, update)
 
     def _update_sync(self, binding_id: str, update: dict) -> None:
         self._sb.table(self.TABLE).update(update).eq("id", binding_id).execute()
 
-    async def delete_by_project(self, project_id: str) -> bool:
-        return await asyncio.to_thread(self._delete_by_project_sync, project_id)
+    def delete_by_project(self, project_id: str) -> bool:
+        return self._delete_by_project_sync(project_id)
 
     def _delete_by_project_sync(self, project_id: str) -> bool:
         resp = (
@@ -142,7 +139,7 @@ class GithubSyncLogRepository:
     def __init__(self, client: Optional[SupabaseClient] = None):
         self._sb = (client or SupabaseClient()).client
 
-    async def record(
+    def record(
         self, binding_id: str, *,
         direction: str, status: str,
         git_sha: Optional[str] = None,
@@ -150,8 +147,8 @@ class GithubSyncLogRepository:
         error_message: Optional[str] = None,
         files_changed: Optional[int] = None,
     ) -> dict:
-        return await asyncio.to_thread(
-            self._record_sync, binding_id, direction, status,
+        return self._record_sync(
+            binding_id, direction, status,
             git_sha, version_commit_id, error_message, files_changed,
         )
 
@@ -176,13 +173,11 @@ class GithubSyncLogRepository:
             raise RuntimeError("synchronize_github_logs insert returned no row")
         return _to_api_row(rows[0])
 
-    async def list_recent(
+    def list_recent(
         self, binding_id: str, *,
         limit: int = 50, offset: int = 0,
     ) -> tuple[list[dict], int]:
-        return await asyncio.to_thread(
-            self._list_recent_sync, binding_id, limit, offset,
-        )
+        return self._list_recent_sync(binding_id, limit, offset)
 
     def _list_recent_sync(
         self, binding_id: str, limit: int, offset: int,
@@ -197,22 +192,20 @@ class GithubSyncLogRepository:
         )
         return [_to_api_row(row) for row in (resp.data or [])], int(resp.count or 0)
 
-    async def has_successful_sha(
+    def has_successful_sha(
         self, binding_id: str, direction: str, git_sha: str,
     ) -> bool:
         """Webhook idempotency check — has this (integration, direction,
         git_sha) already been imported successfully?"""
-        return await asyncio.to_thread(
-            self._has_successful_sha_sync, binding_id, direction, git_sha,
-        )
+        return self._has_successful_sha_sync(binding_id, direction, git_sha)
 
     def _has_successful_sha_sync(
         self, binding_id: str, direction: str, git_sha: str,
     ) -> bool:
         return self._find_successful_sha_sync(binding_id, direction, git_sha) is not None
 
-    async def find_successful_sha(self, binding_id: str, direction: str, git_sha: str) -> Optional[dict]:
-        return await asyncio.to_thread(self._find_successful_sha_sync, binding_id, direction, git_sha)
+    def find_successful_sha(self, binding_id: str, direction: str, git_sha: str) -> Optional[dict]:
+        return self._find_successful_sha_sync(binding_id, direction, git_sha)
 
     def _find_successful_sha_sync(self, binding_id: str, direction: str, git_sha: str) -> Optional[dict]:
         resp = (
@@ -229,10 +222,10 @@ class GithubSyncLogRepository:
         rows = resp.data or []
         return dict(rows[0]) if rows else None
 
-    async def latest_successful_import(self, binding_id: str) -> Optional[dict]:
+    def latest_successful_import(self, binding_id: str) -> Optional[dict]:
         """Most recent successful import row (carries version_commit_id +
         created_at) — the anchor for GitHub-import conflict detection."""
-        return await asyncio.to_thread(self._latest_successful_import_sync, binding_id)
+        return self._latest_successful_import_sync(binding_id)
 
     def _latest_successful_import_sync(self, binding_id: str) -> Optional[dict]:
         resp = (

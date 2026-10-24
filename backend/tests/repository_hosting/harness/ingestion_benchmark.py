@@ -11,7 +11,6 @@ they are NOT full initialization acceptance or a claim about hosted latency.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import hashlib
 import json
 import os
@@ -47,7 +46,7 @@ class EmptyReader:
         raise ValueError("Benchmark requires a full pack, without external thin bases")
 
 
-async def measure(incoming, *, mode):
+def measure(incoming, *, mode):
     db = FencedDB()
     s3 = FencedS3(db)
     backend = S3StorageBackend(s3, "proj", supabase=db)
@@ -71,18 +70,18 @@ async def measure(incoming, *, mode):
             batch, size = {}, 0
             for oid, data in objects():
                 if batch and (len(batch) >= 100 or size + len(data) > 8 * 1024**2):
-                    await backend.async_put_many(batch)
+                    backend.put_objects(batch)
                     batch, size = {}, 0
                 batch[oid] = data
                 size += len(data)
             if batch:
-                await backend.async_put_many(batch)
+                backend.put_objects(batch)
         elif mode == "byte_windows":
-            await backend.async_put_stream(objects())
+            backend.put_stream(objects())
         else:
             facts = {oid: (kind, size) for oid, (kind, _offset, size) in incoming.objects.items()}
             facts[encode_object("tree", b"")[0]] = ("tree", 0)
-            await backend.async_put_prepared_stream(objects(), facts)
+            backend.put_prepared_stream_durable(objects(), facts)
     duration = time.perf_counter() - started
     summaries = [p for p in trace.phases if p["phase"] == "storage.stream.summary"]
     result = {
@@ -100,7 +99,7 @@ async def measure(incoming, *, mode):
     cold = S3StorageBackend(s3, "proj", supabase=db)
     checked = 0
     for oid, expected in objects():
-        assert await cold.async_get(oid) == expected
+        assert cold.get(oid) == expected
         checked += 1
     result["cold_read_objects_verified"] = checked
     return result
@@ -123,9 +122,9 @@ def main():
             "pack_sha256": pack_digest,
             "pack_objects": len(incoming.objects),
             "parse_seconds": round(time.perf_counter() - start, 4),
-            "legacy_100_object_windows": asyncio.run(measure(incoming, mode="legacy")),
-            "byte_windows": asyncio.run(measure(incoming, mode="byte_windows")),
-            "prepared_operation": asyncio.run(measure(incoming, mode="prepared")),
+            "legacy_100_object_windows": measure(incoming, mode="legacy"),
+            "byte_windows": measure(incoming, mode="byte_windows"),
+            "prepared_operation": measure(incoming, mode="prepared"),
         }
     encoded = json.dumps(result, indent=2) + "\n"
     if args.output:

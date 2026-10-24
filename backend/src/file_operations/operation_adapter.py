@@ -7,13 +7,14 @@ actual RuntimeGrant. Every write goes through NativeOperationWriter.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
 
+from src.file_operations.queries import ProductQueries, open_query_session
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
 from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.read.native_tree_reader import open_tree_read
@@ -43,7 +44,7 @@ class BlobRef:
     content: bytes | None = field(default=None, repr=False)
 
 
-class ProductOperationAdapter:
+class ProductOperationAdapter(ProductQueries):
     def __init__(self, repo_manager, *, grant=None, operation_key: str | None = None):
         self._repos, self._grant, self._operation_key = repo_manager, grant, operation_key
 
@@ -90,11 +91,14 @@ class ProductOperationAdapter:
     def open_read(self, project_id, grant, *, selector=b"HEAD", bulk=False):
         return open_tree_read(self._repos, project_id, grant, selector=selector, bulk=bulk)
 
+    def read_session(self, project_id):
+        return open_query_session(self, project_id)
+
     async def native_ref_metadata(self, project_id, grant):
-        return await asyncio.to_thread(self._repos.get_native_ref_metadata, project_id, grant)
+        return await run_blocking(self._repos.get_native_ref_metadata, project_id, grant)
 
     async def native_operation_status(self, project_id, grant, request_key):
-        return await asyncio.to_thread(
+        return await run_blocking(
             self._repos.get_native_operation_status, project_id, grant, request_key
         )
 
@@ -114,28 +118,20 @@ class ProductOperationAdapter:
         from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 
         admitted_actor(grant, project_id, write=False)
-        service = await asyncio.to_thread(self._repos.get_native_service, project_id)
+        service = await run_blocking(self._repos.get_native_service, project_id)
         if service is None:
             raise RuntimeError("repository migration required")
         writer = NativeOperationWriter(service)
         request = dict(
             request_key=request_key, base=base, input_sha256=input_sha256, message=message
         )
-        result = await asyncio.to_thread(writer.replay, grant, **request)
+        result = await run_blocking(writer.replay, grant, **request)
         if result is not None:
             return result
         admitted_actor(grant, project_id, write=True)
         async with (write_lease_factory or ProjectWriteLease)(project_id, "product.native"):
-            worker = asyncio.create_task(
-                asyncio.to_thread(writer.apply, grant, splice=splice, **request)
-            )
-            try:
-                return await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                try:
-                    await worker
-                finally:
-                    raise
+            # The lease outlives the publication thread even if we are cancelled.
+            return await run_blocking(writer.apply, grant, splice=splice, **request)
 
     def get_project_write_state(self, project_id, user_id):
         bound = self.for_user(project_id, user_id)
@@ -188,14 +184,14 @@ class ProductOperationAdapter:
                     revision = reader.get_read_revision(project_id)
             return revision
 
-        base = await asyncio.to_thread(starting_revision)
+        base = await run_blocking(starting_revision)
         if self._operation_key:
             # Durable task identity plus logical step. Input digest is checked
             # separately: changing a retry's content cannot create a new task.
             key = self.producer_request_key(operation, message)
             actor = admitted_actor(grant, project_id, write=False)
-            service = await asyncio.to_thread(self._repos.get_native_service, project_id)
-            base = await asyncio.to_thread(
+            service = await run_blocking(self._repos.get_native_service, project_id)
+            base = await run_blocking(
                 service.control.producer_base, project_id, actor, key, digest, base
             )
         else:
@@ -292,66 +288,6 @@ class ProductOperationAdapter:
     def _read(self, method, project_id, *args, **kwargs):
         with self.open_read(project_id, self._bound_grant(project_id)) as reader:
             return getattr(reader, method)(project_id, *args, **kwargs)
-
-    def read_file(self, project_id, path):
-        return self._read("read_file", project_id, path)
-
-    def read_file_range(self, project_id, path, **kwargs):
-        return self._read("read_file_range", project_id, path, **kwargs)
-
-    def list_dir(self, project_id, path="", **kwargs):
-        return self._read("list_dir", project_id, path, **kwargs)
-
-    def list_tree(self, project_id, path="", max_depth=-1, **kwargs):
-        return self._read("list_tree", project_id, path, max_depth, **kwargs)
-
-    def stat(self, project_id, path, **kwargs):
-        return self._read("stat", project_id, path, **kwargs)
-
-    def get_head_commit_id(self, project_id):
-        return self._read("get_head_commit_id", project_id)
-
-    def get_root_hash(self, project_id):
-        return self._read("get_root_hash", project_id)
-
-    def get_read_revision(self, project_id):
-        return self._read("get_read_revision", project_id)
-
-    def get_scope_head_commit_id(self, project_id, scope_path):
-        if scope_path:
-            raise PermissionError("native Scope operations are not enabled")
-        return self.get_head_commit_id(project_id)
-
-    def get_scope_head_commit_id_for_path(self, project_id, path):
-        return self.get_head_commit_id(project_id)
-
-    def _scope_read(self, method, project_id, scope, *args, **kwargs):
-        if scope:
-            raise PermissionError("native Scope operations are not enabled")
-        return self._read(method, project_id, *args, **kwargs)
-
-    def read_file_in_scope(self, project_id, scope, path):
-        return self._scope_read("read_file", project_id, scope, path)
-
-    def read_file_range_in_scope(self, project_id, scope, path, **kwargs):
-        return self._scope_read("read_file_range", project_id, scope, path, **kwargs)
-
-    def list_dir_in_scope(self, project_id, scope, path="", **kwargs):
-        return self._scope_read("list_dir", project_id, scope, path, **kwargs)
-
-    def list_tree_in_scope(self, project_id, scope, path="", max_depth=-1, **kwargs):
-        return self._scope_read("list_tree", project_id, scope, path, max_depth, **kwargs)
-
-    def stat_in_scope(self, project_id, scope, path, **kwargs):
-        return self._scope_read("stat", project_id, scope, path, **kwargs)
-
-    def get_path_timestamps(self, project_id, paths):
-        # File timestamps are a derived history view, never a second authority.
-        self._bound_grant(project_id)
-        from src.version_engine.read.native_history import NativeHistory
-
-        with self.open_read(project_id, self._bound_grant(project_id)) as reader:
-            return NativeHistory(reader.snapshot).timestamps(paths)
 
     async def restore_commit(self, project_id, target):
         """Create a normal Git revert-style commit, preserving current ancestry."""

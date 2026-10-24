@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
@@ -37,6 +36,7 @@ from src.platform.synchronize.router import _ensure_classified_binding
 from src.platform.synchronize.run_repository import NEW_TABLE as SYNCHRONIZE_RUNS_TABLE
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.infra.execution.runner import run_blocking
 
 
 class DashboardResourceSummary(BaseModel):
@@ -210,10 +210,10 @@ async def get_resource_dashboard(
     project_id = str(project.id)
     sb = SupabaseClient().client
     counts, resources, tools, uploads = await asyncio.gather(
-        run_in_threadpool(_compute_node_counts, ops, project_id),
-        run_in_threadpool(fetch_dashboard_resources, sb, project_id),
-        run_in_threadpool(_fetch_tools, sb, project_id),
-        run_in_threadpool(_fetch_uploads, sb, project_id),
+        run_blocking(_compute_node_counts, ops, project_id),
+        run_blocking(fetch_dashboard_resources, sb, project_id),
+        run_blocking(_fetch_tools, sb, project_id),
+        run_blocking(_fetch_uploads, sb, project_id),
     )
     return ApiResponse.success(
         ResourceDashboard(

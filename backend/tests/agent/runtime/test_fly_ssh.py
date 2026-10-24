@@ -10,8 +10,8 @@ import asyncssh
 import pytest
 from cryptography.hazmat.primitives.serialization import SSHCertificateBuilder, SSHCertificateType
 
-from src.platform.workspace.execution.providers.fly_certificate import import_user_certificate
-from src.platform.workspace.execution.providers.fly_ssh import FlySSHConnections
+from src.platform.sandbox.providers.fly.certificate import import_user_certificate
+from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 

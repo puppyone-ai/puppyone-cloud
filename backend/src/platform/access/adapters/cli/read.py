@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json as _json
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.file_operations.queries import ProductQueries, run_read
 from src.version_engine.admission.validation import validate_limit
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
@@ -31,7 +32,6 @@ from .context import (
     _resolve_auth,
     _scope_payload,
 )
-
 
 router = APIRouter()
 
@@ -79,6 +79,31 @@ async def list_dir(
         command="ls",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(
+        ops,
+        project_id,
+        lambda read: _list_dir_query(
+            read,
+            project_id,
+            scope,
+            path=path,
+            include_hidden=include_hidden,
+            include_size=include_size,
+            include_times=include_times,
+        ),
+    )
+
+
+def _list_dir_query(
+    ops: ProductQueries,
+    project_id: str,
+    scope: dict,
+    *,
+    path,
+    include_hidden,
+    include_size,
+    include_times,
+):
     rel_path = _clean_relative(path)
     _assert_not_excluded(rel_path, scope)
 
@@ -136,6 +161,37 @@ async def tree(
         command="tree",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(
+        ops,
+        project_id,
+        lambda read: _tree_query(
+            read,
+            project_id,
+            scope,
+            path=path,
+            max_depth=max_depth,
+            limit=limit,
+            include_hidden=include_hidden,
+            include_size=include_size,
+            include_times=include_times,
+            directories_only=directories_only,
+        ),
+    )
+
+
+def _tree_query(
+    ops: ProductQueries,
+    project_id: str,
+    scope: dict,
+    *,
+    path,
+    max_depth,
+    limit,
+    include_hidden,
+    include_size,
+    include_times,
+    directories_only,
+):
     rel_path = _clean_relative(path)
     _assert_not_excluded(rel_path, scope)
     max_depth = _query_int(max_depth, -1)
@@ -213,6 +269,14 @@ async def read_file(
         command="cat",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(
+        ops,
+        project_id,
+        lambda read: _read_file_query(read, project_id, scope, path=path, structured=structured),
+    )
+
+
+def _read_file_query(ops: ProductQueries, project_id: str, scope: dict, *, path, structured):
     rel_path = _clean_relative(path)
     if not rel_path:
         raise HTTPException(status_code=400, detail="File path is required")
@@ -266,6 +330,14 @@ async def raw_file(
         command="download",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(
+        ops,
+        project_id,
+        lambda read: _raw_file_query(read, project_id, scope, path=path, start=start, limit=limit),
+    )
+
+
+def _raw_file_query(ops: ProductQueries, project_id: str, scope: dict, *, path, start, limit):
     rel_path = _clean_relative(path)
     if not rel_path:
         raise HTTPException(status_code=400, detail="File path is required")
@@ -328,6 +400,12 @@ async def stat(
         command="stat",
     )
     ops = ops.for_grant(_auth["_runtime_grant"])
+    return await run_read(
+        ops, project_id, lambda read: _stat_query(read, project_id, scope, path=path)
+    )
+
+
+def _stat_query(ops: ProductQueries, project_id: str, scope: dict, *, path):
     rel_path = _clean_relative(path)
     _assert_not_excluded(rel_path, scope)
 

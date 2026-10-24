@@ -1,0 +1,20 @@
+{
+  "paths": {
+    "removed": {
+      "/api/v1/scope-sandboxes/connect": "63f4ceab8fc9b7dcc80957b3c7d98b499bc8290044c4811e11e4e14e45692c70",
+      "/api/v1/scope-sandboxes/providers": "ffeba36190f2ec84d5978f88aff7cbae6ec7a287d9e3e3a65c8979eaeb11f0aa",
+      "/api/v1/scope-sandboxes/revoke": "93120112197a83b2bfbf653daab116b577ea70361e510dd981535241af230e17",
+      "/api/v1/scope-sandboxes/status": "1afaf9776775dccc83ee4026e338407e2801b76112ef230b386921b5fb157e17"
+    },
+    "added": {},
+    "changed": {}
+  },
+  "schemas": {
+    "removed": {
+      "ConnectRequest": "c3b3fbfa7b5217df20b2cc4f19da945686bd902174870bf088224f892a6b5363",
+      "RevokeRequest": "663eea1ba2216148c9d6265676b27c5b3f6d05e949c05416ddaccb014ce1ac04"
+    },
+    "added": {},
+    "changed": {}
+  }
+}

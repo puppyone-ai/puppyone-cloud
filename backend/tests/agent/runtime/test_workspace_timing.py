@@ -9,7 +9,7 @@ def test_workspace_stages_survive_console_interception_without_private_exception
     script = '''
 from loguru import logger
 from src.utils.logging_setup import setup_logging
-from src.platform.workspace.execution.timing import workspace_stage, workspace_event
+from src.platform.sandbox.timing import workspace_stage, workspace_event
 setup_logging()
 try:
     with workspace_stage("connection.open", reason="missing"):

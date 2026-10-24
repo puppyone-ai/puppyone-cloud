@@ -1,16 +1,21 @@
 """Cancellation must preserve ownership; limits must stop real subprocesses."""
 
 import asyncio
+import io
 import os
 import subprocess
 import sys
 import threading
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, Request
+from pydantic import ValidationError
 
+from src.config import Settings
+from src.platform.access.adapters.git import execution
 from src.platform.access.adapters.git.execution import admission, run_git, run_owned
 
 pytestmark = pytest.mark.hosting_component
@@ -50,7 +55,7 @@ async def test_native_request_limits_reject_before_spooling_or_running_git(
 
 @pytest.mark.parametrize("cancelled", [False, True], ids=["deadline", "disconnect"])
 def test_snapshot_progress_stops_expensive_reads_after_owned_execution_ends(cancelled):
-    from src.version_engine.infrastructure.owned_work import Execution, current_execution
+    from src.infra.execution.context import Execution, current_execution
     from src.version_engine.read.repository_snapshot import RepositorySnapshot
 
     # Health and graph walks use this same snapshot progress callback. They
@@ -72,11 +77,12 @@ def test_snapshot_progress_stops_expensive_reads_after_owned_execution_ends(canc
 
 @pytest.mark.asyncio
 async def test_disconnected_caller_stops_owned_work_before_releasing_its_scope():
-    from src.version_engine.infrastructure.owned_work import checkpoint
+    from src.infra.execution.context import checkpoint
 
-    exited = threading.Event()
+    started, exited = threading.Event(), threading.Event()
 
     def worker():
+        started.set()
         try:
             while True:
                 checkpoint()
@@ -85,7 +91,9 @@ async def test_disconnected_caller_stops_owned_work_before_releasing_its_scope()
             exited.set()
 
     async def disconnected():
-        return True
+        # The client leaves while the worker runs (an already-disconnected
+        # client may legitimately never start it).
+        return started.is_set()
 
     with pytest.raises(RuntimeError, match="cancelled"):
         await run_owned(worker, cancel_when=disconnected)
@@ -113,11 +121,75 @@ async def test_cancelled_native_worker_is_joined_before_lease_scope_exits():
     assert exited.is_set()
 
 
-def test_native_worker_capacity_has_no_unbounded_wait_queue():
-    with admission(), admission():
+@pytest.mark.parametrize("capacity", [1, 4])
+def test_native_worker_capacity_has_no_unbounded_wait_queue(monkeypatch, capacity):
+    monkeypatch.setattr(execution, "_slots", threading.BoundedSemaphore(capacity))
+    with ExitStack() as active:
+        for _ in range(capacity):
+            active.enter_context(admission())
         with pytest.raises(HTTPException) as caught, admission():
-            pytest.fail("third worker must not be admitted")
+            pytest.fail("worker beyond the configured capacity must not be admitted")
         assert caught.value.status_code == 503
+        assert caught.value.headers == {"Retry-After": "1"}
+    with ExitStack() as active:
+        for _ in range(capacity):
+            active.enter_context(admission())
+
+
+def test_native_worker_limit_is_loaded_from_environment_at_startup(tmp_path):
+    # A fresh process proves the real gate uses the environment setting without
+    # reloading globals or changing the admission gate used by other tests.
+    script = """
+from contextlib import ExitStack
+from fastapi import HTTPException
+from src.platform.access.adapters.git.execution import MAX_CONCURRENT_OPERATIONS, admission
+assert MAX_CONCURRENT_OPERATIONS == 4
+with ExitStack() as active:
+    for _ in range(4):
+        active.enter_context(admission())
+    try:
+        with admission():
+            raise AssertionError('fifth worker admitted')
+    except HTTPException as exc:
+        assert exc.status_code == 503
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=dict(
+            os.environ,
+            PYTHONPATH=str(Path(__file__).resolve().parents[3]),
+            GIT_MAX_CONCURRENT_OPERATIONS="4",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "unlimited"])
+def test_native_worker_configuration_rejects_invalid_limits(monkeypatch, value):
+    monkeypatch.setenv("GIT_MAX_CONCURRENT_OPERATIONS", value)
+    with pytest.raises(ValidationError, match="GIT_MAX_CONCURRENT_OPERATIONS"):
+        Settings(_env_file=None, APP_ENV="test")
+
+
+def test_native_worker_slot_is_released_on_error_and_retained_until_stream_close(monkeypatch):
+    monkeypatch.setattr(execution, "_slots", threading.BoundedSemaphore(1))
+    with pytest.raises(RuntimeError, match="failed"), admission():
+        raise RuntimeError("failed")
+
+    response = execution.OwnedGitResponse(io.BytesIO(b"pack"))
+    try:
+        with admission() as retain:
+            retain(response)
+        with pytest.raises(HTTPException) as caught, admission():
+            pytest.fail("stream must still own its slot")
+        assert caught.value.status_code == 503
+    finally:
+        response.close()
+    response.close()  # idempotent close must not over-release the bounded gate
     with admission():
         pass
 

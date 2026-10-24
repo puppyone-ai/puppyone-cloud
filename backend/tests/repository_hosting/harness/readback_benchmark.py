@@ -50,7 +50,7 @@ async def measure(incoming, root, reuse):
     facts = {oid: (kind, size) for oid, (kind, _, size) in incoming.objects.items()}
     facts[encode_object("tree", b"")[0]] = ("tree", 0)
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        await backend.async_put_prepared_stream(objects(), facts)
+        backend.put_prepared_stream_durable(objects(), facts)
         evidence = publication_context.get().readbacks
         retained = {"objects": len(evidence.records), "metadata_budget_bytes": evidence.bytes}
         if not reuse:

@@ -1,17 +1,21 @@
 """Byte-bounded object ingestion, independent of Git transport and S3 layout.
 
-The producer is pulled only when a worker slot is available. At most one batch
-is held as lookahead for byte admission. Oversized objects run alone; neither
-the number of tasks nor queued payload grows with the length of the input.
-Workers keep their caller's publication context and are joined on every exit.
+The calling thread produces batches only when a worker slot and byte credit
+are available, so at most one batch is held as lookahead; oversized objects
+run alone. Neither queued work nor buffered payload grows with the input.
+Batch writes run on the storage I/O pool with the caller's context and are
+joined on every exit. The caller keeps heartbeats (``progress``) and
+cooperative cancellation (``checkpoint``) running at least once a second.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 
+from src.infra.execution.context import checkpoint
+from src.version_engine.storage import io_pool
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.write_engine.trace import trace_mark, trace_phase
 
@@ -57,85 +61,54 @@ def object_batches(
         yield ObjectBatch(batch, size)
 
 
-async def join_owned(tasks):
-    """Drain even after repeated cancellation, before releasing source/pins.
-
-    Do not cancel workers: a DB or SDK thread may already have performed its
-    side effect. Each worker must finish its existing admission/settlement path.
-    Exceptions are retrieved so none become detached background failures.
-    """
-    joined = asyncio.gather(*tasks, return_exceptions=True)
-    cancelled = False
-    while not joined.done():
-        try:
-            await asyncio.shield(joined)
-        except asyncio.CancelledError:
-            cancelled = True
-    results = joined.result()
-    if cancelled:
-        raise asyncio.CancelledError
-    return results
-
-
-async def call_owned(function, *args):
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await join_owned([task])
-        raise
-
-
-async def write_object_stream(
+def write_object_stream(
     objects: Iterable[tuple[str, bytes]],
     strategy: IOStorageStrategy,
-    write_batch: Callable[[dict[str, bytes]], Awaitable[None]],
+    write_batch: Callable[[dict[str, bytes]], None],
     *,
     progress: Callable[[], None] | None = None,
 ) -> None:
     """Bound the working set and retain I/O ownership on failure/cancellation."""
     batches = object_batches(objects, strategy)
-    pending: dict[asyncio.Task, int] = {}
+    pending: dict[Future, int] = {}
     inflight_bytes = 0
     batch_count = object_count = total_bytes = peak_bytes = peak_batches = 0
 
     def reap():
         nonlocal inflight_bytes
-        done = [task for task in pending if task.done()]
         error = None
-        for task in done:
-            inflight_bytes -= pending.pop(task)
-            try:
-                task.result()
-            except BaseException as exc:
-                error = error or exc
+        for future in [future for future in pending if future.done()]:
+            inflight_bytes -= pending.pop(future)
+            error = error or future.exception()
         if error is not None:
             raise error
 
-    async def wait_for_credit():
+    def wait_for_credit():
         with trace_phase("storage.stream.backpressure", inflight_bytes=inflight_bytes):
-            await asyncio.wait(pending, timeout=1, return_when=asyncio.FIRST_COMPLETED)
+            wait(pending, timeout=1, return_when=FIRST_COMPLETED)
+        checkpoint()
         if progress is not None:
-            await call_owned(progress)
+            progress()
         reap()
 
     try:
         while True:
             reap()
+            checkpoint()
             while len(pending) >= strategy.write_concurrency:
-                await wait_for_credit()
+                wait_for_credit()
             # Encoding can be CPU intensive. Only this single producer touches
             # the incoming spool; it never runs concurrently with itself.
-            batch = await call_owned(next, batches, None)
+            batch = next(batches, None)
             if batch is None:
                 break
             while pending and inflight_bytes + batch.size_bytes > strategy.max_inflight_bytes:
-                await wait_for_credit()
+                wait_for_credit()
             reap()  # A worker may have failed while the producer was encoding.
             if progress is not None:
-                await call_owned(progress)
-            task = asyncio.create_task(write_batch(batch.objects))
-            pending[task] = batch.size_bytes
+                progress()
+            future = io_pool.submit(write_batch, batch.objects)
+            pending[future] = batch.size_bytes
             inflight_bytes += batch.size_bytes
             batch_count += 1
             object_count += len(batch.objects)
@@ -144,10 +117,12 @@ async def write_object_stream(
             peak_batches = max(peak_batches, len(pending))
             del batch
         while pending:
-            await wait_for_credit()
+            wait_for_credit()
     finally:
         try:
-            await join_owned(pending)
+            # Never cancel started workers: a DB or SDK call may already have
+            # performed its side effect. Each finishes its admission path.
+            io_pool.join(pending)
         finally:
             batches.close()
             trace_mark(

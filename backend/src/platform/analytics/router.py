@@ -3,6 +3,9 @@ Analytics API - Access Monitoring for Context Layer
 
 Provides time-series data for monitoring data egress (context → sandbox).
 Data source: access_logs table (records each time a node is sent to sandbox).
+
+Handlers only do blocking work (authorization and Supabase RPCs), so they are
+plain ``def`` handlers that FastAPI runs in its threadpool.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,7 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from src.infra.supabase import get_supabase_client
+from src.platform.analytics.service import query_access_summary, query_access_timeseries
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -53,7 +56,7 @@ class TimeSeriesResponse(BaseModel):
 
 
 @router.get("/access-timeseries", response_model=TimeSeriesResponse)
-async def get_access_timeseries(
+def get_access_timeseries(
     project_id: str = Query(..., description="Project to report on (required)"),
     interval: Literal["hour", "day"] = Query("hour", description="'hour' or 'day'"),
     range_hours: int = Query(168, ge=1, le=_MAX_RANGE_HOURS, description="Hours back (default 7 days)"),
@@ -69,21 +72,16 @@ async def get_access_timeseries(
     This is the TRUE measure of data egress.
     """
     _require_project_access(authorization, project_id, current_user.user_id)
-    supabase = get_supabase_client()
 
     now = datetime.now(timezone.utc)
     start_time = now - timedelta(hours=range_hours)
-    result = supabase.rpc(
-        "analytics_access_timeseries",
-        {
-            "p_project_id": project_id,
-            "p_start_time": start_time.isoformat(),
-            "p_interval": interval,
-            "p_agent_id": agent_id,
-            "p_node_name": node_name,
-        },
-    ).execute()
-    rows = result.data or []
+    rows = query_access_timeseries(
+        project_id,
+        start_time=start_time,
+        interval=interval,
+        agent_id=agent_id,
+        node_name=node_name,
+    )
 
     bucket_counts: dict[str, int] = {}
     bucket_hours = 24 if interval == "day" else 1
@@ -119,7 +117,7 @@ async def get_access_timeseries(
 
 
 @router.get("/access-summary")
-async def get_access_summary(
+def get_access_summary(
     project_id: str = Query(..., description="Project to report on (required)"),
     range_hours: int = Query(24, ge=1, le=_MAX_RANGE_HOURS),
     current_user: CurrentUser = Depends(get_current_user),
@@ -129,13 +127,8 @@ async def get_access_summary(
     Summary stats for access monitoring.
     """
     _require_project_access(authorization, project_id, current_user.user_id)
-    supabase = get_supabase_client()
     start_time = datetime.now(timezone.utc) - timedelta(hours=range_hours)
-    result = supabase.rpc(
-        "analytics_access_summary",
-        {"p_project_id": project_id, "p_start_time": start_time.isoformat()},
-    ).execute()
-    row = (result.data or [{}])[0]
+    row = query_access_summary(project_id, start_time=start_time)
 
     return {
         "total_accesses": int(row.get("total_accesses") or 0),

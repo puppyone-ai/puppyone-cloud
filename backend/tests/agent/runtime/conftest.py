@@ -30,6 +30,21 @@ def literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def claimant(name, *, pool="default"):
+    """The worker identity a dispatcher of ``pool`` claims with, named for the test."""
+    from src.platform.access.adapters.agent.runtime.dispatch import WorkerIdentity
+
+    return WorkerIdentity(
+        id=name,
+        pool=pool,
+        service="agent_worker",
+        environment="test",
+        host="test",
+        build="test",
+        provider="docker",
+    ).claim()
+
+
 class Database:
     def __init__(self, url):
         self.url = url

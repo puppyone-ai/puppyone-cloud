@@ -9,6 +9,7 @@ import asyncio
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from src.common_schemas import ApiResponse
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
@@ -275,7 +276,7 @@ async def create_project(
     # The RPC is the authoritative membership + quota admission point.  Keep
     # the caller-selected tenant explicit; never reinterpret it as "first org".
     resolved_org_id = payload.org_id
-    project_limit = await asyncio.to_thread(
+    project_limit = await run_blocking(
         entitlement_service.enforced_limit_value,
         resolved_org_id,
         "projects.max",
@@ -300,13 +301,13 @@ async def create_project(
     )
     project = result.project
     grant, access_point_counts = await asyncio.gather(
-        asyncio.to_thread(
+        run_blocking(
             authorization.authorize,
             str(project.id),
             current_user.user_id,
             ProjectAction.PROJECT_READ,
         ),
-        asyncio.to_thread(_count_user_access_points, [str(project.id)]),
+        run_blocking(_count_user_access_points, [str(project.id)]),
     )
     response.status_code = status.HTTP_200_OK if result.replayed else status.HTTP_201_CREATED
     mark_idempotency_replay(response, replayed=result.replayed)

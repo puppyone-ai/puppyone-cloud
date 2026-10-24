@@ -8,13 +8,9 @@ to response schemas.
 
 from __future__ import annotations
 
-import hashlib
-import json
-
-from src.version_engine.infrastructure.owned_work import run_owned
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.history_cache import HistoryGraphCache
-from src.version_engine.read.history_cursor import HistoryCursorCodec
+from src.version_engine.read.history_cursor import HistoryCursorCodec, history_snapshot_id
 from src.version_engine.read.history_models import (
     HistoryCursorState,
     HistoryGraphCacheStats,
@@ -47,21 +43,15 @@ class HistoryGraphService:
         self._cursor_codec = cursor_codec or HistoryCursorCodec()
         self._max_traversal_nodes = max_traversal_nodes
 
-    async def get_page(
-        self, project_id, *, limit, cursor="", grant=None, summary=False, cancel_when=None
-    ):
-        return await run_owned(
-            self._native_page, project_id, grant, limit, cursor, summary, cancel_when=cancel_when
-        )
+    def get_page(self, project_id, *, limit, cursor="", grant=None, summary=False):
+        return self._native_page(project_id, grant, limit, cursor, summary)
 
     def _native_page(self, project_id, grant, limit, cursor, summary=False):
         state = self._cursor_codec.decode(cursor, project_id=project_id) if cursor else None
         # Admission is fresh even on a graph-cache hit. Cached derived facts
         # never substitute for current authorization, generation or ref state.
         with self._repos.open_native_read(project_id, grant) as snapshot:
-            snapshot_id = hashlib.sha256(
-                json.dumps(snapshot.to_wire()["refs"], sort_keys=True).encode()
-            ).hexdigest()
+            snapshot_id = history_snapshot_id(snapshot.to_wire())
             if state and state.snapshot_id != snapshot_id:
                 raise HistorySnapshotUnavailableError("repository refs changed; refresh history")
             key = (project_id, f"{snapshot.generation}:{snapshot.ref_sequence}:{snapshot_id}")
@@ -132,8 +122,8 @@ class HistoryGraphService:
             "changes_loaded": False,
         }
 
-    async def get_detail(self, project_id, commit_id, *, grant, cancel_when=None):
-        return await run_owned(self._detail, project_id, commit_id, grant, cancel_when=cancel_when)
+    def get_detail(self, project_id, commit_id, *, grant):
+        return self._detail(project_id, commit_id, grant)
 
     def _detail(self, project_id, commit_id, grant):
         with open_tree_read(self._repos, project_id, grant, bulk=True) as reader:

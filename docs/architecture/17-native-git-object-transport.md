@@ -19,7 +19,10 @@ Standard Git client
      -> discovery: PG refs and verified tag peel metadata
      -> fetch: pinned published graph -> StorageBackend -> S3
           -> incremental pack encoding -> HTTP stream -> client
-     -> push: stock Git index-pack in bounded pack scratch
+     -> receive probe: authenticated flush-only request -> empty HTTP 200
+          (no pack ingestion, publication identity or ref transaction)
+     -> ref updates: initial-attempt policy, when supplied
+          -> stock Git index-pack in bounded pack scratch
           -> typed new-object closure -> RefTransactionService
           -> standard .pack in S3 + closure proof -> atomic PG ref CAS
           -> Git report-status from the canonical transaction result
@@ -37,7 +40,7 @@ encoder; cold standard-pack reads may fill/index a local pack cache.
 | Component | Responsibility |
 | --- | --- |
 | `adapters/git/native_repository.py` | Admitted orchestration and canonical publication handoff |
-| `adapters/git/native_wire.py` | Packet limits, byte-preserving discovery and receive commands |
+| `adapters/git/native_wire.py` | Packet limits, discovery and typed `ReceiveProbe` / `ReceivePush` decoding |
 | `adapters/git/native_fetch.py` | v0/v1/v2 rounds, common objects, shallow boundaries and filters |
 | `adapters/git/object_reader.py` | Published reachability, pinned durable reads, bounded body cache |
 | `adapters/git/object_pack.py` | Published thin-base/path checks and existing incremental output encoder |
@@ -55,6 +58,35 @@ Dulwich entry scanner discovers candidate thin-base IDs without executing deltas
 against the published snapshot before import. This bounded fallback can perform
 additional decoding; no custom delta implementation remains. Neither library
 owns refs or replaces PostgreSQL publication.
+
+### HTTP requests and publication attempts
+
+One push may issue multiple HTTP requests. Before a chunked upload, stock Git's
+[`remote-curl` probe](https://github.com/git/git/blob/master/remote-curl.c)
+POSTs exactly four bytes, `0000`. The same Desktop initial-attempt header can
+accompany both that probe and the subsequent ref-update/pack request.
+
+`native_wire.receive_request` produces either `ReceiveProbe` or `ReceivePush`.
+Only the exact flush-only body is a probe; truncated framing, shallow-only
+commands and bytes after an empty command list are rejected. A delete command
+without a pack remains a real ref update. Decoding has no storage side effects.
+
+After authentication and write-authority admission, orchestration answers a
+probe with HTTP 200 and an empty `application/x-git-receive-pack-result` body.
+It does not create a publication receipt, consume the initial-attempt identity,
+open a graph snapshot, reserve storage capacity or access S3. Existing route
+authentication and project admission may still consult PostgreSQL.
+
+Only `ReceivePush` enters the initial-main constraint, pack validation, durable
+storage and `RefTransactionService`. A trusted Product publication context
+cannot turn a probe into successful publication. The transport acknowledgement
+means only that the probe succeeded; Git report-status and the canonical PG
+result establish that ref updates committed.
+
+Regression coverage uses real stock Git with a default-buffer large pack and
+with explicitly chunked requests. Isolated PostgreSQL tests assert that probes
+create no objects or transactions and initial/incremental updates publish
+exactly once. Small buffered packs alone do not cover this protocol boundary.
 
 ## Concurrency and safety
 
@@ -282,8 +314,19 @@ loose/POB/chunked data remain compatible; no historical repack has been run.
 
 ## Resource contract and tradeoffs
 
-- Per-process admission remains two Git operations; this does not claim 1000
-  simultaneous transfers per process.
+- Per-process admission uses `GIT_MAX_CONCURRENT_OPERATIONS` (positive integer,
+  default `2`), read at process startup. Restart workers to apply a change.
+  The health response reports that same initialized limit. Saturation returns
+  `503` with `Retry-After: 1`; there is no unbounded wait queue. Streaming responses
+  retain their slot until closed, and cancelled work finishes cleanup before its
+  slot is released.
+- Process and replica counts multiply the configured slots, not available
+  hardware: `WEB_CONCURRENCY=2` with `GIT_MAX_CONCURRENT_OPERATIONS=4` gives eight
+  slots per API replica. Size aggregate CPU, RAM, HTTP spools and pack scratch
+  accordingly, then measure under representative concurrent pushes/fetches.
+  Per-process routing can still reject work while another process has room;
+  this is not a cluster-wide scheduler or a throughput guarantee. Raising this
+  limit does not change S3 I/O budgets or add a reusable disk repository service.
 - HTTP may spool a fetch negotiation request capped at 16 MiB. The fetch encoder
   does not spool its output; standard-pack cold reads use bounded storage scratch.
 - Native pack input uses the configured deployment/plan allowance (default/hard maximum 2 GiB).

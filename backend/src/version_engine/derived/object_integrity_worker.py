@@ -14,7 +14,6 @@ human gate the ``/admin/object-integrity`` endpoint enforces).
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 
 from src.config import settings
@@ -75,7 +74,7 @@ def _scan_one_project(repos, project_id: str, *, heal: bool) -> IntegrityScanRes
     # concrete backend that implements the scan; otherwise every project is
     # silently reported unsupported because the wrapper lacks the method.
     backend = getattr(repo.store, "_backend", None) or repo.store
-    scan = getattr(backend, "async_scan_primary_loose_integrity", None)
+    scan = getattr(backend, "scan_primary_loose_integrity", None)
     for _ in range(8):  # bounded unwrap; guards against a cyclic _inner
         if scan is not None:
             break
@@ -83,11 +82,11 @@ def _scan_one_project(repos, project_id: str, *, heal: bool) -> IntegrityScanRes
         if inner is None or inner is backend:
             break
         backend = inner
-        scan = getattr(backend, "async_scan_primary_loose_integrity", None)
+        scan = getattr(backend, "scan_primary_loose_integrity", None)
     if scan is None:
         return IntegrityScanResult(project_id=project_id, supported=False)
 
-    summary = asyncio.run(scan(heal=heal))
+    summary = scan(heal=heal)
     result = IntegrityScanResult(
         project_id=project_id,
         checked=summary.get("checked", 0),

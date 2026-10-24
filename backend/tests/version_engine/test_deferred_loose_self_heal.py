@@ -28,7 +28,7 @@ class _StubS3:
         self.delete_calls: list[str] = []
         self.bucket_name = "test-bucket"
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         self.download_calls.append(key)
         if key not in self.bytes_by_key:
             # Match the production not-found detection (see
@@ -41,17 +41,17 @@ class _StubS3:
             raise S3FileNotFoundError(key)
         return self.bytes_by_key[key]
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         return key in self.bytes_by_key
 
-    async def delete_file(self, key: str) -> None:
+    def delete_file(self, key: str) -> None:
         self.delete_calls.append(key)
         self.bytes_by_key.pop(key, None)
 
-    async def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
+    def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
         self.bytes_by_key[key] = data
 
-    async def list_files(
+    def list_files(
         self,
         prefix: str = "",
         max_keys: int = 1000,
@@ -230,8 +230,7 @@ class TestDeferredLooseSelfHeal:
 class TestDeferredLooseSelfHealAsync:
     """Async path mirror — same contract, same regressions."""
 
-    @pytest.mark.asyncio
-    async def test_async_stale_deferred_bytes_do_not_propagate_zlib_error(
+    def test_async_stale_deferred_bytes_do_not_propagate_zlib_error(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -241,10 +240,9 @@ class TestDeferredLooseSelfHealAsync:
         stub_s3.bytes_by_key[_stale_deferred_key(project_id, h)] = b'{"not": "loose"}'
 
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
 
-    @pytest.mark.asyncio
-    async def test_async_stale_deferred_bytes_preserved(
+    def test_async_stale_deferred_bytes_preserved(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -256,7 +254,7 @@ class TestDeferredLooseSelfHealAsync:
         stub_s3.bytes_by_key[stale_key] = b"not zlib"
 
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
         assert stub_s3.delete_calls == [], (
             f"async read path must not delete; saw deletes={stub_s3.delete_calls}"
         )
@@ -323,8 +321,7 @@ class TestPrimaryNamespaceVerify:
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = good
         assert backend.get(h) == good
 
-    @pytest.mark.asyncio
-    async def test_async_stale_primary_falls_through(
+    def test_async_stale_primary_falls_through(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -333,7 +330,7 @@ class TestPrimaryNamespaceVerify:
         h = "5" + "c" * 39
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = b"not loose"
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
 
 
 class TestHashOnWrite:
@@ -341,8 +338,7 @@ class TestHashOnWrite:
     key instead of trusting the dedup skip — the write-side half of
     the 520885e2 fix that makes re-upload self-heal."""
 
-    @pytest.mark.asyncio
-    async def test_put_overwrites_corrupt_resident_bytes(
+    def test_put_overwrites_corrupt_resident_bytes(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -351,12 +347,11 @@ class TestHashOnWrite:
         key = _primary_loose_key(backend, h)
         # Stale bytes already squatting on the key from a prior failed push.
         stub_s3.bytes_by_key[key] = b"stale garbage"
-        await backend.async_put(h, good)
+        backend._put(h, good)
         # The corrupt bytes were overwritten with the correct object.
         assert stub_s3.bytes_by_key[key] == good
 
-    @pytest.mark.asyncio
-    async def test_put_skips_when_resident_bytes_already_valid(
+    def test_put_skips_when_resident_bytes_already_valid(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -366,7 +361,7 @@ class TestHashOnWrite:
         stub_s3.bytes_by_key[key] = good
         # No upload should happen — dedup skip stands for valid bytes.
         before_uploads = list(stub_s3.bytes_by_key.items())
-        await backend.async_put(h, good)
+        backend._put(h, good)
         assert list(stub_s3.bytes_by_key.items()) == before_uploads
 
 
@@ -377,8 +372,7 @@ class TestHashOnWrite:
 
 
 class TestPrimaryLooseIntegrityScan:
-    @pytest.mark.asyncio
-    async def test_scan_reports_corrupt_without_healing_by_default(
+    def test_scan_reports_corrupt_without_healing_by_default(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -389,15 +383,14 @@ class TestPrimaryLooseIntegrityScan:
         bad_key = _primary_loose_key(backend, bad_h)
         stub_s3.bytes_by_key[bad_key] = b"corrupt squatter"
 
-        result = await backend.async_scan_primary_loose_integrity(heal=False)
+        result = backend.scan_primary_loose_integrity(heal=False)
         assert result["checked"] == 2
         assert result["corrupt"] == [bad_h]
         assert result["healed"] == 0
         assert bad_key in stub_s3.bytes_by_key
         assert stub_s3.delete_calls == []
 
-    @pytest.mark.asyncio
-    async def test_scan_heals_when_enabled(
+    def test_scan_heals_when_enabled(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -406,14 +399,13 @@ class TestPrimaryLooseIntegrityScan:
         bad_key = _primary_loose_key(backend, bad_h)
         stub_s3.bytes_by_key[bad_key] = b"corrupt"
 
-        result = await backend.async_scan_primary_loose_integrity(heal=True)
+        result = backend.scan_primary_loose_integrity(heal=True)
         assert result["corrupt"] == [bad_h]
         assert result["healed"] == 1
         assert bad_key not in stub_s3.bytes_by_key
         assert bad_key in stub_s3.delete_calls
 
-    @pytest.mark.asyncio
-    async def test_scan_clean_project_reports_no_corruption(
+    def test_scan_clean_project_reports_no_corruption(
         self,
         backend: S3StorageBackend,
         stub_s3: _StubS3,
@@ -422,7 +414,7 @@ class TestPrimaryLooseIntegrityScan:
         h2, b2 = _valid_loose(b"two")
         stub_s3.bytes_by_key[_primary_loose_key(backend, h1)] = b1
         stub_s3.bytes_by_key[_primary_loose_key(backend, h2)] = b2
-        result = await backend.async_scan_primary_loose_integrity()
+        result = backend.scan_primary_loose_integrity()
         assert result["checked"] == 2
         assert result["corrupt"] == []
         assert result["healed"] == 0
@@ -441,7 +433,7 @@ class _ScanCapableBackend:
     def __init__(self):
         self.called_with = None
 
-    async def async_scan_primary_loose_integrity(self, heal: bool = False):
+    def scan_primary_loose_integrity(self, heal: bool = False):
         self.called_with = heal
         return {"checked": 3, "corrupt": [], "healed": 0, "truncated": False, "supported": True}
 

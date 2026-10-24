@@ -11,11 +11,11 @@ from unittest.mock import Mock
 import pytest
 
 from scripts import local_fly_agent
-from src.platform.workspace.execution.providers.fly_agent import (
+from src.platform.sandbox.providers.fly.agent import (
     MANAGED_AGENT,
     managed_environment,
 )
-from src.platform.workspace.execution.providers.fly_transport import (
+from src.platform.sandbox.providers.fly.transport import (
     acquire_transport,
     close_transports,
 )

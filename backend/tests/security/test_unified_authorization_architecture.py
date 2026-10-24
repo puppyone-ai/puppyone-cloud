@@ -77,66 +77,15 @@ def test_only_authorization_boundary_reads_project_membership_facts():
 def test_every_project_path_route_has_an_authorization_contract():
     from src.main import app
 
-    # These identifiers derive a Project through a child record.  Treating
-    # only literal project_id parameters as Project-scoped lets a new Agent,
-    # Tool, Session, Publish, or upload route bypass the manifest.
-    derived_project_resource_params = {
-        "agent_id",
-        "connection_id",
-        "access_surface_id",
-        "synchronize_binding_id",
-        "import_database_source_id",
-        "endpoint_id",
-        "job_id",
-        "publish_id",
-        "run_id",
-        "session_id",
-        "snapshot_id",
-        "table_id",
-        "task_id",
-        "tool_id",
-    }
+    from tests.security.entrypoint_audit import project_route_keys
 
     actual_routes = {
         (method, route.path)
         for route in app.routes
         if hasattr(route, "methods")
-        for method in route.methods
-        if method not in {"HEAD", "OPTIONS"}
+        for method in route.methods - {"HEAD", "OPTIONS"}
     }
-    registered = set()
-    for route in app.routes:
-        methods = getattr(route, "methods", None)
-        dependant = getattr(route, "dependant", None)
-        if not methods or dependant is None:
-            continue
-        direct_names = {
-            field.name
-            for field in (
-                list(dependant.path_params)
-                + list(dependant.query_params)
-                + list(dependant.body_params)
-            )
-        }
-        body_models_have_project = any(
-            "project_id"
-            in getattr(
-                getattr(field.field_info, "annotation", None),
-                "model_fields",
-                {},
-            )
-            for field in dependant.body_params
-        )
-        if (
-            "{project_id}" not in route.path
-            and "project_id" not in direct_names
-            and not body_models_have_project
-            and derived_project_resource_params.isdisjoint(direct_names)
-        ):
-            continue
-        registered.update(
-            (method, route.path) for method in methods if method not in {"HEAD", "OPTIONS"}
-        )
+    registered = project_route_keys(app.routes)
     manifested = set(PROJECT_ROUTE_AUTHORIZATION)
     assert registered - manifested == set()
     assert manifested - actual_routes == set()

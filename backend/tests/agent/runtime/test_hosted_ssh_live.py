@@ -51,7 +51,7 @@ async def live(postgres, submitted, control_api, tmp_path, monkeypatch):
     # protocol behavior is mocked; only the normally discarded CLI stderr is read.
     diagnostics = []
     if PROVIDER == "fly":
-        from src.platform.workspace.execution.providers import fly
+        from src.platform.sandbox.providers.fly import provider as fly
 
         read_process = fly.read_process
 

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from src.platform.access.adapters.git.execution import MAX_PACK_BYTES, admission, run_owned
+from src.infra.execution.runner import run_cleanup, run_owned
+from src.platform.access.adapters.git.execution import MAX_PACK_BYTES, admission
 from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.version_engine.read.ref_metadata import GitBranchBase
 
@@ -110,4 +111,4 @@ class RunGitTransport:
                     }
                 finally:
                     if hasattr(response, "close"):
-                        await run_owned(response.close)
+                        await run_cleanup(response.close)

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import heapq
-import json
 from dataclasses import replace
 from types import MappingProxyType
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
+from src.version_engine.read.history_cursor import history_snapshot_id
 from src.version_engine.read.history_facts import _git_identity_time
 from src.version_engine.read.history_models import (
     GraphCommit,
@@ -120,9 +119,7 @@ class NativeHistory:
             raise ValueError("cyclic Git ancestry")
         self.head = snapshot.revision().commit_oid or ""
         self.roots = tuple(dict.fromkeys(roots))
-        self.snapshot_id = hashlib.sha256(
-            json.dumps(snapshot.to_wire()["refs"], sort_keys=True).encode()
-        ).hexdigest()
+        self.snapshot_id = history_snapshot_id(snapshot.to_wire())
 
     def graph(self):
         nodes = {

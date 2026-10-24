@@ -1,0 +1,254 @@
+{
+  "_contract": "Exact source reference review inventory, not a runtime network budget or security proof. New files/aliases/references/counts require review; remove stale entries. See openspec/changes/refactor-operation-lifetimes/entrypoint-audit.md.",
+  "known_gaps": [
+    {
+      "path": "platform/project/dashboard_router.py",
+      "function": "_compute_node_counts",
+      "reason": "Mounted resource dashboard passes unbound ops; head and tree also use separate snapshots."
+    },
+    {
+      "path": "platform/access/identity_router.py",
+      "function": "get_access_point",
+      "reason": "AuthorizedProject grant is not bound before head read."
+    },
+    {
+      "path": "platform/upload/jobs.py",
+      "function": "etl_postprocess_job",
+      "reason": "Stat and JSON content use separate snapshots; any content read error becomes empty JSON before write."
+    },
+    {
+      "path": "platform/synchronize/engine.py",
+      "function": "SynchronizeEngine._target_exists_as_file",
+      "reason": "Builds engine and reads full content just to check existence; any failure becomes false."
+    },
+    {
+      "path": "content/table/service.py",
+      "function": "TableService._read_json_from_version_store",
+      "reason": "Content/revision already pinned; dependency grant discarded and _get_ops reauthorizes via for_user."
+    },
+    {
+      "path": "platform/repository_target/scope_router.py",
+      "function": "auto_suggest_scopes",
+      "reason": "One bound read is legitimate, but broad failure becomes empty suggestions."
+    }
+  ],
+  "references": {
+    "factories": {
+      "infra/scheduler/jobs/native_projection_job.py": {
+        "process_native_events::build_worker_version_engine_container": 1
+      },
+      "main.py": {
+        "app_lifespan::build_version_engine_container": 1
+      },
+      "platform/access/adapters/agent/runtime/worker.py": {
+        "serve::build_worker_version_engine_container": 1
+      },
+      "platform/access/composition.py": {
+        "build_workbench_service::build_worker_version_engine_container": 1
+      },
+      "platform/auth/initialization.py": {
+        "UserInitializationService._seed_demo_project::build_worker_version_engine_container": 1
+      },
+      "platform/landing/service.py": {
+        "LandingService.claim::build_worker_version_engine_container": 1
+      },
+      "platform/project/initialization_reconciler.py": {
+        "process_project_initialization_reconciliation::build_worker_version_engine_container": 1
+      },
+      "platform/project/write_lease.py": {
+        "build_leased_worker_write_commands::build_worker_version_engine_container": 1
+      },
+      "platform/synchronize/engine.py": {
+        "SynchronizeEngine._target_exists_as_file::build_worker_version_engine_container": 1
+      },
+      "platform/synchronize/github/exporter.py": {
+        "_read_native_export::build_worker_version_engine_container": 1
+      },
+      "platform/synchronize/github/importer.py": {
+        "_do_import::build_worker_version_engine_container": 1
+      },
+      "version_engine/bootstrap/dependencies.py": {
+        "build_request_version_engine_container::build_version_engine_container": 1,
+        "build_worker_version_engine_container::build_version_engine_container": 1,
+        "get_version_engine_container::build_version_engine_container": 1
+      },
+      "version_engine/derived/object_gc_worker.py": {
+        "process_object_gc_projects::build_worker_version_engine_container": 1
+      },
+      "version_engine/derived/object_integrity_worker.py": {
+        "process_object_integrity_projects::build_worker_version_engine_container": 1
+      }
+    },
+    "reads": {
+      "content/table/service.py": {
+        "TableService._read_json_from_version_store::reader.get_read_revision": 1,
+        "TableService._read_json_from_version_store::reader.read_file": 1
+      },
+      "file_operations/operation_adapter.py": {
+        "ProductOperationAdapter._publish.starting_revision::reader.get_read_revision": 1,
+        "ProductOperationAdapter.get_project_write_state::reader.get_read_revision": 1,
+        "ProductOperationAdapter.restore_commit::reader.get_read_revision": 1
+      },
+      "file_operations/queries.py": {
+        "ProductQueries.get_scope_head_commit_id::self.get_head_commit_id": 1,
+        "ProductQueries.get_scope_head_commit_id_for_path::self.get_head_commit_id": 1
+      },
+      "infra/data_migrations/release/backup.py": {
+        "create_backup::destination.stat": 1
+      },
+      "infra/search/source.py": {
+        "IndexSource.check_live::read.get_head_commit_id": 1,
+        "IndexSource.content::read.read_file": 1,
+        "IndexSource.entries::read.list_tree": 1
+      },
+      "platform/access/adapters/agent/config/metadata.py": {
+        "read_path_metadata::read.stat": 1
+      },
+      "platform/access/adapters/agent/runtime/execution/tools.py": {
+        "BoundTools.execute::read.stat": 1
+      },
+      "platform/access/adapters/api/read.py": {
+        "download.chunks::read.read_file": 1,
+        "download::read.list_tree": 1,
+        "download::read.read_file": 1,
+        "download::read.stat": 1,
+        "full_tree::read.get_head_commit_id": 1,
+        "full_tree::read.list_tree": 1,
+        "inline_file::read.read_file": 1,
+        "inline_file::read.stat": 1,
+        "list_dir::read.get_head_commit_id": 1,
+        "list_dir::read.list_dir": 1,
+        "raw_file::read.read_file": 1,
+        "raw_file::read.stat": 1,
+        "read_file::read.get_head_commit_id": 1,
+        "read_file::read.read_file": 1,
+        "stat::read.get_head_commit_id": 1,
+        "stat::read.get_scope_head_commit_id_for_path": 1,
+        "stat::read.stat": 1
+      },
+      "platform/access/adapters/api/read_context.py": {
+        "_product_read::read.get_read_revision": 1
+      },
+      "platform/access/adapters/api/resource.py": {
+        "_file_preview::read.read_file": 1,
+        "_file_preview::read.read_file_range": 1,
+        "read_resource::read.stat": 1
+      },
+      "platform/access/adapters/api/write.py": {
+        "_native_write.capture::reader.get_read_revision": 1
+      },
+      "platform/access/adapters/cli/context.py": {
+        "_ops_list_dir::ops.list_dir": 1,
+        "_ops_list_tree::ops.list_tree": 1,
+        "_ops_read_file::ops.read_file": 1,
+        "_ops_read_file_range::ops.read_file_range": 1,
+        "_ops_stat::ops.stat": 1
+      },
+      "platform/access/adapters/cli/read.py": {
+        "_attach_timestamps::ops.get_path_timestamps": 1,
+        "_list_dir_query::ops.get_head_commit_id": 1,
+        "_read_file_query::ops.get_head_commit_id": 1,
+        "_stat_query::ops.get_head_commit_id": 1,
+        "_stat_query::ops.get_scope_head_commit_id": 1,
+        "_tree_query::ops.get_head_commit_id": 1
+      },
+      "platform/access/adapters/cli/search.py": {
+        "_grep_query::ops.get_scope_head_commit_id": 1,
+        "_try_indexed_grep_legacy_response::ops.get_scope_head_commit_id": 1
+      },
+      "platform/access/adapters/git/execution.py": {
+        "run_git.check::os.stat": 1
+      },
+      "platform/access/adapters/ssh/gateway.py": {
+        "run::path.stat": 1
+      },
+      "platform/access/filesystem/indexed_grep.py": {
+        "run_indexed_grep_payload::ops.get_head_commit_id": 1
+      },
+      "platform/access/filesystem/service.py": {
+        "ScopedFsService._head::self.ops.get_scope_head_commit_id": 1,
+        "ScopedFsService._read_cat::self.ops.read_file_in_scope": 1,
+        "ScopedFsService._read_find::self.ops.list_tree_in_scope": 1,
+        "ScopedFsService._read_grep::self.ops.list_tree_in_scope": 1,
+        "ScopedFsService._read_grep::self.ops.read_file_in_scope": 1,
+        "ScopedFsService._read_head::self.ops.read_file_in_scope": 1,
+        "ScopedFsService._read_ls::self.ops.list_dir_in_scope": 1,
+        "ScopedFsService._read_tail::self.ops.read_file_in_scope": 1,
+        "ScopedFsService._read_tree::self.ops.list_tree_in_scope": 1,
+        "ScopedFsService._rmdir_chain::self.ops.list_dir_in_scope": 2,
+        "ScopedFsService._stat::self.ops.stat_in_scope": 1
+      },
+      "platform/access/identity_router.py": {
+        "get_access_point::ops.get_head_commit_id": 1
+      },
+      "platform/project/dashboard_router.py": {
+        "_compute_node_counts::ops.get_head_commit_id": 1,
+        "_compute_node_counts::ops.list_tree": 1
+      },
+      "platform/repository_target/scope_router.py": {
+        "auto_suggest_scopes::ops.list_dir": 1
+      },
+      "platform/synchronize/engine.py": {
+        "SynchronizeEngine._target_exists_as_file::ops.read_file": 1
+      },
+      "platform/synchronize/github/exporter.py": {
+        "_read_native_export::reader.get_head_commit_id": 1,
+        "_read_native_export::reader.list_tree": 1,
+        "_read_native_export::reader.read_file": 1
+      },
+      "platform/synchronize/github/importer.py": {
+        "_do_import::reader.get_read_revision": 1,
+        "_do_import::reader.list_tree": 1
+      },
+      "platform/synchronize/router.py": {
+        "trigger_push::read.get_head_commit_id": 1,
+        "trigger_push::read.read_file": 1
+      },
+      "platform/upload/jobs.py": {
+        "etl_postprocess_job::commands.ops.read_file": 1,
+        "etl_postprocess_job::commands.ops.stat": 1
+      },
+      "platform/workspace/project_cleanup.py": {
+        "ProjectHostCleanupPort._read_view_metadata_bytes::metadata_path.stat": 1
+      },
+      "tool/service.py": {
+        "ToolService.get_path_with_access_check::self._ops.for_grant(grant).stat": 1
+      },
+      "version_engine/derived/native_events.py": {
+        "rebuild_projection::reader.get_head_commit_id": 1,
+        "rebuild_projection::reader.list_tree": 1,
+        "rebuild_projection::reader.read_file": 1
+      },
+      "version_engine/infrastructure/git_view_cache.py": {
+        "_dir_size_bytes::entry.stat": 1,
+        "_view_recency::candidate.stat": 1
+      },
+      "version_engine/read/native_history.py": {
+        "NativeHistory.content::reader.read_file": 1
+      },
+      "version_engine/read/native_tree_reader.py": {
+        "NativeTreeReader.get_path_timestamps::self.get_head_commit_id": 1
+      },
+      "version_engine/storage/backends/s3.py": {
+        "S3StorageBackend.put_git_pack_durable::pack.path.stat": 2
+      },
+      "version_engine/storage/git_pack.py": {
+        "GitPack._read::self.path.stat": 2
+      },
+      "version_engine/storage/git_pack_io.py": {
+        "upload_pack::path.stat": 1
+      },
+      "version_engine/storage/git_process.py": {
+        "check::os.stat": 1
+      },
+      "version_engine/storage/object_store.py": {
+        "FileSystemBackend._get_packed::path.stat": 1,
+        "FileSystemBackend.count::obj.stat": 1,
+        "FileSystemBackend.count::path.stat": 1
+      },
+      "version_engine/write_engine/hash_utils.py": {
+        "hash_blob_file::path.stat": 1
+      }
+    }
+  }
+}

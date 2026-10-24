@@ -209,14 +209,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("DELETE", "/api/v1/projects/{project_id}/git-credentials/{credential_id}"): _owner("git_credential.owner"),
 
     # Delegated internal human calls.
-    ("POST", "/internal/nodes/resolve-path"): _human(ProjectAction.CONTENT_READ),
-    ("GET", "/internal/nodes/list"): _human(ProjectAction.CONTENT_READ),
-    ("GET", "/internal/nodes/read"): _human(ProjectAction.CONTENT_READ),
-    ("PUT", "/internal/nodes/write"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/create"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/rm"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/rename"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/nodes/move"): _human(ProjectAction.CONTENT_WRITE),
     ("GET", "/internal/table/{table_id}"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/internal/tables/{table_id}/context-schema"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/internal/tables/{table_id}/context-data"): _human(ProjectAction.CONTENT_READ),
@@ -226,11 +218,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/internal/tools/{tool_id}/search"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/api/v1/nodes/project-audit-logs"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/nodes/{path:path}/audit-logs"): _human(ProjectAction.HISTORY_READ),
-
-    # Remote Agent workspaces.
-    ("POST", "/api/v1/workspace/create"): _human(ProjectAction.AGENT_RUN),
-    ("POST", "/api/v1/workspace/{agent_id}/complete"): _human(ProjectAction.CONTENT_WRITE),
-    ("GET", "/api/v1/workspace/{agent_id}/status"): _human(ProjectAction.AGENT_READ),
 })
 
 PROJECT_ROUTE_AUTHORIZATION.update({
@@ -253,9 +240,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/api/v1/synchronize/push/{path:path}"): _human(ProjectAction.AUTOMATION_RUN),
 
     # Scope policy, Sandbox sessions, analytics and activity.
-    ("POST", "/api/v1/scope-sandboxes/connect"): _human(ProjectAction.SANDBOX_MANAGE),
-    ("GET", "/api/v1/scope-sandboxes/status"): _human(ProjectAction.ACCESS_READ),
-    ("POST", "/api/v1/scope-sandboxes/revoke"): _human(ProjectAction.SANDBOX_MANAGE),
     ("GET", "/api/v1/analytics/access-timeseries"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/analytics/access-summary"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/activity/items"): _human(ProjectAction.HISTORY_READ),

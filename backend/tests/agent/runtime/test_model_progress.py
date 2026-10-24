@@ -16,7 +16,7 @@ from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.managed_ai.contracts import InferenceRun, ModelChunk
 from src.platform.workspace.execution.pi_worker import PiWorker
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
+from src.platform.sandbox.store import InMemoryExecutionSessionStore
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 

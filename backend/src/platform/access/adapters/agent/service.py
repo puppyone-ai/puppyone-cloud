@@ -5,9 +5,11 @@ import asyncio
 from fastapi import HTTPException
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.admission import Admission, digest
 from src.platform.access.adapters.agent.runtime.control.models import public_run
 from src.platform.access.adapters.agent.runtime.control.ports import RunStore
+from src.platform.access.adapters.agent.runtime.dispatch import run_dispatch
 from src.platform.authorization.models import ProjectAction
 
 
@@ -56,6 +58,8 @@ class AgentService:
             raise HTTPException(503, {"code": "managed_agent_inference_disabled"})
         if not policy["model"]:
             raise HTTPException(409, "Configure an Agent model before submitting")
+        # SQL moves the route into dedicated columns and strips it from the policy.
+        policy = {**policy, "dispatch": run_dispatch()}
         run = self.repository.submit_run(
             user=user_id,
             project=request.project_id,
@@ -127,7 +131,7 @@ class AgentService:
         from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 
         while True:
-            value = await asyncio.to_thread(self.view, user_id, run_id, after)
+            value = await run_blocking(self.view, user_id, run_id, after)
             run = value["run"]
             sequence = run["sequence"]
             if after > sequence or after < max(0, sequence - 512):

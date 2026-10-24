@@ -7,11 +7,14 @@ Records all Agent activities in a unified log:
 - llm: LLM API calls (Claude/GPT)
 
 All logs are grouped by session_id for complete audit trail.
-Designed to be lightweight and non-blocking.
+Designed to be lightweight and non-blocking: the async wrappers run the
+synchronous Supabase insert in a worker thread.
 """
 
+from datetime import datetime
 from typing import Any
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase import get_supabase_client
 from src.utils.logger import logger
 
@@ -92,7 +95,8 @@ async def log_bash_execution(
     if output:
         output_preview = output[:500] + "..." if len(output) > 500 else output
 
-    log_agent_call(
+    await run_blocking(
+        log_agent_call,
         call_type="bash",
         user_id=user_id,
         agent_id=agent_id,
@@ -126,7 +130,8 @@ async def log_tool_call(
     if output:
         output_preview = output[:500] + "..." if len(output) > 500 else output
 
-    log_agent_call(
+    await run_blocking(
+        log_agent_call,
         call_type="tool",
         user_id=user_id,
         agent_id=agent_id,
@@ -154,7 +159,8 @@ async def log_llm_call(
     error_message: str | None = None,
 ) -> None:
     """Log an LLM API call."""
-    log_agent_call(
+    await run_blocking(
+        log_agent_call,
         call_type="llm",
         user_id=user_id,
         agent_id=agent_id,
@@ -203,3 +209,37 @@ def log_context_access(
 
     except Exception as e:
         logger.warning(f"[access_log] Failed to log access: {e}")
+
+
+# Access monitoring queries (synchronous; callers run them off the event loop)
+
+
+def query_access_timeseries(
+    project_id: str,
+    *,
+    start_time: datetime,
+    interval: str,
+    agent_id: str | None = None,
+    node_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return access-event counts per bucket for one project."""
+    result = get_supabase_client().rpc(
+        "analytics_access_timeseries",
+        {
+            "p_project_id": project_id,
+            "p_start_time": start_time.isoformat(),
+            "p_interval": interval,
+            "p_agent_id": agent_id,
+            "p_node_name": node_name,
+        },
+    ).execute()
+    return result.data or []
+
+
+def query_access_summary(project_id: str, *, start_time: datetime) -> dict[str, Any]:
+    """Return aggregate access counts for one project."""
+    result = get_supabase_client().rpc(
+        "analytics_access_summary",
+        {"p_project_id": project_id, "p_start_time": start_time.isoformat()},
+    ).execute()
+    return (result.data or [{}])[0]

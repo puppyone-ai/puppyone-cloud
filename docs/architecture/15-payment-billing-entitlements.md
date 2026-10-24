@@ -273,9 +273,10 @@ General product enforcement follows `disabled -> shadow -> required`:
 6. PuppyPay releases unused reservation, records consumed units, and may
    asynchronously report provider meter usage.
 
-Automation, Hosted Agent, and Scope Sandbox have integrated lifecycle paths.
-Remote Workspace creation and OCR/Smart Parse remain explicitly unsupported in
-`required` mode until their complete lifecycle has a stable metering identity.
+Automation and Hosted Agent have integrated lifecycle paths. Scope Sandbox and
+the host-local Remote Workspace are retired. OCR/Smart Parse remains explicitly
+unsupported in `required` mode until its complete lifecycle has a stable
+metering identity.
 Desktop-local runtime is never hosted RU.
 
 ### 6.6 Logical storage

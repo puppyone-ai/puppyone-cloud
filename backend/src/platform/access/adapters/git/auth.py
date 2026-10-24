@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 
 from fastapi import HTTPException, Request
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
+from src.platform.access.adapters.git.locator import validate_git_locator_id
+from src.platform.access.credential_repository import AccessCredentialRepository
+from src.platform.access.credentials import resolve_access_point
 from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.platform.repository_target.auth_context import repository_view_from_auth
 from src.platform.repository_target.models import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.platform.repository_target.auth_context import repository_view_from_auth
-from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
-from src.platform.access.adapters.git.locator import validate_git_locator_id
-from src.platform.access.credentials import resolve_access_point
 from src.version_engine.admission.channel_pause import enforce_channel_pause
 from src.version_engine.write_engine.path_utils import normalize_path
 
@@ -32,7 +32,7 @@ async def resolve_git_access_point(
 ) -> tuple[str, dict]:
     # ``resolver`` preserves the router's long-standing test/integration seam
     # while keeping all legacy identity/pause checks in this one function.
-    project_id, auth = await asyncio.to_thread(
+    project_id, auth = await run_blocking(
         resolver or resolve_access_point,
         access_key,
     )
@@ -108,7 +108,7 @@ async def resolve_canonical_git_auth(
 
     user_identity = request.headers.get("x-puppyone-user", "") or username
     repository = AccessCredentialRepository(SupabaseClient().client)
-    resolved = await asyncio.to_thread(
+    resolved = await run_blocking(
         repository.resolve_git_runtime_credential,
         token,
     )
@@ -213,7 +213,7 @@ async def _mock_git_auth(
     """Bypass credential auth without bypassing canonical target geometry."""
 
     if scope_id is None:
-        rows = await asyncio.to_thread(
+        rows = await run_blocking(
             lambda: (
                 SupabaseClient().client.table("projects")
                 .select("id")
@@ -233,7 +233,7 @@ async def _mock_git_auth(
         )
         mode = RuntimeMode.READ_WRITE
     else:
-        scope = await asyncio.to_thread(
+        scope = await run_blocking(
             RepositoryScopeRepository(SupabaseClient().client).get,
             scope_id,
         )
@@ -251,7 +251,7 @@ async def _mock_git_auth(
             for item in scope.exclude
             if (normalized := normalize_path(item))
         )
-        all_scopes = await asyncio.to_thread(
+        all_scopes = await run_blocking(
             RepositoryScopeRepository(SupabaseClient().client).list_by_project,
             project_id,
         )

@@ -522,17 +522,6 @@
       "count": 5
     }
   },
-  "frontend/features/access/components/SandboxConnectCard.tsx": {
-    "complexity": {
-      "count": 2
-    },
-    "max-lines": {
-      "count": 1
-    },
-    "no-nested-ternary": {
-      "count": 13
-    }
-  },
   "frontend/features/access/components/ScopeDetailPanel.tsx": {
     "complexity": {
       "count": 1
@@ -549,11 +538,6 @@
   "frontend/features/access/components/ScopeSidebar.tsx": {
     "no-nested-ternary": {
       "count": 3
-    }
-  },
-  "frontend/features/access/components/SyncActivityPanel.tsx": {
-    "no-nested-ternary": {
-      "count": 1
     }
   },
   "frontend/features/access/lib/format.ts": {

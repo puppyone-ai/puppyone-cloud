@@ -1,11 +1,40 @@
 """Smart HTTP discovery and bounded packet parsing for canonical native refs."""
 
 import base64
+from dataclasses import dataclass
 
 from src.platform.access.adapters.git.execution import MAX_OBJECTS, MAX_REFS, checkpoint
 from src.platform.access.adapters.git.protocol import pkt_line
 from src.version_engine.storage.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
 from src.version_engine.write_engine.ref_transaction import RefEdit, RefState, validate_ref_name
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiveProbe:
+    """A flush-only HTTP probe; it does not request a ref transaction."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReceivePush:
+    """Decoded ref updates, with the stream positioned at the optional pack."""
+
+    edits: tuple[RefEdit, ...]
+    capabilities: frozenset[str]
+
+
+def receive_request(handle, object_format) -> ReceiveProbe | ReceivePush:
+    """Classify the wire request before applying publication-specific policy.
+
+    Stock Git's remote-curl sends exactly ``0000`` before a large chunked POST.
+    Reject malformed no-command bodies instead of treating arbitrary content
+    as a successful probe. Neither decoding nor probing accesses storage.
+    """
+    edits, capabilities = receive_commands(handle, object_format)
+    if not edits:
+        if handle.tell() != 4 or handle.read(1):
+            raise ValueError("Git receive probe must contain only a flush packet")
+        return ReceiveProbe()
+    return ReceivePush(tuple(edits), frozenset(capabilities))
 
 
 def version(protocol):

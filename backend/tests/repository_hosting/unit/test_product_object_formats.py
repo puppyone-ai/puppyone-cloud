@@ -208,18 +208,17 @@ def test_blob_put_preserves_blob_mode_but_replaces_a_gitlink(tmp_path, object_fo
     assert tree_path_modes(store, new) == {"exec": MODE_EXECUTABLE, "link": MODE_FILE}
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
-async def test_async_product_store_keeps_declared_format(tmp_path, object_format):
+def test_product_store_keeps_declared_format(tmp_path, object_format):
     store = ObjectStore(tmp_path / "objects", object_format=object_format)
-    oid, loose = encode_object("blob", b"async save", object_format=object_format)
-    assert await store.async_put(b"async save") == oid
-    assert await store.async_get(oid) == b"async save"
-    assert await store.async_get_loose(oid) == loose
+    oid, loose = encode_object("blob", b"save", object_format=object_format)
+    assert store.put(b"save") == oid
+    assert store.get(oid) == b"save"
+    assert store.get_loose(oid) == loose
     empty, empty_loose = encode_object("tree", b"", object_format=object_format)
-    await store.async_put_loose(empty, empty_loose)
-    assert await store.async_exists(empty)
-    assert await store.async_get_loose(empty) == empty_loose
+    store.put_loose(empty, empty_loose)
+    assert store.exists(empty)
+    assert store.get_loose(empty) == empty_loose
     assert set(store.all_hashes()) == {oid}
 
 

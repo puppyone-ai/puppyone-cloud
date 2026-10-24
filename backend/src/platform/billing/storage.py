@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections import Counter
 from datetime import datetime
@@ -8,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.write_engine.tree import tree_to_flat
 
@@ -235,15 +235,15 @@ class StorageReconciliationService:
 
     async def reconcile_once(self, *, limit, min_age_seconds):
         for _ in range(10):
-            if await asyncio.to_thread(self._checked.prune) < 200:
+            if await run_blocking(self._checked.prune) < 200:
                 break
-        org_ids = await asyncio.to_thread(
+        org_ids = await run_blocking(
             self._usage.claim_reconciliation_batch, limit=limit, min_age_seconds=min_age_seconds
         )
         summary = {"claimed": len(org_ids), "reconciled": 0, "failed": 0}
         for org_id in org_ids:
             try:
-                await asyncio.to_thread(self._checked.reconcile, org_id)
+                await run_blocking(self._checked.reconcile, org_id)
                 summary["reconciled"] += 1
             except Exception:
                 summary["failed"] += 1

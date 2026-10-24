@@ -1,15 +1,15 @@
 """Run-bound Git synchronization and publication; no project bytes or object codecs."""
 
-import asyncio
 
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.ports import GitTransport
 from src.platform.access.adapters.agent.runtime.control.workspace import (
     require_full_project,
     workspace_state,
 )
-from src.platform.workspace.filesystem.port import FilesystemPort
-from src.platform.project.write_lease import ProjectWriteLease
 from src.platform.access.adapters.git.workspace_transport import RunPublication
+from src.platform.project.write_lease import ProjectWriteLease
+from src.platform.workspace.filesystem.port import FilesystemPort
 from src.version_engine.read.ref_metadata import GitBranchBase
 
 
@@ -83,11 +83,11 @@ class Publication:
             return {"status": "no_changes"}
         if run["policy"]["readonly"]:
             raise PublicationRejected("Read-only Agent cannot publish")
-        result = await asyncio.to_thread(self.transport.result, run["project_id"], grant, run["id"])
+        result = await run_blocking(self.transport.result, run["project_id"], grant, run["id"])
         if result is not None and result["status"] == "pending":
             raise RuntimeError("Original Git publication is still pending")
         if result is None:
-            current = await asyncio.to_thread(self.describe, run, grant)
+            current = await run_blocking(self.describe, run, grant)
             if GitBranchBase.parse(current) != GitBranchBase.parse(checkpoint["base"]):
                 return {
                     "status": "conflict",
@@ -99,13 +99,13 @@ class Publication:
                 pushed = await self.filesystem.push(worker, state["tip"])
             except Exception:
                 # ACK loss must be reconciled by original identity, never by current HEAD.
-                result = await asyncio.to_thread(
+                result = await run_blocking(
                     self.transport.result, run["project_id"], grant, run["id"]
                 )
                 if result is None:
                     raise
             else:
-                result = await asyncio.to_thread(
+                result = await run_blocking(
                     self.transport.result, run["project_id"], grant, run["id"]
                 )
                 if result is None and pushed.get("rejected"):

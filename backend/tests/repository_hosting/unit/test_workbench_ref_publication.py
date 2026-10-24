@@ -72,3 +72,43 @@ def test_transport_describes_explicit_ref_using_one_metadata_read():
     wire = RunGitTransport(manager).describe("project", "grant", target_ref="refs/heads/workbench")
     assert wire["target_ref"] == "refs/heads/workbench" and wire["head_guard"] is None
     manager.get_native_ref_metadata.assert_called_once_with("project", "grant")
+
+
+async def test_transport_closes_relay_response_after_reading_body(monkeypatch):
+    from src.platform.access.adapters.git import workspace_transport
+
+    closed = []
+
+    class Response:
+        status_code = 200
+        media_type = "application/x-git-upload-pack-advertisement"
+        body = b"refs"
+
+        def close(self):
+            closed.append(True)
+
+    class Repository:
+        def __init__(self, service, *, expected_generation):
+            assert expected_generation == 7
+
+        def info_refs(self, grant, service_name, *, protocol):
+            assert (grant, service_name) == ("grant", "git-upload-pack")
+            return Response()
+
+    monkeypatch.setattr(workspace_transport, "NativeGitRepository", Repository)
+    manager = SimpleNamespace(service_from_metadata=Mock(return_value=object()))
+    base = GitBranchBase.from_metadata(metadata()).wire()
+
+    result = await RunGitTransport(manager).exchange(
+        "project",
+        "grant",
+        {"path": "/git/project.git/info/refs?service=git-upload-pack", "method": "GET"},
+        base=base,
+    )
+
+    assert result == {
+        "status": 200,
+        "content_type": Response.media_type,
+        "body": base64.b64encode(b"refs").decode(),
+    }
+    assert closed == [True]

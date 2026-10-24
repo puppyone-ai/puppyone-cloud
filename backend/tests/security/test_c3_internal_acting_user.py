@@ -3,8 +3,9 @@ acting user has access to the targeted project.
 
 The vulnerability: holders of the internal SECRET could read/write any
 project by varying the project_id payload. After this fix, every
-project-scoped /internal/nodes/* endpoint additionally requires
-X-Acting-User-Id and verifies that user has access.
+remaining project-scoped table/search endpoint requires X-Acting-User-Id
+and verifies that user has access. The old /internal/nodes/* routes are retired
+and their absence is covered by test_internal_nodes_retired.py.
 
 These tests exercise the helper directly so they don't depend on a live
 FastAPI request lifecycle (which would still need DB stubs).

@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from src.exceptions import AppException, ErrorCode
+from src.infra.execution.runner import run_blocking
 from src.platform.project.control_plane import (
     IdempotentProjectResult,
     ProjectControlPlaneService,
@@ -33,20 +34,6 @@ from src.version_engine.write_engine.engine import VersionWriteEngine
 logger = logging.getLogger(__name__)
 
 ProjectInitializer = Callable[[Project], Awaitable[None]]
-
-
-def initialize_project_tree_sync(
-    version_engine: VersionWriteEngine,
-    project_id: str,
-) -> str:
-    """Run L5 on a worker-owned event loop.
-
-    ``initialize_project_tree`` retains an async public API, but its repository
-    boundary includes synchronous Supabase work.  Request event loops therefore
-    enter it through ``asyncio.to_thread`` and this small worker-loop adapter.
-    """
-
-    return asyncio.run(version_engine.initialize_project_tree(project_id))
 
 
 async def create_project_with_tree(
@@ -79,7 +66,7 @@ async def create_project_with_tree(
         raise ValueError("deferred Project publication requires an initializer")
 
     native_options = {"native_repository": native_repository} if native_repository is not None else {}
-    result = await asyncio.to_thread(
+    result = await run_blocking(
         control_plane.create_project,
         operation_key=operation_key,
         name=name,
@@ -116,14 +103,10 @@ async def create_project_with_tree(
             initialization_operation_key=operation_key,
             initialization_actor=created_by,
         ):
-            await asyncio.to_thread(
-                initialize_project_tree_sync,
-                version_engine,
-                project_id,
-            )
+            await run_blocking(version_engine.initialize_project_tree, project_id)
             if initialize is not None:
                 await initialize(result.project)
-            return await asyncio.to_thread(
+            return await run_blocking(
                 control_plane.complete_project_initialization,
                 project_id=project_id,
                 operation_key=operation_key,
@@ -134,7 +117,7 @@ async def create_project_with_tree(
         if publication_mode == "deferred":
             try:
                 await asyncio.shield(
-                    asyncio.to_thread(
+                    run_blocking(
                         control_plane.abort_deferred_publication,
                         project_id=project_id,
                         operation_key=operation_key,

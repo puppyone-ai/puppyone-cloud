@@ -46,7 +46,7 @@ class Application:
             SCHEDULER_ENABLED="false",
             ENABLE_ETL="false",
             MCP_SERVER_URL="",
-            SCOPE_SANDBOX_REAPER_ENABLED="false",
+            SANDBOX_REAPER_ENABLED="false",
             ENTITLEMENTS_MODE="disabled",
             BILLING_ENFORCEMENT="disabled",
             STORAGE_ENFORCEMENT_MODE="disabled",

@@ -1,6 +1,4 @@
 import logging
-import re
-from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
@@ -22,8 +20,6 @@ from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
-from src.platform.workspace.execution.dependencies import get_sandbox_service
-from src.platform.workspace.execution.service import SandboxService
 
 router = APIRouter(
     prefix="/sandbox-endpoints",
@@ -54,75 +50,6 @@ def _to_out(row: dict) -> SandboxEndpointOut:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
-
-
-def _normalize_mount_path(path: str) -> str:
-    normalized = (path or "/workspace").strip()
-    if not normalized.startswith("/"):
-        normalized = f"/{normalized}"
-    if normalized.endswith("/"):
-        normalized = normalized[:-1]
-    if not normalized.startswith("/workspace"):
-        normalized = f"/workspace{normalized}" if normalized != "/" else "/workspace"
-    return normalized or "/workspace"
-
-
-def _is_write_command(command: str) -> bool:
-    write_patterns = [
-        r">",
-        r">>",
-        r"\brm\b",
-        r"\bmv\b",
-        r"\bcp\b",
-        r"\btouch\b",
-        r"\bmkdir\b",
-        r"\brmdir\b",
-        r"\btruncate\b",
-        r"\bsed\s+-i\b",
-        r"\btee\b",
-        r"\bchmod\b",
-        r"\bchown\b",
-        r"\becho\b.*>",
-    ]
-    return any(re.search(pattern, command) for pattern in write_patterns)
-
-
-def _validate_command(command: str, mounts: list[dict[str, Any]]) -> None:
-    # Forbidden-pattern policy lives in the shared choke point so the endpoint
-    # and the agent bash tool stay in lockstep (ISSUE-009).
-    from src.platform.workspace.execution.policy import (
-        SandboxCommandRejected,
-        assert_command_allowed,
-    )
-
-    try:
-        assert_command_allowed(command)
-    except SandboxCommandRejected as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    readonly_mounts = [
-        _normalize_mount_path(m.get("mount_path", "/workspace"))
-        for m in mounts
-        if (m.get("permissions") or {}).get("write") is False
-    ]
-    if not readonly_mounts:
-        return
-
-    if not _is_write_command(command):
-        return
-
-    referenced_paths = re.findall(r"(/workspace[^\s\"']*)", command)
-    if not referenced_paths:
-        raise HTTPException(
-            status_code=400, detail="Write commands must target explicit /workspace paths"
-        )
-
-    for path in referenced_paths:
-        for readonly_path in readonly_mounts:
-            if path == readonly_path or path.startswith(f"{readonly_path}/"):
-                raise HTTPException(
-                    status_code=403, detail=f"Write denied for readonly mount: {readonly_path}"
-                )
 
 
 @router.get(
@@ -248,12 +175,11 @@ def regenerate_key(
     response_model=ApiResponse[dict],
     summary="Execute command in Sandbox endpoint",
 )
-async def exec_command(
+def exec_command(
     endpoint_id: str,
     payload: dict,
     x_access_key: str = Header(..., alias="X-Access-Key"),
     service: SandboxEndpointService = Depends(get_sandbox_endpoint_service),
-    sandbox_service: SandboxService = Depends(get_sandbox_service),
 ):
     try:
         endpoint = service.get_by_access_key(x_access_key)

@@ -14,6 +14,10 @@ from src.version_engine.domain.git_pack_limits import (
 
 
 class Settings(BaseSettings):
+    FILE_READ_CONCURRENCY: int = Field(default=8, ge=1, le=128)
+    FILE_READ_QUEUE_LIMIT: int = Field(default=32, ge=0, le=1024)
+    FILE_READ_QUEUE_TIMEOUT_SECONDS: float = Field(default=10, gt=0, le=300)
+
     """Application configuration"""
 
     model_config = SettingsConfigDict(
@@ -45,6 +49,17 @@ class Settings(BaseSettings):
     )
     DEBUG: bool | None = None
     VERSION: str = "0.0.3"
+
+    # Concurrency boundary (docs/architecture/18-concurrency-boundary.md).
+    # Worker threads per Python process for every blocking call made from async
+    # code (run_blocking) plus FastAPI def routes/dependencies; shared limit.
+    # Replica capacity is roughly this times WEB_CONCURRENCY. Read at start-up.
+    BLOCKING_THREAD_LIMIT: int = Field(default=40, gt=0, le=512)
+    # Log a warning when the event loop is stalled longer than this; 0 disables.
+    EVENT_LOOP_LAG_WARN_MS: int = Field(default=250, ge=0)
+    # Bounded process-wide pool for Version Engine object fan-out (parallel S3
+    # reads/writes inside one storage call). Never borrows request threads.
+    VERSION_STORAGE_IO_THREADS: int = Field(default=16, gt=0, le=64)
 
     # Local storage configuration, mostly using Supabase now
     DATA_PATH: Path = Path("./data")
@@ -346,12 +361,8 @@ class Settings(BaseSettings):
                     raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
             elif not self.E2B_API_KEY:
                 raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
-            if self.SCOPE_SANDBOX_STORE != "supabase":
-                raise ValueError("Hosted sandbox sessions require SCOPE_SANDBOX_STORE=supabase")
-            if not self.SCOPE_SANDBOX_REAPER_ENABLED:
-                raise ValueError(
-                    "Hosted sandbox sessions require SCOPE_SANDBOX_REAPER_ENABLED=true"
-                )
+            if not self.SANDBOX_REAPER_ENABLED:
+                raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
         return self
 
     @model_validator(mode="after")
@@ -412,46 +423,39 @@ class Settings(BaseSettings):
     CLOUD_AGENT_CONTEXT_WINDOW: int = Field(default=131072, ge=16384, le=2000000)
     CLOUD_AGENT_MAX_MODEL_CALLS: int = Field(default=32, ge=1, le=100)
     CLOUD_AGENT_CONCURRENCY: int = Field(default=4, ge=1, le=32)
+    # Work admitted by this deployment runs only on workers of the same pool. A
+    # local stack sharing a hosted database must use its own pool (dev-<name>).
+    AGENT_WORKER_POOL: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    # A stopping worker lets active Runs continue this long, then hands them off.
+    # The platform's SIGTERM-to-SIGKILL window must be longer.
+    CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS: int = Field(default=20, ge=0, le=600)
     # Docker sandbox dedicated temp directory; only needed when containerized backend controls host Docker
     SANDBOX_TMPDIR: str | None = None
     # Sandbox file download concurrency
     SANDBOX_DOWNLOAD_CONCURRENCY: int = 10
     # Large file streaming threshold (bytes); files exceeding this size use streaming transfer
     SANDBOX_LARGE_FILE_THRESHOLD: int = 50 * 1024 * 1024  # 50MB
-    # ── Scope-sandbox (V2 "sandbox as access point") ──
-    # NOTE: the per-project/enterprise choice of "fly" vs "e2b" is a USER
-    # selection made in the frontend and persisted as a project setting; it is
-    # resolved at runtime via factory.provider_from_settings(settings, name=...).
-    # The env var below is only the DEFAULT/fallback for projects that haven't
-    # chosen. The vars here hold the per-provider CREDENTIALS (always needed for
-    # whichever provider a project selects). See docs/proposals/PUP-sandbox-access-point.md.
-    # Default only; the per-project UI choice overrides. Defaults to "e2b" — the
-    # live-validated path (full SSH + credential round-trip proven). Fly is
-    # code-complete but not yet live (needs payment + dedicated IPv4), so it
-    # shouldn't be the silent fallback for projects that haven't chosen.
-    SCOPE_SANDBOX_PROVIDER: Literal["fly", "e2b"] = "e2b"
+    # Sandbox reaper: stops idle unretained executions and retires machines left
+    # by the removed Scope Sandbox product. It is part of the lifecycle
+    # correctness contract: without it a worker crash can leave paid provider
+    # resources alive. SCOPE_SANDBOX_REAPER_* remain accepted as old names.
+    SANDBOX_REAPER_ENABLED: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SANDBOX_REAPER_ENABLED", "SCOPE_SANDBOX_REAPER_ENABLED"),
+    )
+    SANDBOX_REAPER_INTERVAL_S: int = Field(
+        default=120,
+        validation_alias=AliasChoices(
+            "SANDBOX_REAPER_INTERVAL_S", "SCOPE_SANDBOX_REAPER_INTERVAL_S"
+        ),
+    )
+    # Legacy only: the Fly account that owns retired Scope Sandbox machines, used
+    # to destroy them during retirement and Project deletion. No new use.
     SCOPE_SANDBOX_FLY_APP: str = ""
     SCOPE_SANDBOX_FLY_TOKEN: str = ""
-    SCOPE_SANDBOX_FLY_IMAGE: str = ""
-    # Custom E2B template (roadmap #6) baking sshd+websocat+sidecar. When set,
-    # the provider launches this template and the bootstrap uses the FAST provision
-    # path (seed key + start pre-installed daemons). Unset → default template +
-    # full runtime install. Build via sandbox/scope-e2b/build.sh.
-    SCOPE_SANDBOX_E2B_TEMPLATE: str = ""
-    # Session store backend: "memory" (dev/single-process) or "supabase"
-    # (durable, multi-worker-visible — required for the reaper + multi-instance).
-    SCOPE_SANDBOX_STORE: Literal["memory", "supabase"] = "supabase"
-    # Background reaper is part of the lifecycle correctness contract: without
-    # it a worker crash can leave paid provider resources alive indefinitely.
-    SCOPE_SANDBOX_REAPER_ENABLED: bool = True
-    SCOPE_SANDBOX_REAPER_INTERVAL_S: int = 120
 
-    # Workspace Provider configuration
-    # - "auto": Auto-detect platform (macOS -> APFS Clone, Linux -> OverlayFS, other -> full copy)
-    # - "apfs": Force APFS Clone (macOS only)
-    # - "overlayfs": Force OverlayFS (Linux only)
-    # - "fallback": Force full copy
-    WORKSPACE_PROVIDER: str = "auto"
+    # Root of legacy host-local Agent workspace directories (lower/, workspaces/).
+    # Nothing creates them any more; Project deletion still scrubs leftovers.
     WORKSPACE_BASE_DIR: str = "/tmp/contextbase"
     # These paths contain only reconstructable, authorization-fenced derived
     # state. "persistent" is allowed for local/self-hosted experimentation but
@@ -654,6 +658,10 @@ class Settings(BaseSettings):
     # Preserve the environment name; zero never disables the finite work cap.
     GIT_MAX_EXPANDED_BYTES: int = Field(default=8 * 1024**3, gt=0, le=8 * 1024**3)
     GIT_SUBPROCESS_TIMEOUT_SECONDS: int = 300  # per git invocation
+    # Admission is local to each Python process, including retained responses.
+    # Size against aggregate CPU/RAM/scratch across all processes and replicas.
+    # Read at startup; changing this setting requires restarting the workers.
+    GIT_MAX_CONCURRENT_OPERATIONS: int = Field(default=2, gt=0)
 
     VERSION_OBJECT_GC_ENABLED: bool = False
     VERSION_OBJECT_GC_DRY_RUN: bool = True

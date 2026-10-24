@@ -1,0 +1,24 @@
+{
+  "paths": {
+    "removed": {
+      "/api/v1/workspace/create": "164f0f8d0d4ccfd5098df646c5dd03b66feb7277c3909b32e34d133b52c5d39d",
+      "/api/v1/workspace/{agent_id}/complete": "47ed6401ecd279928cddc2591165291f5faa0255c9fca03e34315df80b9e47af",
+      "/api/v1/workspace/{agent_id}/status": "05261c42bf3b60e8a3bad10d3a65a4d3cf2059f1f92a1266a5994b757cdf0513"
+    },
+    "added": {},
+    "changed": {}
+  },
+  "schemas": {
+    "removed": {
+      "ApiResponse_CompleteWorkspaceResponse_": "bacba10c5fb2bc4244f45679bb3bc26e2e1a2f964e8c0535205e804dbcf9446a",
+      "ApiResponse_CreateWorkspaceResponse_": "b4b5a9c4fcf1f3a4ebb21e3ed4497b3bc02c3da9b21385f1805b3e09bb017181",
+      "ApiResponse_WorkspaceStatusResponse_": "88bfad0398da42ee587f16809f57ffec0192ec37f21905eaa476bcc790c02771",
+      "CompleteWorkspaceResponse": "9a0f7fffb661a37353790cb7323c157dfa1a1110a7b9cc43b6efec9d7bc46780",
+      "CreateWorkspaceRequest": "3113c831f4118e5770dcf316b5bdbb156a01dc4051040d3da1e6b8350fcc8f5f",
+      "CreateWorkspaceResponse": "978f340b24642aa35d2b7260d0c5680df5c1fb9400b69ef515603882d04956ba",
+      "WorkspaceStatusResponse": "a4bfac3c14ad12c49da8bb2925b5c54c00f48dd5a17c2873c4e3368dd0b4ecbd"
+    },
+    "added": {},
+    "changed": {}
+  }
+}

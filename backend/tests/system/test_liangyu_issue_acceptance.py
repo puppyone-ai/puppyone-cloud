@@ -1,8 +1,8 @@
 """Cross-module acceptance cases for the owner-liangyu remediations.
 
 These are intentionally not isolated units: they exercise worker policy plus a
-real ObjectStore repository, provider restart recovery through a shared store,
-and two independent MCP transport registries over one pub/sub bus.
+real ObjectStore repository and two independent MCP transport registries over
+one pub/sub bus. Ephemeral sandbox recovery is covered by the sandbox reaper.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from types import SimpleNamespace
 import pytest
 
 from mcp_service.core.session_registry import SessionRegistry
-from src.platform.workspace.execution.e2b_sandbox import E2BSandbox
-from src.platform.workspace.execution.store import InMemoryExecutionSessionStore
 from src.version_engine.derived.object_gc_worker import process_object_gc_projects
 from src.version_engine.storage.object_store import ObjectStore
 
@@ -103,59 +101,6 @@ def test_issue_012_production_gc_evidence_is_enforced_per_project(tmp_path, monk
     by_project = {result.project_id: result for result in results}
     assert by_project["ready-project"].dry_run is False
     assert by_project["unproven-project"].dry_run is True
-
-
-class _FakeFiles:
-    def __init__(self):
-        self.data = {}
-
-    async def write(self, path, content):
-        self.data[path] = content
-
-    async def read(self, path):
-        return self.data[path]
-
-
-class _FakeCommands:
-    def run(self, command, **_kwargs):
-        return SimpleNamespace(text=f"ran:{command}", exit_code=0, stderr="")
-
-
-class _FakeE2B:
-    id = "provider-resource-1"
-
-    def __init__(self):
-        self.files = _FakeFiles()
-        self.commands = _FakeCommands()
-        self.closed = False
-
-    async def close(self):
-        self.closed = True
-
-
-@pytest.mark.asyncio
-async def test_issue_018_execution_survives_service_reconstruction():
-    """A second worker can resolve and stop a sandbox created by the first."""
-
-    store = InMemoryExecutionSessionStore()
-    provider = _FakeE2B()
-    first_worker = E2BSandbox(
-        sandbox_factory=lambda: provider,
-        sandbox_connector=lambda resource_id: provider,
-        session_store=store,
-    )
-    assert (await first_worker.start("chat-turn", {"value": 7}, False))["success"]
-
-    second_worker = E2BSandbox(
-        sandbox_factory=lambda: (_ for _ in ()).throw(AssertionError("must reconnect")),
-        sandbox_connector=lambda resource_id: provider if resource_id == provider.id else None,
-        session_store=store,
-    )
-    assert (await second_worker.read("chat-turn"))["data"] == {"value": 7}
-    assert (await second_worker.exec("chat-turn", "echo ok"))["success"]
-    assert (await second_worker.stop("chat-turn"))["success"]
-    assert provider.closed is True
-    assert store.get("chat-turn") is None
 
 
 class _PubSub:

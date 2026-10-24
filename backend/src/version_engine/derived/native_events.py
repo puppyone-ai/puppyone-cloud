@@ -1,4 +1,7 @@
-"""Rebuild derived indexes and notify from native ref events, with fenced retries.
+"""Rebuild derived indexes from native ref events, with fenced retries.
+
+Synchronous steps; the scheduler job (infra/scheduler/jobs/native_projection_job)
+orchestrates them and broadcasts the WebSocket notification.
 
 Only the maintenance worker uses the internal read-pin capability. API readers
 continue to require their current Human/Runtime grant. Event claims never grant
@@ -7,13 +10,11 @@ object publication rights. A stale projection cannot overwrite a newer ref view.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 
 from src.config import settings
 from src.infra.search.text_indexer import _chunk_text, _decode_for_index
-from src.utils.logger import log_warning
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     RefAuthorityRepository,
 )
@@ -90,41 +91,21 @@ def rebuild_projection(manager, project, token):
         snapshot.close()
 
 
-async def process_native_events(*, repo_manager=None, limit=20):
-    from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-    from src.version_engine.derived.notifications import NotificationManager
-
-    manager = repo_manager or build_worker_version_engine_container().repo_manager
+def claim_native_events(manager, token: str, limit: int) -> list[dict]:
     control = RefAuthorityRepository(manager._supabase.client)
-    token = str(uuid.uuid4())
-    rows = await asyncio.to_thread(
-        control.call, "claim_native_projection_events", p_token=token, p_limit=limit
+    return control.call("claim_native_projection_events", p_token=token, p_limit=limit)
+
+
+def finish_native_event(manager, project: str, token: str, sequence) -> None:
+    RefAuthorityRepository(manager._supabase.client).call(
+        "finish_native_projection_events",
+        p_project=project,
+        p_token=token,
+        p_sequence=sequence,
     )
-    processed = 0
-    for row in rows:
-        project = row["project_id"]
-        try:
-            head, sequence = await asyncio.to_thread(rebuild_projection, manager, project, token)
-            await NotificationManager.get().broadcast_commit_update(
-                project,
-                "",
-                commit_id=head,
-                pushed_by="repository",
-                changes=[],
-                message="Repository refs changed",
-            )
-            await asyncio.to_thread(
-                control.call,
-                "finish_native_projection_events",
-                p_project=project,
-                p_token=token,
-                p_sequence=sequence,
-            )
-            processed += 1
-        except Exception as exc:
-            log_warning(f"[native-projection] retry project={project}: {type(exc).__name__}")
-        finally:
-            await asyncio.to_thread(
-                control.call, "release_native_projection_events", p_project=project, p_token=token
-            )
-    return processed
+
+
+def release_native_event(manager, project: str, token: str) -> None:
+    RefAuthorityRepository(manager._supabase.client).call(
+        "release_native_projection_events", p_project=project, p_token=token
+    )

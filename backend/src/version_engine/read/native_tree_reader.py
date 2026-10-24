@@ -105,6 +105,12 @@ class NativeTreeReader:
         self._check_project(project_id)
         return self.revision.tree_oid
 
+    def get_path_timestamps(self, project_id, paths):
+        self.get_head_commit_id(project_id)  # validates the pinned project
+        from src.version_engine.read.native_history import NativeHistory
+
+        return NativeHistory(self.snapshot).timestamps(paths)
+
     def get_head_commit_id(self, project_id):
         self._check_project(project_id)
         return self.revision.commit_oid or ""

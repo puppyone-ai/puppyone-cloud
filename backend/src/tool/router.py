@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 
 from src.common_schemas import ApiResponse
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.s3.service import S3Service
 from src.infra.search.dependencies import get_search_service
 from src.infra.search.index_task import SearchIndexTaskOut, SearchIndexTaskUpsert
@@ -158,7 +159,7 @@ async def _run_search_indexing_background(
         f"[search_index] background task accepted: tool_id={tool_id} project_id={project_id} path={path} json_path='{json_path}'"
     )
     try:
-        await asyncio.to_thread(
+        await run_blocking(
             repo.upsert,
             SearchIndexTaskUpsert(
                 tool_id=tool_id,
@@ -194,7 +195,7 @@ async def _run_search_indexing_background(
             timeout=float(settings.SEARCH_INDEX_TIMEOUT_SECONDS),
         )
         finished = dt.datetime.now(tz=dt.UTC)
-        await asyncio.to_thread(
+        await run_blocking(
             repo.upsert,
             SearchIndexTaskUpsert(
                 tool_id=tool_id,
@@ -218,7 +219,7 @@ async def _run_search_indexing_background(
         finished = dt.datetime.now(tz=dt.UTC)
         msg = f"index_scope timeout after {settings.SEARCH_INDEX_TIMEOUT_SECONDS}s"
         try:
-            await asyncio.to_thread(
+            await run_blocking(
                 repo.upsert,
                 SearchIndexTaskUpsert(
                     tool_id=tool_id,
@@ -243,7 +244,7 @@ async def _run_search_indexing_background(
         finished = dt.datetime.now(tz=dt.UTC)
         err = str(e)[:500]
         try:
-            await asyncio.to_thread(
+            await run_blocking(
                 repo.upsert,
                 SearchIndexTaskUpsert(
                     tool_id=tool_id,
@@ -287,7 +288,7 @@ async def _run_folder_search_indexing_background(
 
     # Mark as indexing
     try:
-        await asyncio.to_thread(
+        await run_blocking(
             repo.upsert,
             SearchIndexTaskUpsert(
                 tool_id=tool_id,
@@ -344,7 +345,7 @@ async def _run_folder_search_indexing_background(
             timeout=float(settings.SEARCH_INDEX_TIMEOUT_SECONDS),
         )
         finished = dt.datetime.now(tz=dt.UTC)
-        await asyncio.to_thread(
+        await run_blocking(
             repo.upsert,
             SearchIndexTaskUpsert(
                 tool_id=tool_id,
@@ -372,7 +373,7 @@ async def _run_folder_search_indexing_background(
         finished = dt.datetime.now(tz=dt.UTC)
         msg = f"index_folder timeout after {settings.SEARCH_INDEX_TIMEOUT_SECONDS}s"
         try:
-            await asyncio.to_thread(
+            await run_blocking(
                 repo.upsert,
                 SearchIndexTaskUpsert(
                     tool_id=tool_id,
@@ -398,7 +399,7 @@ async def _run_folder_search_indexing_background(
         finished = dt.datetime.now(tz=dt.UTC)
         err = str(e)[:500]
         try:
-            await asyncio.to_thread(
+            await run_blocking(
                 repo.upsert,
                 SearchIndexTaskUpsert(
                     tool_id=tool_id,

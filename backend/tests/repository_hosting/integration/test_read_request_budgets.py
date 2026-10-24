@@ -132,7 +132,7 @@ async def test_bulk_s3_reads_reuse_missing_location_results(services, submitted,
     objects = dict(encode_object("blob", f"object-{i}".encode()) for i in range(count))
     async with ProjectWriteLease(project, "fixture.objects"):
         for oid, data in objects.items():
-            await storage.upload_file(backend._key_for(oid), data)
+            storage.upload_file(backend._key_for(oid), data)
     result, report = await asyncio.to_thread(
         measured, "objects.batch", lambda: backend.get_many([*objects, *objects])
     )

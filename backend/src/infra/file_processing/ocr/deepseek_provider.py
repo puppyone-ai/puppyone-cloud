@@ -10,7 +10,6 @@ Uses DeepSeek-OCR model via DeepInfra's OpenAI-compatible API.
 API docs: https://deepinfra.com/deepseek-ai/DeepSeek-OCR/api
 """
 
-import asyncio
 import base64
 import logging
 from pathlib import Path
@@ -19,6 +18,7 @@ import httpx
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.infra.execution.runner import run_blocking
 from src.infra.file_processing.ocr.base import (
     OCRProvider,
     OCRProviderAPIError,
@@ -289,7 +289,7 @@ class DeepSeekOCRProvider(OCRProvider):
             doc.close()
             return images
 
-        return await asyncio.to_thread(_convert)
+        return await run_blocking(_convert)
 
     @staticmethod
     def _guess_extension(url: str) -> str:

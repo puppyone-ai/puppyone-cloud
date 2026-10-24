@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.exceptions import AppException
+from src.infra.execution.runner import run_blocking
 from src.infra.s3.service import S3Service
 from src.platform.project.write_lease import (
     PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
@@ -73,10 +74,10 @@ async def test_copied_background_context_cannot_reuse_released_outer_claim(
                 {"project_id": project_id, "operation": operation, **kwargs}
             )
 
-        async def __aenter__(self):
+        def __enter__(self):
             return self
 
-        async def __aexit__(self, *_args):
+        def __exit__(self, *_args):
             return False
 
     monkeypatch.setattr(
@@ -87,9 +88,7 @@ async def test_copied_background_context_cannot_reuse_released_outer_claim(
 
     async def late_write() -> None:
         await continue_background.wait()
-        async with s3._project_write_guard(
-            "version/project-1/objects/aa/blob", "put_object"
-        ):
+        with s3._project_write_guard("version/project-1/objects/aa/blob", "put_object"):
             pass
 
     async with outer:
@@ -118,10 +117,10 @@ async def test_physical_child_inherits_live_initializer_proof(monkeypatch) -> No
                 {"project_id": project_id, "operation": operation, **kwargs}
             )
 
-        async def __aenter__(self):
+        def __enter__(self):
             return self
 
-        async def __aexit__(self, *_args):
+        def __exit__(self, *_args):
             return False
 
     s3 = object.__new__(S3Service)
@@ -138,9 +137,7 @@ async def test_physical_child_inherits_live_initializer_proof(monkeypatch) -> No
             "src.platform.project.write_lease.ProjectWriteLease",
             RecordingChildLease,
         )
-        async with s3._project_write_guard(
-            "projects/project-1/uploads/staged", "put_object"
-        ):
+        with s3._project_write_guard("projects/project-1/uploads/staged", "put_object"):
             pass
 
     assert recorded[0]["reuse_active"] is False
@@ -155,7 +152,6 @@ async def test_renewal_loss_waits_for_real_thread_before_releasing_lease() -> No
     repository = LeaseRepositoryStub(renew=False)
     started = threading.Event()
     finish = threading.Event()
-    s3 = object.__new__(S3Service)
 
     def long_physical_write() -> str:
         started.set()
@@ -171,7 +167,7 @@ async def test_renewal_loss_waits_for_real_thread_before_releasing_lease() -> No
             heartbeat_interval_seconds=0.01,
             reuse_active=False,
         ):
-            await s3._run_sync(long_physical_write)
+            await run_blocking(long_physical_write)
 
     task = asyncio.create_task(write())
     await asyncio.to_thread(started.wait, 1)
@@ -348,3 +344,61 @@ async def test_access_key_git_read_is_resolved_then_leased(monkeypatch) -> None:
     await dependency.aclose()
 
     assert events == [("project-1", "git.post")]
+
+
+def test_synchronous_owner_renews_from_a_thread_and_releases_once() -> None:
+    import time
+
+    repository = LeaseRepositoryStub()
+    lease = ProjectWriteLease(
+        "project-1",
+        "s3.put_object",
+        repository=repository,
+        heartbeat_interval_seconds=0.01,
+        reuse_active=False,
+    )
+    with lease:
+        assert active_project_write_lease("project-1") is lease
+        with ProjectWriteLease("project-1", "nested", repository=repository) as nested:
+            assert nested is not lease and len(repository.acquired) == 1
+        deadline = time.monotonic() + 2
+        while len(repository.renewed) < 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+    renewals = len(repository.renewed)
+    time.sleep(0.05)
+    assert len(repository.renewed) == renewals  # heartbeat stopped with the claim
+    assert active_project_write_lease("project-1") is None
+    assert len(repository.released) == 1
+
+
+def test_synchronous_owner_lost_claim_cancels_its_execution() -> None:
+    import time
+
+    from src.infra.execution.context import Execution, checkpoint, current_execution
+
+    repository = LeaseRepositoryStub(renew=False)
+    execution = Execution()
+    token = current_execution.set(execution)
+    try:
+        with (
+            pytest.raises(AppException) as caught,
+            ProjectWriteLease(
+                "project-1",
+                "s3.put_object",
+                repository=repository,
+                heartbeat_interval_seconds=0.01,
+                reuse_active=False,
+            ) as lease,
+        ):
+            deadline = time.monotonic() + 2
+            while lease.is_active:
+                assert time.monotonic() < deadline
+                time.sleep(0.005)
+            with pytest.raises(RuntimeError, match="cancelled"):
+                checkpoint()  # cooperative work stops; a thread cannot be killed
+    finally:
+        current_execution.reset(token)
+    assert caught.value.details["code"] == "project_write_lease_lost"
+    assert execution.cancelled.is_set()
+    assert len(repository.released) == 1

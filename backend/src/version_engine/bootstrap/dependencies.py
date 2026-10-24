@@ -5,10 +5,10 @@ from __future__ import annotations
 from fastapi import Depends, Request
 
 from src.file_operations.commands import VersionWriteCommandService
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.container import (
     VersionEngineContainer,
     build_version_engine_container,
@@ -77,11 +77,8 @@ def build_worker_version_engine_container(
 ) -> VersionEngineContainer:
     """Explicit bootstrap for scheduler jobs, ARQ workers, and CLI scripts.
 
-    Long-lived worker processes should pass ``probe=True`` at boot so a
-    misconfigured deploy surfaces immediately rather than on the first
-    queued task. Short-lived per-call rebuilds keep the default
-    (``False``) — they reuse the same long-lived Supabase/S3 services
-    so a fresh probe per call would add latency without adding signal.
+    Build once at worker boot and inject into jobs. This function creates
+    storage resources; it must not be used as a request dependency.
     """
 
     return build_version_engine_container(probe=probe)

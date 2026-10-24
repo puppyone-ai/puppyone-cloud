@@ -91,9 +91,9 @@ async def test_named_ref_capacity_denial_precedes_s3_put_and_preserves_ack(publi
         puts = []
         original_put = s3.upload_file
 
-        async def record_put(*args, **kwargs):
+        def record_put(*args, **kwargs):
             puts.append(args[0])
-            return await original_put(*args, **kwargs)
+            return original_put(*args, **kwargs)
 
         monkeypatch.setattr(s3, 'upload_file', record_put)
         with pytest.raises(Exception, match='repository_capacity_exceeded'):
@@ -125,20 +125,20 @@ async def test_same_pin_retry_cannot_settle_an_earlier_s3_invocation(publication
     actor = admitted_actor(grant, auth.project, write=True)
     proposed, loose = encode_object('blob', b'retry with unsettled IO', object_format=service.object_format)
     pending = []
-    original_settle = S3StorageBackend._async_settle_capacity
+    original_settle = S3StorageBackend._settle_capacity
 
-    async def lose_settlement(self, io_id):
+    def lose_settlement(self, io_id):
         if not pending:
             pending.append(io_id)
             raise RuntimeError('injected post-PUT settlement outage')
-        await original_settle(self, io_id)
+        original_settle(self, io_id)
 
     async with ProjectWriteLease(auth.project, 'same-pin-recovery', repository=ProjectWriteLeaseRepository(db.client)):
         await asyncio.to_thread(service.submit, grant, request_key=str(uuid.uuid4()), generation=1,
                                 edits=[RefEdit(b'refs/heads/main', RefState(), RefState(oid=oid))],
                                 roots={oid: 'commit'}, prepare=prepare)
         before = control.snapshot(auth.project)
-        monkeypatch.setattr(S3StorageBackend, '_async_settle_capacity', lose_settlement)
+        monkeypatch.setattr(S3StorageBackend, '_settle_capacity', lose_settlement)
         args = dict(request_key=str(uuid.uuid4()), generation=1,
                     edits=[RefEdit(b'refs/tags/recovery', RefState(), RefState(oid=proposed))],
                     roots={proposed: 'blob'}, prepare=lambda: backend.put_durable(proposed, loose))

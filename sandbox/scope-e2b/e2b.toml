@@ -1,8 +1,0 @@
-# E2B template config for the PuppyOne scope-sandbox (roadmap #6).
-# `template_id` is filled in by `e2b template build` — copy it into the backend
-# setting SCOPE_SANDBOX_E2B_TEMPLATE (env) so the provider launches this image.
-dockerfile = "e2b.Dockerfile"
-template_name = "puppyone-scope-sandbox"
-
-# The forwarder + sshd are started by the connect flow (puppyone-ssh-up), not at
-# template boot, because the websocat forward port + per-user key are per-connect.

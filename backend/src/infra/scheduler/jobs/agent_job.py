@@ -1,6 +1,9 @@
-"""Scheduled Agents submit the same durable runs as interactive clients."""
+"""Scheduled Agents submit the same durable runs as interactive clients.
 
-import asyncio
+APScheduler runs this job in its thread pool; every step is a synchronous
+call, so no event loop is created.
+"""
+
 import logging
 from uuid import uuid4
 
@@ -12,14 +15,12 @@ from src.platform.authorization.service import redacted_project_ref
 logger = logging.getLogger(__name__)
 
 
-async def _execute_agent_task_async(agent_id: str) -> dict:
+def execute_agent_task(agent_id: str) -> dict:
     from src.infra.supabase.client import SupabaseClient
     from src.platform.authorization.factory import build_authorization_service
 
     client = SupabaseClient().client
-    surface = await asyncio.to_thread(
-        AccessSurfaceRepository(client).get_agent_with_project, agent_id
-    )
+    surface = AccessSurfaceRepository(client).get_agent_with_project(agent_id)
     if surface is None:
         return {"status": "failed", "error": "Agent not found"}
     if surface.get("status", "active") != "active":
@@ -28,8 +29,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
     if not user_id:
         return {"status": "failed", "error": "Agent has no associated user"}
     try:
-        authorized = await asyncio.to_thread(
-            build_authorization_service().allows,
+        authorized = build_authorization_service().allows(
             surface["project_id"],
             user_id,
             ProjectAction.AGENT_RUN,
@@ -48,8 +48,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
         from src.platform.access.adapters.agent.dependencies import get_agent_service
 
         service = get_agent_service()
-        result = await asyncio.to_thread(
-            service.submit,
+        result = service.submit(
             user_id,
             SubmitRun(
                 project_id=surface["project_id"],
@@ -65,7 +64,3 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
     except Exception:
         logger.exception("scheduled_agent_submission_failed", extra={"agent_id": agent_id})
         return {"status": "failed", "error": "Agent submission failed"}
-
-
-def execute_agent_task(agent_id: str):
-    return asyncio.run(_execute_agent_task_async(agent_id))

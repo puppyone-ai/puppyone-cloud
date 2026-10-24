@@ -27,8 +27,9 @@ class RunRepository(RunQueries):
             resource=resource,
         )
 
-    def workspace_due(self, limit=20):
-        return self.rpc("workspace_due", limit=limit)
+    def workspace_due(self, *, pool, limit=20):
+        """Claim Session workspaces of ``pool`` whose retirement is due."""
+        return self.rpc("workspace_due_in_pool", pool=pool, limit=limit)
 
     def workspace_retired(self, workspace):
         return self.rpc(
@@ -122,14 +123,44 @@ class RunRepository(RunQueries):
         return self.rpc("submit_context", **values)
 
     def claim_workbench_run(self, *, worker):
-        value = self.rpc("claim_workbench_execution", worker=worker)
+        """Claim the next shared-workbench Run of this worker's pool and contracts."""
+        value = self.rpc("dispatch", worker=worker, workbench=True)
         return {**value["run"], "_execution": value} if value else None
 
     def claim_run(self, *, worker):
-        value = self.rpc("claim_execution", worker=worker)
-        if value is None:
-            return None
-        return {**value["run"], "_execution": value}
+        """Claim the next Session-workspace Run of this worker's pool and contracts."""
+        value = self.rpc("dispatch", worker=worker, workbench=False)
+        return {**value["run"], "_execution": value} if value else None
+
+    def release_execution(self, run, *, reason):
+        """Return a claimed Run to its queue (worker_shutdown | worker_incapable)."""
+        return self.rpc(
+            "release",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            reason=reason,
+        )
+
+    def verify_dispatch_contract(self):
+        """Prove the routed dispatch RPCs exist without claiming or releasing work."""
+        absent = "00000000-0000-0000-0000-000000000000"
+        probes = (
+            ("dispatch", {"worker": {}, "workbench": False}, "agent_worker_invalid"),
+            (
+                "release",
+                {"run": absent, "execution": absent, "fence": 0, "reason": "worker_shutdown"},
+                "agent_execution_fenced",
+            ),
+        )
+        for function, values, expected in probes:
+            try:
+                self.rpc(function, **values)
+            except Exception as exc:
+                if getattr(exc, "message", None) != expected:
+                    raise
+            else:
+                raise RuntimeError(f"agent_run_{function} accepted an invalid probe")
 
     def renew_execution(self, run):
         return self.rpc("renew", run=run["id"], execution=run["execution_id"], fence=run["fence"])

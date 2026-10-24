@@ -6,6 +6,7 @@ import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
+from src.infra.execution.runner import await_owned
 from src.infra.file_processing.ocr.base import (
     ExternalJobCreatedHook,
     ExternalJobTerminalHook,
@@ -24,40 +25,6 @@ class ProjectWriteLeaseFactory(Protocol):
         operation: str,
         **kwargs: Any,
     ) -> AbstractAsyncContextManager[Any]: ...
-
-
-async def _drain_after_cancellation(task: asyncio.Task[Any]) -> None:
-    """Wait until ``task`` no longer owns work, despite repeated cancellation."""
-
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # A second cancellation of the owner must not make its lease look
-            # released while the shielded provider/thread is still running.
-            continue
-        except BaseException:
-            break
-
-    # Retrieve a terminal exception to avoid an unhandled-task warning.  The
-    # caller's cancellation remains the externally visible outcome.
-    if task.done() and not task.cancelled():
-        task.exception()
-
-
-async def await_before_propagating_cancellation(task: asyncio.Task[Any]) -> Any:
-    """Shield work and drain it before propagating owner cancellation.
-
-    ``asyncio.to_thread`` cannot stop its underlying thread when its awaiter is
-    cancelled.  A Project lease must therefore remain open until the provider
-    lifecycle (including any materialization thread) has actually stopped.
-    """
-
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await _drain_after_cancellation(task)
-        raise
 
 
 async def run_ocr_lifecycle_under_project_lease(
@@ -89,4 +56,4 @@ async def run_ocr_lifecycle_under_project_lease(
                 on_terminal=on_terminal,
             )
         )
-        return await await_before_propagating_cancellation(lifecycle)
+        return await await_owned(lifecycle)

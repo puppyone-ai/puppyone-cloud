@@ -4,7 +4,7 @@ Only storage, user authentication and job transport are isolated doubles. This
 is not a claim of real PG/Redis/OAuth or target-environment acceptance.
 """
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
@@ -79,7 +79,7 @@ class RunStore:
 def environment(monkeypatch):
     from src.infra.scheduler import service as scheduler
 
-    monkeypatch.setattr(scheduler, "get_scheduler_service", lambda: SimpleNamespace(sync_trigger=AsyncMock()))
+    monkeypatch.setattr(scheduler, "get_scheduler_service", lambda: SimpleNamespace(sync_trigger=Mock()))
     bindings = BindingStore()
     runs = RunStore()
     monkeypatch.setattr(router, "_get_run_repo", lambda: runs)

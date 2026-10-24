@@ -12,7 +12,7 @@ from src.platform.access.adapters.agent.runtime.control.checkpoints import Check
 from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun, ExecutionLease
 from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
 from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
-from src.platform.access.adapters.agent.runtime.control.ports import RunStore
+from src.platform.access.adapters.agent.runtime.control.ports import BindingCapability, RunStore
 from src.platform.access.adapters.agent.runtime.control.publication import PublicationRejected
 from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
 from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
@@ -22,12 +22,18 @@ from src.platform.access.adapters.agent.runtime.control.tool_results import (
     tool_denial,
     tool_error,
 )
+from src.platform.access.adapters.agent.runtime.dispatch import (
+    INCAPABLE_CODES,
+    MAX_DISPATCH_ATTEMPTS,
+)
 from src.platform.access.adapters.agent.runtime.execution.port import BoundToolPort, ExecutionPort
 from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopProtocolError
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
+from src.platform.sandbox import WorkspaceUnavailable
 from src.platform.workspace.execution.worker_port import WorkerLifecycle, WorkerLost
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +56,10 @@ class RunSupervisor:
         bound_tools: BoundToolPort | None = None,
         workspace=None,
         shared_tasks=None,
+        capability: BindingCapability | None = None,
     ):
         self.repo, self.admission, self.publication = repository, admission, publication
+        self.capability = capability
         self.inference, self.billing = inference, billing
         self.checkpoints = checkpoints or Checkpoints()
         if workspace is not None and shared_tasks is not None:
@@ -86,12 +94,12 @@ class RunSupervisor:
 
     async def write(self, kind, payload=None, **patch):
         async with self.lock:
-            self.run = await asyncio.to_thread(self.repo.write, self.run, kind, payload, **patch)
+            self.run = await run_blocking(self.repo.write, self.run, kind, payload, **patch)
         return self.run
 
     async def command(self, method, *args, **kwargs):
         async with self.lock:
-            reply = await asyncio.to_thread(method, self.run, *args, **kwargs)
+            reply = await run_blocking(method, self.run, *args, **kwargs)
             self.run = reply["run"]
         status = reply.get("status", {})
         if code := status.get("code"):
@@ -154,7 +162,7 @@ class RunSupervisor:
                         ],
                     )
                 batch_id, length, events = self.pending_batch
-                self.run = await asyncio.to_thread(
+                self.run = await run_blocking(
                     self.repo.append_events_batch,
                     self.run,
                     events,
@@ -220,6 +228,7 @@ class RunSupervisor:
         flusher = asyncio.create_task(self.text_flush_loop())
         models = asyncio.create_task(self.watch_models())
         outcome = None
+        incapable = None
         try:
             done, _ = await asyncio.wait(
                 {heartbeat, operation, flusher, models}, return_when=asyncio.FIRST_COMPLETED
@@ -235,6 +244,13 @@ class RunSupervisor:
             outcome = (exc.state, exc.code)
         except PublicationRejected:
             outcome = ("failed", "publication_rejected")
+        except WorkspaceUnavailable as exc:
+            if exc.code in INCAPABLE_CODES:
+                # Configuration, not the task: another worker of the pool may serve it.
+                incapable = exc.code
+            else:
+                logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
+                outcome = ("failed", exc.code)
         except Exception:
             logger.exception("cloud_agent_execution_failed", extra={"run_id": run["id"]})
             outcome = ("failed", "execution_failed")
@@ -245,8 +261,10 @@ class RunSupervisor:
             for task in (heartbeat, operation, flusher, models, *self.models.values()):
                 with suppress(asyncio.CancelledError, Exception):
                     await task
+        if incapable:
+            outcome = await self.hand_back(run, incapable)
         if outcome:
-            current = await asyncio.to_thread(self.repo.get, run["id"])
+            current = await run_blocking(self.repo.get, run["id"])
             if (
                 not current
                 or current["execution_id"] != run["execution_id"]
@@ -261,7 +279,7 @@ class RunSupervisor:
                     await self.billing.detach_session(self.run["billing_run_id"])
                 return
             self.run = current
-            tools = await asyncio.to_thread(self.repo.tools, run["id"])
+            tools = await run_blocking(self.repo.tools, run["id"])
             if any(t["state"] == "executing" for t in tools) or (
                 self.run["state"] == "publishing" and outcome[1] != "publication_rejected"
             ):
@@ -272,8 +290,67 @@ class RunSupervisor:
                 outcome = ("conflict", "publication_reconciled")
             elif (self.run["publication"] or {}).get("status") == "failed":
                 outcome = ("failed", "publication_reconciled")
-            retained = not await self.preserve_resources()
+            if incapable:
+                # This worker cannot operate the Run's compute: record what
+                # exists for a capable worker instead of touching the provider.
+                retained = await self.holds_resources()
+            else:
+                retained = not await self.preserve_resources()
             await self.finish(outcome[0], outcome[1], retain_resource=retained)
+
+    async def hand_back(self, run, code):
+        """Release a Run this worker cannot serve; returns an outcome once exhausted.
+
+        Release is lease expiry without the wait: the successor's takeover rules
+        apply and this worker never claims the Run again. An active Run fails
+        as no_capable_worker on the MAX_DISPATCH_ATTEMPTS-th incapable worker;
+        terminal cleanup is never abandoned.
+        """
+        if self.shared_tasks and self.worker:
+            with suppress(Exception):
+                await self.worker.stop()
+        current = await run_blocking(self.repo.get, run["id"])
+        if (
+            not current
+            or current["execution_id"] != run["execution_id"]
+            or current["fence"] != run["fence"]
+        ):
+            return None
+        attempts = current.get("dispatch_attempts", 0) + 1
+        details = {"run_id": run["id"], "code": code, "dispatch_attempts": attempts}
+        if attempts >= MAX_DISPATCH_ATTEMPTS and current["state"] not in TERMINAL:
+            logger.error("cloud_agent_no_capable_worker", extra=details)
+            return ("failed", "no_capable_worker")
+        (logger.error if attempts >= MAX_DISPATCH_ATTEMPTS else logger.warning)(
+            "cloud_agent_run_released", extra=details
+        )
+        await run_blocking(self.repo.release_execution, current, reason="worker_incapable")
+        return None
+
+    async def holds_resources(self):
+        """Whether compute is recorded for this Run, without provider I/O."""
+        if self.shared_tasks:
+            return bool(await run_blocking(self.shared_tasks.repository.active, self.run))
+        executions = await run_blocking(self.repo.executions, self.run["id"])
+        return any(execution["resource"] for execution in executions)
+
+    async def require_capability(self):
+        """Prove this worker can operate the Run's persisted compute before acting.
+
+        An unbound Run is always servable: this worker allocates it with its
+        own configuration. Raises WorkspaceUnavailable otherwise.
+        """
+        if self.capability is None:
+            return
+        if self.shared_tasks:
+            row = await self.shared_tasks.workbench(self.run)
+            if row["state"] != "retired" and row.get("binding"):
+                # The workspace lifecycle operates only the deployment default.
+                await self.capability(row["binding"], row.get("resource"), default_only=True)
+            return
+        row = await run_blocking(self.repo.workspace, self.run["session_id"])
+        if row and row.get("binding"):
+            await self.capability(row["binding"], row.get("resource"))
 
     async def preserve_resources(self):
         """Quiesce before copying. Storage outages transfer cleanup to the run
@@ -292,7 +369,7 @@ class RunSupervisor:
         if self.value is None and self.run["checkpoint"]:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
         saved = True
-        for execution in await asyncio.to_thread(self.repo.executions, self.run["id"]):
+        for execution in await run_blocking(self.repo.executions, self.run["id"]):
             resource = execution["resource"]
             if not resource:
                 continue
@@ -339,6 +416,7 @@ class RunSupervisor:
         return saved
 
     async def execute(self):
+        await self.require_capability()
         if self.run["state"] in TERMINAL:
             saved = await self.preserve_resources()
             await self.finish(
@@ -347,7 +425,7 @@ class RunSupervisor:
                 retain_resource=not saved,
             )
             return
-        self.execution = self.run.get("_execution") or await asyncio.to_thread(
+        self.execution = self.run.get("_execution") or await run_blocking(
             self.repo.load_execution, self.run["id"]
         )
         self.context = self.admission.evaluate(
@@ -390,7 +468,7 @@ class RunSupervisor:
                 # complete acknowledged state. Quiesce the old process before
                 # cleanup; a late file mutation cannot join the new execution.
                 await self.worker_lifecycle.cleanup(execution["resource"])
-                await asyncio.to_thread(self.repo.cleaned, execution["id"])
+                await run_blocking(self.repo.cleaned, execution["id"])
         resume = bool(self.run["checkpoint"])
         if resume:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
@@ -417,7 +495,7 @@ class RunSupervisor:
             with database_stage("workspace_prepare"):
                 self.value = {
                     **self.loop.initial_state(),
-                    **await asyncio.to_thread(self.publication.capture, self.run, grant),
+                    **await run_blocking(self.publication.capture, self.run, grant),
                 }
             previous = self.execution["previous"]
             if previous and previous["checkpoint"]:
@@ -492,7 +570,7 @@ class RunSupervisor:
                 )
         await self.write("resource", {}, resource=resource)
         definitions = (
-            await asyncio.to_thread(self.bound_tools.definitions, self.run)
+            await run_blocking(self.bound_tools.definitions, self.run)
             if self.bound_tools
             else []
         )
@@ -814,7 +892,7 @@ class RunSupervisor:
                     }
                 ]
                 if completed_execution
-                else await asyncio.to_thread(self.repo.executions, self.run["id"])
+                else await run_blocking(self.repo.executions, self.run["id"])
             )
             for execution in executions:
                 if execution["fence"] > self.run["fence"]:
@@ -829,14 +907,14 @@ class RunSupervisor:
                         else:
                             await self.worker_lifecycle.cleanup(execution["resource"])
                 if not completed_execution:
-                    await asyncio.to_thread(self.repo.cleaned, execution["id"])
+                    await run_blocking(self.repo.cleaned, execution["id"])
         if self.run["billing_run_id"] and not retain_resource:
             await self.billing.finish_session(self.run["billing_run_id"])
         if self.workspace and self.workspace.row is None and not retain_resource:
-            await asyncio.to_thread(self.repo.workspace_recovered, self.run)
+            await run_blocking(self.repo.workspace_recovered, self.run)
         snapshot = {**self.run["snapshot"], "code": code, "resource_retained": retain_resource}
         async with self.lock:
-            self.run = await asyncio.to_thread(
+            self.run = await run_blocking(
                 self.repo.complete_run,
                 self.run,
                 state=state,

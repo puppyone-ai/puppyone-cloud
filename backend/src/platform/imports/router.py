@@ -35,7 +35,7 @@ async def create_import_job(
 
 
 @router.get("", response_model=ApiResponse[ImportJobListResponse])
-async def list_import_jobs(
+def list_import_jobs(
     project_id: str = Query(..., description="Project ID"),
     active_only: bool = Query(False, description="Only queued/running jobs"),
     limit: int = Query(20, ge=1, le=100),
@@ -57,7 +57,7 @@ async def list_import_jobs(
 
 
 @router.get("/providers", response_model=ApiResponse)
-async def list_import_providers(
+def list_import_providers(
     registry: ProviderRegistry = Depends(get_import_provider_registry),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -66,7 +66,7 @@ async def list_import_providers(
 
 
 @router.get("/{job_id}", response_model=ApiResponse[ImportJobResponse])
-async def get_import_job(
+def get_import_job(
     job_id: str,
     service: ImportJobService = Depends(get_import_job_service),
     current_user: CurrentUser = Depends(get_current_user),
@@ -76,7 +76,7 @@ async def get_import_job(
 
 
 @router.delete("/{job_id}", response_model=ApiResponse[ImportJobResponse])
-async def cancel_import_job(
+def cancel_import_job(
     job_id: str,
     service: ImportJobService = Depends(get_import_job_service),
     current_user: CurrentUser = Depends(get_current_user),

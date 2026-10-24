@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import asyncssh
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.access.composition import build_workbench_service
 from src.platform.authorization.models import ProjectAction
@@ -91,7 +92,7 @@ class HostedSshAccess:
     async def issue(self, user, project, generation, key, ttl):
         endpoint = self.endpoint()
         key = public_key(key)
-        await asyncio.to_thread(
+        await run_blocking(
             self.workspace.context, user, project, ProjectAction.CREDENTIAL_MANAGE
         )
         row, _ = await self.workspace.bound(user, project, generation, write=True)
@@ -100,7 +101,7 @@ class HostedSshAccess:
         if not 60 <= ttl <= 3600:
             raise WorkspaceError(422, {"code": "ssh_grant_invalid_expiry"})
         identity = str(uuid4())
-        grant = await asyncio.to_thread(
+        grant = await run_blocking(
             self.grants.create,
             {
                 "id": identity,
@@ -123,7 +124,7 @@ class HostedSshAccess:
         }
 
     async def validate(self, identity, *, unused=False):
-        grant = await asyncio.to_thread(self.grants.get, str(UUID(identity)))
+        grant = await run_blocking(self.grants.get, str(UUID(identity)))
         if (
             not grant
             or grant.get("revoked_at")
@@ -148,7 +149,7 @@ class HostedSshAccess:
     @asynccontextmanager
     async def open(self, identity):
         grant = await self.validate(identity, unused=True)
-        await asyncio.to_thread(self.grants.consume, identity)
+        await run_blocking(self.grants.consume, identity)
         async with self.connections.open(
             identity,
             grant["user_id"],
@@ -164,10 +165,10 @@ class HostedSshAccess:
             await self.connections.renew(connection, shell)
 
     async def revoke(self, user, project, identity):
-        await asyncio.to_thread(
+        await run_blocking(
             self.workspace.context, user, project, ProjectAction.CREDENTIAL_MANAGE
         )
-        rows = await asyncio.to_thread(self.grants.revoke, identity, user, project)
+        rows = await run_blocking(self.grants.revoke, identity, user, project)
         if not rows:
             raise WorkspaceError(404, {"code": "ssh_grant_not_found"})
 

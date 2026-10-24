@@ -105,7 +105,7 @@ class Stack:
             PUBLIC_URL=self.base, FRONTEND_URL=f"http://localhost:{port}", SCHEDULER_ENABLED="false",
             ENABLE_ETL="true", OCR_PROVIDER="mineru", ENTITLEMENTS_MODE="disabled", BILLING_ENFORCEMENT="disabled",
             MANAGED_AI_ENABLED="false", MCP_SERVER_URL=f"http://127.0.0.1:{port+93}", MAIN_SERVICE_URL=self.base,
-            SCOPE_SANDBOX_REAPER_ENABLED="false", WORKSPACE_BASE_DIR=str(self.directory/"workspaces"),
+            SANDBOX_REAPER_ENABLED="false", WORKSPACE_BASE_DIR=str(self.directory/"workspaces"),
             GIT_VIEW_CACHE_DIR=str(self.directory/"git-cache"))
         self.supabase = supabase.resolve()
         # The MCP SDK creates its own httpx client; do not send loopback bearer

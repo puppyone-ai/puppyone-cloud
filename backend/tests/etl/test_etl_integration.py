@@ -105,7 +105,7 @@ async def s3_service():
         
         # 检查 bucket 是否可访问
         try:
-            await service.list_files(max_keys=1)
+            service.list_files(max_keys=1)
             print(f"  ✓ Bucket '{service.bucket_name}' 可访问")
         except Exception as e:
             print(f"  ✗ 警告: 无法访问 bucket '{service.bucket_name}': {e}")
@@ -286,7 +286,7 @@ async def test_etl_complete_flow(etl_service, s3_service, rule_repository):
     filename = "test_document.pdf"
     
     s3_key = f"users/{user_id}/raw/{project_id}/{filename}"
-    upload_result = await s3_service.upload_file(
+    upload_result = s3_service.upload_file(
         key=s3_key,
         content=pdf_content,
         content_type="application/pdf",
@@ -296,7 +296,7 @@ async def test_etl_complete_flow(etl_service, s3_service, rule_repository):
     print(f"✓ 文件已上传: {s3_key}")
     
     # 检查是否使用 LocalStack（如果是，跳过测试）
-    presigned_url = await s3_service.generate_presigned_download_url(key=s3_key)
+    presigned_url = s3_service.generate_presigned_download_url(key=s3_key)
     if "localhost" in presigned_url or "127.0.0.1" in presigned_url:
         pytest.skip(
             "跳过测试: MineRU API 无法访问 LocalStack URL。"
@@ -379,7 +379,7 @@ async def test_etl_complete_flow(etl_service, s3_service, rule_repository):
     print("\n[步骤 7/7] 验证输出的JSON结构...")
     
     # 从S3下载输出的JSON
-    output_content = await s3_service.download_file(key=result.output_path)
+    output_content = s3_service.download_file(key=result.output_path)
     output_json = json.loads(output_content)
     
     print(f"✓ 成功解析JSON输出")
@@ -473,14 +473,14 @@ async def test_etl_with_custom_rule(etl_service, s3_service, rule_repository):
     filename = "simple_test.pdf"
     s3_key = f"users/{user_id}/raw/{project_id}/{filename}"
     
-    await s3_service.upload_file(
+    s3_service.upload_file(
         key=s3_key,
         content=pdf_content,
         content_type="application/pdf",
     )
     
     # 检查LocalStack
-    presigned_url = await s3_service.generate_presigned_download_url(key=s3_key)
+    presigned_url = s3_service.generate_presigned_download_url(key=s3_key)
     if "localhost" in presigned_url or "127.0.0.1" in presigned_url:
         pytest.skip("跳过测试: 需要真实的S3服务")
     
@@ -517,7 +517,7 @@ async def test_etl_with_custom_rule(etl_service, s3_service, rule_repository):
     
     # 验证输出
     final_task = await etl_service.get_task_status(task.task_id)
-    output_content = await s3_service.download_file(key=final_task.result.output_path)
+    output_content = s3_service.download_file(key=final_task.result.output_path)
     output_json = json.loads(output_content)
     
     # 验证简单的schema
@@ -557,14 +557,14 @@ async def test_etl_task_status_tracking(etl_service, s3_service, rule_repository
     filename = "status_test.pdf"
     s3_key = f"users/{user_id}/raw/{project_id}/{filename}"
     
-    await s3_service.upload_file(
+    s3_service.upload_file(
         key=s3_key,
         content=pdf_content,
         content_type="application/pdf",
     )
     
     # 检查LocalStack
-    presigned_url = await s3_service.generate_presigned_download_url(key=s3_key)
+    presigned_url = s3_service.generate_presigned_download_url(key=s3_key)
     if "localhost" in presigned_url or "127.0.0.1" in presigned_url:
         pytest.skip("跳过测试: 需要真实的S3服务")
     

@@ -50,8 +50,7 @@ def test_single_attempt_view_does_not_mutate_shared_sdk_configuration(monkeypatc
     service.close()
 
 
-@pytest.mark.asyncio
-async def test_strict_delete_never_uses_ambiguous_head_as_absence():
+def test_strict_delete_never_uses_ambiguous_head_as_absence():
     service = object.__new__(S3Service)
     service._single_attempt_io = True
     service.bucket_name = 'owned'
@@ -61,17 +60,17 @@ async def test_strict_delete_never_uses_ambiguous_head_as_absence():
         calls.append(kwargs['Key'])
         return {'ResponseMetadata': {'RetryAttempts': 0}}
 
-    async def absent(_key):
+    def absent(_key):
         assert not service._single_attempt_io, 'strict DELETE must not use HEAD'
         return False
 
     service.client = SimpleNamespace(delete_object=delete)
     service.file_exists = absent
-    await service.delete_file('key')
+    service.delete_file('key')
     assert calls == ['key']
     service._single_attempt_io = False
     with pytest.raises(S3FileNotFoundError):
-        await service.delete_file('key')
+        service.delete_file('key')
     assert calls == ['key']
 
 

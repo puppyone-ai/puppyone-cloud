@@ -59,7 +59,11 @@ class SupabaseClient:
                     postgrest_client_timeout=60,
                     storage_client_timeout=30,
                     schema="public",
-                    httpx_client=instrument_httpx_client(httpx.Client(trust_env=trust_env_proxy)),
+                    # A supplied client owns its timeout: the SDK does not
+                    # apply postgrest_client_timeout to this transport.
+                    httpx_client=instrument_httpx_client(
+                        httpx.Client(trust_env=trust_env_proxy, timeout=60)
+                    ),
                 ),
             )
 

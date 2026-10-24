@@ -7,6 +7,7 @@ No policy enrollment, authority switch or legacy-view widening happens here.
 from __future__ import annotations
 
 from fastapi import HTTPException
+from loguru import logger
 
 from src.platform.access.adapters.git import execution as limits
 from src.platform.access.adapters.git.native_repository import (
@@ -42,6 +43,12 @@ class NativeGitEndpoint:
             return self.repository.receive(self.grant, path, initial_attempt=initial_attempt,
                                            max_pack_bytes=max_pack_bytes)
         except PublicationIndeterminateError as exc:
+            causes = []
+            error = exc
+            while error is not None and len(causes) < 8:
+                causes.append(type(error).__name__)
+                error = error.__cause__
+            logger.bind(error_types=causes).error("git_publication_indeterminate")
             # Do not emit an `ng` report for an operation that may be durable.
             raise HTTPException(
                 503,
@@ -90,7 +97,7 @@ class NativeGitEndpoint:
                     "objects": limits.MAX_OBJECTS,
                     "refs": limits.MAX_REFS,
                     "worker_seconds": limits.MAX_SECONDS,
-                    "concurrent_workers_per_process": 2,
+                    "concurrent_workers_per_process": limits.MAX_CONCURRENT_OPERATIONS,
                     "object_cache_bytes_per_request": 8 * 1024**2,
                     "fetch_repository_scratch_bytes": pack_limits.scratch_bytes,
                     "temporary_bytes_excluding_input": pack_limits.scratch_bytes,

@@ -13,7 +13,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.storage.git_pack_limits import (
     MAX_METADATA_BYTES,
     configured_pack_limits,

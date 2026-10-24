@@ -87,7 +87,7 @@ async def test_execute_github_import_runs_branch(monkeypatch):
     seen = {}
 
     class _Repo:
-        async def get_by_id(self, iid):
+        def get_by_id(self, iid):
             seen["fetched"] = iid
             return {"id": iid}
 
@@ -105,7 +105,7 @@ async def test_execute_github_import_runs_branch(monkeypatch):
 
 async def test_execute_github_import_missing_integration(monkeypatch):
     class _Repo:
-        async def get_by_id(self, iid):
+        def get_by_id(self, iid):
             return None
     monkeypatch.setattr(gh_jobs, "GithubSyncRepository", lambda: _Repo())
     out = await gh_jobs.execute_synchronize_github_pull({}, "missing")

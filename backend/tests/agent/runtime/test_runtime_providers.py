@@ -12,8 +12,8 @@ from src.platform.workspace.errors import WorkspaceError
 from src.config import settings
 from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
 from src.platform.workspace.execution.pi_worker import PiWorker
-from src.platform.workspace.execution.providers.fly import FlyRuntimeProvider
-from src.platform.workspace.execution.providers.registry import runtime_provider
+from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
+from src.platform.sandbox.registry import runtime_provider
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.service import WorkbenchAdmission
 
@@ -310,7 +310,7 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
     from pathlib import Path
     from unittest.mock import AsyncMock
 
-    from src.platform.workspace.execution.providers.port import (
+    from src.platform.sandbox.port import (
         RuntimeConnection,
         resource_identity,
     )
@@ -323,14 +323,14 @@ async def test_fly_channel_uses_only_its_app_token_and_releases_tunnel(monkeypat
         stdout=SimpleNamespace(read=AsyncMock(return_value=b"")),
         stderr=SimpleNamespace(read=AsyncMock(return_value=b"")),
     )
-    from src.platform.workspace.execution.providers.fly_transport import FlyTransport
+    from src.platform.sandbox.providers.fly.transport import FlyTransport
 
     transport = FlyTransport("backend-only", "fly", binding["app"])
     lease = SimpleNamespace(process=process, release=Mock())
     transport.ssh = SimpleNamespace(open=AsyncMock(return_value=lease))
     transport.users = 1
     monkeypatch.setattr(
-        "src.platform.workspace.execution.providers.fly.acquire_transport",
+        "src.platform.sandbox.providers.fly.provider.acquire_transport",
         AsyncMock(return_value=transport),
     )
     provider = FlyRuntimeProvider()

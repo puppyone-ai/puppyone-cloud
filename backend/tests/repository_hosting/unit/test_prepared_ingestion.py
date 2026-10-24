@@ -1,19 +1,21 @@
 """Operation ownership and byte page bounds; substituted PG/S3, not latency."""
 
-import asyncio
+import threading
+import time
 from collections import Counter
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
+from src.infra.execution.context import Execution
 from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.storage.metadata_pages import metadata_pages
 from src.version_engine.storage.mutation_context import publication_storage
 from src.version_engine.write_engine.git_object_format import decode_object, encode_object
-from tests.repository_hosting.unit.test_streamed_storage import FencedDB, FencedS3
+from tests.repository_hosting.unit.test_streamed_storage import FencedDB, FencedS3, run_storage_call
 
 pytestmark = pytest.mark.hosting_component
 
@@ -24,8 +26,7 @@ def fixture(count=1001):
     return objects, facts
 
 
-@pytest.mark.asyncio
-async def test_many_physical_windows_share_one_capacity_and_location_page_and_settlement():
+def test_many_physical_windows_share_one_capacity_and_location_page_and_settlement():
     db = FencedDB()
     s3 = FencedS3(db)
     backend = S3StorageBackend(
@@ -33,7 +34,7 @@ async def test_many_physical_windows_share_one_capacity_and_location_page_and_se
     )
     objects, facts = fixture()
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        await backend.async_put_prepared_stream(iter(objects.items()), facts)
+        backend.put_prepared_stream_durable(iter(objects.items()), facts)
     assert len(s3.uploads) > 1 and 1 < s3.peak <= 4
     assert len(db.reservations) == len(db.settled) == 1
     assert Counter(db.calls) == {
@@ -44,14 +45,13 @@ async def test_many_physical_windows_share_one_capacity_and_location_page_and_se
     assert db.calls[-1] == "settle_version_object_capacity_io"
     cold = S3StorageBackend(s3, "proj", supabase=db)
     for oid, data in objects.items():
-        assert await cold.async_get(oid) == data
+        assert cold.get(oid) == data
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure", ["denied", "readback", "missing", "extra", "wrong-fact", "index"]
 )
-async def test_partial_or_unverified_ingestion_cannot_settle(failure):
+def test_partial_or_unverified_ingestion_cannot_settle(failure):
     class DB(FencedDB):
         def rpc(self, name, params):
             if (failure == "denied" and name.startswith("reserve")) or (
@@ -65,8 +65,8 @@ async def test_partial_or_unverified_ingestion_cannot_settle(failure):
             return super().rpc(name, params)
 
     class S3(FencedS3):
-        async def download_file(self, key):
-            data = await super().download_file(key)
+        def download_file(self, key):
+            data = super().download_file(key)
             return data + b"broken" if failure == "readback" else data
 
     db = DB()
@@ -84,7 +84,7 @@ async def test_partial_or_unverified_ingestion_cannot_settle(failure):
         publication_storage("proj", "actor", "pin", require_capacity=True),
         pytest.raises((ValueError, StorageWriteError)),
     ):
-        await backend.async_put_prepared_stream(objects.items(), facts)
+        backend.put_prepared_stream_durable(objects.items(), facts)
     assert not db.settled and s3.active == 0
     if failure in {"denied", "extra", "wrong-fact"}:
         assert not s3.uploads
@@ -92,31 +92,31 @@ async def test_partial_or_unverified_ingestion_cannot_settle(failure):
         assert not db.rows
 
 
-@pytest.mark.asyncio
-async def test_cancel_joins_started_io_and_keeps_operation_fenced():
-    started, release = asyncio.Event(), asyncio.Event()
+def test_cancel_joins_started_io_and_keeps_operation_fenced():
+    started, release = threading.Event(), threading.Event()
 
     class S3(FencedS3):
-        async def upload_file(self, *args, **kwargs):
+        def upload_file(self, *args, **kwargs):
             started.set()
-            await release.wait()
-            return await super().upload_file(*args, **kwargs)
+            assert release.wait(3)
+            return super().upload_file(*args, **kwargs)
 
     db = FencedDB()
     s3 = S3(db)
     backend = S3StorageBackend(s3, "proj", supabase=db)
     objects, facts = fixture()
+    execution = Execution()
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        task = asyncio.create_task(backend.async_put_prepared_stream(objects.items(), facts))
-        await started.wait()
-        task.cancel()
-        await asyncio.sleep(0)
-        task.cancel()
-        await asyncio.sleep(0)
-        assert not task.done() and not db.settled
+        thread, outcome = run_storage_call(
+            lambda: backend.put_prepared_stream_durable(objects.items(), facts), execution
+        )
+        assert started.wait(2)
+        execution.cancelled.set()  # cooperative; the started PUT cannot be killed
+        time.sleep(0.02)
+        assert thread.is_alive() and not db.settled
         release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        thread.join(5)
+    assert isinstance(outcome.get("error"), RuntimeError)
     assert not db.settled and s3.active == 0
 
 

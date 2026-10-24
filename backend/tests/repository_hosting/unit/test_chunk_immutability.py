@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.version_engine.domain.errors import StorageWriteError
-from src.version_engine.storage.backends.s3 import ObjectLocation, S3StorageBackend, _run_async
+from src.version_engine.storage.backends.s3 import ObjectLocation, S3StorageBackend
 from src.version_engine.storage.chunk_manifest import chunk_upload_plan
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.write_engine.git_object_format import encode_object
@@ -45,11 +45,11 @@ class MemoryS3:
         self.reads = []
         self.deletes = []
 
-    async def download_file(self, key):
+    def download_file(self, key):
         self.reads.append(key)
         return self.objects[key]
 
-    async def delete_file(self, key):
+    def delete_file(self, key):
         self.deletes.append(key)
         raise AssertionError("invalid manifest must not authorize any deletion")
 
@@ -109,7 +109,7 @@ def test_invalid_chunk_manifest_is_rejected_before_part_io(mutation, operation):
     location = ObjectLocation("chunked:" + key, 0, len(loose))
     with pytest.raises(StorageWriteError, match="invalid chunk manifest"):
         if operation == "read":
-            _run_async(backend._async_get_chunked_object_at(oid, location))
+            backend._get_chunked_object_at(oid, location)
         else:
             backend._delete_chunked(oid, location)
     assert s3.reads == [key]
@@ -125,7 +125,7 @@ def test_foreign_manifest_location_is_rejected_before_manifest_io(operation):
     location = ObjectLocation("chunked:" + key, 0, len(loose))
     with pytest.raises(StorageWriteError, match="manifest namespace"):
         if operation == "read":
-            _run_async(backend._async_get_chunked_object_at(oid, location))
+            backend._get_chunked_object_at(oid, location)
         else:
             backend._delete_chunked(oid, location)
     assert not s3.reads and not s3.deletes
@@ -136,13 +136,13 @@ def test_unreadable_manifest_does_not_fall_back_to_destructive_listing(failure):
     oid, loose, key, _manifest, _objects = legacy_placement()
 
     class Unreadable(MemoryS3):
-        async def download_file(self, key):
+        def download_file(self, key):
             self.reads.append(key)
             if failure == "unavailable":
                 raise ConnectionError("manifest service unavailable")
             return b"not JSON"
 
-        async def list_files(self, **_kwargs):
+        def list_files(self, **_kwargs):
             raise AssertionError("only an explicitly absent manifest permits listing")
 
     s3 = Unreadable({})
@@ -161,6 +161,6 @@ def test_same_size_corrupt_part_fails_its_physical_digest():
     objects[first_key] = b"x" * len(objects[first_key])
     backend = S3StorageBackend(MemoryS3(objects), "chunk-project")
     with pytest.raises(StorageWriteError, match="chunk digest mismatch"):
-        _run_async(backend._async_get_chunked_object_at(
+        backend._get_chunked_object_at(
             oid, ObjectLocation("chunked:" + key, 0, len(loose)),
-        ))
+        )

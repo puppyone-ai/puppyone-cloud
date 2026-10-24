@@ -335,6 +335,60 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in waiting["paths"].items():
         assert expected["contract"]["paths"][name] == change["before"]
         expected["contract"]["paths"][name] = change["after"]
+    # The shared History API was already merged at bc8714ec. Preserve the
+    # historical fixtures and record only its exact reviewed wire delta.
+    history = json.loads(Path(__file__).with_name("shared_history_contract_delta.json").read_text())
+    assert set(history["paths"]) == {
+        "/api/v1/content/{project_id}/commits", "/api/v1/content/{project_id}/commit-detail",
+    }
+    assert set(history["schemas"]) == {"FileVersionInfo", "ApiResponse_FileVersionInfo_"}
+    for category, changes in history.items():
+        for name, change in changes.items():
+            assert expected["contract"][category].get(name) == change["before"]
+            expected["contract"][category][name] = change["after"]
+    internal_nodes = json.loads(
+        Path(__file__).with_name("internal_nodes_retirement_contract_delta.json").read_text()
+    )
+    assert set(internal_nodes["paths"]["removed"]) == {
+        f"/internal/nodes/{action}"
+        for action in ("resolve-path", "list", "read", "write", "create", "rm", "rename", "move")
+    }
+    assert internal_nodes["schemas"] == {"removed": {}, "added": {}, "changed": {}}
+    assert internal_nodes["paths"]["added"] == internal_nodes["paths"]["changed"] == {}
+    for name, digest in internal_nodes["paths"]["removed"].items():
+        assert expected["contract"]["paths"].pop(name) == digest
+    # The host-local Agent workspace had no callers and is retired exactly;
+    # Hosted Workspaces under /projects/{project_id}/workbench are unchanged.
+    local_workspace = json.loads(
+        Path(__file__).with_name("local_workspace_retirement_contract_delta.json").read_text()
+    )
+    assert set(local_workspace["paths"]["removed"]) == {
+        "/api/v1/workspace/create",
+        "/api/v1/workspace/{agent_id}/complete",
+        "/api/v1/workspace/{agent_id}/status",
+    }
+    assert set(local_workspace["schemas"]["removed"]) == {
+        "CreateWorkspaceRequest", "CreateWorkspaceResponse", "CompleteWorkspaceResponse",
+        "WorkspaceStatusResponse", "ApiResponse_CreateWorkspaceResponse_",
+        "ApiResponse_CompleteWorkspaceResponse_", "ApiResponse_WorkspaceStatusResponse_",
+    }
+    for category in ("paths", "schemas"):
+        assert local_workspace[category]["added"] == local_workspace[category]["changed"] == {}
+        for name, digest in local_workspace[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
+    # Scope Sandbox SSH is retired exactly; Hosted Workspace SSH grants under
+    # /projects/{project_id}/workbench/ssh-grants are unchanged.
+    scope_sandbox = json.loads(
+        Path(__file__).with_name("scope_sandbox_retirement_contract_delta.json").read_text()
+    )
+    assert set(scope_sandbox["paths"]["removed"]) == {
+        f"/api/v1/scope-sandboxes/{action}" for action in ("connect", "providers", "status", "revoke")
+    }
+    assert set(scope_sandbox["schemas"]["removed"]) == {"ConnectRequest", "RevokeRequest"}
+    for category in ("paths", "schemas"):
+        assert scope_sandbox[category]["added"] == scope_sandbox[category]["changed"] == {}
+        for name, digest in scope_sandbox[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 

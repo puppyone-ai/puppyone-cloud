@@ -1,4 +1,3 @@
-import asyncio
 import json
 from datetime import datetime
 from uuid import UUID
@@ -6,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.dependencies import get_agent_service
 from src.platform.access.adapters.agent.runtime.control.models import Approval, SubmitRun
 from src.platform.auth.dependencies import get_current_user
@@ -86,7 +86,7 @@ async def events(
     user=Depends(get_current_user),
     service=Depends(get_agent_service),
 ):
-    await asyncio.to_thread(service.owned, user.user_id, str(run_id))
+    await run_blocking(service.owned, user.user_id, str(run_id))
     if last_event_id is not None:
         if not last_event_id.isdigit() or len(last_event_id) > 18:
             raise HTTPException(400, "Invalid event cursor")

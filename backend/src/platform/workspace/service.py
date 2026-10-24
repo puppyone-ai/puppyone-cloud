@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.authorization.models import ProjectAction
-from src.platform.workspace.execution.providers.registry import runtime_provider
-from src.platform.workspace.execution.timing import workspace_stage
+from src.platform.sandbox import runtime_provider, workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
@@ -90,7 +90,7 @@ class WorkbenchService(WorkbenchAdmission):
         self.opening = WorkspaceOpening(self)
 
     async def current(self, user, project):
-        context, _ = await asyncio.to_thread(
+        context, _ = await run_blocking(
             self.context, user, project, ProjectAction.CONTENT_READ
         )
         return context["workbench"]
@@ -108,7 +108,7 @@ class WorkbenchService(WorkbenchAdmission):
         await self.lifecycle.reap()
 
     async def check(self, row):
-        context, _ = await asyncio.to_thread(
+        context, _ = await run_blocking(
             self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
         )
         # Context already contains the interactive default workspace. Automation
@@ -116,7 +116,7 @@ class WorkbenchService(WorkbenchAdmission):
         current = (
             context["workbench"]
             if row.get("is_default")
-            else await asyncio.to_thread(self.repository.get, row["id"])
+            else await run_blocking(self.repository.get, row["id"])
         )
         if (
             not current
@@ -136,7 +136,7 @@ class WorkbenchService(WorkbenchAdmission):
     async def connection(self, row, *, capabilities=()):
         # Used by already-admitted tasks, including revoked-task cleanup. The
         # task ledger holds occupancy until stop ACK, so idle pause cannot race.
-        current = await asyncio.to_thread(self.repository.get, row["id"])
+        current = await run_blocking(self.repository.get, row["id"])
         if (
             not current
             or current["generation"] != row["generation"]
@@ -159,7 +159,7 @@ class WorkbenchService(WorkbenchAdmission):
 
     async def bound(self, user, project, generation, *, write=False):
         action = ProjectAction.CONTENT_WRITE if write else ProjectAction.CONTENT_READ
-        context, _ = await asyncio.to_thread(self.context, user, project, action)
+        context, _ = await run_blocking(self.context, user, project, action)
         row = context["workbench"]
         if row is None:
             raise WorkspaceError(404, {"code": "workbench_not_found"})
@@ -182,7 +182,7 @@ class WorkbenchService(WorkbenchAdmission):
             if cached:
                 try:
                     with workspace_stage("files.admission_activity"):
-                        row = await asyncio.to_thread(
+                        row = await run_blocking(
                             self.repository.activity, row, cached["revision"], write=write
                         )
                 except Exception as exc:
@@ -201,7 +201,7 @@ class WorkbenchService(WorkbenchAdmission):
             row, context = await self.bound(user, project, generation, write=write)
         if not watch:
             with workspace_stage("files.activity"):
-                row = await asyncio.to_thread(
+                row = await run_blocking(
                     self.repository.activity, row, context["revision"], write=write
                 )
         await self.billing.check_session(meter_id(row))
@@ -209,7 +209,7 @@ class WorkbenchService(WorkbenchAdmission):
             yield host
 
     async def close(self):
-        from .execution.providers.registry import close_provider_transports
+        from src.platform.sandbox import close_provider_transports
 
         await self.opening.observers.close()
         await self.channels.close()
@@ -225,7 +225,7 @@ class WorkbenchService(WorkbenchAdmission):
         ):
             audit_id = str(uuid4())
             if write:
-                await asyncio.to_thread(
+                await run_blocking(
                     self.repository.audit, user, project, generation, operation, audit_id, "intent"
                 )
             try:
@@ -233,7 +233,7 @@ class WorkbenchService(WorkbenchAdmission):
                     result = await self.filesystem.operation(channel, operation)
             except FilesystemError as exc:
                 if write:
-                    await asyncio.to_thread(
+                    await run_blocking(
                         self.repository.audit,
                         user,
                         project,
@@ -245,7 +245,7 @@ class WorkbenchService(WorkbenchAdmission):
                 status = {"file_conflict": 409, "file_not_found": 404}.get(exc.code, 422)
                 raise WorkspaceError(status, {"code": exc.code}) from exc
             if write:
-                await asyncio.to_thread(
+                await run_blocking(
                     self.repository.audit,
                     user,
                     project,

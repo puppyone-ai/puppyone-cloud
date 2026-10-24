@@ -61,10 +61,12 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
     monkeypatch.setattr(scheduler_module.settings, "VERSION_OBJECT_GC_ENABLED", True)
     monkeypatch.setattr(scheduler_module.settings, "VERSION_INTEGRITY_SCAN_ENABLED", True)
     monkeypatch.setattr(scheduler_module.settings, "SHADOW_SNAPSHOT_REAPER_ENABLED", True)
+    for flag in ("SYNC_RUN_REAPER_ENABLED", "IMPORT_JOB_REAPER_ENABLED", "UPLOAD_JOB_REAPER_ENABLED"):
+        monkeypatch.setattr(scheduler_module.settings, flag, True)
 
     service = scheduler_module.SchedulerService()
     await service.start()
-    await service.add_agent_job(
+    service.add_agent_job(
         agent_id="agent-1",
         trigger_config={
             "date": "2026-06-04",
@@ -73,7 +75,7 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
         },
         agent_name="Daily Agent",
     )
-    await service.sync_trigger(
+    service.sync_trigger(
         connection_id="conn-1",
         provider="github",
         trigger_config={
@@ -97,10 +99,53 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
     assert "shadow-snapshot-reaper" not in jobs_by_id
     assert "executor" not in jobs_by_id["native-repository-projection"][1]
 
+    # Scheduled pulls enqueue through arq's async client on the API loop.
+    assert "executor" not in jobs_by_id["sync:conn-1"][1]
+
+    # Synchronous jobs (database reapers included) never run on the API loop.
     for job_id in [
         "version-object-gc",
         "version-object-integrity-scan",
+        "sync-run-reaper",
+        "import-job-reaper",
+        "upload-job-reaper",
         "agent-1",
-        "sync:conn-1",
     ]:
         assert jobs_by_id[job_id][1]["executor"] == "threadpool"
+
+
+@pytest.mark.asyncio
+async def test_startup_loaders_read_database_off_the_event_loop(monkeypatch):
+    import threading
+
+    loop_thread = threading.get_ident()
+    reads: list[tuple[str, int]] = []
+    registered: list[tuple[str, str]] = []
+
+    def agent_rows():
+        reads.append(("agents", threading.get_ident()))
+        return [{"id": "agent-1", "config": {"name": "Daily", "trigger": {"type": "cron"}}}]
+
+    def sync_rows():
+        reads.append(("syncs", threading.get_ident()))
+        return [{"id": "sync-1", "provider": "github", "trigger": {"type": "scheduled"}}]
+
+    def add_agent_job(self, agent_id, trigger_config, agent_name=""):
+        registered.append(("agent", agent_id))
+
+    def sync_trigger(self, connection_id, provider, trigger_config):
+        registered.append(("sync", connection_id))
+
+    monkeypatch.setattr(scheduler_module, "_scheduled_agent_rows", agent_rows)
+    monkeypatch.setattr(scheduler_module, "_scheduled_sync_rows", sync_rows)
+    monkeypatch.setattr(scheduler_module.SchedulerService, "add_agent_job", add_agent_job)
+    monkeypatch.setattr(scheduler_module.SchedulerService, "sync_trigger", sync_trigger)
+
+    service = scheduler_module.SchedulerService()
+    service.scheduler = FakeScheduler()
+    await service._load_scheduled_agents()
+    await service._load_scheduled_syncs()
+
+    assert [name for name, _thread in reads] == ["agents", "syncs"]
+    assert loop_thread not in {thread for _name, thread in reads}
+    assert registered == [("agent", "agent-1"), ("sync", "sync-1")]

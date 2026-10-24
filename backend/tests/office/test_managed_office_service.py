@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import Iterator
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -80,19 +80,19 @@ class MemoryBinaries:
         self.objects: dict[str, bytes] = {}
         self.metadata: dict[str, dict[str, str]] = {}
 
-    async def upload_file(self, key, content, _content_type=None, metadata=None):
+    def upload_file(self, key, content, _content_type=None, metadata=None):
         self.objects[key] = bytes(content)
         self.metadata[key] = metadata or {}
 
-    async def download_file(self, key):
+    def download_file(self, key):
         return self.objects[key]
 
-    async def download_file_stream(self, key, chunk_size=8192) -> AsyncIterator[bytes]:
+    def download_file_stream(self, key, chunk_size=8192) -> Iterator[bytes]:
         content = self.objects[key]
         for offset in range(0, len(content), chunk_size):
             yield content[offset : offset + chunk_size]
 
-    async def delete_file(self, key):
+    def delete_file(self, key):
         if key not in self.objects:
             raise FileNotFoundError(key)
         self.objects.pop(key)

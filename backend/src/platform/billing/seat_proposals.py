@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.billing.gateway import PuppyPayGateway
 from src.platform.billing.operations import BillingOperation, BillingOperationRepository
 from src.platform.organization.repository import OrganizationRepository
@@ -38,7 +38,7 @@ class SeatProposalService:
     async def recover_once(self, *, limit: int = 25) -> dict[str, int]:
         if settings.SEAT_BILLING_MODE == "disabled":
             return {"claimed": 0, "quoted": 0, "failed": 0}
-        claimed = await asyncio.to_thread(
+        claimed = await run_blocking(
             self._operation_repo.claim_seat_proposals,
             limit=limit,
             lease_seconds=settings.SEAT_PROPOSAL_LEASE_SECONDS,
@@ -58,7 +58,7 @@ class SeatProposalService:
             target = operation.target_seat_quantity
             if target is None or target <= 0:
                 raise ValueError("seat proposal target must be positive")
-            owner_user_id = await asyncio.to_thread(
+            owner_user_id = await run_blocking(
                 self._organizations.get_owner_user_id,
                 operation.org_id,
             )
@@ -79,7 +79,7 @@ class SeatProposalService:
             quote_id = str(quote.get("quote_id") or "")
             if not quote_id:
                 raise ValueError("seat proposal response is missing quote_id")
-            updated = await asyncio.to_thread(
+            updated = await run_blocking(
                 self._operation_repo.update_claimed_seat_proposal,
                 operation,
                 {
@@ -101,7 +101,7 @@ class SeatProposalService:
                 "awaiting_confirmation" if operation.kind == "member_activation" else "pending"
             )
             try:
-                await asyncio.to_thread(
+                await run_blocking(
                     self._operation_repo.update_claimed_seat_proposal,
                     operation,
                     {

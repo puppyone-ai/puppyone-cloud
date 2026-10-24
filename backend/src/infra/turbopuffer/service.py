@@ -3,7 +3,7 @@ TurbopufferSearchService
 
 Notes:
 - This service provides async-first interfaces; underneath it uses the synchronous turbopuffer SDK
-  by default, wrapped with `asyncio.to_thread` to avoid blocking the event loop
+  by default, called through `run_blocking` to avoid blocking the event loop
   (can be replaced if the SDK provides a native async client in the future)
 - This service does not expose turbopuffer SDK model objects externally; return values are normalized
   to this module's schemas
@@ -11,10 +11,10 @@ Notes:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Callable
 
+from src.infra.execution.runner import run_blocking
 from src.infra.turbopuffer.config import TurbopufferConfig, turbopuffer_config
 from src.infra.turbopuffer.exceptions import TurbopufferConfigError, map_external_exception
 from src.infra.turbopuffer.schemas import (
@@ -149,15 +149,11 @@ class TurbopufferSearchService:
         raise TurbopufferConfigError("Invalid turbopuffer client: no namespace API")
 
     async def _call(self, fn: Callable[[], Any]) -> Any:
-        task = asyncio.create_task(asyncio.to_thread(fn))
+        # The SDK call is synchronous and cannot be stopped once its thread
+        # begins; run_blocking keeps the caller's Project write lease alive
+        # until the namespace mutation has physically completed.
         try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # The SDK call is synchronous and cannot be stopped once its
-            # thread begins. Keep the surrounding Project write lease alive
-            # until the namespace mutation has physically completed.
-            await task
-            raise
+            return await run_blocking(fn)
         except Exception as e:
             mapped = map_external_exception(e)
             # Log more detailed error info for debugging

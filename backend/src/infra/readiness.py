@@ -8,6 +8,8 @@ import httpx
 from botocore.config import Config
 from redis.asyncio import Redis
 
+from src.infra.execution.runner import run_blocking
+
 
 def _probe_bucket():
     client = boto3.client(
@@ -48,7 +50,7 @@ async def core_dependency_errors() -> list[str]:
 
     results = await asyncio.gather(
         database(),
-        asyncio.to_thread(_probe_bucket),
+        run_blocking(_probe_bucket),
         redis(),
         return_exceptions=True,
     )

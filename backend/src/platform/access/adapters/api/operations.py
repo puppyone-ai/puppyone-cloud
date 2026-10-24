@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from httpx import HTTPError
 from postgrest.exceptions import APIError
 
+from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.infra.execution.runner import run_blocking
+from src.platform.access.repository_schemas import (
+    NativeOperationStatusEnvelope,
+    NativeRepositoryMetadataEnvelope,
+)
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.models import ProjectAction, ProjectGrant
 from src.platform.authorization.service import AuthorizationService
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
-from src.platform.access.repository_schemas import (
-    NativeOperationStatusEnvelope,
-    NativeRepositoryMetadataEnvelope,
-)
 
 operations_router = APIRouter()
 
@@ -40,7 +40,7 @@ async def read_operation_status(
     authorization: AuthorizationService = Depends(get_authorization_service),
 ):
     response.headers["Cache-Control"] = "no-store"
-    grant = await asyncio.to_thread(authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_READ)
+    grant = await run_blocking(authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_READ)
     if not isinstance(grant, ProjectGrant):
         raise HTTPException(status_code=403, detail="Human Project grant required")
     try:
@@ -71,7 +71,7 @@ async def read_repository_refs(
 ):
     headers = {"Cache-Control": "no-store"}
     response.headers.update(headers)
-    grant = await asyncio.to_thread(authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_READ)
+    grant = await run_blocking(authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_READ)
     if not isinstance(grant, ProjectGrant):
         raise HTTPException(403, "Human Project grant required", headers=headers)
     try:

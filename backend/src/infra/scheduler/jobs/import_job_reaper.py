@@ -16,7 +16,7 @@ from src.platform.imports.repository import ImportJobRepository
 from src.utils.logger import log_error
 
 
-async def process_import_job_reaper() -> dict:
+def process_import_job_reaper() -> dict:
     try:
         stale = max(
             settings.IMPORT_JOB_STALE_SECONDS,

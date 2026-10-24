@@ -20,6 +20,7 @@ import hmac
 from hashlib import sha256
 from typing import Optional
 
+from src.infra.execution.runner import run_blocking
 from src.platform.synchronize.github.repository import GithubSyncRepository
 from src.utils.logger import log_error, log_info, log_warning
 
@@ -94,7 +95,7 @@ async def handle_webhook(
 
     pushed_branch = pushed_ref.removeprefix("refs/heads/") if pushed_ref else ""
     binding_repo = GithubSyncRepository()
-    rows = await binding_repo.find_by_repo(owner, repo_name)
+    rows = await run_blocking(binding_repo.find_by_repo, owner, repo_name)
     if not rows:
         log_warning(
             f"[GithubWebhook] no integration bound to {owner}/{repo_name}; "

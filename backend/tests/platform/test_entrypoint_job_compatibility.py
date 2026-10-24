@@ -1,6 +1,6 @@
 """Post-drain task contract: no Synchronize jobs remain on Import workers."""
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from arq.jobs import deserialize_job, serialize_job
@@ -13,7 +13,7 @@ async def test_serialized_github_pull_is_consumed_only_by_synchronize(monkeypatc
     from src.platform.imports.worker import WorkerSettings as ImportWorker
     from src.platform.synchronize.worker import WorkerSettings
 
-    repository = SimpleNamespace(get_by_id=AsyncMock(return_value={"id": "binding-1"}))
+    repository = SimpleNamespace(get_by_id=MagicMock(return_value={"id": "binding-1"}))
     pull = AsyncMock(return_value=SimpleNamespace(status="success", git_sha="sha"))
     monkeypatch.setattr(jobs, "GithubSyncRepository", lambda: repository)
     monkeypatch.setattr(jobs, "import_branch", pull)

@@ -3,7 +3,6 @@ import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
 import { useExplorerActions } from '@/features/files/explorerSession';
 
-import { useProjectSession } from '@/features/workspace/session';
 
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -196,7 +195,6 @@ export interface DataCreateMenuActions {
   onCreateAgent: () => void;
   onCreateMcp: () => void;
   onCreateSandbox: () => void;
-  onCreateSshTerminal: () => void;
 }
 
 export type CreateMenuActionSource = 'create' | 'access';
@@ -265,7 +263,6 @@ export function useDataCreateFlow({
   const {listDir, mkdir, writeFile} = files;
   const { addPendingCreatingNode, addPendingCreatingPath, ensureExpanded, removePendingCreatingPath } = useExplorerActions();
   const { cache } = useSWRConfig();
-  const openPanel = useProjectSession(state => state.openPanel);
   const [createTableOpen, setCreateTableOpen] = useState(false);
   const [defaultStartOption, setDefaultStartOption] = useState<'documents' | 'url'>('documents');
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -754,16 +751,8 @@ export function useDataCreateFlow({
       onCreateAgent: () => handleAccessSelect('chat'),
       onCreateMcp: () => handleAccessSelect('mcp'),
       onCreateSandbox: () => handleAccessSelect('sandbox'),
-      // SSH Terminal (Remote Dev) lives on the Access page as a scope-level
-      // card, not a connector panel — route there, preselecting the scope that
-      // matches the folder the user acted on (?path → matched in access page).
-      onCreateSshTerminal: () => {
-        closeCreateMenu();
-        const path = accessTargetPath ?? '';
-        openPanel({ type: 'access_list', view: 'detail', nodeId: path });
-      },
     };
-  }, [closeCreateMenu, createInFolderId, currentFolderId, cache, projectId, identity, listDir, addPendingCreatingPath, ensureExpanded, showToast, mkdir, removePendingCreatingPath, addPendingCreatingNode, highlightCreatedNode, writeFile, navigateTo, openFileImportDialogForTarget, openFilePickerForTarget, accessTargetPath, handleAccessSelect, openSyncSetting, openSyncCreatePanel, openPanel]);
+  }, [closeCreateMenu, createInFolderId, currentFolderId, cache, projectId, identity, listDir, addPendingCreatingPath, ensureExpanded, showToast, mkdir, removePendingCreatingPath, addPendingCreatingNode, highlightCreatedNode, writeFile, navigateTo, openFileImportDialogForTarget, openFilePickerForTarget, accessTargetPath, handleAccessSelect, openSyncSetting, openSyncCreatePanel]);
 
   const closeCreateTable = useCallback(() => {
     setCreateTableOpen(false);

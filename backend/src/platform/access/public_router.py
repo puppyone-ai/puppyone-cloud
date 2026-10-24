@@ -181,7 +181,7 @@ def list_access_surface_types():
     status_code=201,
     dependencies=[query_contract()],
 )
-async def configure_access_surface(
+def configure_access_surface(
     body: AccessSurfaceConfigure,
     current_user: User,
     authorization: Authorization,
@@ -189,7 +189,7 @@ async def configure_access_surface(
 ):
     authorization.authorize(body.project_id, current_user.user_id, ProjectAction.ACCESS_MANAGE)
     _safe_metadata(body.config, body.accesses, body.tools_config)
-    result = await global_ops.create_connection(
+    result = global_ops.create_connection(
         payload=body,
         current_user=current_user,
         entitlement_service=entitlements,
@@ -221,7 +221,7 @@ def get_access_surface(access_surface_id: str, current_user: User, authorization
     response_model=ApiResponse[AccessSurface],
     dependencies=[query_contract()],
 )
-async def update_access_surface_metadata(
+def update_access_surface_metadata(
     access_surface_id: str,
     body: AccessSurfaceMetadataUpdate,
     current_user: User,
@@ -239,13 +239,13 @@ async def update_access_surface_metadata(
 @router.delete(
     "/{access_surface_id}", response_model=ApiResponse[None], dependencies=[query_contract()]
 )
-async def delete_access_surface(
+def delete_access_surface(
     access_surface_id: str, current_user: User, authorization: Authorization, service: Service
 ):
     _global_surface(
         access_surface_id, current_user, authorization, service, ProjectAction.ACCESS_MANAGE
     )
-    return await global_ops.delete_connection(
+    return global_ops.delete_connection(
         connection_id=access_surface_id, current_user=current_user, authorization=authorization
     )
 

@@ -66,15 +66,15 @@ class S3:
     def __init__(self) -> None:
         self.uploads = []
 
-    async def generate_presigned_download_url(self, key, expires_in):
+    def generate_presigned_download_url(self, key, expires_in):
         assert expires_in == 3600
         return f"https://storage.invalid/{key}"
 
-    async def download_file(self, key):
+    def download_file(self, key):
         assert key == "artifact.md"
         return b"# parsed"
 
-    async def upload_file(self, **kwargs):
+    def upload_file(self, **kwargs):
         self.uploads.append(kwargs)
         raise AssertionError("S3 upload crossed a deleted Project write fence")
 

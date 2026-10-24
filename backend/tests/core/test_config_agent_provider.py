@@ -2,8 +2,7 @@
 
 import pytest
 
-from src.config import Settings, settings
-from src.platform.workspace.execution.service import _create_sandbox_impl
+from src.config import Settings
 
 
 def hosted(**values):
@@ -12,8 +11,7 @@ def hosted(**values):
         APP_ENV="production",
         SANDBOX_TYPE="e2b",
         E2B_API_KEY="",
-        SCOPE_SANDBOX_STORE="supabase",
-        SCOPE_SANDBOX_REAPER_ENABLED=True,
+        SANDBOX_REAPER_ENABLED=True,
         **values,
     )
 
@@ -36,12 +34,3 @@ def test_fly_only_hosted_agent_requires_its_own_credentials():
 def test_hosted_agent_cannot_fall_back_to_docker(provider):
     with pytest.raises(ValueError):
         hosted(CLOUD_AGENT_SANDBOX_PROVIDER=provider).enforce_hosted_sandbox_safety()
-
-
-@pytest.mark.parametrize("selection", ["e2b", "auto"])
-def test_unconfigured_legacy_executor_fails_closed(monkeypatch, selection):
-    monkeypatch.setattr(settings, "APP_ENV", "production")
-    monkeypatch.setattr(settings, "E2B_API_KEY", "")
-    monkeypatch.setattr(settings, "SANDBOX_TYPE", selection)
-    with pytest.raises(RuntimeError):
-        _create_sandbox_impl()

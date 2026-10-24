@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.storage import git_process as proc
 from src.version_engine.storage.git_pack_limits import configured_pack_limits
 from src.version_engine.write_engine.git_object_format import encode_object, hash_object

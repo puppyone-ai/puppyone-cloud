@@ -5,7 +5,7 @@ import time
 from collections import OrderedDict
 from contextlib import contextmanager
 
-from src.version_engine.infrastructure.owned_work import checkpoint
+from src.infra.execution.context import checkpoint
 from src.version_engine.storage.git_process import MAX_SECONDS
 
 

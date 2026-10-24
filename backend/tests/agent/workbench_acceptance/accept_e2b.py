@@ -11,7 +11,7 @@ from e2b.exceptions import NotFoundException
 from e2b.sandbox.sandbox_api import SandboxQuery
 
 from src.config import settings
-from src.platform.workspace.execution.providers.e2b import E2BRuntimeProvider
+from src.platform.sandbox.providers.e2b.provider import E2BRuntimeProvider
 from tests.agent.workbench_acceptance.accept_production_entry import control_api as control_api
 from tests.agent.workbench_acceptance.accept_production_entry import entry as entry
 from tests.agent.workbench_acceptance.accept_production_entry import (

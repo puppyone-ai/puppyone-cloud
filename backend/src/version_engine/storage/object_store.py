@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import fcntl
 import json
 import os
@@ -401,41 +400,6 @@ class ObjectStore:
             if h not in reachable and self._backend.delete(h):
                 deleted += 1
         return deleted
-
-    async def async_put(self, data: bytes) -> str:
-        sha1, loose = encode_object("blob", data, object_format=self.object_format)
-        if sha1 == self._empty_tree_id:
-            return sha1
-        async_put = getattr(self._backend, "async_put", None)
-        if callable(async_put):
-            await async_put(sha1, loose)
-        else:
-            await asyncio.to_thread(self._backend.put, sha1, loose)
-        return sha1
-
-    async def async_get(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get, h)
-
-    async def async_exists(self, h: str) -> bool:
-        return await asyncio.to_thread(self.exists, h)
-
-    async def async_all_hashes(self) -> list[str]:
-        return await asyncio.to_thread(self.all_hashes)
-
-    async def async_count(self) -> tuple[int, int]:
-        return await asyncio.to_thread(self.count)
-
-    async def async_put_loose(self, h: str, loose: bytes) -> None:
-        if h == self._empty_tree_id:
-            return
-        async_put = getattr(self._backend, "async_put", None)
-        if callable(async_put):
-            await async_put(h, loose)
-        else:
-            await asyncio.to_thread(self._backend.put, h, loose)
-
-    async def async_get_loose(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get_loose, h)
 
 
 @contextmanager

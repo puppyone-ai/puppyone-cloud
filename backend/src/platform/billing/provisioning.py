@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.billing.gateway import PuppyPayGateway
 from src.platform.billing.operations import BillingOperation, BillingOperationRepository
 from src.platform.entitlements.models import EntitlementUpsert
@@ -50,7 +50,7 @@ class EntitlementProvisioningService:
         org_id: str,
         actor_user_id: str | None,
     ) -> bool:
-        operation = await asyncio.to_thread(
+        operation = await run_blocking(
             self.enqueue,
             org_id=org_id,
             actor_user_id=actor_user_id,
@@ -64,11 +64,11 @@ class EntitlementProvisioningService:
     async def recover_once(self, *, limit: int = 25) -> dict[str, int]:
         if settings.ENTITLEMENTS_MODE != "db":
             return {"enqueued": 0, "claimed": 0, "succeeded": 0, "failed": 0}
-        enqueued = await asyncio.to_thread(
+        enqueued = await run_blocking(
             self._operation_repo.enqueue_missing_entitlement_provisioning,
             limit=max(100, limit),
         )
-        claimed = await asyncio.to_thread(
+        claimed = await run_blocking(
             self._operation_repo.claim_entitlement_provisioning,
             limit=limit,
             lease_seconds=settings.ENTITLEMENT_PROVISIONING_LEASE_SECONDS,
@@ -99,8 +99,8 @@ class EntitlementProvisioningService:
             snapshot = EntitlementUpsert.model_validate(payload)
             if snapshot.org_id != operation.org_id:
                 raise ValueError("provisioned entitlement organization mismatch")
-            acknowledgement = await asyncio.to_thread(self._entitlements.publish, snapshot)
-            await asyncio.to_thread(
+            acknowledgement = await run_blocking(self._entitlements.publish, snapshot)
+            await run_blocking(
                 self._operation_repo.update,
                 operation.id,
                 {
@@ -126,7 +126,7 @@ class EntitlementProvisioningService:
             # leak into product-side audit rows.
             delay_seconds = min(3600, 2 ** min(max(operation.attempts, 1), 11))
             try:
-                await asyncio.to_thread(
+                await run_blocking(
                     self._operation_repo.update,
                     operation.id,
                     {

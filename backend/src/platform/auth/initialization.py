@@ -21,11 +21,11 @@ API split (intentional):
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from src.infra.execution.runner import run_blocking
 from src.utils.logger import log_error, log_info
 
 if TYPE_CHECKING:
@@ -195,7 +195,7 @@ class UserInitializationService:
         try:
             from src.platform.entitlements.service import EntitlementService
 
-            project_limit = await asyncio.to_thread(
+            project_limit = await run_blocking(
                 EntitlementService().enforced_limit_value,
                 org_id,
                 "projects.max",

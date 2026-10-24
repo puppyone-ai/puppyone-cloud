@@ -9,17 +9,24 @@ from typing import Any
 
 from src.file_operations.commands import VersionWriteCommandService
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.file_operations.queries import run_read
+from src.platform.access.filesystem.capabilities import SEMANTICS
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.errors import (
+    ScopedFsError,
+    ScopedFsNotFound,
+    ScopedFsPermissionDenied,
+)
+from src.platform.access.filesystem.indexed_grep import (
+    IndexedGrepError,
+    relative_to_scope,
+    run_indexed_grep_payload,
+)
+from src.platform.access.filesystem.policy import default_mcp_fs_allowed_tools
+from src.platform.access.filesystem.registry import FS_TOOL_BY_NAME
 from src.version_engine.read.tree_reader import VersionEntry, detect_type
 from src.version_engine.write_engine.errors import ConcurrentMutationError
 from src.version_engine.write_engine.path_utils import normalize_path
-
-from src.platform.access.filesystem.context import ScopedFsContext
-from src.platform.access.filesystem.errors import ScopedFsError, ScopedFsNotFound, ScopedFsPermissionDenied
-from src.platform.access.filesystem.capabilities import SEMANTICS
-from src.platform.access.filesystem.indexed_grep import IndexedGrepError, relative_to_scope, run_indexed_grep_payload
-from src.platform.access.filesystem.registry import FS_TOOL_BY_NAME
-from src.platform.access.filesystem.policy import default_mcp_fs_allowed_tools
-
 
 _DEFAULT_TREE_LIMIT = 5000
 _MAX_TREE_LIMIT = 50000
@@ -75,6 +82,16 @@ class ScopedFsService:
         include_hidden: bool = False,
         include_size: bool = False,
     ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_ls(ctx, path=path, include_hidden=include_hidden, include_size=include_size))
+
+    def _read_ls(
+        self,
+        ctx: ScopedFsContext,
+        path: str = "",
+        include_hidden: bool = False,
+        include_size: bool = False,
+    ) -> dict[str, Any]:
         rel = self._clean_path(ctx, path)
         target = self._stat(ctx, rel, include_size=include_size)
         if target is None and rel:
@@ -96,6 +113,19 @@ class ScopedFsService:
         }
 
     async def tree(
+        self,
+        ctx: ScopedFsContext,
+        path: str = "",
+        max_depth: int = -1,
+        limit: int = _DEFAULT_TREE_LIMIT,
+        include_hidden: bool = False,
+        include_size: bool = False,
+        directories_only: bool = False,
+    ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_tree(ctx, path=path, max_depth=max_depth, limit=limit, include_hidden=include_hidden, include_size=include_size, directories_only=directories_only))
+
+    def _read_tree(
         self,
         ctx: ScopedFsContext,
         path: str = "",
@@ -143,6 +173,23 @@ class ScopedFsService:
         }
 
     async def find(
+        self,
+        ctx: ScopedFsContext,
+        path: str = "",
+        name: str = "",
+        iname: str = "",
+        path_glob: str = "",
+        type: str = "any",
+        conditions: list[dict[str, Any]] | str | None = None,
+        mindepth: int = 0,
+        max_depth: int = -1,
+        limit: int = _DEFAULT_TREE_LIMIT,
+        include_hidden: bool = True,
+    ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_find(ctx, path=path, name=name, iname=iname, path_glob=path_glob, type=type, conditions=conditions, mindepth=mindepth, max_depth=max_depth, limit=limit, include_hidden=include_hidden))
+
+    def _read_find(
         self,
         ctx: ScopedFsContext,
         path: str = "",
@@ -219,6 +266,33 @@ class ScopedFsService:
         }
 
     async def grep(
+        self,
+        ctx: ScopedFsContext,
+        pattern: str,
+        path: str = "",
+        regex: bool = True,
+        ignore_case: bool = False,
+        invert_match: bool = False,
+        only_matching: bool = False,
+        include_hidden: bool = False,
+        include: list[str] | str | None = None,
+        exclude: list[str] | str | None = None,
+        exclude_dir: list[str] | str | None = None,
+        max_depth: int = -1,
+        max_count: int = 0,
+        require_file_list: bool = False,
+        include_offsets: bool = False,
+        word_match: bool = False,
+        limit: int = _DEFAULT_GREP_LIMIT,
+        max_files: int = _DEFAULT_GREP_MAX_FILES,
+        max_bytes: int = _DEFAULT_GREP_MAX_BYTES,
+        before_context: int = 0,
+        after_context: int = 0,
+    ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_grep(ctx, pattern=pattern, path=path, regex=regex, ignore_case=ignore_case, invert_match=invert_match, only_matching=only_matching, include_hidden=include_hidden, include=include, exclude=exclude, exclude_dir=exclude_dir, max_depth=max_depth, max_count=max_count, require_file_list=require_file_list, include_offsets=include_offsets, word_match=word_match, limit=limit, max_files=max_files, max_bytes=max_bytes, before_context=before_context, after_context=after_context))
+
+    def _read_grep(
         self,
         ctx: ScopedFsContext,
         pattern: str,
@@ -557,6 +631,10 @@ class ScopedFsService:
         }
 
     async def cat(self, ctx: ScopedFsContext, path: str, structured: bool = False) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_cat(ctx, path=path, structured=structured))
+
+    def _read_cat(self, ctx: ScopedFsContext, path: str, structured: bool = False) -> dict[str, Any]:
         rel = self._clean_path(ctx, path, require=True)
         entry = self._stat(ctx, rel, include_size=True)
         if entry is None:
@@ -592,6 +670,16 @@ class ScopedFsService:
         lines: int = 10,
         bytes: int | None = None,
     ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_head(ctx, path=path, lines=lines, bytes=bytes))
+
+    def _read_head(
+        self,
+        ctx: ScopedFsContext,
+        path: str,
+        lines: int = 10,
+        bytes: int | None = None,
+    ) -> dict[str, Any]:
         rel = self._clean_path(ctx, path, require=True)
         content = self.ops.read_file_in_scope(ctx.project_id, ctx.scope_path, rel)
         if bytes is not None:
@@ -609,6 +697,16 @@ class ScopedFsService:
         lines: int = 10,
         bytes: int | None = None,
     ) -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_tail(ctx, path=path, lines=lines, bytes=bytes))
+
+    def _read_tail(
+        self,
+        ctx: ScopedFsContext,
+        path: str,
+        lines: int = 10,
+        bytes: int | None = None,
+    ) -> dict[str, Any]:
         rel = self._clean_path(ctx, path, require=True)
         content = self.ops.read_file_in_scope(ctx.project_id, ctx.scope_path, rel)
         if bytes is not None:
@@ -620,6 +718,10 @@ class ScopedFsService:
         return {"path": rel, "content_text": output, "bytes": len(output.encode("utf-8"))}
 
     async def stat(self, ctx: ScopedFsContext, path: str = "") -> dict[str, Any]:
+        return await run_read(self.ops, ctx.project_id,
+                              lambda read: self.__class__(read, self.commands)._read_stat(ctx, path=path))
+
+    def _read_stat(self, ctx: ScopedFsContext, path: str = "") -> dict[str, Any]:
         rel = self._clean_path(ctx, path)
         if not rel:
             return {

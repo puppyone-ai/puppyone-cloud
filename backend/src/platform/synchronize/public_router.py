@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from src.common_schemas import ApiResponse
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
@@ -39,6 +40,7 @@ from src.platform.synchronize.public_schemas import (
 )
 from src.platform.synchronize.service import SynchronizeService
 from src.provider.registry import ProviderRegistry
+from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 Service = Annotated[SynchronizeService, Depends(get_synchronize_service)]
 Registry = Annotated[ProviderRegistry, Depends(get_synchronize_provider_registry)]
@@ -46,6 +48,7 @@ Queue = Annotated[SyncArqClient, Depends(get_sync_arq_client)]
 Engine = Annotated[SynchronizeEngine, Depends(get_synchronize_engine)]
 Authorization = Annotated[AuthorizationService, Depends(get_authorization_service)]
 User = Annotated[CurrentUser, Depends(get_current_user)]
+Operations = Annotated[ProductOperationAdapter, Depends(get_product_operation_adapter)]
 
 
 def _validate_query_contract(request: Request) -> None:
@@ -135,24 +138,24 @@ async def create_synchronize_binding(body: SynchronizeBindingCreate, service: Se
 
 
 @router.patch("/bindings/{synchronize_binding_id}", response_model=ApiResponse[SynchronizeBinding])
-async def update_synchronize_binding(synchronize_binding_id: str, body: SynchronizeBindingUpdate,
+def update_synchronize_binding(synchronize_binding_id: str, body: SynchronizeBindingUpdate,
         service: Service, registry: Registry, authorization: Authorization, current_user: User):
-    return _reply(await operations.update_connection(connection_id=synchronize_binding_id,
+    return _reply(operations.update_connection(connection_id=synchronize_binding_id,
         body=body,
         service=service, registry=registry, authorization=authorization, current_user=current_user), _binding)
 
 
 @router.delete("/bindings/{synchronize_binding_id}", response_model=ApiResponse)
-async def delete_synchronize_binding(synchronize_binding_id: str, service: Service,
+def delete_synchronize_binding(synchronize_binding_id: str, service: Service,
         authorization: Authorization, current_user: User):
-    return await operations.delete_connection(connection_id=synchronize_binding_id, service=service,
+    return operations.delete_connection(connection_id=synchronize_binding_id, service=service,
         authorization=authorization, current_user=current_user)
 
 
 @router.patch("/bindings/{synchronize_binding_id}/trigger", response_model=ApiResponse)
-async def update_synchronize_trigger(synchronize_binding_id: str, body: SynchronizeTriggerUpdate,
+def update_synchronize_trigger(synchronize_binding_id: str, body: SynchronizeTriggerUpdate,
         service: Service, authorization: Authorization, current_user: User):
-    return await operations.update_connection_trigger(connection_id=synchronize_binding_id,
+    return operations.update_connection_trigger(connection_id=synchronize_binding_id,
         body=body, service=service,
         authorization=authorization, current_user=current_user)
 
@@ -200,8 +203,8 @@ def list_failed_synchronize_runs(project_id: str, service: Service, authorizatio
 
 
 @router.get("/status", response_model=ApiResponse[SynchronizeStatus])
-async def get_synchronize_status(project_id: str, service: Service, authorization: Authorization, current_user: User):
-    return _reply(await operations.get_project_sync_status(project_id=project_id, service=service,
+def get_synchronize_status(project_id: str, service: Service, authorization: Authorization, current_user: User):
+    return _reply(operations.get_project_sync_status(project_id=project_id, service=service,
         authorization=authorization, current_user=current_user),
         lambda data: SynchronizeStatus(**_dict(data)))
 
@@ -225,8 +228,8 @@ async def pull_synchronize_bindings(service: Service, sync_arq_client: Queue, au
 
 @router.post("/push/{path:path}", response_model=ApiResponse[SynchronizePushResult])
 async def push_synchronize_path(path: str, project_id: str, engine: Engine,
-        authorization: Authorization, current_user: User):
-    return _reply(await operations.trigger_push(path=path, project_id=project_id, engine=engine,
+        authorization: Authorization, current_user: User, ops: Operations):
+    return _reply(await operations.trigger_push(path=path, project_id=project_id, engine=engine, ops=ops,
         authorization=authorization, current_user=current_user),
         lambda data: SynchronizePushResult(pushed=_dict(data)["pushed"],
             results=[_execution(row) for row in _dict(data)["results"]]))

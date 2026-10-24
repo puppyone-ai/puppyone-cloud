@@ -75,18 +75,20 @@ class WorkbenchRepository:
             write=write,
         )
 
-    def request_open(self, row, binding, revision):
+    def request_open(self, row, binding, revision, pool):
+        """Record open intent, executed by workers of ``pool``."""
         return self.command(
-            "request_open",
+            "request_open_in_pool",
             workbench=row["id"],
             user=row["user_id"],
             project=row["project_id"],
             binding=binding,
             revision=revision,
+            pool=pool,
         )
 
-    def pending(self, provider):
-        return self.command("pending", provider=provider)
+    def pending(self, provider, pool):
+        return self.command("pending_in_pool", provider=provider, pool=pool)
 
     def progress(self, row, phase, error=None, retryable=False):
         return self.command(
@@ -166,12 +168,9 @@ class WorkbenchRepository:
     def expire_open(self, row):
         return self.command("expire_open", workbench=row["id"], deadline=row["open_deadline"])
 
-    def due(self, provider=None):
-        return (
-            self.command("maintenance_for_provider", provider=provider)
-            if provider
-            else self.command("maintenance")
-        )
+    def due(self, provider, pool):
+        """Claim workbenches of ``pool`` on ``provider`` whose maintenance is due."""
+        return self.command("maintenance_in_pool", provider=provider, pool=pool)
 
     def idle(self, row):
         return self.command(

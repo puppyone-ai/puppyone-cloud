@@ -3,11 +3,14 @@
 The deletion worker owns orchestration.  This module owns only the host-side
 contract: snapshot exact handles, delete those handles idempotently, and then
 verify the Project has no remaining deterministic workspace/cache state.
+
+The ``lower/`` and ``workspaces/`` trees under ``WORKSPACE_BASE_DIR`` belong to
+the retired host-local Agent workspace. Nothing creates them any more; deletion
+still scrubs leftovers by path so older hosts and volumes converge.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -18,14 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from src.infra.execution.runner import run_blocking
 from src.platform.workspace.paths import (
     absolute_path,
     project_child,
     validate_storage_segment,
-)
-from src.platform.workspace.provider import (
-    WorkspaceProvider,
-    get_active_workspace_provider,
 )
 from src.version_engine.infrastructure.file_lock import try_file_exclusive_lock
 
@@ -213,7 +213,6 @@ class ProjectHostResourceSnapshot:
 class ProjectHostDeletionResult:
     deleted_paths: int
     missing_paths: int
-    forgotten_workspaces: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,7 +221,6 @@ class ProjectHostCleanupVerification:
     remaining_paths: tuple[Path, ...]
     remaining_git_views: tuple[Path, ...]
     unresolved_git_entries: tuple[Path, ...]
-    live_workspace_agents: tuple[str, ...]
 
 
 class ProjectHostCleanupPort:
@@ -233,7 +231,6 @@ class ProjectHostCleanupPort:
         *,
         workspace_base_dir: str | os.PathLike[str] | None = None,
         git_view_cache_dir: str | os.PathLike[str] | None = None,
-        workspace_provider: WorkspaceProvider | None = None,
     ) -> None:
         if workspace_base_dir is None or git_view_cache_dir is None:
             from src.config import settings
@@ -247,7 +244,6 @@ class ProjectHostCleanupPort:
                 )
         self._workspace_base = absolute_path(workspace_base_dir)
         self._git_cache_root = absolute_path(git_view_cache_dir)
-        self._workspace_provider = workspace_provider
 
     def snapshot(self, project_id: str) -> ProjectHostResourceSnapshot:
         """Snapshot only deterministic paths and exact Git ownership proofs."""
@@ -283,24 +279,8 @@ class ProjectHostCleanupPort:
         """Delete a snapshot and wait for real filesystem work on cancellation."""
 
         self._validate_configured_snapshot(snapshot)
-        task = asyncio.create_task(asyncio.to_thread(self._delete_sync, snapshot))
-        try:
-            result = await asyncio.shield(task)
-        except asyncio.CancelledError as cancelled:
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    continue
-            task.result()
-            self._forget_project_workspaces(snapshot.project_id)
-            raise cancelled
-        forgotten = self._forget_project_workspaces(snapshot.project_id)
-        return ProjectHostDeletionResult(
-            deleted_paths=result[0],
-            missing_paths=result[1],
-            forgotten_workspaces=forgotten,
-        )
+        deleted, missing = await run_blocking(self._delete_sync, snapshot)
+        return ProjectHostDeletionResult(deleted_paths=deleted, missing_paths=missing)
 
     def verify(
         self,
@@ -315,27 +295,12 @@ class ProjectHostCleanupPort:
             if os.path.lexists(handle.path)
         )
         fresh_views, unresolved = self._snapshot_git_views(snapshot.project_id)
-        provider = self._provider_for_base()
-        live_agents: tuple[str, ...] = ()
-        if provider is not None:
-            live_agents = tuple(
-                sorted(
-                    info.agent_id
-                    for info in provider.snapshot_project_workspaces(snapshot.project_id)
-                )
-            )
         remaining_git_views = tuple(handle.view_dir for handle in fresh_views)
         return ProjectHostCleanupVerification(
-            complete=not (
-                remaining_paths
-                or remaining_git_views
-                or unresolved
-                or live_agents
-            ),
+            complete=not (remaining_paths or remaining_git_views or unresolved),
             remaining_paths=remaining_paths,
             remaining_git_views=remaining_git_views,
             unresolved_git_entries=unresolved,
-            live_workspace_agents=live_agents,
         )
 
     def restore(self, value: dict[str, Any]) -> ProjectHostResourceSnapshot:
@@ -591,18 +556,3 @@ class ProjectHostCleanupPort:
             return metadata_path.read_bytes()
         except OSError:
             return None
-
-    def _provider_for_base(self) -> WorkspaceProvider | None:
-        provider = self._workspace_provider or get_active_workspace_provider()
-        if provider is None:
-            return None
-        base_dir = getattr(provider, "_base_dir", None)
-        if base_dir is None or absolute_path(base_dir) != self._workspace_base:
-            return None
-        return provider
-
-    def _forget_project_workspaces(self, project_id: str) -> int:
-        provider = self._provider_for_base()
-        if provider is not None:
-            return provider.forget_project_workspaces(project_id)
-        return 0

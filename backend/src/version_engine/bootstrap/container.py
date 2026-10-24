@@ -11,9 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.file_operations.commands import VersionWriteCommandService
+from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_graph import HistoryGraphService
@@ -53,10 +53,8 @@ def build_version_engine_container(
 
     ``probe=True`` runs a cheap connectivity check against Supabase + S3
     so misconfigured credentials surface as a startup error rather than
-    crashing the first user request. Default is ``False`` because this
-    function is also used for cheap per-request rebuilds (testing hook,
-    connector helpers); the **process boot** entry point in ``main.py``
-    and the worker bootstrap helper opt into probing explicitly.
+    crashing the first user request. Tests may leave probing disabled. Request services must inject the
+    existing container, rather than creating new storage clients here.
     """
 
     s3_svc = s3 or S3Service()

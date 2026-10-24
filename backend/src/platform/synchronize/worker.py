@@ -14,6 +14,7 @@ from arq.connections import RedisSettings  # noqa: E402
 
 from src.platform.synchronize.providers import get_synchronize_provider_registry  # noqa: E402
 from src.platform.synchronize.run_repository import SyncRunRepository  # noqa: E402
+from src.infra.execution.process import start_process_concurrency  # noqa: E402
 from src.infra.supabase.client import SupabaseClient  # noqa: E402
 from src.platform.synchronize.config import synchronize_config  # noqa: E402
 from src.platform.synchronize.engine import SynchronizeEngine  # noqa: E402
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 async def startup(ctx: dict) -> None:
+    ctx["process_concurrency"] = start_process_concurrency()
     registry = get_synchronize_provider_registry()
     supabase = SupabaseClient()
     run_repo = SyncRunRepository(supabase)
@@ -40,6 +42,8 @@ async def startup(ctx: dict) -> None:
 
 
 async def shutdown(ctx: dict) -> None:
+    if concurrency := ctx.pop("process_concurrency", None):
+        await concurrency.stop()
     logger.info("Sync ARQ worker shutdown")
 
 

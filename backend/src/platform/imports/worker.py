@@ -12,6 +12,7 @@ load_dotenv(_env_path, override=False)
 
 from arq.connections import RedisSettings  # noqa: E402
 
+from src.infra.execution.process import start_process_concurrency  # noqa: E402
 from src.platform.imports.config import import_config  # noqa: E402
 from src.platform.imports.jobs import execute_import_job  # noqa: E402
 from src.platform.imports.repository import ImportJobRepository  # noqa: E402
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 async def startup(ctx: dict) -> None:
+    ctx["process_concurrency"] = start_process_concurrency()
     ctx["import_job_repository"] = ImportJobRepository()
     ctx["one_time_import_runner"] = OneTimeImportRunner()
     ctx["arq_queue_name"] = import_config.import_arq_queue_name
@@ -29,6 +31,8 @@ async def startup(ctx: dict) -> None:
 
 
 async def shutdown(ctx: dict) -> None:
+    if concurrency := ctx.pop("process_concurrency", None):
+        await concurrency.stop()
     logger.info("Import ARQ worker shutdown")
 
 

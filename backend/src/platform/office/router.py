@@ -22,7 +22,7 @@ router = APIRouter(prefix="/office", tags=["managed-office"])
 
 
 @router.get("/availability", response_model=OfficeAvailabilityResponse)
-async def get_availability(
+def get_availability(
     _current_user: CurrentUser = Depends(get_current_user),
     service: ManagedOfficeService = Depends(get_office_service),
 ) -> OfficeAvailabilityResponse:

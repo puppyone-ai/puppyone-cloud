@@ -16,9 +16,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from src.infra.execution.context import checkpoint
 from src.utils.logger import log_warning
 from src.version_engine.domain.errors import RepositoryRefNotFoundError, RepositoryRefTypeError
-from src.version_engine.infrastructure.owned_work import checkpoint
 from src.version_engine.write_engine.git_object_format import (
     decode_object,
     encode_object,

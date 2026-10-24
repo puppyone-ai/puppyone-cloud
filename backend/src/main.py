@@ -246,11 +246,12 @@ async def _init_file_ingest() -> None:
         log_info("📄 Initializing File Ingest service...")
         from pathlib import Path
 
+        from src.infra.execution.runner import run_blocking
         from src.platform.upload.dependencies import get_etl_service
 
         file_ingest_service = await get_etl_service()
-        Path(".mineru_cache").mkdir(parents=True, exist_ok=True)
-        Path(".etl_rules").mkdir(parents=True, exist_ok=True)
+        for directory in (".mineru_cache", ".etl_rules"):
+            await run_blocking(Path(directory).mkdir, parents=True, exist_ok=True)
         await file_ingest_service.start()
         file_ingest_duration = time.time() - file_ingest_init_start
         log_info(
@@ -284,28 +285,20 @@ def _init_provider_registry() -> None:
         )
 
 
-def _init_scope_sandbox_reaper(app: FastAPI) -> None:
-    """Start the scope-sandbox reaper (idle→stop, long-idle→destroy) if enabled.
+def _init_sandbox_reaper(app: FastAPI) -> None:
+    """Start the sandbox reaper: idle unretained executions and legacy Scope machines.
 
     It is enabled by default and mandatory in hosted deployments so crashed
     workers cannot orphan paid provider resources. Stored on app.state so
-    shutdown can stop both durable reaper loops cleanly."""
-    if not getattr(settings, "SCOPE_SANDBOX_REAPER_ENABLED", False):
+    shutdown can stop the durable reaper loop cleanly."""
+    if not settings.SANDBOX_REAPER_ENABLED:
         return
-    from src.platform.workspace.execution.reaper import start_execution_reaper
-    from src.platform.workspace.scopes.reaper import start_reaper
-    from src.platform.access.adapters.ssh.service import get_ssh_access_service
+    from src.platform.sandbox import start_sandbox_reaper
 
-    service = get_ssh_access_service().workspace
-    task, stop_event = start_reaper(
-        service,
-        interval_s=settings.SCOPE_SANDBOX_REAPER_INTERVAL_S,
+    app.state.sandbox_execution_reaper = start_sandbox_reaper(
+        interval_s=settings.SANDBOX_REAPER_INTERVAL_S,
     )
-    app.state.scope_sandbox_reaper = (task, stop_event)
-    app.state.sandbox_execution_reaper = start_execution_reaper(
-        interval_s=settings.SCOPE_SANDBOX_REAPER_INTERVAL_S,
-    )
-    log_info(f"🧹 Scope-sandbox reaper started (every {settings.SCOPE_SANDBOX_REAPER_INTERVAL_S}s)")
+    log_info(f"🧹 Sandbox reaper started (every {settings.SANDBOX_REAPER_INTERVAL_S}s)")
 
 
 def _init_runtime_billing_reaper(app: FastAPI) -> None:
@@ -465,7 +458,11 @@ async def app_lifespan(app: FastAPI):
     log_info("🚀 ContextBase API starting...")
     log_info("=" * 80)
 
+    from src.infra.execution.process import start_process_concurrency
     from src.version_engine.bootstrap.container import build_version_engine_container
+
+    # One shared worker-thread capacity for run_blocking and def routes.
+    app.state.process_concurrency = start_process_concurrency()
 
     # Probe external storage at non-debug process boot so production fails fast
     # on misconfigured S3/Supabase. Local development/test runs often use partial
@@ -481,7 +478,7 @@ async def app_lifespan(app: FastAPI):
     await _init_scheduler()
     await _init_file_ingest()
     _init_provider_registry()
-    _init_scope_sandbox_reaper(app)
+    _init_sandbox_reaper(app)
     _init_entitlement_provisioner(app)
     _init_seat_proposal_worker(app)
     _init_runtime_billing_reaper(app)
@@ -499,14 +496,6 @@ async def app_lifespan(app: FastAPI):
     log_info("")
 
     yield
-    reaper = getattr(app.state, "scope_sandbox_reaper", None)
-    if reaper is not None:
-        task, stop_event = reaper
-        stop_event.set()
-        try:
-            await task
-        except Exception as e:
-            log_error(f"Scope-sandbox reaper shutdown error: {e}")
     execution_reaper = getattr(app.state, "sandbox_execution_reaper", None)
     if execution_reaper is not None:
         task, stop_event = execution_reaper
@@ -514,7 +503,7 @@ async def app_lifespan(app: FastAPI):
         try:
             await task
         except Exception as e:
-            log_error(f"Sandbox execution reaper shutdown error: {e}")
+            log_error(f"Sandbox reaper shutdown error: {e}")
     runtime_billing_reaper = getattr(app.state, "runtime_billing_reaper", None)
     if runtime_billing_reaper is not None:
         task, stop_event = runtime_billing_reaper
@@ -551,7 +540,10 @@ async def app_lifespan(app: FastAPI):
         if service := getattr(app.state, "workbench_service", None):
             await service.close()
     finally:
-        await _shutdown_services()
+        try:
+            await _shutdown_services()
+        finally:
+            await app.state.process_concurrency.stop()
 
 
 def create_app() -> FastAPI:
@@ -671,9 +663,6 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
-    from src.platform.access.adapters.api.workspace_router import router as workspace_router
-
-    app.include_router(workspace_router, prefix="/api/v1", tags=["workspace"])
     from src.platform.synchronize.public_router import router as synchronize_public_router
 
     app.include_router(synchronize_public_router, prefix="/api/v1")
@@ -685,9 +674,6 @@ def create_app() -> FastAPI:
 
     app.include_router(synchronize_github_router)
     app.include_router(synchronize_github_webhook_router)
-    from src.platform.access.adapters.ssh.router import router as scope_sandbox_router
-
-    app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
     from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
 
     app.include_router(hosted_ssh_router)
@@ -744,9 +730,12 @@ def create_app() -> FastAPI:
 
     # Register exception handlers
     exception_handler_start = time.time()
+    from src.exception_handler import execution_capacity_handler
+    from src.infra.execution.admission import ExecutionCapacityError
+    app.add_exception_handler(ExecutionCapacityError, execution_capacity_handler)
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore
-    from src.platform.workspace.errors import WorkspaceError
     from src.platform.access.adapters.api.workbench_router import workspace_error_handler
+    from src.platform.workspace.errors import WorkspaceError
 
     app.add_exception_handler(WorkspaceError, workspace_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore

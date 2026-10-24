@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from typing import Any
 
 from fastapi import HTTPException
 
 from src.exceptions import ErrorCode
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.infra.execution.runner import run_blocking
 from src.platform.access.credentials import resolve_access_point
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.errors import ScopedFsError
 from src.platform.repository_target.auth_context import repository_view_from_auth
 from src.platform.repository_target.models import repository_target_scope_id
 from src.version_engine.admission.channel_pause import enforce_channel_pause
@@ -25,8 +26,6 @@ from src.version_engine.admission.repo_facade import (
     repo_facade_from_auth,
 )
 from src.version_engine.admission.validation import validate_limit, validate_path
-from src.platform.access.filesystem.context import ScopedFsContext
-from src.platform.access.filesystem.errors import ScopedFsError
 
 
 def _is_not_found_error(exc: Exception) -> bool:
@@ -49,7 +48,7 @@ async def _resolve_auth(
     x_puppy_client: str | None = None,
     command: str | None = None,
 ) -> tuple[str, dict, dict]:
-    project_id, auth = await asyncio.to_thread(
+    project_id, auth = await run_blocking(
         resolve_access_point,
         _normalize_access_key(x_access_key),
     )

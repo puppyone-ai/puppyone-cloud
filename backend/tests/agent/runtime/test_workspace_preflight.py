@@ -31,7 +31,8 @@ async def test_preflight_proves_provider_and_both_database_contracts_without_wri
     assert result["provider"] == "fly"
     absent = "00000000-0000-0000-0000-000000000000"
     authorization.load_project_facts.assert_called_once_with(absent, absent)
-    workspace.pending.assert_called_once_with("fly")
+    # Probes this deployment's own pool: never another deployment's queue.
+    workspace.pending.assert_called_once_with("fly", preflight.settings.AGENT_WORKER_POOL)
     workspace.verify_opening_contract.assert_called_once_with()
     workspace.request_open.assert_not_called()
     provider.aclose.assert_awaited_once()

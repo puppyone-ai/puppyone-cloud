@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.common_schemas import ApiResponse
 from src.config import settings
+from src.infra.execution.runner import run_blocking
+from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
 from src.platform.access.adapters.git.auth import (
     request_actor,
     resolve_git_project_auth,
@@ -43,6 +45,7 @@ from src.version_engine.admission.repo_facade import (
 from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.storage.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
+from src.version_engine.write_engine.trace import VersionTrace, use_version_trace
 
 router = APIRouter(prefix="/git")
 
@@ -115,7 +118,7 @@ async def _record_git_fetch_audit(
         ),
         "service": "upload-pack",
     }
-    await asyncio.to_thread(repo.record_audit, "git_fetch", actor, detail)
+    await run_blocking(repo.record_audit, "git_fetch", actor, detail)
 
 
 def _git_receive_max_body_bytes(project_id: str) -> int:
@@ -438,6 +441,20 @@ async def git_project_rebuild_cache(
 
 
 async def _native_rpc(native, request, *, upload, project_id):
+    trace = VersionTrace("git.fetch" if upload else "git.push", project_id=project_id,
+                         source_channel="access_git")
+    database = DatabaseTrace("git-rpc")
+    status = "error"
+    with use_version_trace(trace), database_trace(database):
+        try:
+            result = await _native_rpc_owned(native, request, upload=upload, project_id=project_id)
+            status = "ok"
+            return result
+        finally:
+            trace.finish(status, database=database.report())
+
+
+async def _native_rpc_owned(native, request, *, upload, project_id):
     # Admit before reading a request body. Keep the slot until a fetch response
     # is sent/aborted, bounding slow clients' object buffers and snapshot pins.
     with admission() as retain:

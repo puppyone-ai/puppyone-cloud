@@ -75,7 +75,7 @@ def _message_to_response(m) -> MessageResponse:
 
 
 @router.post("/sessions", summary="Create a chat session")
-async def create_session(
+def create_session(
     body: CreateSessionRequest,
     current_user: CurrentUser = Depends(get_current_user),
     chat_service: ChatService = Depends(get_chat_service),
@@ -109,7 +109,7 @@ async def create_session(
 
 
 @router.get("/sessions", summary="List chat sessions")
-async def list_sessions(
+def list_sessions(
     agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
     limit: int = Query(50, ge=1, le=200),
     current_user: CurrentUser = Depends(get_current_user),
@@ -154,7 +154,7 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}", summary="Get a session")
-async def get_session(
+def get_session(
     session_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     chat_service: ChatService = Depends(get_chat_service),
@@ -175,7 +175,7 @@ async def get_session(
 
 
 @router.patch("/sessions/{session_id}", summary="Update a session")
-async def update_session(
+def update_session(
     session_id: str,
     body: UpdateSessionRequest,
     current_user: CurrentUser = Depends(get_current_user),
@@ -206,7 +206,7 @@ async def update_session(
 
 
 @router.delete("/sessions/{session_id}", summary="Delete a session")
-async def delete_session(
+def delete_session(
     session_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     chat_service: ChatService = Depends(get_chat_service),
@@ -235,7 +235,7 @@ async def delete_session(
 
 
 @router.get("/sessions/{session_id}/messages", summary="List messages in a session")
-async def list_messages(
+def list_messages(
     session_id: str,
     limit: int = Query(200, ge=1, le=500),
     current_user: CurrentUser = Depends(get_current_user),

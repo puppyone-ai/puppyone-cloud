@@ -1,12 +1,14 @@
 """Native pack storage interoperability, durability and bounded transfer faults."""
 
-import asyncio
 import io
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from src.infra.execution.context import Execution
 from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.storage import git_pack_io, git_process
 from src.version_engine.storage.backends.s3 import S3StorageBackend
@@ -19,14 +21,14 @@ from src.version_engine.storage.object_store import FileSystemBackend
 from src.version_engine.storage.publication import ClosureVerifier
 from src.version_engine.write_engine.git_object_format import decode_object
 from tests.repository_hosting.harness.git import Git
-from tests.repository_hosting.unit.test_streamed_storage import FencedDB, FencedS3
+from tests.repository_hosting.unit.test_streamed_storage import FencedDB, FencedS3, run_storage_call
 
 pytestmark = pytest.mark.hosting_component
 
 
 class StreamS3(FencedS3):
-    async def download_file_stream(self, key, chunk_size=8192):
-        data = await self.download_file(key)
+    def download_file_stream(self, key, chunk_size=8192):
+        data = self.download_file(key)
         for offset in range(0, len(data), chunk_size):
             yield data[offset : offset + chunk_size]
 
@@ -101,13 +103,13 @@ def test_failed_pack_never_promotes_publishable_evidence(packed, failure):
             return super().rpc(name, params)
 
     class S3(StreamS3):
-        async def upload_file(self, *args, **kwargs):
+        def upload_file(self, *args, **kwargs):
             if failure == "upload":
                 raise ConnectionError("injected failure")
-            return await super().upload_file(*args, **kwargs)
+            return super().upload_file(*args, **kwargs)
 
-        async def download_file(self, key):
-            data = await super().download_file(key)
+        def download_file(self, key):
+            data = super().download_file(key)
             return data + b"corrupt" if failure == "readback" else data
 
     db = DB()
@@ -153,47 +155,52 @@ def test_multipart_bounds_memory_concurrency_and_joins_before_abort(tmp_path, mo
         def __init__(self):
             self.parts = {}
 
-        async def create_multipart_upload(self, *args):
+        def create_multipart_upload(self, *args):
             return "upload"
 
-        async def upload_part(self, key, upload, number, data):
+        lock = threading.Lock()
+
+        def upload_part(self, key, upload, number, data):
             assert len(data) <= 32
-            self.active += 1
-            self.peak = max(self.peak, self.active)
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
             try:
-                await asyncio.sleep(0.001)
+                time.sleep(0.001)
                 if fault == "part" and number == 2:
                     raise ConnectionError("part failed")
                 self.parts[number] = data
                 return str(number)
             finally:
-                self.active -= 1
+                with self.lock:
+                    self.active -= 1
 
-        async def complete_multipart_upload(self, key, upload, parts):
+        def complete_multipart_upload(self, key, upload, parts):
             assert not self.active
             assert [n for n, _ in parts] == sorted(self.parts)
             if fault == "complete":
                 raise ConnectionError("completion response lost")
             self.complete = True
 
-        async def abort_multipart_upload(self, *args):
+        def abort_multipart_upload(self, *args):
             assert not self.active
             self.aborted = True
 
     s3 = S3()
 
-    async def run():
+    def run():
         with operation_io_budget(2):
-            await git_pack_io.upload_pack(s3, "pack", path)
+            git_pack_io.upload_pack(s3, "pack", path)
 
     if fault:
         with pytest.raises(ConnectionError):
-            asyncio.run(run())
+            run()
         assert s3.aborted and not s3.complete
     else:
-        asyncio.run(run())
+        run()
         assert s3.complete and not s3.aborted
-        assert b"".join(s3.parts.values()) == path.read_bytes()
+        # Parts complete in any order; their numbers define the object.
+        assert b"".join(s3.parts[n] for n in sorted(s3.parts)) == path.read_bytes()
     assert s3.peak == 2 and not s3.active
 
 
@@ -266,42 +273,44 @@ def test_interrupted_object_read_reaps_child_and_next_read_reopens(packed, monke
     assert pack.get(head) == expected
 
 
-@pytest.mark.asyncio
-async def test_repeated_cancellation_joins_parts_before_abort(tmp_path, monkeypatch):
+def test_cancellation_joins_started_parts_before_abort(tmp_path, monkeypatch):
     monkeypatch.setattr(git_pack_io, "PART_BYTES", 32)
     path = tmp_path / "cancel.pack"
     path.write_bytes(b"x" * 100)
-    started, release = asyncio.Event(), asyncio.Event()
+    started, release = threading.Event(), threading.Event()
     active = 0
     aborted = False
 
     class S3:
-        async def create_multipart_upload(self, *_):
+        def create_multipart_upload(self, *_):
             return "upload"
 
-        async def upload_part(self, *_):
+        lock = threading.Lock()
+
+        def upload_part(self, *_):
             nonlocal active
-            active += 1
+            with self.lock:
+                active += 1
             started.set()
             try:
-                await release.wait()
+                assert release.wait(3)
                 return "etag"
             finally:
-                active -= 1
+                with self.lock:
+                    active -= 1
 
-        async def abort_multipart_upload(self, *_):
+        def abort_multipart_upload(self, *_):
             nonlocal aborted
             assert active == 0
             aborted = True
 
-    task = asyncio.create_task(git_pack_io.upload_pack(S3(), "key", path))
-    await started.wait()
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    await asyncio.sleep(0)
-    assert not task.done() and not aborted
+    execution = Execution()
+    thread, outcome = run_storage_call(lambda: git_pack_io.upload_pack(S3(), "key", path), execution)
+    assert started.wait(2)
+    execution.cancelled.set()  # cooperative; started part uploads cannot be killed
+    time.sleep(0.02)
+    assert thread.is_alive() and not aborted
     release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    thread.join(5)
+    assert isinstance(outcome.get("error"), RuntimeError)
     assert aborted and active == 0
