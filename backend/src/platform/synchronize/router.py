@@ -424,7 +424,7 @@ async def create_connection(
         try:
             from src.infra.scheduler.service import get_scheduler_service
 
-            await get_scheduler_service().sync_trigger(
+            get_scheduler_service().sync_trigger(
                 connection_id=connection.id,
                 provider=provider,
                 trigger_config=body.trigger,
@@ -479,7 +479,7 @@ async def delete_connection(
     try:
         from src.infra.scheduler.service import get_scheduler_service
 
-        await get_scheduler_service().sync_trigger(connection_id)
+        get_scheduler_service().sync_trigger(connection_id)
     except Exception:
         pass
     service.remove_sync(connection_id)
@@ -576,7 +576,7 @@ async def update_connection_trigger(
     try:
         from src.infra.scheduler.service import get_scheduler_service
 
-        await get_scheduler_service().sync_trigger(
+        get_scheduler_service().sync_trigger(
             connection_id=connection_id,
             provider=connection.provider,
             trigger_config=trigger_data if body.sync_mode == "scheduled" else None,
@@ -838,7 +838,7 @@ async def bootstrap(
 
             scheduler = get_scheduler_service()
             for connection in queued_connections:
-                await scheduler.sync_trigger(
+                scheduler.sync_trigger(
                     connection_id=connection.id,
                     provider=provider,
                     trigger_config=body.trigger,

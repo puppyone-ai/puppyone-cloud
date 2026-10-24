@@ -4,7 +4,6 @@ Agent Config Router
 REST API for Agent configuration.
 """
 
-import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 
@@ -181,16 +180,9 @@ def _sync_scheduler_add(agent_id: str, agent_type: str, trigger_type: str, trigg
         return
 
     try:
-        scheduler = get_scheduler_service()
-        # Run async method in a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                scheduler.add_agent_job(agent_id, trigger_config or {}, agent_name)
-            )
-        finally:
-            loop.close()
+        # APScheduler registration is in-memory and thread-safe (it wakes the
+        # scheduler through call_soon_threadsafe); no event loop is needed.
+        get_scheduler_service().add_agent_job(agent_id, trigger_config or {}, agent_name)
         log_info(f"✅ Scheduler synced: added job for agent {agent_id}")
     except Exception as e:
         log_error(f"❌ Failed to sync scheduler for agent {agent_id}: {e}")

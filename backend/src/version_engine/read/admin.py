@@ -14,10 +14,10 @@ class VersionAdminService:
     def for_grant(self, grant):
         return type(self)(self._repos, grant)
 
-    async def init_tree(self, project_id):
+    def init_tree(self, project_id):
         from src.version_engine.write_engine.engine import VersionWriteEngine
 
-        return await VersionWriteEngine(self._repos).initialize_project_tree(project_id)
+        return VersionWriteEngine(self._repos).initialize_project_tree(project_id)
 
     def _read(self, project_id, callback):
         from src.version_engine.read.native_history import NativeHistory

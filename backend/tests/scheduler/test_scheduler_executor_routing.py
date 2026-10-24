@@ -64,7 +64,7 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
 
     service = scheduler_module.SchedulerService()
     await service.start()
-    await service.add_agent_job(
+    service.add_agent_job(
         agent_id="agent-1",
         trigger_config={
             "date": "2026-06-04",
@@ -73,7 +73,7 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
         },
         agent_name="Daily Agent",
     )
-    await service.sync_trigger(
+    service.sync_trigger(
         connection_id="conn-1",
         provider="github",
         trigger_config={
@@ -97,11 +97,13 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
     assert "shadow-snapshot-reaper" not in jobs_by_id
     assert "executor" not in jobs_by_id["native-repository-projection"][1]
 
+    # Scheduled pulls enqueue through arq's async client on the API loop.
+    assert "executor" not in jobs_by_id["sync:conn-1"][1]
+
     for job_id in [
         "version-object-gc",
         "version-object-integrity-scan",
         "agent-1",
-        "sync:conn-1",
     ]:
         assert jobs_by_id[job_id][1]["executor"] == "threadpool"
 
@@ -122,10 +124,10 @@ async def test_startup_loaders_read_database_off_the_event_loop(monkeypatch):
         reads.append(("syncs", threading.get_ident()))
         return [{"id": "sync-1", "provider": "github", "trigger": {"type": "scheduled"}}]
 
-    async def add_agent_job(self, agent_id, trigger_config, agent_name=""):
+    def add_agent_job(self, agent_id, trigger_config, agent_name=""):
         registered.append(("agent", agent_id))
 
-    async def sync_trigger(self, connection_id, provider, trigger_config):
+    def sync_trigger(self, connection_id, provider, trigger_config):
         registered.append(("sync", connection_id))
 
     monkeypatch.setattr(scheduler_module, "_scheduled_agent_rows", agent_rows)

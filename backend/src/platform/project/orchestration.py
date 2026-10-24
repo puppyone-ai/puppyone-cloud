@@ -36,20 +36,6 @@ logger = logging.getLogger(__name__)
 ProjectInitializer = Callable[[Project], Awaitable[None]]
 
 
-def initialize_project_tree_sync(
-    version_engine: VersionWriteEngine,
-    project_id: str,
-) -> str:
-    """Run L5 on a worker-owned event loop.
-
-    ``initialize_project_tree`` retains an async public API, but its repository
-    boundary includes synchronous Supabase work.  Request event loops therefore
-    enter it through ``asyncio.to_thread`` and this small worker-loop adapter.
-    """
-
-    return asyncio.run(version_engine.initialize_project_tree(project_id))
-
-
 async def create_project_with_tree(
     *,
     control_plane: ProjectControlPlaneService,
@@ -117,11 +103,7 @@ async def create_project_with_tree(
             initialization_operation_key=operation_key,
             initialization_actor=created_by,
         ):
-            await run_blocking(
-                initialize_project_tree_sync,
-                version_engine,
-                project_id,
-            )
+            await run_blocking(version_engine.initialize_project_tree, project_id)
             if initialize is not None:
                 await initialize(result.project)
             return await run_blocking(

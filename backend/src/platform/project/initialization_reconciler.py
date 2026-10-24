@@ -11,7 +11,6 @@ from uuid import uuid4
 from src.config import settings
 from src.infra.execution.runner import run_blocking
 from src.platform.project.control_plane import ProjectControlPlaneRepository
-from src.platform.project.orchestration import initialize_project_tree_sync
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseFactory
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 from src.version_engine.write_engine.engine import VersionWriteEngine
@@ -190,11 +189,7 @@ class ProjectInitializationReconciler:
                 initialization_actor=actor_user_id,
                 initialization_worker=self._worker_id,
             ):
-                await run_blocking(
-                    initialize_project_tree_sync,
-                    self._version_engine,
-                    project_id,
-                )
+                await run_blocking(self._version_engine.initialize_project_tree, project_id)
                 outcome = await run_blocking(
                     self._repository.complete_initialization,
                     project_id=project_id,

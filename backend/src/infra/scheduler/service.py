@@ -246,7 +246,7 @@ class SchedulerService:
             for agent in agents:
                 config = agent.get("config") or {}
                 trigger = config.get("trigger") or {}
-                await self.add_agent_job(
+                self.add_agent_job(
                     agent_id=agent["id"],
                     trigger_config=trigger.get("config") or trigger,
                     agent_name=config.get("name", "Unknown"),
@@ -257,7 +257,7 @@ class SchedulerService:
         except Exception as e:
             log_error(f"❌ Failed to load scheduled agents: {e}")
 
-    async def add_agent_job(
+    def add_agent_job(
         self, agent_id: str, trigger_config: dict, agent_name: str = ""
     ) -> Job | None:
         """
@@ -303,7 +303,7 @@ class SchedulerService:
 
     # ── Sync Trigger (unified API) ───────────────────────────
 
-    async def sync_trigger(
+    def sync_trigger(
         self,
         connection_id: str,
         provider: str = "",
@@ -338,6 +338,7 @@ class SchedulerService:
             log_warning(f"Invalid trigger config for {connection_id}: {trigger_config}")
             return None
 
+        # Coroutine job on the default AsyncIOExecutor: arq's client is async.
         job = self.scheduler.add_job(
             execute_sync_pull,
             trigger=trigger,
@@ -345,7 +346,6 @@ class SchedulerService:
             name=f"Sync: {provider} ({connection_id[:8]})",
             args=[connection_id],
             replace_existing=True,
-            executor="threadpool",
         )
 
         next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A"
@@ -365,7 +365,7 @@ class SchedulerService:
             log_info(f"Found {len(scheduled)} scheduled syncs to load")
 
             for sync_row in scheduled:
-                await self.sync_trigger(
+                self.sync_trigger(
                     connection_id=sync_row["id"],
                     provider=sync_row.get("provider", ""),
                     trigger_config=sync_row.get("trigger") or {},
