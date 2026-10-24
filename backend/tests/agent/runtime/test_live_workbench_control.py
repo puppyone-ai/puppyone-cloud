@@ -201,6 +201,7 @@ async def test_product_owner_single_flight_native_files_and_revocation(
 ):
     import asyncio
     import base64
+    import copy
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -240,6 +241,8 @@ async def test_product_owner_single_flight_native_files_and_revocation(
         def __init__(self, row, *, purpose="lifecycle"):
             assert row["binding"]["provider"] == "docker"
             self.row, self.purpose, self.runtime = row, purpose, provider
+            # The row this channel was admitted for, as WorkbenchHost records it.
+            self.admitted_row = copy.deepcopy(row)
             self.resource = row["resource"] or dict(
                 provider="docker",
                 resource_id="same-computer",
