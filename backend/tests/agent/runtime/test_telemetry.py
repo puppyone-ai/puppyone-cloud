@@ -48,6 +48,76 @@ def test_instrumentation_preserves_proxy_routes(monkeypatch):
         assert client._transport_for_url(httpx.URL("http://127.0.0.1:9000")).transport is local
 
 
+def test_supabase_rpc_uses_configured_timeout_on_actual_http_request(monkeypatch):
+    from src.infra.supabase.client import SupabaseClient
+
+    monkeypatch.setenv("SUPABASE_URL", "https://database.test")
+    monkeypatch.setenv("SUPABASE_KEY", "test-service-key")
+    monkeypatch.setattr(SupabaseClient, "_instance", None)
+    monkeypatch.setattr(SupabaseClient, "_client", None)
+    client = SupabaseClient().client.postgrest.session
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    client._transport.close()
+    client._transport = DatabaseTransport(httpx.MockTransport(respond))
+    try:
+        SupabaseClient().client.rpc("test_read", {}).execute()
+        assert requests[0].extensions["timeout"] == {
+            "connect": 60, "read": 60, "write": 60, "pool": 60,
+        }
+    finally:
+        client.close()
+
+
+def test_failed_database_request_is_observable_without_active_trace():
+    from loguru import logger
+
+    records = []
+    sink = logger.add(lambda message: records.append(message.record))
+
+    def fail(request):
+        raise httpx.ReadTimeout("private-body-secret", request=request)
+
+    try:
+        with (
+            httpx.Client(transport=DatabaseTransport(httpx.MockTransport(fail))) as client,
+            pytest.raises(httpx.ReadTimeout),
+        ):
+            client.post("https://db.test/rest/v1/rpc/reserve?token=private-query-secret",
+                        json={"data": "private-body-secret"})
+        record = next(r for r in records if r["message"] == "database_http_request_failed")
+        assert record["extra"]["operation"] == "POST rpc/reserve"
+        assert record["extra"]["error_type"] == "ReadTimeout"
+        assert record["extra"]["elapsed_ms"] >= 0
+        assert "private-" not in str(record)
+    finally:
+        logger.remove(sink)
+
+
+def test_database_rejection_logs_sqlstate_without_response_content():
+    from loguru import logger
+
+    records = []
+    sink = logger.add(lambda message: records.append(message.record))
+    try:
+        with httpx.Client(transport=DatabaseTransport(httpx.MockTransport(
+            lambda _: httpx.Response(500, json={
+                "code": "57014", "message": "private-database-detail",
+            }),
+        ))) as client:
+            assert client.post("https://db.test/rest/v1/rpc/reserve").status_code == 500
+        record = next(r for r in records if r["message"] == "database_http_response_failed")
+        assert record["extra"]["error_code"] == "57014"
+        assert record["extra"]["status_code"] == 500
+        assert "private-" not in str(record)
+    finally:
+        logger.remove(sink)
+
+
 @pytest.mark.asyncio
 async def test_streamed_api_telemetry_includes_late_database_calls(caplog):
     from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry

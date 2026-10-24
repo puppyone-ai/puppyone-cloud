@@ -4,6 +4,7 @@ Context is copied by asyncio.to_thread; the accumulator is shared and locked.
 No query strings, SQL bodies, tokens or user content enter measurements.
 """
 
+import re
 import threading
 import time
 from collections import Counter
@@ -12,6 +13,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 import httpx
+from loguru import logger
 
 _trace = ContextVar("database_trace", default=None)
 _stage = ContextVar("database_stage", default="control")
@@ -95,7 +97,7 @@ class DatabaseTransport(httpx.BaseTransport):
         traces = [trace for trace in (_trace.get(), self.aggregate) if trace is not None]
         if len(traces) == 2 and traces[0] is traces[1]:
             traces.pop()
-        if not traces or not request.url.path.startswith(self.path_prefix):
+        if not request.url.path.startswith(self.path_prefix):
             return self.transport.handle_request(request)
         operation = request.method + " " + request.url.path.removeprefix(self.path_prefix)
         for trace in traces:
@@ -105,7 +107,30 @@ class DatabaseTransport(httpx.BaseTransport):
             response = self.transport.handle_request(request)
             response.read()
             failed = response.status_code >= 400
+            if failed:
+                try:
+                    code = response.json().get("code")
+                except (ValueError, AttributeError):
+                    code = None
+                logger.bind(
+                    component="database", operation=operation,
+                    elapsed_ms=round((time.monotonic() - start) * 1000, 2),
+                    status_code=response.status_code,
+                    error_code=code if isinstance(code, str) and re.fullmatch(r"[A-Z0-9]{5,10}", code) else None,
+                ).error("database_http_response_failed")
             return response
+        except Exception as exc:
+            # Failed requests never reach HTTPX's response log. Preserve the
+            # operation and timing without credentials, query/body or arbitrary
+            # exception text (which may contain customer data).
+            logger.bind(
+                component="database",
+                operation=operation,
+                elapsed_ms=round((time.monotonic() - start) * 1000, 2),
+                error_type=type(exc).__name__,
+                timeout=request.extensions.get("timeout"),
+            ).error("database_http_request_failed")
+            raise
         finally:
             for trace in traces:
                 trace.end(time.monotonic() - start, failed)
