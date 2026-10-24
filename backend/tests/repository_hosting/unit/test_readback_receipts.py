@@ -29,15 +29,14 @@ def verifier(backend, **kwargs):
     return value
 
 
-@pytest.mark.asyncio
-async def test_real_readback_once_then_typed_closure_without_more_reads_or_lookups():
+def test_real_readback_once_then_typed_closure_without_more_reads_or_lookups():
     db = FencedDB()
     s3 = FencedS3(db)
     backend = S3StorageBackend(s3, "proj", supabase=db)
     root, objects = graph()
     facts = {oid: (decode_object(data)[0], len(decode_object(data)[1])) for oid, data in objects.items()}
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        await backend.async_put_prepared_stream(objects.items(), facts)
+        backend.put_prepared_stream_durable(objects.items(), facts)
         readbacks = len(s3.download_file_keys)
         check = verifier(backend)
         result = check.verify({root: "tree"})
@@ -58,9 +57,8 @@ async def test_real_readback_once_then_typed_closure_without_more_reads_or_looku
         assert check._readback_record(root, None) is None
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["readback", "index", "settle"])
-async def test_incomplete_write_never_promotes_evidence(failure):
+def test_incomplete_write_never_promotes_evidence(failure):
     class DB(FencedDB):
         def rpc(self, name, params):
             if (failure == "index" and name.startswith("register")) or (
@@ -78,18 +76,17 @@ async def test_incomplete_write_never_promotes_evidence(failure):
     oid, loose = encode_object("blob", b"hello")
     with publication_storage("proj", "actor", "pin", require_capacity=True):
         with pytest.raises(StorageWriteError):
-            await backend.async_put_prepared_stream([(oid, loose)], {oid: ("blob", 5)})
+            backend.put_prepared_stream_durable([(oid, loose)], {oid: ("blob", 5)})
         assert not publication_context.get().readbacks.records
 
 
-@pytest.mark.asyncio
-async def test_receipt_does_not_certify_missing_child_or_other_namespace():
+def test_receipt_does_not_certify_missing_child_or_other_namespace():
     db = FencedDB()
     backend = S3StorageBackend(FencedS3(db), "proj", supabase=db)
     root, objects = graph()
     loose = objects[root]
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        await backend.async_put_prepared_stream([(root, loose)], {root: ("tree", len(decode_object(loose)[1]))})
+        backend.put_prepared_stream_durable([(root, loose)], {root: ("tree", len(decode_object(loose)[1]))})
         read = Mock()
         read.get_durable.side_effect = KeyError("missing child")
         backend.durable_readback = lambda: read
@@ -100,14 +97,13 @@ async def test_receipt_does_not_certify_missing_child_or_other_namespace():
         assert verifier(backend)._readback_record(root, lambda *_: None) is None
 
 
-@pytest.mark.asyncio
-async def test_metadata_budget_uses_durable_fallback(monkeypatch):
+def test_metadata_budget_uses_durable_fallback(monkeypatch):
     monkeypatch.setattr(ReadbackReceipts, "MAX_BYTES", 0)
     db = FencedDB()
     backend = S3StorageBackend(FencedS3(db), "proj", supabase=db)
     oid, loose = encode_object("blob", b"hello")
     with publication_storage("proj", "actor", "pin", require_capacity=True):
-        await backend.async_put_prepared_stream([(oid, loose)], {oid: ("blob", 5)})
+        backend.put_prepared_stream_durable([(oid, loose)], {oid: ("blob", 5)})
         assert not publication_context.get().readbacks.records
         reader = SimpleNamespace(get_durable=Mock(return_value=loose))
         backend.durable_readback = lambda: reader

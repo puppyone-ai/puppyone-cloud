@@ -7,7 +7,7 @@ import pytest
 from src.version_engine.derived.repository_gc import RepositoryCollector
 from src.version_engine.domain.errors import ObjectNotFoundError, StorageWriteError
 from src.version_engine.infrastructure.supabase.capacity_repository import RepositoryCapacity
-from src.version_engine.storage.backends.s3 import S3StorageBackend, _run_async
+from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.storage.mutation_context import publication_storage
 from src.version_engine.write_engine.git_object_format import encode_object
 from tests.repository_hosting.unit.test_storage_mutation_context import NoIO
@@ -32,7 +32,7 @@ def test_capacity_denial_cannot_upload_or_fall_back(batch, message):
 
     backend = S3StorageBackend(NoIO(), 'project', supabase=SimpleNamespace(client=Client()))
     with publication_storage('project', 'actor', 'pin', require_capacity=True), pytest.raises(StorageWriteError, match=message):
-        _run_async(backend.async_put_many({oid: loose}) if batch else backend.async_put(oid, loose))
+        backend.put_objects({oid: loose}) if batch else backend._put(oid, loose)
 
 
 @pytest.mark.parametrize('value', [None, [], {}, {'new_objects': True, 'new_body_bytes': 6},
@@ -45,7 +45,7 @@ def test_malformed_capacity_ack_is_not_permission_to_put(value):
     backend = S3StorageBackend(NoIO(), 'project', supabase=SimpleNamespace(client=Client()))
     oid, loose = encode_object('blob', b'abcdef')
     with publication_storage('project', 'actor', 'pin', require_capacity=True), pytest.raises(StorageWriteError, match='invalid capacity'):
-        _run_async(backend.async_put(oid, loose))
+        backend._put(oid, loose)
 
 
 def test_capacity_reservation_precedes_loose_put_and_measures_decoded_body(monkeypatch):
@@ -70,20 +70,19 @@ def test_capacity_reservation_precedes_loose_put_and_measures_decoded_body(monke
 
     backend = S3StorageBackend(NoIO(), 'project', supabase=SimpleNamespace(client=Client()))
 
-    async def put(_key, data, **_kwargs):
+    def put(_key, data, **_kwargs):
         assert data == loose
         order.append('physical')
 
     monkeypatch.setattr(backend, '_do_put', put)
     with publication_storage('project', 'actor', 'pin', require_capacity=True):
-        _run_async(backend.async_put(oid, loose))
+        backend._put(oid, loose)
     assert order == ['reserve', 'physical', 'settle']
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize('batch', [False, True])
 @pytest.mark.parametrize('failure', [TimeoutError, asyncio.CancelledError])
-async def test_failed_or_cancelled_storage_does_not_settle_invocation(batch, failure, monkeypatch):
+def test_failed_or_cancelled_storage_does_not_settle_invocation(batch, failure, monkeypatch):
     calls = []
 
     class Client:
@@ -95,7 +94,7 @@ async def test_failed_or_cancelled_storage_does_not_settle_invocation(batch, fai
     def failed_upload(*_args, **_kwargs):
         raise failure('unknown physical outcome')
 
-    async def failed_put(*_args, **_kwargs):
+    def failed_put(*_args, **_kwargs):
         failed_upload()
 
     storage = SimpleNamespace(upload_file=failed_upload)
@@ -105,7 +104,7 @@ async def test_failed_or_cancelled_storage_does_not_settle_invocation(batch, fai
     objects = dict(encode_object('blob', body) for body in (b'aaa', b'bbb'))
     oid, loose = next(iter(objects.items()))
     with publication_storage('project', 'actor', 'pin', require_capacity=True), pytest.raises(failure):
-        await (backend.async_put_many(objects) if batch else backend.async_put(oid, loose))
+        (backend.put_objects(objects) if batch else backend._put(oid, loose))
     assert calls == ['reserve_version_object_capacity']
 
 

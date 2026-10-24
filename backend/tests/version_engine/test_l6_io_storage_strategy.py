@@ -202,8 +202,7 @@ def test_strategy_rejects_invalid_thresholds(kwargs: dict[str, int]) -> None:
         IOStorageStrategy(**kwargs)
 
 
-@pytest.mark.asyncio
-async def test_backend_single_large_write_uses_chunk_manifest_not_loose_key() -> None:
+def test_backend_single_large_write_uses_chunk_manifest_not_loose_key() -> None:
     object_id, loose = _synthetic_loose_blob(4096)
     s3 = _FakeS3(max_upload_bytes=2048)
     supabase = _FakeSupabase()
@@ -214,7 +213,7 @@ async def test_backend_single_large_write_uses_chunk_manifest_not_loose_key() ->
         io_strategy=_strategy(bundle_target_bytes=1024, chunk_bytes=512),
     )
 
-    await backend.async_put(object_id, loose)
+    backend._put(object_id, loose)
 
     location = supabase.rows[("proj", object_id)]
     assert location["pack_key"].startswith("chunked:")
@@ -252,7 +251,7 @@ def test_backend_sync_put_uses_io_strategy_for_large_objects() -> None:
 
 
 @pytest.mark.asyncio
-async def test_object_store_async_put_uses_backend_io_strategy(tmp_path) -> None:
+def test_object_store_put_uses_backend_io_strategy(tmp_path) -> None:
     rng = random.Random(2)
     content = bytes(rng.randrange(256) for _ in range(4096))
     s3 = _FakeS3(max_upload_bytes=2048)
@@ -265,16 +264,15 @@ async def test_object_store_async_put_uses_backend_io_strategy(tmp_path) -> None
     )
     store = ObjectStore(tmp_path / "objects", backend=backend)
 
-    object_id = await store.async_put(content)
+    object_id = store.put(content)
 
     location = supabase.rows[("proj", object_id)]
     assert location["pack_key"].startswith("chunked:")
     assert not any("/objects/" in key for key in s3.uploads)
-    assert await store.async_get(object_id) == content
+    assert store.get(object_id) == content
 
 
-@pytest.mark.asyncio
-async def test_backend_batch_mixes_bundle_and_chunked_layouts_under_one_plan() -> None:
+def test_backend_batch_mixes_bundle_and_chunked_layouts_under_one_plan() -> None:
     large_id, large_loose = _synthetic_loose_blob(4096, seed=1)
     small_id, small_loose = encode_object("blob", b"small\n")
     s3 = _FakeS3(max_upload_bytes=4096)
@@ -286,7 +284,7 @@ async def test_backend_batch_mixes_bundle_and_chunked_layouts_under_one_plan() -
         io_strategy=_strategy(bundle_target_bytes=1024, chunk_bytes=512),
     )
 
-    await backend.async_put_many({
+    backend.put_objects({
         large_id: large_loose,
         small_id: small_loose,
     }, skip_exists=True)
@@ -300,8 +298,7 @@ async def test_backend_batch_mixes_bundle_and_chunked_layouts_under_one_plan() -
     assert max(s3.upload_sizes) <= 4096
 
 
-@pytest.mark.asyncio
-async def test_backend_without_location_index_keeps_large_objects_loose() -> None:
+def test_backend_without_location_index_keeps_large_objects_loose() -> None:
     large_id, large_loose = _synthetic_loose_blob(4096)
     small_id, small_loose = encode_object("blob", b"small\n")
     s3 = _FakeS3()
@@ -312,7 +309,7 @@ async def test_backend_without_location_index_keeps_large_objects_loose() -> Non
         io_strategy=_strategy(bundle_target_bytes=1024, chunk_bytes=512),
     )
 
-    await backend.async_put_many({
+    backend.put_objects({
         large_id: large_loose,
         small_id: small_loose,
     }, skip_exists=True)
@@ -324,8 +321,7 @@ async def test_backend_without_location_index_keeps_large_objects_loose() -> Non
     assert backend.get(small_id) == small_loose
 
 
-@pytest.mark.asyncio
-async def test_backend_chunked_range_read_returns_logical_object_slice() -> None:
+def test_backend_chunked_range_read_returns_logical_object_slice() -> None:
     object_id, loose = _synthetic_loose_blob(4096)
     s3 = _FakeS3(max_upload_bytes=2048)
     supabase = _FakeSupabase()
@@ -335,10 +331,10 @@ async def test_backend_chunked_range_read_returns_logical_object_slice() -> None
         supabase=supabase,
         io_strategy=_strategy(bundle_target_bytes=1024, chunk_bytes=512),
     )
-    await backend.async_put(object_id, loose)
+    backend._put(object_id, loose)
 
     cold_backend = S3StorageBackend(s3, "proj", supabase=supabase)
-    logical_slice, total = await cold_backend.async_get_range(
+    logical_slice, total = cold_backend.get_range(
         object_id,
         start=333,
         limit=777,

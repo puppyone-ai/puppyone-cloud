@@ -241,8 +241,8 @@ def test_unknown_s3_delete_result_keeps_fence_instead_of_racing_next_writer(
     backend.put_durable(orphan, loose)
     original = s3.delete_file
 
-    async def lost_ack(key):
-        await original(key)
+    def lost_ack(key):
+        original(key)
         raise ConnectionError("lost DELETE acknowledgement")
 
     repo = VersionRepoManager(s3, db).get_gc_repo(auth.project)

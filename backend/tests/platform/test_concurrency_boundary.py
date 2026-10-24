@@ -56,11 +56,6 @@ _ENTRY_POINTS = {
     "platform/access/adapters/ssh/gateway.py",
     "platform/access/adapters/agent/runtime/worker.py",
 }
-# Removed by the Version Engine storage slice of this change.
-_PENDING_REMOVAL = {
-    "version_engine/storage/backends/s3.py",
-    "version_engine/derived/object_integrity_worker.py",
-}
 _LOOP_CALLS = {
     "run",  # asyncio.run
     "new_event_loop",
@@ -104,8 +99,6 @@ def test_event_loops_are_created_only_in_process_entry_points():
     for path, tree in _python_files():
         relative = path.relative_to(SOURCE).as_posix()
         found = [f"{relative}:{line} {call}" for line, call in _loop_creation(tree)]
-        if relative in _PENDING_REMOVAL:
-            continue
         if relative in _ENTRY_POINTS:
             entry_point_violations.extend(found)
         else:
@@ -114,12 +107,3 @@ def test_event_loops_are_created_only_in_process_entry_points():
     assert entry_point_violations == [], "entry points create loops only in main():\n" + "\n".join(
         entry_point_violations
     )
-
-
-def test_pending_loop_creation_list_only_shrinks():
-    still_creating = {
-        relative
-        for relative in _PENDING_REMOVAL
-        if list(_loop_creation(ast.parse((SOURCE / relative).read_text(encoding="utf-8"))))
-    }
-    assert still_creating == _PENDING_REMOVAL, "remove fixed modules from _PENDING_REMOVAL"

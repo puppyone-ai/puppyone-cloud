@@ -1,12 +1,15 @@
 """Ingestion bounds and ownership tested with blocked, failed and cancelled I/O."""
 
-import asyncio
+import contextvars
 import threading
+import time
 from dataclasses import replace
 
 import pytest
 
+from src.infra.execution.context import Execution, checkpoint, current_execution
 from src.version_engine.storage.io_budget import operation_io_budget, physical_io_credit
+from src.version_engine.storage.io_pool import parallel_each
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.storage.mutation_context import publication_context, publication_storage
 from src.version_engine.storage.object_stream import object_batches, write_object_stream
@@ -67,10 +70,26 @@ def test_invalid_resource_profiles_fail_before_any_work(kwargs):
         replace(IOStorageStrategy(), **kwargs)
 
 
-@pytest.mark.asyncio
-async def test_backpressure_stops_producer_and_preserves_publication_context():
-    release, full = asyncio.Event(), asyncio.Event()
+def _run_in_thread(function):
+    """Run a storage call on its own thread; return (thread, outcome dict)."""
+    outcome = {}
+
+    def target():
+        try:
+            outcome["result"] = function()
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    # Like a task, the storage call runs in a copy of the caller's context.
+    thread = threading.Thread(target=contextvars.copy_context().run, args=(target,), daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+def test_backpressure_stops_producer_and_preserves_publication_context():
+    release, full = threading.Event(), threading.Event()
     produced, running, completed = [], set(), []
+    lock = threading.Lock()
 
     def source():
         assert publication_context.get().pin_id == "pin"
@@ -78,50 +97,55 @@ async def test_backpressure_stops_producer_and_preserves_publication_context():
             produced.append(n)
             yield str(n), b"x" * 10
 
-    async def write(batch):
-        assert publication_context.get().pin_id == "pin"
-        running.update(batch)
-        if len(running) == 2:
-            full.set()
-        await release.wait()
-        running.difference_update(batch)
-        completed.extend(batch)
+    def write(batch):
+        assert publication_context.get().pin_id == "pin"  # copied into the worker
+        with lock:
+            running.update(batch)
+            if len(running) == 2:
+                full.set()
+        assert release.wait(3)
+        with lock:
+            running.difference_update(batch)
+            completed.extend(batch)
 
     with publication_storage("project", "actor", "pin"):
-        task = asyncio.create_task(
-            write_object_stream(source(), policy(write_concurrency=2), write)
+        thread, outcome = _run_in_thread(
+            lambda: write_object_stream(source(), policy(write_concurrency=2), write)
         )
-        await asyncio.wait_for(full.wait(), 2)
-        assert produced == [0, 1]  # no eager input list or tasks waiting on a semaphore
+        assert full.wait(2)
+        assert produced == [0, 1]  # no eager input list or queued writes
         release.set()
-        await task
+        thread.join(5)
+    assert "error" not in outcome
     assert len(completed) == 30 and not running
 
 
-@pytest.mark.asyncio
-async def test_byte_credit_runs_an_oversized_object_exclusively():
+def test_byte_credit_runs_an_oversized_object_exclusively():
     running_bytes = 0
     seen = []
+    lock = threading.Lock()
 
-    async def write(batch):
+    def write(batch):
         nonlocal running_bytes
         size = sum(map(len, batch.values()))
-        running_bytes += size
-        seen.append(running_bytes)
-        assert running_bytes <= 20 or (size == 25 and running_bytes == 25)
-        await asyncio.sleep(0.005)
-        running_bytes -= size
+        with lock:
+            running_bytes += size
+            seen.append(running_bytes)
+            assert running_bytes <= 20 or (size == 25 and running_bytes == 25)
+        time.sleep(0.005)
+        with lock:
+            running_bytes -= size
 
     source = ((str(n), b"x" * size) for n, size in enumerate([10, 10, 25, 10, 10]))
-    await write_object_stream(source, policy(), write)
+    write_object_stream(source, policy(), write)
     assert 25 in seen and running_bytes == 0
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_kind", ["failure", "cancel", "producer"])
-async def test_every_exit_joins_started_workers_before_return(exit_kind):
-    release, started = asyncio.Event(), asyncio.Event()
+def test_every_exit_joins_started_workers_before_return(exit_kind):
+    release, started = threading.Event(), threading.Event()
     finished = []
+    execution = Execution()
 
     def source():
         yield "slow", b"x" * 10
@@ -129,32 +153,38 @@ async def test_every_exit_joins_started_workers_before_return(exit_kind):
             raise ValueError("producer failed")
         yield "bad", b"x" * 10
 
-    async def write(batch):
+    def write(batch):
         if "bad" in batch and exit_kind == "failure":
-            await started.wait()
+            assert started.wait(2)
             raise ValueError("upload failed")
         started.set()
-        await release.wait()
+        assert release.wait(3)
         finished.extend(batch)
 
-    task = asyncio.create_task(write_object_stream(source(), policy(write_concurrency=2), write))
-    await asyncio.wait_for(started.wait(), 2)
+    def run():
+        token = current_execution.set(execution)
+        try:
+            write_object_stream(source(), policy(write_concurrency=2), write)
+        finally:
+            current_execution.reset(token)
+
+    thread, outcome = _run_in_thread(run)
+    assert started.wait(2)
     if exit_kind == "cancel":
-        task.cancel()
-        await asyncio.sleep(0)
-        task.cancel()  # cancellation during the drain must not detach workers
-    await asyncio.sleep(0.03)
-    assert not task.done()
+        execution.cancelled.set()  # cooperative: a started worker cannot be killed
+    time.sleep(0.03)
+    assert thread.is_alive()
     release.set()
-    with pytest.raises(asyncio.CancelledError if exit_kind == "cancel" else ValueError):
-        await task
+    thread.join(5)
+    expected = RuntimeError if exit_kind == "cancel" else ValueError
+    assert isinstance(outcome.get("error"), expected)
     assert "slow" in finished
 
 
-@pytest.mark.asyncio
-async def test_cancel_waits_for_the_producer_thread_before_closing_its_spool():
+def test_cancel_waits_for_the_producer_before_closing_its_spool():
     release, started = threading.Event(), threading.Event()
     finished = threading.Event()
+    execution = Execution()
 
     def source():
         started.set()
@@ -162,39 +192,63 @@ async def test_cancel_waits_for_the_producer_thread_before_closing_its_spool():
         finished.set()
         yield "object", b"x"
 
-    async def forbidden(_batch):
+    def forbidden(_batch):
         pytest.fail("cancelled producer scheduled a new upload")
 
-    task = asyncio.create_task(write_object_stream(source(), policy(), forbidden))
-    assert await asyncio.to_thread(started.wait, 2)
-    task.cancel()
-    await asyncio.sleep(0.02)
-    assert not task.done()
+    def run():
+        token = current_execution.set(execution)
+        try:
+            write_object_stream(source(), policy(), forbidden, progress=checkpoint)
+        finally:
+            current_execution.reset(token)
+
+    thread, outcome = _run_in_thread(run)
+    assert started.wait(2)
+    execution.cancelled.set()
+    time.sleep(0.02)
+    assert thread.is_alive()
     release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    thread.join(5)
+    assert isinstance(outcome.get("error"), RuntimeError)
     assert finished.is_set()
 
 
-@pytest.mark.asyncio
-async def test_physical_credits_bound_nested_fanout_across_operations():
+def test_physical_credits_bound_nested_fanout_across_operations():
     active = peak = 0
     local = [0] * 4
+    lock = threading.Lock()
 
-    async def request(operation):
+    def request(operation):
         nonlocal active, peak
-        async with physical_io_credit():
-            active += 1
-            local[operation] += 1
-            peak = max(peak, active)
-            assert local[operation] <= 3 and active <= 8
-            await asyncio.sleep(0.005)
-            local[operation] -= 1
-            active -= 1
+        with physical_io_credit():
+            with lock:
+                active += 1
+                local[operation] += 1
+                peak = max(peak, active)
+                assert local[operation] <= 3 and active <= 8
+            time.sleep(0.005)
+            with lock:
+                local[operation] -= 1
+                active -= 1
 
-    async def operation(n):
+    def operation(n):
         with operation_io_budget(3):
-            await asyncio.gather(*(request(n) for _ in range(20)))
+            parallel_each(lambda _: request(n), range(20), concurrency=20)
 
-    await asyncio.gather(*(operation(n) for n in range(4)))
+    threads = [threading.Thread(target=operation, args=(n,)) for n in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
     assert peak == 8 and active == 0
+
+
+def test_nested_parallel_fanout_never_waits_for_unstarted_helpers():
+    # Saturate the pool with outer items whose own fan-out must still finish.
+    outer = range(32)
+    results = parallel_each(
+        lambda n: sum(parallel_each(lambda m: m, range(10), concurrency=10)) + n,
+        outer,
+        concurrency=32,
+    )
+    assert results == [45 + n for n in outer]

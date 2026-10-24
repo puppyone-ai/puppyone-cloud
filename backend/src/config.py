@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     EVENT_LOOP_LAG_WARN_MS: int = Field(default=250, ge=0)
     # Bounded process-wide pool for Version Engine object fan-out (parallel S3
     # reads/writes inside one storage call). Never borrows request threads.
-    VERSION_STORAGE_IO_THREADS: int = Field(default=8, gt=0, le=64)
+    VERSION_STORAGE_IO_THREADS: int = Field(default=16, gt=0, le=64)
 
     # Local storage configuration, mostly using Supabase now
     DATA_PATH: Path = Path("./data")

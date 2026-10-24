@@ -257,7 +257,7 @@
         "NativeTreeReader.get_path_timestamps::self.get_head_commit_id": 1
       },
       "version_engine/storage/backends/s3.py": {
-        "S3StorageBackend.put_git_pack_durable.persist::pack.path.stat": 2
+        "S3StorageBackend.put_git_pack_durable::pack.path.stat": 2
       },
       "version_engine/storage/git_pack.py": {
         "GitPack._read::self.path.stat": 2

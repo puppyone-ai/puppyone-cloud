@@ -19,7 +19,7 @@ The race lives inside ``S3StorageBackend.exists_many``:
      or any other transient — even though the row exists on the
      primary. The bulk query itself succeeded so the code marked
      ``location_lookup_completed = True``.
-  4. The fallback ``async_exists_many`` was then called with
+  4. The fallback ``_exists_many_physical`` was then called with
      ``check_packed_locations=False`` — only checks
      ``s3.file_exists(loose_key)``, which returns False because the
      bundle path doesn't materialize loose keys.
@@ -27,7 +27,7 @@ The race lives inside ``S3StorageBackend.exists_many``:
      reports the tree invalid → view health = ``current_corrupt``.
 
 The fix forces ``check_packed_locations=True`` on the fallback. The
-per-hash ``async_exists`` then retries the location lookup (with both
+per-hash ``exists`` then retries the location lookup (with both
 an early and a late retry inside), catching the row the bulk query
 missed.
 """
@@ -191,7 +191,7 @@ class TestBundledExistsRace:
     ):
         """In-memory _location_cache hit short-circuits Supabase entirely."""
         h = "b" * 40
-        # Pre-populate the per-process cache as _async_put_bundle would.
+        # Pre-populate the per-process cache as _put_bundle would.
         backend._location_cache[h] = ObjectLocation(
             pack_key="version/test-proj/object-bundles/y",
             offset_bytes=0,
@@ -213,7 +213,7 @@ class TestBundledExistsRace:
         BEFORE the fix this returned an incomplete set → tree validator
         marked the tree invalid → view = current_corrupt.
 
-        AFTER the fix the per-hash retry hits async_exists which
+        AFTER the fix the per-hash retry hits exists which
         re-runs ``_lookup_object_location``, finds the row, returns
         True. The exists_many response is complete.
         """
@@ -267,7 +267,7 @@ class TestBundledExistsRace:
         Before the fix the fallback ran ``s3.file_exists(loose_key)``
         for bundled objects — always False, so a Supabase miss became
         a hard ``object missing`` answer. After the fix the fallback
-        re-runs ``async_exists`` which calls
+        re-runs ``exists`` which calls
         ``_lookup_object_location`` again.
         """
         h = "f" * 40

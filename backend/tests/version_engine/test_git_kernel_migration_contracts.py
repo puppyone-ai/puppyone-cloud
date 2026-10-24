@@ -214,8 +214,7 @@ def _git_rev_list_objects(git_dir: Path, root: str, *, exclude: str = "") -> set
     return {line.split(maxsplit=1)[0].decode("ascii") for line in out.splitlines() if line}
 
 
-@pytest.mark.asyncio
-async def test_object_batch_writes_one_bundle_with_location_index() -> None:
+def test_object_batch_writes_one_bundle_with_location_index() -> None:
     blob_id, blob_loose = encode_object("blob", b"hello\n")
     tree_id, tree_loose = encode_object("tree", encode_tree([]))
     commit_id, commit_loose = encode_object(
@@ -309,7 +308,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     supabase = _FakeSupabase()
     backend = S3StorageBackend(s3, "proj", supabase=supabase)
 
-    await backend.async_put_many(
+    backend.put_objects(
         {
             blob_id: blob_loose,
             tree_id: tree_loose,
@@ -336,7 +335,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     assert cold_backend.get(blob_id) == blob_loose
     assert cold_backend.get(tree_id) == tree_loose
     assert cold_backend.get(commit_id) == commit_loose
-    blob_slice, blob_total = await cold_backend.async_get_range(blob_id, start=1, limit=6)
+    blob_slice, blob_total = cold_backend.get_range(blob_id, start=1, limit=6)
     assert blob_total == len(blob_loose)
     assert blob_slice == blob_loose[1:7]
     assert s3.download_file_keys == []
@@ -356,8 +355,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
     assert s3.file_exists_keys == []
 
 
-@pytest.mark.asyncio
-async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> None:
+def test_object_batch_chunks_large_objects_below_storage_object_cap() -> None:
     rng = random.Random(0)
     large_id, large_loose = encode_object(
         "blob",
@@ -452,7 +450,7 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
         ),
     )
 
-    await backend.async_put_many(
+    backend.put_objects(
         {
             large_id: large_loose,
             small_id: small_loose,
@@ -470,7 +468,7 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
     cold_backend = S3StorageBackend(s3, "proj", supabase=supabase)
     assert cold_backend.get(large_id) == large_loose
     assert cold_backend.get(small_id) == small_loose
-    large_slice, large_total = await cold_backend.async_get_range(large_id, 10, 25)
+    large_slice, large_total = cold_backend.get_range(large_id, 10, 25)
     assert large_total == len(large_loose)
     assert large_slice == large_loose[10:35]
 
