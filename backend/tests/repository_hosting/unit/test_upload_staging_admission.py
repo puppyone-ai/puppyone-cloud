@@ -28,7 +28,7 @@ class Storage:
         self.calls.append(("head", kwargs["Key"]))
         return {"ContentLength": self.size}
 
-    async def download_file_stream(self, key, chunk_size):
+    def download_file_stream(self, key, chunk_size):
         self.calls.append(("get", key))
         assert chunk_size == 1024**2
         try:
@@ -39,7 +39,7 @@ class Storage:
         finally:
             self.closed = True
 
-    async def upload_file(self, *_args, **_kwargs):
+    def upload_file(self, *_args, **_kwargs):
         pytest.fail("staging wrote canonical storage before publication")
 
 

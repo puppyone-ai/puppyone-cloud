@@ -67,14 +67,14 @@ class FencedS3(_FakeS3):
     def for_single_attempt_io(self):
         return self
 
-    async def upload_file(self, key, content, **kwargs):
+    def upload_file(self, key, content, **kwargs):
         assert self.db.reservations  # admission precedes all physical writes
         assert publication_context.get().pin_id == "pin"
         self.active += 1
         self.peak = max(self.peak, self.active)
         try:
-            await asyncio.sleep(0.002)
-            return await super().upload_file(key, content, **kwargs)
+            time.sleep(0.002)
+            return super().upload_file(key, content, **kwargs)
         finally:
             self.active -= 1
 
@@ -123,8 +123,8 @@ async def test_failed_readback_never_registers_or_settles_the_batch():
     db = FencedDB()
 
     class CorruptS3(FencedS3):
-        async def download_file(self, key):
-            return (await super().download_file(key)) + b"corruption"
+        def download_file(self, key):
+            return (super().download_file(key)) + b"corruption"
 
     s3 = CorruptS3(db)
     backend = S3StorageBackend(s3, "proj", supabase=db)
@@ -138,16 +138,16 @@ async def test_failed_readback_never_registers_or_settles_the_batch():
 
 @pytest.mark.asyncio
 async def test_readback_failure_joins_other_chunk_reads_before_releasing_owner():
-    started, release = asyncio.Event(), asyncio.Event()
+    started, release = threading.Event(), threading.Event()
     finished = []
 
     class S3:
-        async def download_file(self, key):
+        def download_file(self, key):
             if key == "bad":
-                await started.wait()
+                assert started.wait(2)
                 return b"bad"
             started.set()
-            await release.wait()
+            assert release.wait(3)
             finished.append(key)
             return b"expected"
 
@@ -160,7 +160,7 @@ async def test_readback_failure_joins_other_chunk_reads_before_releasing_owner()
             ]
         )
     )
-    await asyncio.wait_for(started.wait(), 2)
+    assert await asyncio.to_thread(started.wait, 2)
     await asyncio.sleep(0.02)
     assert not task.done()
     release.set()

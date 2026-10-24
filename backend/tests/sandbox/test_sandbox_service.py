@@ -427,9 +427,9 @@ async def test_parallel_download():
     from src.platform.workspace.execution.file_utils import download_files_parallel
     
     # 创建模拟 S3 服务
-    mock_s3 = AsyncMock()
-    mock_s3.download_file = AsyncMock(return_value=b"test content")
-    mock_s3.get_file_metadata = AsyncMock(return_value=MagicMock(size=100))
+    mock_s3 = MagicMock()
+    mock_s3.download_file = MagicMock(return_value=b"test content")
+    mock_s3.get_file_metadata = MagicMock(return_value=MagicMock(size=100))
     
     files = [
         {"path": "/workspace/file1.txt", "s3_key": "key1"},
@@ -457,9 +457,9 @@ async def test_prepare_files_for_sandbox():
     from src.platform.workspace.execution.file_utils import prepare_files_for_sandbox
     
     # 创建模拟 S3 服务
-    mock_s3 = AsyncMock()
-    mock_s3.download_file = AsyncMock(return_value=b"downloaded content")
-    mock_s3.get_file_metadata = AsyncMock(return_value=MagicMock(size=100))
+    mock_s3 = MagicMock()
+    mock_s3.download_file = MagicMock(return_value=b"downloaded content")
+    mock_s3.get_file_metadata = MagicMock(return_value=MagicMock(size=100))
     
     files = [
         {"path": "/workspace/file1.txt", "content": "local content"},
@@ -485,12 +485,12 @@ async def test_parallel_download_with_failures():
     from src.platform.workspace.execution.file_utils import prepare_files_for_sandbox
     
     # 创建模拟 S3 服务，第二个文件下载失败
-    mock_s3 = AsyncMock()
-    mock_s3.download_file = AsyncMock(side_effect=[
+    mock_s3 = MagicMock()
+    mock_s3.download_file = MagicMock(side_effect=[
         b"success content",
         Exception("S3 download failed"),
     ])
-    mock_s3.get_file_metadata = AsyncMock(return_value=MagicMock(size=100))
+    mock_s3.get_file_metadata = MagicMock(return_value=MagicMock(size=100))
     
     files = [
         {"path": "/workspace/file1.txt", "s3_key": "key1"},

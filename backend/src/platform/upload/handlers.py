@@ -450,7 +450,7 @@ async def _upload_to_s3(
 
     original_filename_b64 = base64.b64encode(original_filename.encode("utf-8")).decode("ascii")
 
-    await s3_service.upload_file(
+    await run_blocking(s3_service.upload_file,
         key=s3_key,
         content=content,
         content_type=content_type,
@@ -871,7 +871,7 @@ async def init_multipart_upload(
                 "original_filename_b64": original_filename_b64,
             }
             if f.size == 0:
-                await s3_service.upload_file(
+                await run_blocking(s3_service.upload_file,
                     key=s3_key,
                     content=b"",
                     content_type=f.content_type,
@@ -879,7 +879,7 @@ async def init_multipart_upload(
                 )
                 upload_id = ""
             else:
-                upload_id = await s3_service.create_multipart_upload(
+                upload_id = await run_blocking(s3_service.create_multipart_upload,
                     key=s3_key,
                     content_type=f.content_type,
                     metadata=s3_metadata,
@@ -929,7 +929,7 @@ async def init_multipart_upload(
                 )
                 try:
                     if upload_id:
-                        await s3_service.abort_multipart_upload(s3_key, upload_id)
+                        await run_blocking(s3_service.abort_multipart_upload, s3_key, upload_id)
                 except Exception as abort_err:
                     logger.warning(
                         f"Failed to abort orphaned multipart upload {s3_key}: {abort_err}"
@@ -984,7 +984,7 @@ async def init_multipart_upload(
                 return
             try:
                 if r.upload_id:
-                    await s3_service.abort_multipart_upload(r.s3_key, r.upload_id)
+                    await run_blocking(s3_service.abort_multipart_upload, r.s3_key, r.upload_id)
             except Exception as abort_err:
                 logger.warning(
                     f"Failed to abort multipart upload after init "
@@ -1118,7 +1118,7 @@ async def upload_part(
     _validate_part_body_shape(task.metadata, part_number, len(body))
 
     try:
-        etag = await s3_service.upload_part(
+        etag = await run_blocking(s3_service.upload_part,
             key=s3_key,
             upload_id=upload_id,
             part_number=part_number,
@@ -1207,7 +1207,7 @@ async def complete_upload(
         )
     else:
         try:
-            await s3_service.complete_multipart_upload(request.s3_key, request.upload_id, parts)
+            await run_blocking(s3_service.complete_multipart_upload, request.s3_key, request.upload_id, parts)
         except Exception as e:
             logger.error(
                 f"complete_multipart_upload failed for task {request.task_id}: {e}",
@@ -1217,7 +1217,7 @@ async def complete_upload(
             # multipart upload on the bucket.
             try:
                 if request.upload_id:
-                    await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
+                    await run_blocking(s3_service.abort_multipart_upload, request.s3_key, request.upload_id)
             except Exception:
                 pass
             task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1241,7 +1241,7 @@ async def complete_upload(
     # Mismatch is non-fatal but worth logging — could indicate a
     # client that lied about the file size or a part ETag mismatch.
     try:
-        meta = await s3_service.get_file_metadata(request.s3_key)
+        meta = await run_blocking(s3_service.get_file_metadata, request.s3_key)
         if expected_size is not None and meta.size != expected_size:
             message = f"Declared size {expected_size} differs from S3 size {meta.size}"
             logger.warning(f"Task {request.task_id}: {message}")
@@ -1461,7 +1461,7 @@ async def complete_upload_batch(
             )
         else:
             try:
-                await s3_service.complete_multipart_upload(item.s3_key, item.upload_id, parts)
+                await run_blocking(s3_service.complete_multipart_upload, item.s3_key, item.upload_id, parts)
             except Exception as e:
                 logger.error(
                     f"complete_multipart_upload failed for task {item.task_id}: {e}",
@@ -1469,7 +1469,7 @@ async def complete_upload_batch(
                 )
                 try:
                     if item.upload_id:
-                        await s3_service.abort_multipart_upload(item.s3_key, item.upload_id)
+                        await run_blocking(s3_service.abort_multipart_upload, item.s3_key, item.upload_id)
                 except Exception:
                     pass
                 task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1486,7 +1486,7 @@ async def complete_upload_batch(
         # the single-file endpoint). Failure here just logs — we don't
         # block the upload on a missing HEAD.
         try:
-            meta = await s3_service.get_file_metadata(item.s3_key)
+            meta = await run_blocking(s3_service.get_file_metadata, item.s3_key)
             if expected_size is not None and meta.size != expected_size:
                 message = f"Declared size {expected_size} differs from S3 size {meta.size}"
                 logger.warning(f"Task {item.task_id}: {message}")
@@ -1635,7 +1635,7 @@ async def abort_upload(
 
     if request.upload_id:
         try:
-            await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
+            await run_blocking(s3_service.abort_multipart_upload, request.s3_key, request.upload_id)
         except Exception as e:
             # The most common reason this fails is "already aborted/
             # completed", which is fine — we still want to flag the task

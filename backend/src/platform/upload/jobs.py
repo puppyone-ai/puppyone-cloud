@@ -33,7 +33,7 @@ from src.platform.upload.state.models import ETLPhase, ETLRuntimeState
 from src.platform.upload.state.repository import ETLStateRepositoryRedis
 from src.platform.upload.tasks.models import ETLTaskResult, ETLTaskStatus
 from src.file_operations.operation_adapter import BlobRef
-from src.infra.execution.runner import run_blocking
+from src.infra.execution.runner import iterate_blocking, run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ async def stage_blob_from_s3(
     if size > 64 * 1024**2:
         raise S3OperationError("upload exceeds native object body limit")
     parts, received = [], 0
-    stream = s3.download_file_stream(src_key, chunk_size=1024**2)
+    stream = iterate_blocking(s3.download_file_stream(src_key, chunk_size=1024**2))
     try:
         async for part in stream:
             received += len(part)
@@ -208,7 +208,7 @@ async def etl_ocr_job(ctx: dict, task_id: str | int) -> dict:
         else:
             source_key = f"users/{_creator_id(task)}/raw/{task.project_id}/{task.filename}"
 
-        presigned_url = await s3.generate_presigned_download_url(source_key, expires_in=3600)
+        presigned_url = await run_blocking(s3.generate_presigned_download_url, source_key, expires_in=3600)
 
         async def persist_provider_handle(
             provider_job: OCRExternalJob,
@@ -284,7 +284,7 @@ async def etl_ocr_job(ctx: dict, task_id: str | int) -> dict:
         if _reload_task_before_project_storage_write(repo, task_id, task) is None:
             return {"ok": True, "skipped": "task_not_live"}
         md_key = _artifact_markdown_key(task_id, _creator_id(task), task.project_id)
-        await s3.upload_file(
+        await run_blocking(s3.upload_file,
             key=md_key,
             content=parsed.markdown_content.encode("utf-8"),
             content_type="text/markdown",
@@ -919,7 +919,7 @@ async def etl_postprocess_job(ctx: dict, task_id: str | int) -> dict:
         if not md_key:
             raise RuntimeError("Missing markdown artifact key for postprocess")
 
-        markdown_bytes = await s3.download_file(md_key)
+        markdown_bytes = await run_blocking(s3.download_file, md_key)
         markdown = markdown_bytes.decode("utf-8")
 
         # Load rule (per-user)
@@ -991,7 +991,7 @@ async def etl_postprocess_job(ctx: dict, task_id: str | int) -> dict:
         output_json = json.dumps(output_obj, indent=2, ensure_ascii=False).encode("utf-8")
         if _reload_task_before_project_storage_write(repo, task_id, task) is None:
             return {"ok": True, "skipped": "task_not_live"}
-        await s3.upload_file(
+        await run_blocking(s3.upload_file,
             key=output_key,
             content=output_json,
             content_type="application/json",

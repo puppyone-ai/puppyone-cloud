@@ -19,6 +19,7 @@ from src.platform.workspace.cache import CacheManager
 from src.platform.workspace.paths import content_child
 from src.utils.logger import log_error, log_info
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.infra.execution.runner import run_blocking
 
 
 def _extract_file_ref(data: bytes) -> str | None:
@@ -99,7 +100,7 @@ class SyncWorker:
 
                 if s3:
                     try:
-                        data = await s3.download_file(s3_key)
+                        data = await run_blocking(s3.download_file, s3_key)
                         binary_count += 1
                     except Exception as e:
                         log_error(f"[SyncWorker] S3 download failed for {entry.path} ({s3_key}): {e}")

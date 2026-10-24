@@ -34,21 +34,21 @@ class FakeS3:
         self.objects: dict[str, bytes] = {}
         self.deleted: list[str] = []
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         if key not in self.objects:
             raise RuntimeError(f"not found: {key}")
         return self.objects[key]
 
-    async def delete_file(self, key: str) -> None:
+    def delete_file(self, key: str) -> None:
         if key not in self.objects:
             raise RuntimeError(f"not found: {key}")
         del self.objects[key]
         self.deleted.append(key)
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         return key in self.objects
 
-    async def list_files(self, prefix="", max_keys=1000, continuation_token=None):
+    def list_files(self, prefix="", max_keys=1000, continuation_token=None):
         items = [
             SimpleNamespace(key=key, size=len(data), last_modified="2026-01-01T00:00:00+00:00")
             for key, data in self.objects.items()

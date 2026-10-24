@@ -28,7 +28,7 @@ class _StubS3:
         self.delete_calls: list[str] = []
         self.bucket_name = "test-bucket"
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         self.download_calls.append(key)
         if key not in self.bytes_by_key:
             # Match the production not-found detection (see
@@ -41,17 +41,17 @@ class _StubS3:
             raise S3FileNotFoundError(key)
         return self.bytes_by_key[key]
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         return key in self.bytes_by_key
 
-    async def delete_file(self, key: str) -> None:
+    def delete_file(self, key: str) -> None:
         self.delete_calls.append(key)
         self.bytes_by_key.pop(key, None)
 
-    async def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
+    def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
         self.bytes_by_key[key] = data
 
-    async def list_files(
+    def list_files(
         self,
         prefix: str = "",
         max_keys: int = 1000,

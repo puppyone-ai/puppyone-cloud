@@ -52,9 +52,9 @@ def test_rejected_new_bundle_cannot_break_previously_acknowledged_objects(
             uploaded.append(key)
             # Actual owned S3 loss/corruption, before index mutation.
             if fault == "missing":
-                await s3.delete_file(key)
+                s3.delete_file(key)
             else:
-                await s3.upload_file(key, body[:-1] + bytes([body[-1] ^ 1]), content_type=mime)
+                s3.upload_file(key, body[:-1] + bytes([body[-1] ^ 1]), content_type=mime)
 
     def prepare_fault():
         with backend.stage_object_writes() as batch:

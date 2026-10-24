@@ -231,17 +231,17 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
             self.download_range_keys: list[str] = []
             self.file_exists_keys: list[str] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.uploads[key] = content
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             self.download_file_keys.append(key)
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             self.download_range_keys.append(key)
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
@@ -249,7 +249,7 @@ async def test_object_batch_writes_one_bundle_with_location_index() -> None:
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             self.file_exists_keys.append(key)
             return key in self.uploads
 
@@ -370,26 +370,26 @@ async def test_object_batch_chunks_large_objects_below_storage_object_cap() -> N
             self.uploads: dict[str, bytes] = {}
             self.upload_sizes: list[int] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.upload_sizes.append(len(content))
             if len(content) > 4096:
                 raise AssertionError(f"physical S3 object too large: {len(content)}")
             self.uploads[key] = content
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             content = self.uploads[key]
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             return key in self.uploads
 
     class _FakeTable:
@@ -485,24 +485,24 @@ def test_s3_backend_only_reads_and_writes_canonical_namespace() -> None:
             self.uploads: dict[str, bytes] = {deferred_key: loose}
             self.uploaded_keys: list[str] = []
 
-        async def upload_file(self, key, content, content_type=None, metadata=None):
+        def upload_file(self, key, content, content_type=None, metadata=None):
             self.uploads[key] = content
             self.uploaded_keys.append(key)
             return SimpleNamespace(key=key)
 
-        async def download_file(self, key):
+        def download_file(self, key):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             return self.uploads[key]
 
-        async def download_file_range(self, key, start=0, limit=None):
+        def download_file_range(self, key, start=0, limit=None):
             if key not in self.uploads:
                 raise FileNotFoundError("not found")
             content = self.uploads[key]
             end = len(content) if limit is None else min(len(content), start + limit)
             return content[start:end], len(content)
 
-        async def file_exists(self, key):
+        def file_exists(self, key):
             return key in self.uploads
 
     s3 = _FakeS3()
@@ -608,7 +608,7 @@ async def test_upload_staging_keeps_private_bytes_until_admitted_publication(
             self.client = _Client()
             self.uploads: dict[str, bytes] = {}
 
-        async def download_file_stream(self, key: str, chunk_size: int):
+        def download_file_stream(self, key: str, chunk_size: int):
             from src.infra.s3.exceptions import S3FileNotFoundError
 
             if key == source_key:
@@ -619,10 +619,10 @@ async def test_upload_staging_keeps_private_bytes_until_admitted_publication(
             else:
                 raise S3FileNotFoundError(key)
 
-        async def object_exists(self, key: str) -> bool:
+        def object_exists(self, key: str) -> bool:
             return key in self.uploads
 
-        async def upload_file(self, key: str, content: bytes, content_type: str | None = None):
+        def upload_file(self, key: str, content: bytes, content_type: str | None = None):
             assert content_type == "application/octet-stream"
             self.uploads[key] = content
 
@@ -668,7 +668,7 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
             # CopyObject finalize would have left behind.
             self.uploads: dict[str, bytes] = {dst_key: raw}
 
-        async def download_file_stream(self, key, chunk_size):
+        def download_file_stream(self, key, chunk_size):
             if key == source_key:
                 yield raw
             elif key in self.uploads:
@@ -676,10 +676,10 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
             else:
                 raise S3FileNotFoundError(key)
 
-        async def object_exists(self, key):
+        def object_exists(self, key):
             return key in self.uploads
 
-        async def get_file_metadata(self, key):
+        def get_file_metadata(self, key):
             if key not in self.uploads:
                 raise S3FileNotFoundError(key)
             data = self.uploads[key]
@@ -693,7 +693,7 @@ async def test_upload_staging_cannot_modify_existing_canonical_bytes(
                 metadata={},
             )
 
-        async def upload_file(self, key, content, content_type=None):
+        def upload_file(self, key, content, content_type=None):
             self.uploads[key] = content
 
     s3 = _FakeS3()

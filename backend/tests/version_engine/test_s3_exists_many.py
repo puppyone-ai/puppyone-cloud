@@ -8,7 +8,7 @@ class _S3ExistsProbe:
     def __init__(self, error: Exception | None = None):
         self.error = error
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         if self.error is not None:
             raise self.error
         return False

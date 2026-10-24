@@ -53,11 +53,11 @@ class _StubS3Service:
         self.upload_file_calls: list[tuple[str, int]] = []
         self.bucket_name = "test-bucket"
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         self.file_exists_calls.append(key)
         return key in self.loose_keys
 
-    async def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
+    def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
         self.upload_file_calls.append((key, len(data)))
         # Bundles upload to bundle/ prefix, loose to objects/. We track both.
         self.loose_keys.add(key)

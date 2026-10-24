@@ -262,13 +262,13 @@ class LandingService:
         name = _safe_name(filename)
 
         src_key = f"{LANDING_PREFIX}/{ticket_id}/source/{name}"
-        await self._s3.upload_file(src_key, content, content_type or "application/octet-stream")
+        await run_blocking(self._s3.upload_file, src_key, content, content_type or "application/octet-stream")
 
         markdown = await self._parse(spec, src_key=src_key, content=content, ticket_id=ticket_id)
 
         md_name = (PurePosixPath(name).stem or "document") + spec.output_ext
         md_key = f"{LANDING_PREFIX}/{ticket_id}/parsed/{md_name}"
-        await self._s3.upload_file(md_key, markdown.encode("utf-8"), "text/markdown; charset=utf-8")
+        await run_blocking(self._s3.upload_file, md_key, markdown.encode("utf-8"), "text/markdown; charset=utf-8")
 
         exp = int(time.time()) + PREVIEW_TTL_SECONDS
         ticket = tickets.sign_ticket(
@@ -321,7 +321,7 @@ class LandingService:
         try:
             from src.infra.file_processing.ocr.factory import get_ocr_provider
 
-            presigned = await self._s3.generate_presigned_download_url(
+            presigned = await run_blocking(self._s3.generate_presigned_download_url,
                 src_key, expires_in=SRC_PRESIGN_SECONDS
             )
             parsed = await get_ocr_provider().parse_document(presigned, data_id=ticket_id)
@@ -368,7 +368,7 @@ class LandingService:
         md_key = _ticket_text(body, "md_key")
         md_name = _ticket_text(body, "md_name")
         src_name = _ticket_text(body, "src_name")
-        md_bytes = await self._s3.download_file(md_key)
+        md_bytes = await run_blocking(self._s3.download_file, md_key)
         content_sha256 = hashlib.sha256(md_bytes).hexdigest()
         api_key = _landing_mcp_api_key(ticket_id=operation_key, user_id=user_id)
 

@@ -134,3 +134,32 @@ async def test_await_owned_returns_and_raises_normally_without_cancellation():
     assert await await_owned(ok()) == 1
     with pytest.raises(LookupError):
         await await_owned(fail())
+
+
+async def test_iterate_blocking_pulls_off_the_loop_and_closes_early_exit():
+    from contextlib import aclosing
+
+    from src.infra.execution.runner import iterate_blocking
+
+    loop_thread = threading.get_ident()
+    threads, closed = [], []
+
+    def chunks():
+        try:
+            for index in range(5):
+                threads.append(threading.get_ident())
+                yield index
+        finally:
+            closed.append(threading.get_ident())
+
+    seen = []
+    async with aclosing(iterate_blocking(chunks())) as stream:
+        async for item in stream:
+            seen.append(item)
+            if item == 2:
+                break
+    assert seen == [0, 1, 2]
+    assert loop_thread not in threads
+    assert closed and closed[0] != loop_thread
+
+    assert [item async for item in iterate_blocking([7, 8])] == [7, 8]

@@ -105,24 +105,24 @@ class S3Stub:
         self.deleted: list[str] = []
         self.aborted: list[tuple[str, str]] = []
 
-    async def list_files(self, *, prefix, max_keys):
+    def list_files(self, *, prefix, max_keys):
         self.listed.append((prefix, max_keys))
         matches = sorted(key for key in self.keys if key.startswith(prefix))[:max_keys]
         return [File(key) for key in matches], None, None, None
 
-    async def delete_files_batch(self, keys):
+    def delete_files_batch(self, keys):
         for key in keys:
             self.keys.discard(key)
             self.deleted.append(key)
         return [DeleteResult(key) for key in keys]
 
-    async def list_multipart_uploads(self, *, prefix, max_uploads):
+    def list_multipart_uploads(self, *, prefix, max_uploads):
         matches = sorted(item for item in self.multipart_uploads if item[0].startswith(prefix))[
             :max_uploads
         ]
         return [MultipartUpload(key, upload_id) for key, upload_id in matches], None
 
-    async def abort_multipart_upload(self, key, upload_id):
+    def abort_multipart_upload(self, key, upload_id):
         self.multipart_uploads.discard((key, upload_id))
         self.aborted.append((key, upload_id))
 

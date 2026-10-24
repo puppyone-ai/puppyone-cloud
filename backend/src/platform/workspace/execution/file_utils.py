@@ -4,6 +4,7 @@ import asyncio
 import os
 from typing import Any, Optional
 from src.config import settings
+from src.infra.execution.runner import iterate_blocking, run_blocking
 
 
 # Large file memory warning threshold (100MB)
@@ -62,7 +63,7 @@ async def download_files_parallel(
                         content = await _download_file_chunked(s3_service, s3_key)
                     else:
                         # Small file: download directly
-                        content = await s3_service.download_file(s3_key)
+                        content = await run_blocking(s3_service.download_file, s3_key)
 
                     return (path, content, None)
                 except Exception as e:
@@ -79,7 +80,7 @@ async def download_files_parallel(
 async def _get_file_size(s3_service: Any, s3_key: str) -> Optional[int]:
     """Get S3 file size"""
     try:
-        metadata = await s3_service.get_file_metadata(s3_key)
+        metadata = await run_blocking(s3_service.get_file_metadata, s3_key)
         return metadata.size
     except Exception:
         return None
@@ -98,7 +99,7 @@ async def _download_file_chunked(s3_service: Any, s3_key: str) -> bytes:
     """
     chunks = []
     total_size = 0
-    async for chunk in s3_service.download_file_stream(s3_key):
+    async for chunk in iterate_blocking(s3_service.download_file_stream(s3_key)):
         chunks.append(chunk)
         total_size += len(chunk)
         # Print progress every 10MB
@@ -129,7 +130,7 @@ async def download_file_to_disk(
 
     total_size = 0
     with open(local_path, "wb") as f:
-        async for chunk in s3_service.download_file_stream(s3_key):
+        async for chunk in iterate_blocking(s3_service.download_file_stream(s3_key)):
             f.write(chunk)
             total_size += len(chunk)
 
@@ -252,7 +253,7 @@ async def prepare_files_for_docker_sandbox(
                         await download_file_to_disk(s3_service, s3_key, local_path)
                     else:
                         # Small file: download to memory then write
-                        file_content = await s3_service.download_file(s3_key)
+                        file_content = await run_blocking(s3_service.download_file, s3_key)
                         with open(local_path, "wb") as file:
                             file.write(file_content)
                     return (local_path, None)

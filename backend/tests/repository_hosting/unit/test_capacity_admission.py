@@ -92,10 +92,13 @@ async def test_failed_or_cancelled_storage_does_not_settle_invocation(batch, fai
             assert name == 'reserve_version_object_capacity'
             return SimpleNamespace(execute=lambda: SimpleNamespace(data=dict(new_objects=2, new_body_bytes=6)))
 
-    async def failed_put(*_args, **_kwargs):
+    def failed_upload(*_args, **_kwargs):
         raise failure('unknown physical outcome')
 
-    storage = SimpleNamespace(upload_file=failed_put)
+    async def failed_put(*_args, **_kwargs):
+        failed_upload()
+
+    storage = SimpleNamespace(upload_file=failed_upload)
     storage.for_single_attempt_io = lambda: storage  # Component double has no SDK/retries.
     backend = S3StorageBackend(storage, 'project', supabase=SimpleNamespace(client=Client()))
     monkeypatch.setattr(backend, '_do_put', failed_put)

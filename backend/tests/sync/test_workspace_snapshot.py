@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -73,8 +73,8 @@ async def test_sync_worker_materializes_lower_snapshot(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_sync_worker_downloads_binary_from_s3(tmp_path: Path, monkeypatch):
     """SyncWorker should resolve file_ref blobs to actual S3 binary content."""
-    fake_s3 = AsyncMock()
-    fake_s3.download_file = AsyncMock(return_value=b"\x89PNG_FAKE_DATA")
+    fake_s3 = MagicMock()
+    fake_s3.download_file = MagicMock(return_value=b"\x89PNG_FAKE_DATA")
 
     monkeypatch.setattr(
         "src.platform.workspace.sync_worker.get_s3_service_instance",
@@ -91,7 +91,7 @@ async def test_sync_worker_downloads_binary_from_s3(tmp_path: Path, monkeypatch)
     photo_path = tmp_path / "lower" / "proj-binary" / "photo.png"
     assert photo_path.read_bytes() == b"\x89PNG_FAKE_DATA"
 
-    fake_s3.download_file.assert_awaited_once_with("projects/p1/uploads/photo.png")
+    fake_s3.download_file.assert_called_once_with("projects/p1/uploads/photo.png")
 
 
 @pytest.mark.asyncio

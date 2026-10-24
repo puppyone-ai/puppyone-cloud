@@ -666,7 +666,7 @@ class S3StorageBackend(StorageBackend):
             return self._get_packed_object_at(h, location)
         try:
             with trace_phase("s3.get", object_id=h[:12]):
-                data = _run_async(self._s3.download_file(self._key_for(h)))
+                data = self._s3.download_file(self._key_for(h))
         except ObjectNotFoundError as exc:
             return self._get_packed_object(h, cause=exc)
         except Exception as e:
@@ -812,7 +812,7 @@ class S3StorageBackend(StorageBackend):
         if self._lookup_object_location(h) is not None:
             return True
         try:
-            if _run_async(self._s3.file_exists(self._key_for(h))):
+            if self._s3.file_exists(self._key_for(h)):
                 return True
             return self._lookup_object_location(h) is not None
         except Exception as e:
@@ -965,13 +965,11 @@ class S3StorageBackend(StorageBackend):
         items = []
         token = None
         while True:
-            page, _, token, truncated = _run_async(
-                self._s3.list_files(
+            page, _, token, truncated = self._s3.list_files(
                     prefix=f"{self._prefix}/",
                     max_keys=_MAX_LIST_KEYS,
                     continuation_token=token,
                 )
-            )
             items.extend(page)
             if not truncated or not token:
                 return items
@@ -1027,7 +1025,7 @@ class S3StorageBackend(StorageBackend):
         self.invalidate_proofs([h])
         deleted = True
         try:
-            _run_async(self._physical_s3().delete_file(self._key_for(h)))
+            self._physical_s3().delete_file(self._key_for(h))
         except Exception as e:
             if _is_not_found_error(e):
                 deleted = False
@@ -1044,7 +1042,7 @@ class S3StorageBackend(StorageBackend):
         deleted_any = False
         for key in keys:
             try:
-                _run_async(self._physical_s3().delete_file(key))
+                self._physical_s3().delete_file(key)
                 deleted_any = True
             except Exception as exc:
                 if not _is_not_found_error(exc):
@@ -1068,20 +1066,18 @@ class S3StorageBackend(StorageBackend):
         )
         root = chunk_manifest_root(manifest_key, h, prefixes)
         try:
-            manifest_raw = _run_async(self._s3.download_file(manifest_key))
+            manifest_raw = self._s3.download_file(manifest_key)
         except Exception as exc:
             if not _is_not_found_error(exc):
                 raise
             keys = [manifest_key]
             token = None
             while True:
-                page, _, token, truncated = _run_async(
-                    self._s3.list_files(
+                page, _, token, truncated = self._s3.list_files(
                         prefix=root + "/",
                         max_keys=_MAX_LIST_KEYS,
                         continuation_token=token,
                     )
-                )
                 for item in page:
                     if not item.key.startswith(root + "/"):
                         raise StorageWriteError("chunk listing escaped its object namespace")
@@ -1151,7 +1147,7 @@ class S3StorageBackend(StorageBackend):
         self._authorize_deletion()
         self.invalidate_proofs(members)
         try:
-            _run_async(self._physical_s3().delete_file(pack_key))
+            self._physical_s3().delete_file(pack_key)
         except Exception as exc:
             if not _is_not_found_error(exc):
                 log_error(f"[VersionS3] delete bundle {pack_key}: {exc}")
@@ -1261,7 +1257,7 @@ class S3StorageBackend(StorageBackend):
             return await self._async_get_packed_object_at(h, location)
         key = self._key_for(h)
         try:
-            data = await self._s3.download_file(key)
+            data = await run_blocking(self._s3.download_file, key)
         except ObjectNotFoundError as exc:
             return await self._async_get_packed_object(h, cause=exc)
         except Exception as e:
@@ -1317,7 +1313,7 @@ class S3StorageBackend(StorageBackend):
         if self._lookup_object_location(h) is not None:
             return True
         try:
-            if await self._s3.file_exists(self._key_for(h)):
+            if await run_blocking(self._s3.file_exists, self._key_for(h)):
                 return True
             return self._lookup_object_location(h) is not None
         except Exception as exc:
@@ -1442,9 +1438,7 @@ class S3StorageBackend(StorageBackend):
                 key = self._key_for(h)
                 if skip_exists:
                     async with physical_io_credit():
-                        await self._physical_s3().upload_file(
-                            key, data, content_type="application/octet-stream"
-                        )
+                        await run_blocking(self._physical_s3().upload_file, key, data, content_type="application/octet-stream")
                 else:
                     await self._do_put(key, data, expected_hash=h)
 
@@ -1563,13 +1557,11 @@ class S3StorageBackend(StorageBackend):
                 object_id=h[:12],
                 size_bytes=location.size_bytes,
             ):
-                data, _total = _run_async(
-                    self._s3.download_file_range(
+                data, _total = self._s3.download_file_range(
                         location.pack_key,
                         start=location.offset_bytes,
                         limit=location.size_bytes,
                     )
-                )
             _verify_loose_hash(h, data)
             return data
         except Exception as exc:
@@ -1605,11 +1597,7 @@ class S3StorageBackend(StorageBackend):
                 object_id=h[:12],
                 size_bytes=location.size_bytes,
             ):
-                data, _total = await self._s3.download_file_range(
-                    location.pack_key,
-                    start=location.offset_bytes,
-                    limit=location.size_bytes,
-                )
+                data, _total = await run_blocking(self._s3.download_file_range, location.pack_key, start=location.offset_bytes, limit=location.size_bytes)
             _verify_loose_hash(h, data)
             return data
         except Exception as exc:
@@ -1633,7 +1621,7 @@ class S3StorageBackend(StorageBackend):
                 object_id=h[:12],
                 size_bytes=location.size_bytes,
             ):
-                manifest_raw = await self._s3.download_file(manifest_key)
+                manifest_raw = await run_blocking(self._s3.download_file, manifest_key)
                 immutable, ordered_chunks = validate_chunk_manifest(
                     manifest_raw,
                     key=manifest_key,
@@ -1649,7 +1637,7 @@ class S3StorageBackend(StorageBackend):
                     offset = int(chunk.get("offset_bytes") or 0)
                     expected_size = int(chunk.get("size_bytes") or 0)
                     async with sem:
-                        part = await self._s3.download_file(key)
+                        part = await run_blocking(self._s3.download_file, key)
                     if len(part) != expected_size:
                         raise StorageWriteError(
                             f"chunk size mismatch for {h}: {key}",
@@ -1838,11 +1826,7 @@ class S3StorageBackend(StorageBackend):
 
         async def upload_one(key: str, data: bytes, content_type: str) -> None:
             async with sem, physical_io_credit():
-                await self._physical_s3().upload_file(
-                    key,
-                    data,
-                    content_type=content_type,
-                )
+                await run_blocking(self._physical_s3().upload_file, key, data, content_type=content_type)
 
         results = await asyncio.gather(
             *[upload_one(key, data, content_type) for key, data, content_type in uploads],
@@ -1865,7 +1849,7 @@ class S3StorageBackend(StorageBackend):
         async def verify(key: str, expected: bytes) -> None:
             try:
                 async with sem, physical_io_credit():
-                    actual = await self._s3.download_file(key)
+                    actual = await run_blocking(self._s3.download_file, key)
             except Exception as exc:
                 raise StorageWriteError(f"physical upload verification failed: {key}") from exc
             if actual != expected:
@@ -1951,7 +1935,7 @@ class S3StorageBackend(StorageBackend):
                 if check_packed_locations:
                     exists = await self.async_exists(h)
                 else:
-                    exists = await self._s3.file_exists(self._key_for(h))
+                    exists = await run_blocking(self._s3.file_exists, self._key_for(h))
                 if exists:
                     existing.add(h)
 
@@ -1983,13 +1967,13 @@ class S3StorageBackend(StorageBackend):
         know it (none today); when omitted we keep the legacy skip-if-
         exists behaviour.
         """
-        if await self._s3.file_exists(key):
+        if await run_blocking(self._s3.file_exists, key):
             if expected_hash is None:
                 return
             # Key exists — confirm the resident bytes are the object we
             # think they are before trusting the dedup skip.
             try:
-                existing = await self._s3.download_file(key)
+                existing = await run_blocking(self._s3.download_file, key)
                 _verify_loose_hash(expected_hash, existing)
                 return  # resident bytes are valid; dedup skip stands.
             except StorageWriteError:
@@ -2004,7 +1988,7 @@ class S3StorageBackend(StorageBackend):
                         f"bytes at {key} ({exc}); overwriting",
                     )
         async with physical_io_credit():
-            await self._physical_s3().upload_file(key, data, content_type="application/octet-stream")
+            await run_blocking(self._physical_s3().upload_file, key, data, content_type="application/octet-stream")
 
     async def async_scan_primary_loose_integrity(
         self,
@@ -2036,11 +2020,7 @@ class S3StorageBackend(StorageBackend):
         truncated = False
         continuation: str | None = None
         while True:
-            files, _prefixes, next_token, is_truncated = await self._s3.list_files(
-                prefix=prefix,
-                max_keys=1000,
-                continuation_token=continuation,
-            )
+            files, _prefixes, next_token, is_truncated = await run_blocking(self._s3.list_files, prefix=prefix, max_keys=1000, continuation_token=continuation)
             for item in files:
                 h = _hash_from_loose_key(item.key, prefix)
                 if h is None:
@@ -2071,7 +2051,7 @@ class S3StorageBackend(StorageBackend):
         """Verify one primary loose key. Returns ``"ok"`` /
         ``"corrupt"`` / ``"healed"`` / ``"skip"``."""
         try:
-            data = await self._s3.download_file(key)
+            data = await run_blocking(self._s3.download_file, key)
             _verify_loose_hash(h, data)
             return "ok"
         except StorageWriteError:
@@ -2082,7 +2062,7 @@ class S3StorageBackend(StorageBackend):
             if not heal:
                 return "corrupt"
             try:
-                await self._physical_s3().delete_file(key)
+                await run_blocking(self._physical_s3().delete_file, key)
                 return "healed"
             except Exception as exc:
                 log_warning(f"[integrity-scan] heal delete failed for {key}: {exc}")
@@ -2178,9 +2158,7 @@ class _S3DurableReadback:
                 2 * required, 8 * 1024**2 - self.buffered_bytes
             ):
                 continue
-            data, _ = _run_async(
-                self.reader._s3.download_file_range(key, start=start, limit=end - start)
-            )
+            data, _ = self.reader._s3.download_file_range(key, start=start, limit=end - start)
             if len(data) != end - start:
                 raise StorageWriteError("incomplete publication container readback")
             for oid, location in members:

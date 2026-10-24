@@ -492,11 +492,11 @@ class ProjectDeletionCleanupWorker:
             await self._scrub_host_project(project_id)
 
     async def _prefix_has_objects(self, prefix: str) -> bool:
-        files, _, _, _ = await self._s3.list_files(prefix=prefix, max_keys=1)
+        files, _, _, _ = await run_blocking(self._s3.list_files, prefix=prefix, max_keys=1)
         return bool(files)
 
     async def _prefix_has_multipart_uploads(self, prefix: str) -> bool:
-        uploads, _ = await self._s3.list_multipart_uploads(
+        uploads, _ = await run_blocking(self._s3.list_multipart_uploads,
             prefix=prefix,
             max_uploads=1,
         )
@@ -508,14 +508,14 @@ class ProjectDeletionCleanupWorker:
         # S3 API's pagination markers refer to a changing set once uploads are
         # aborted, so restarting cannot skip a remaining upload.
         while True:
-            uploads, _ = await self._s3.list_multipart_uploads(
+            uploads, _ = await run_blocking(self._s3.list_multipart_uploads,
                 prefix=prefix,
                 max_uploads=1000,
             )
             if not uploads:
                 return aborted
             for upload in uploads:
-                await self._s3.abort_multipart_upload(upload.key, upload.upload_id)
+                await run_blocking(self._s3.abort_multipart_upload, upload.key, upload.upload_id)
                 aborted += 1
 
     async def _purge_prefix(self, prefix: str) -> int:
@@ -523,11 +523,11 @@ class ProjectDeletionCleanupWorker:
         # Always re-read the first page after deletion.  S3 continuation tokens
         # are opaque and can skip keys when the preceding page was removed.
         while True:
-            files, _, _, _ = await self._s3.list_files(prefix=prefix, max_keys=1000)
+            files, _, _, _ = await run_blocking(self._s3.list_files, prefix=prefix, max_keys=1000)
             keys = [item.key for item in files]
             if not keys:
                 return deleted
-            results = await self._s3.delete_files_batch(keys)
+            results = await run_blocking(self._s3.delete_files_batch, keys)
             failures = [
                 result
                 for result in results

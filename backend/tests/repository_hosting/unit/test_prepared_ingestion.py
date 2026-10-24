@@ -1,6 +1,7 @@
 """Operation ownership and byte page bounds; substituted PG/S3, not latency."""
 
 import asyncio
+import threading
 from collections import Counter
 from dataclasses import replace
 from types import SimpleNamespace
@@ -65,8 +66,8 @@ async def test_partial_or_unverified_ingestion_cannot_settle(failure):
             return super().rpc(name, params)
 
     class S3(FencedS3):
-        async def download_file(self, key):
-            data = await super().download_file(key)
+        def download_file(self, key):
+            data = super().download_file(key)
             return data + b"broken" if failure == "readback" else data
 
     db = DB()
@@ -94,13 +95,13 @@ async def test_partial_or_unverified_ingestion_cannot_settle(failure):
 
 @pytest.mark.asyncio
 async def test_cancel_joins_started_io_and_keeps_operation_fenced():
-    started, release = asyncio.Event(), asyncio.Event()
+    started, release = threading.Event(), threading.Event()
 
     class S3(FencedS3):
-        async def upload_file(self, *args, **kwargs):
+        def upload_file(self, *args, **kwargs):
             started.set()
-            await release.wait()
-            return await super().upload_file(*args, **kwargs)
+            assert release.wait(3)
+            return super().upload_file(*args, **kwargs)
 
     db = FencedDB()
     s3 = S3(db)
@@ -108,7 +109,7 @@ async def test_cancel_joins_started_io_and_keeps_operation_fenced():
     objects, facts = fixture()
     with publication_storage("proj", "actor", "pin", require_capacity=True):
         task = asyncio.create_task(backend.async_put_prepared_stream(objects.items(), facts))
-        await started.wait()
+        assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
         await asyncio.sleep(0)
         task.cancel()

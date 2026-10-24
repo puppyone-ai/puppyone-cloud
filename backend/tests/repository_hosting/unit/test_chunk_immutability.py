@@ -45,11 +45,11 @@ class MemoryS3:
         self.reads = []
         self.deletes = []
 
-    async def download_file(self, key):
+    def download_file(self, key):
         self.reads.append(key)
         return self.objects[key]
 
-    async def delete_file(self, key):
+    def delete_file(self, key):
         self.deletes.append(key)
         raise AssertionError("invalid manifest must not authorize any deletion")
 
@@ -136,13 +136,13 @@ def test_unreadable_manifest_does_not_fall_back_to_destructive_listing(failure):
     oid, loose, key, _manifest, _objects = legacy_placement()
 
     class Unreadable(MemoryS3):
-        async def download_file(self, key):
+        def download_file(self, key):
             self.reads.append(key)
             if failure == "unavailable":
                 raise ConnectionError("manifest service unavailable")
             return b"not JSON"
 
-        async def list_files(self, **_kwargs):
+        def list_files(self, **_kwargs):
             raise AssertionError("only an explicitly absent manifest permits listing")
 
     s3 = Unreadable({})

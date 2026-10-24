@@ -5,6 +5,7 @@ import hashlib
 from contextlib import aclosing, suppress
 
 from src.infra.execution.context import checkpoint
+from src.infra.execution.runner import iterate_blocking, run_blocking
 from src.version_engine.storage.io_budget import physical_io_credit
 from src.version_engine.storage.object_stream import call_owned, join_owned
 
@@ -15,7 +16,7 @@ PART_CONCURRENCY = 4
 async def _request(method, *args, **kwargs):
     async def run():
         async with physical_io_credit():
-            return await method(*args, **kwargs)
+            return await run_blocking(method, *args, **kwargs)
 
     result = (await join_owned([asyncio.create_task(run())]))[0]
     if isinstance(result, BaseException):
@@ -73,7 +74,7 @@ async def verify_pack(s3, key, *, expected_size, expected_digest, progress=None)
     total = 0
     async with (
         physical_io_credit(),
-        aclosing(s3.download_file_stream(key, chunk_size=1024 * 1024)) as stream,
+        aclosing(iterate_blocking(s3.download_file_stream(key, chunk_size=1024 * 1024))) as stream,
     ):
         async for block in stream:
             checkpoint()
@@ -91,7 +92,7 @@ async def download_pack(s3, key, destination, *, max_bytes):
     total = 0
     async with (
         physical_io_credit(),
-        aclosing(s3.download_file_stream(key, chunk_size=1024 * 1024)) as stream,
+        aclosing(iterate_blocking(s3.download_file_stream(key, chunk_size=1024 * 1024))) as stream,
     ):
         with destination.open("wb") as output:
             async for block in stream:

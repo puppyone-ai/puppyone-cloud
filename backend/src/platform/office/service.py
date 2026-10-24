@@ -4,7 +4,7 @@ import hashlib
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import Iterator
 from pathlib import PurePath
 from typing import Protocol
 from urllib.parse import quote, urljoin, urlsplit
@@ -12,6 +12,7 @@ from urllib.parse import quote, urljoin, urlsplit
 import httpx
 import jwt
 
+from src.infra.execution.runner import run_blocking
 from src.platform.office.capabilities import issue_capability, verify_capability
 from src.platform.office.config import OfficeSettings
 from src.platform.office.models import (
@@ -34,16 +35,18 @@ _MIME_TYPES = {
 
 
 class OfficeBinaryStore(Protocol):
-    async def upload_file(
+    """Synchronous object store (S3Service); called through run_blocking."""
+
+    def upload_file(
         self,
         key: str,
         content: bytes,
         content_type: str | None = None,
         metadata: dict[str, str] | None = None,
     ): ...
-    async def download_file(self, key: str) -> bytes: ...
-    def download_file_stream(self, key: str, chunk_size: int = 8192) -> AsyncIterator[bytes]: ...
-    async def delete_file(self, key: str) -> None: ...
+    def download_file(self, key: str) -> bytes: ...
+    def download_file_stream(self, key: str, chunk_size: int = 8192) -> Iterator[bytes]: ...
+    def delete_file(self, key: str) -> None: ...
 
 
 class ManagedOfficeError(RuntimeError):
@@ -125,7 +128,7 @@ class ManagedOfficeService:
             updated_at_ms=now,
             expires_at_ms=expires_at,
         )
-        await self._binaries.upload_file(
+        await run_blocking(self._binaries.upload_file,
             source_key,
             content,
             _MIME_TYPES[extension],
@@ -222,7 +225,7 @@ class ManagedOfficeService:
         record = await self._get_active(session_id)
         return record
 
-    def source_stream(self, record: OfficeSessionRecord) -> AsyncIterator[bytes]:
+    def source_stream(self, record: OfficeSessionRecord) -> Iterator[bytes]:
         return self._binaries.download_file_stream(record.source_key, 64 * 1024)
 
     async def handle_callback(
@@ -275,7 +278,7 @@ class ManagedOfficeService:
         try:
             result = await self._download_result(body.url)
             result_hash = hashlib.sha256(result).hexdigest()
-            await self._binaries.upload_file(
+            await run_blocking(self._binaries.upload_file,
                 record.result_key,
                 result,
                 _MIME_TYPES[record.extension],
@@ -345,7 +348,7 @@ class ManagedOfficeService:
         owner_user_id: str,
         session_id: str,
         revision: int,
-    ) -> tuple[OfficeSessionRecord, AsyncIterator[bytes]]:
+    ) -> tuple[OfficeSessionRecord, Iterator[bytes]]:
         record = await self._get_owned(owner_user_id, session_id)
         if revision <= 0 or revision != record.result_revision or not record.result_sha256:
             raise ManagedOfficeError("Office result revision is unavailable.", status_code=404)
@@ -462,7 +465,7 @@ class ManagedOfficeService:
 
     async def _delete_object_best_effort(self, key: str) -> None:
         try:
-            await self._binaries.delete_file(key)
+            await run_blocking(self._binaries.delete_file, key)
         except Exception:
             return
 

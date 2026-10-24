@@ -69,8 +69,8 @@ async def test_incomplete_write_never_promotes_evidence(failure):
             return super().rpc(name, params)
 
     class S3(FencedS3):
-        async def download_file(self, key):
-            data = await super().download_file(key)
+        def download_file(self, key):
+            data = super().download_file(key)
             return data + b"broken" if failure == "readback" else data
 
     db = DB()

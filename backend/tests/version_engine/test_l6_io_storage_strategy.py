@@ -37,20 +37,20 @@ class _FakeS3:
         self.download_range_keys: list[str] = []
         self.file_exists_keys: list[str] = []
 
-    async def upload_file(self, key, content, content_type=None, metadata=None):
+    def upload_file(self, key, content, content_type=None, metadata=None):
         self.upload_sizes.append(len(content))
         if self.max_upload_bytes is not None and len(content) > self.max_upload_bytes:
             raise AssertionError(f"physical S3 object too large: {len(content)}")
         self.uploads[key] = content
         return SimpleNamespace(key=key)
 
-    async def download_file(self, key):
+    def download_file(self, key):
         self.download_file_keys.append(key)
         if key not in self.uploads:
             raise FileNotFoundError("not found")
         return self.uploads[key]
 
-    async def download_file_range(self, key, start=0, limit=None):
+    def download_file_range(self, key, start=0, limit=None):
         self.download_range_keys.append(key)
         if key not in self.uploads:
             raise FileNotFoundError("not found")
@@ -58,7 +58,7 @@ class _FakeS3:
         end = len(content) if limit is None else min(len(content), start + limit)
         return content[start:end], len(content)
 
-    async def file_exists(self, key):
+    def file_exists(self, key):
         self.file_exists_keys.append(key)
         return key in self.uploads
 

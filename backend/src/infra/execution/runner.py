@@ -8,6 +8,8 @@ Async code calls synchronous work only through these helpers:
   result that arrives after the caller left.
 - ``run_cleanup``: mandatory release work that no ``Execution`` may stop.
 - ``await_owned``: the same ownership rule for an awaitable.
+- ``iterate_blocking``: consume a synchronous iterator (e.g. an S3 body stream)
+  from async code, one ``next`` per worker call, closed when the consumer leaves.
 
 Threads cannot be killed. A cancelled caller therefore always waits for its
 started work to return (an active ``Execution`` is cancelled first, so
@@ -23,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import suppress
 from typing import Any
 
@@ -162,3 +164,26 @@ async def run_cleanup(function, *args):
             current_execution.reset(token)
 
     return await await_owned(_blocking(cleanup, (), {}))
+
+
+_END = object()
+
+
+async def iterate_blocking[T](iterable: Iterable[T]) -> AsyncIterator[T]:
+    """Yield a synchronous iterator's items without blocking the event loop.
+
+    Each ``next`` runs through ``run_blocking``. The iterator is closed with
+    ``run_cleanup`` when iteration ends, fails or the consumer closes this
+    generator (use ``contextlib.aclosing`` when not fully consuming it).
+    """
+    iterator = iter(iterable)
+    try:
+        while True:
+            item = await run_blocking(next, iterator, _END)
+            if item is _END:
+                return
+            yield item
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            await run_cleanup(close)
