@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import socket
@@ -16,12 +15,11 @@ from src.infra.file_processing.ocr.external_cleanup import (
 from src.infra.s3.service import S3Service, get_s3_service_instance
 from src.infra.supabase.client import SupabaseClient
 from src.infra.turbopuffer.service import TurbopufferSearchService
-from src.platform.workspace.scopes.factory import provider_from_settings
-from src.platform.workspace.scopes.provider import SandboxState
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
 )
 from src.infra.execution.runner import await_owned, run_blocking
+from src.platform import sandbox
 
 _logger = logging.getLogger("puppyone.project_deletion")
 
@@ -172,13 +170,11 @@ class ProjectExternalResourceCleaner:
         self,
         *,
         search: TurbopufferSearchService | None = None,
-        sandbox_provider_factory=None,
+        sandbox_resources=None,
     ) -> None:
         self._search = search or TurbopufferSearchService()
-        self._sandbox_provider_factory = sandbox_provider_factory or (
-            lambda name: provider_from_settings(settings, name=name)
-        )
-        self._sandbox_providers: dict[str, Any] = {}
+        # destroy_resource/resource_absent by provider, id and owning pool.
+        self._sandbox = sandbox_resources or sandbox
 
     async def purge(self, job: dict[str, Any]) -> None:
         search_prefixes, sandboxes = _validated_external_resources(job)
@@ -213,45 +209,24 @@ class ProjectExternalResourceCleaner:
                 return False
         return True
 
-    def _provider(self, name: str):
-        provider = self._sandbox_providers.get(name)
-        if provider is None:
-            provider = self._sandbox_provider_factory(name)
-            self._sandbox_providers[name] = provider
-        return provider
+    @staticmethod
+    def _pool(resource: dict[str, str]) -> str:
+        # Scope Sandbox machines belong to the retired product's provider account.
+        return "legacy_scope" if resource["kind"] == "scope" else "runtime"
 
     async def _destroy_sandbox(self, resource: dict[str, str]) -> None:
-        provider_name = resource["provider"]
-        resource_id = resource["resource_id"]
-        if provider_name == "docker":
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                "rm",
-                "-f",
-                resource_id,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        await await_owned(
+            self._sandbox.destroy_resource(
+                resource["provider"], resource["resource_id"], pool=self._pool(resource)
             )
-            _stdout, stderr = await await_owned(process.communicate())
-            if process.returncode != 0 and b"no such container" not in stderr.lower():
-                raise RuntimeError("Unable to remove Project execution container")
-            return
-        await await_owned(self._provider(provider_name).destroy(resource_id))
+        )
 
     async def _sandbox_absent(self, resource: dict[str, str]) -> bool:
-        provider_name = resource["provider"]
-        resource_id = resource["resource_id"]
-        if provider_name == "docker":
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                "inspect",
-                resource_id,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+        return await await_owned(
+            self._sandbox.resource_absent(
+                resource["provider"], resource["resource_id"], pool=self._pool(resource)
             )
-            return await await_owned(process.wait()) != 0
-        status = await await_owned(self._provider(provider_name).status(resource_id))
-        return status.state is SandboxState.DESTROYED
+        )
 
 
 class ProjectDeletionCleanupWorker:

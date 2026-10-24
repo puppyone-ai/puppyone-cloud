@@ -11,8 +11,7 @@ def hosted(**values):
         APP_ENV="production",
         SANDBOX_TYPE="e2b",
         E2B_API_KEY="",
-        SCOPE_SANDBOX_STORE="supabase",
-        SCOPE_SANDBOX_REAPER_ENABLED=True,
+        SANDBOX_REAPER_ENABLED=True,
         **values,
     )
 

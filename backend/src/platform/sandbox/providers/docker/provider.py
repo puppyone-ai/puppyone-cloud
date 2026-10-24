@@ -236,8 +236,22 @@ class DockerRuntimeProvider:
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
-        if proc.returncode and b"No such container" not in stderr:
+        if proc.returncode and b"no such container" not in stderr.lower():
             raise RuntimeError("Pi sandbox cleanup failed")
+
+    async def destroy_resource(self, resource_id, *, pool="runtime"):
+        # Removing the container (not only stopping it) releases its resources.
+        await self.cleanup({"resource_id": resource_id})
+
+    async def resource_absent(self, resource_id, *, pool="runtime"):
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "inspect",
+            resource_id,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        return await proc.wait() != 0
 
     def artifact(self, image):
         return image

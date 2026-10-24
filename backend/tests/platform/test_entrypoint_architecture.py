@@ -79,8 +79,6 @@ def test_repository_api_dependencies_remain_one_way():
         )),
         ("platform/access/adapters/ssh", (
             "src.platform.sandbox",
-            "src.platform.workspace.scopes.factory",
-            "src.platform.workspace.scopes.manager",
             "e2b", "docker",
         )),
         ("version_engine", ("src.platform.access.adapters", "src.platform.access.filesystem")),
@@ -133,6 +131,32 @@ def test_sandbox_providers_are_reached_only_through_the_sandbox_package():
         for module in imports(path)
         if module == internal or module.startswith(internal + ".")
     ]
+    assert not violations
+
+
+def test_only_sandbox_providers_talk_to_compute_providers():
+    import re
+
+    providers = SRC / "platform" / "sandbox" / "providers"
+    # Release tooling drives a local PostgreSQL container; it is not a sandbox.
+    release_tooling = SRC / "infra" / "data_migrations"
+    docker_cli = re.compile(
+        r"create_subprocess_exec\(\s*[\"']docker[\"']|\[\s*[\"']docker[\"']\s*,"
+    )
+    violations = []
+    for path in SRC.rglob("*.py"):
+        if providers in path.parents or release_tooling in path.parents:
+            continue
+        relative, text = str(path.relative_to(SRC)), path.read_text()
+        violations.extend(
+            (relative, module)
+            for module in imports(path)
+            if module.split(".")[0] in {"e2b", "e2b_code_interpreter"}
+        )
+        if "api.machines.dev" in text:
+            violations.append((relative, "Fly Machines API"))
+        if docker_cli.search(text):
+            violations.append((relative, "docker CLI"))
     assert not violations
 
 

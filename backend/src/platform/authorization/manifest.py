@@ -240,9 +240,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/api/v1/synchronize/push/{path:path}"): _human(ProjectAction.AUTOMATION_RUN),
 
     # Scope policy, Sandbox sessions, analytics and activity.
-    ("POST", "/api/v1/scope-sandboxes/connect"): _human(ProjectAction.SANDBOX_MANAGE),
-    ("GET", "/api/v1/scope-sandboxes/status"): _human(ProjectAction.ACCESS_READ),
-    ("POST", "/api/v1/scope-sandboxes/revoke"): _human(ProjectAction.SANDBOX_MANAGE),
     ("GET", "/api/v1/analytics/access-timeseries"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/analytics/access-summary"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/activity/items"): _human(ProjectAction.HISTORY_READ),

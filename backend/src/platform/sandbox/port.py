@@ -14,6 +14,10 @@ from typing import Any, Protocol
 
 SEND_TIMEOUT = 15
 
+# Provider accounts that may own a resource known only by its id. "runtime" is the
+# Cloud Agent/Workspace account; "legacy_scope" owns retired Scope Sandbox machines.
+RESOURCE_POOLS = frozenset({"runtime", "legacy_scope"})
+
 
 @dataclass(frozen=True)
 class RuntimeCapabilities:
@@ -104,6 +108,10 @@ class RuntimeProvider(Protocol):
     async def running_connection(self, host: Any) -> RuntimeConnection: ...
     async def prepare_connection(self, host: Any) -> RuntimeConnection: ...
     async def pause_resource(self, host: Any) -> RuntimeTransition: ...
+    # Identity-only operations for owners that hold just a resource id
+    # (Project deletion, legacy retirement). Both are idempotent.
+    async def destroy_resource(self, resource_id: str, *, pool: str = "runtime") -> None: ...
+    async def resource_absent(self, resource_id: str, *, pool: str = "runtime") -> bool: ...
 
 
 async def close_process(host):

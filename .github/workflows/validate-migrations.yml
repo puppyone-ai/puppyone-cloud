@@ -153,7 +153,6 @@ jobs:
             tests/infra/test_self_hosted_bootstrap.py \
             tests/infra/test_readiness.py \
             tests/platform/test_project_authorization_policy.py \
-            tests/platform/scope_sync \
             tests/security/test_audit_tier2_authz.py \
             tests/security/test_canonical_git_remote_contract.py \
             tests/mcp/test_mcp_runtime_principal.py \

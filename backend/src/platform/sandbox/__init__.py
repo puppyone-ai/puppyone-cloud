@@ -15,11 +15,14 @@ A provider owns compute lifecycle and channel transport; it never owns a Run,
 authorizes a Project, selects Git refs, or interprets Loop messages.
 
 ``store`` records unretained ephemeral provider resources and ``reaper`` stops
-idle ones through each provider's ``cleanup``.
+idle ones through each provider's ``cleanup``. ``resources`` destroys and
+verifies a resource known only by id (Project deletion); ``legacy_scope``
+retires machines left by the removed Scope Sandbox product.
 """
 
 from .errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
 from .port import (
+    RESOURCE_POOLS,
     SEND_TIMEOUT,
     RuntimeCapabilities,
     RuntimeConnection,
@@ -27,13 +30,15 @@ from .port import (
     RuntimeTransition,
     resource_identity,
 )
-from .reaper import run_execution_reaper_once, start_execution_reaper
+from .reaper import run_execution_reaper_once, start_sandbox_reaper
 from .registry import PROVIDERS, close_provider_transports, default_provider, runtime_provider
+from .resources import destroy_resource, resource_absent
 from .store import ExecutionSession, ExecutionSessionStore, durable_execution_store
 from .timing import workspace_event, workspace_stage
 
 __all__ = [
     "PROVIDERS",
+    "RESOURCE_POOLS",
     "SEND_TIMEOUT",
     "ExecutionSession",
     "ExecutionSessionStore",
@@ -46,11 +51,13 @@ __all__ = [
     "WorkspaceUnavailable",
     "close_provider_transports",
     "default_provider",
+    "destroy_resource",
     "durable_execution_store",
+    "resource_absent",
     "resource_identity",
     "run_execution_reaper_once",
     "runtime_provider",
-    "start_execution_reaper",
+    "start_sandbox_reaper",
     "workspace_event",
     "workspace_stage",
 ]

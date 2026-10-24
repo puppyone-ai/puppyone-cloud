@@ -47,8 +47,6 @@ import { PROJECT_CONTENT_RAIL_WIDTH } from '@/lib/layout';
 import { T } from '@/features/access/lib/tokens';
 import { STATUS_LABEL } from '@/features/access/lib/constants';
 import { McpConnectCard } from '@/features/access/components/McpConnectCard';
-import { SandboxConnectCard } from '@/features/access/components/SandboxConnectCard';
-import { SyncActivityPanel } from '@/features/access/components/SyncActivityPanel';
 import { ScopeSettingsBlock } from '@/features/files/components/access-points/ScopeSettingsBlock';
 import type { ConnectorEditPatch } from '@/features/access/hooks/useAccessData';
 import { ConnectorList } from '@/features/access/components/ConnectorMethodList';
@@ -298,9 +296,6 @@ export function ScopeDetailPanel({
                 onCreated={onScopeMutated}
               />
             ) : null}
-            {canManage && scope?.target.kind === 'scope'
-              ? <SandboxConnectCard scope={scope} projectId={projectId} />
-              : null}
           </div>
         ) : (
           <div
@@ -319,9 +314,6 @@ export function ScopeDetailPanel({
             No connectors bound to this scope yet.
           </div>
         )}
-        {/* Sync activity + stats (M6 observability) — the managed-sync event
-            log for this scope. Self-hides when there's no sync history. */}
-        {scope ? <SyncActivityPanel scope={scope} projectId={projectId} /> : null}
       </div>
 
       <style>{`

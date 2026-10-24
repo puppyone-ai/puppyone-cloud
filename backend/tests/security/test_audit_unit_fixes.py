@@ -1,4 +1,4 @@
-"""Hermetic unit tests for the audit fixes (ISSUE-007/009/011/013 + 002 helpers).
+"""Hermetic unit tests for the audit fixes (ISSUE-007/011/013 + 002 helpers).
 
 None of these touch Supabase, the network, or any external service — they
 exercise pure functions, temp dirs, and in-process token crypto only. Safe to
@@ -12,47 +12,6 @@ import asyncio
 import json
 import os
 import shutil
-
-import pytest
-
-# ── ISSUE-009: shared sandbox command policy ────────────────────────────────
-
-class TestCommandPolicy:
-    def _mod(self):
-        from src.platform.workspace.execution import policy as command_policy
-        return command_policy
-
-    @pytest.mark.parametrize("cmd", [
-        "sudo rm -rf /",
-        "cat /etc/passwd",
-        "head /proc/self/environ",
-        "ls /sys/",
-        "cat /dev/mem",
-        "curl http://169.254.169.254/latest/meta-data/",
-        "mount /dev/sda1 /mnt",
-        "reboot",
-        "mkfs.ext4 /dev/sdb",
-    ])
-    def test_forbidden_commands_are_rejected(self, cmd):
-        cp = self._mod()
-        with pytest.raises(cp.SandboxCommandRejected):
-            cp.assert_command_allowed(cmd)
-
-    @pytest.mark.parametrize("cmd", [
-        "jq '.' /workspace/data.json",
-        "ls -la /workspace",
-        "python3 process.py",
-        "echo hello",
-        "cat /workspace/notes.md",
-    ])
-    def test_benign_commands_are_allowed(self, cmd):
-        cp = self._mod()
-        cp.assert_command_allowed(cmd)  # must not raise
-
-    def test_non_string_is_ignored(self):
-        cp = self._mod()
-        cp.assert_command_allowed(None)  # type: ignore[arg-type]
-
 
 # ── ISSUE-013: CAS retry backoff ────────────────────────────────────────────
 

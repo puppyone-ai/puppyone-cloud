@@ -17,11 +17,6 @@
       "reason": "Stat and JSON content use separate snapshots; any content read error becomes empty JSON before write."
     },
     {
-      "path": "platform/access/adapters/agent/sandbox_session.py",
-      "function": "prepare_sandbox_data",
-      "reason": "No caller found; legacy helper has per-file snapshots and swallowed errors. Do not enable unchanged."
-    },
-    {
       "path": "platform/synchronize/engine.py",
       "function": "SynchronizeEngine._target_exists_as_file",
       "reason": "Builds engine and reads full content just to check existence; any failure becomes false."
@@ -111,12 +106,6 @@
       },
       "platform/access/adapters/agent/runtime/execution/tools.py": {
         "BoundTools.execute::read.stat": 1
-      },
-      "platform/access/adapters/agent/sandbox_session.py": {
-        "_read_modified_files::sandbox_service.read_file": 1,
-        "prepare_sandbox_data::ops.list_tree": 1,
-        "prepare_sandbox_data::ops.read_file": 2,
-        "prepare_sandbox_data::ops.stat": 1
       },
       "platform/access/adapters/api/read.py": {
         "download.chunks::read.read_file": 1,

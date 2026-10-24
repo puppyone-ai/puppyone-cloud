@@ -77,11 +77,16 @@ class FlyRuntimeProvider:
             raise ValueError("A persisted Fly app binding is required")
         return f"/v1/apps/{app}{suffix}"
 
-    async def _request(self, resource, method, suffix, **kwargs):
-        if not settings.CLOUD_AGENT_FLY_TOKEN:
-            raise ValueError("CLOUD_AGENT_FLY_TOKEN is required")
+    async def _request(self, resource, method, suffix, *, token=None, **kwargs):
+        # ``token`` selects another provider account; it is never persisted.
+        if token is None:
+            if not settings.CLOUD_AGENT_FLY_TOKEN:
+                raise ValueError("CLOUD_AGENT_FLY_TOKEN is required")
+            token = settings.CLOUD_AGENT_FLY_TOKEN
+        elif not token:
+            raise ValueError("A Fly API token is required for this resource pool")
         options = {
-            "headers": {"Authorization": f"Bearer {settings.CLOUD_AGENT_FLY_TOKEN}"},
+            "headers": {"Authorization": f"Bearer {token}"},
             **kwargs,
         }
         path = self._path(resource, suffix)
@@ -112,6 +117,38 @@ class FlyRuntimeProvider:
 
     def _machine(self, resource):
         return "/machines/" + quote(resource["resource_id"], safe="")
+
+    @staticmethod
+    def _pool_account(pool):
+        if pool == "runtime":
+            return settings.CLOUD_AGENT_FLY_APP, settings.CLOUD_AGENT_FLY_TOKEN
+        if pool == "legacy_scope":
+            # Retired Scope Sandbox machines live in their own Fly app.
+            return settings.SCOPE_SANDBOX_FLY_APP, settings.SCOPE_SANDBOX_FLY_TOKEN
+        raise ValueError("Unknown sandbox resource pool")
+
+    async def destroy_resource(self, resource_id, *, pool="runtime"):
+        app, token = self._pool_account(pool)
+        resource = {"app": app, "resource_id": resource_id}
+        try:
+            await self._request(
+                resource, "DELETE", self._machine(resource), token=token,
+                params={"force": "true"},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:  # already gone
+                raise
+
+    async def resource_absent(self, resource_id, *, pool="runtime"):
+        app, token = self._pool_account(pool)
+        resource = {"app": app, "resource_id": resource_id}
+        try:
+            row = await self._request(resource, "GET", self._machine(resource), token=token)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return True
+            raise
+        return (row or {}).get("state") == "destroyed"
 
     @staticmethod
     def _metadata(resource):

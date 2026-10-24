@@ -285,28 +285,20 @@ def _init_provider_registry() -> None:
         )
 
 
-def _init_scope_sandbox_reaper(app: FastAPI) -> None:
-    """Start the scope-sandbox reaper (idle→stop, long-idle→destroy) if enabled.
+def _init_sandbox_reaper(app: FastAPI) -> None:
+    """Start the sandbox reaper: idle unretained executions and legacy Scope machines.
 
     It is enabled by default and mandatory in hosted deployments so crashed
     workers cannot orphan paid provider resources. Stored on app.state so
-    shutdown can stop both durable reaper loops cleanly."""
-    if not getattr(settings, "SCOPE_SANDBOX_REAPER_ENABLED", False):
+    shutdown can stop the durable reaper loop cleanly."""
+    if not settings.SANDBOX_REAPER_ENABLED:
         return
-    from src.platform.access.adapters.ssh.service import get_ssh_access_service
-    from src.platform.sandbox import start_execution_reaper
-    from src.platform.workspace.scopes.reaper import start_reaper
+    from src.platform.sandbox import start_sandbox_reaper
 
-    service = get_ssh_access_service().workspace
-    task, stop_event = start_reaper(
-        service,
-        interval_s=settings.SCOPE_SANDBOX_REAPER_INTERVAL_S,
+    app.state.sandbox_execution_reaper = start_sandbox_reaper(
+        interval_s=settings.SANDBOX_REAPER_INTERVAL_S,
     )
-    app.state.scope_sandbox_reaper = (task, stop_event)
-    app.state.sandbox_execution_reaper = start_execution_reaper(
-        interval_s=settings.SCOPE_SANDBOX_REAPER_INTERVAL_S,
-    )
-    log_info(f"🧹 Scope-sandbox reaper started (every {settings.SCOPE_SANDBOX_REAPER_INTERVAL_S}s)")
+    log_info(f"🧹 Sandbox reaper started (every {settings.SANDBOX_REAPER_INTERVAL_S}s)")
 
 
 def _init_runtime_billing_reaper(app: FastAPI) -> None:
@@ -486,7 +478,7 @@ async def app_lifespan(app: FastAPI):
     await _init_scheduler()
     await _init_file_ingest()
     _init_provider_registry()
-    _init_scope_sandbox_reaper(app)
+    _init_sandbox_reaper(app)
     _init_entitlement_provisioner(app)
     _init_seat_proposal_worker(app)
     _init_runtime_billing_reaper(app)
@@ -504,14 +496,6 @@ async def app_lifespan(app: FastAPI):
     log_info("")
 
     yield
-    reaper = getattr(app.state, "scope_sandbox_reaper", None)
-    if reaper is not None:
-        task, stop_event = reaper
-        stop_event.set()
-        try:
-            await task
-        except Exception as e:
-            log_error(f"Scope-sandbox reaper shutdown error: {e}")
     execution_reaper = getattr(app.state, "sandbox_execution_reaper", None)
     if execution_reaper is not None:
         task, stop_event = execution_reaper
@@ -519,7 +503,7 @@ async def app_lifespan(app: FastAPI):
         try:
             await task
         except Exception as e:
-            log_error(f"Sandbox execution reaper shutdown error: {e}")
+            log_error(f"Sandbox reaper shutdown error: {e}")
     runtime_billing_reaper = getattr(app.state, "runtime_billing_reaper", None)
     if runtime_billing_reaper is not None:
         task, stop_event = runtime_billing_reaper
@@ -690,9 +674,6 @@ def create_app() -> FastAPI:
 
     app.include_router(synchronize_github_router)
     app.include_router(synchronize_github_webhook_router)
-    from src.platform.access.adapters.ssh.router import router as scope_sandbox_router
-
-    app.include_router(scope_sandbox_router, tags=["scope-sandboxes"])
     from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
 
     app.include_router(hosted_ssh_router)

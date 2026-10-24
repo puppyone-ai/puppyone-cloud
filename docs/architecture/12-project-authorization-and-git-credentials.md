@@ -137,8 +137,9 @@ Deletion similarly crosses one durable deletion control plane. Moving a
 Project to `deleting` atomically closes renewable write-lease admission. A
 worker drains every logical and physical writer before relational deletion,
 then purges and independently verifies all persisted manifests: S3 objects and
-multipart uploads, Turbopuffer namespaces, long-lived Scope sandboxes and
-request execution sandboxes, plus durable external OCR/provider jobs and their
+multipart uploads, Turbopuffer namespaces, machines left by the retired Scope
+Sandbox product and request execution sandboxes (destroyed and verified through
+`platform/sandbox`), plus durable external OCR/provider jobs and their
 Redis/cache handles. Organization deletion waits for these authoritative jobs
 to be `completed`, not merely for the Project row to disappear.
 

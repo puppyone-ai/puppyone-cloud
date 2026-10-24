@@ -238,6 +238,22 @@ class E2BRuntimeProvider:
             with suppress(NotFoundException):
                 await AsyncSandbox.kill(allocated["resource_id"], api_key=settings.E2B_API_KEY)
 
+    async def destroy_resource(self, resource_id, *, pool="runtime"):
+        # One E2B API key owns every pool; a missing sandbox is already gone.
+        await self.cleanup({"provider": "e2b", "resource_id": resource_id})
+
+    async def resource_absent(self, resource_id, *, pool="runtime"):
+        from e2b import AsyncSandbox
+        from e2b.exceptions import NotFoundException
+
+        # Only a definite not-found proves absence; any other failure must
+        # surface so a deletion verification is retried, not assumed complete.
+        try:
+            await AsyncSandbox.get_info(resource_id, api_key=settings.E2B_API_KEY)
+        except NotFoundException:
+            return True
+        return False
+
     def artifact(self, image):
         return settings.CLOUD_AGENT_E2B_TEMPLATE
 

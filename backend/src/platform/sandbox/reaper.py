@@ -8,6 +8,9 @@ idle resource through the provider's ``cleanup`` and then forgets the record.
 Only providers with a bounded provider-side lifetime are reaped here. Fly
 records lack the app and volume identity that ``cleanup`` requires, so they stay
 owned by the Workspace lifecycle reapers.
+
+The same loop retires machines left by the removed Scope Sandbox product
+(``legacy_scope``).
 """
 
 from __future__ import annotations
@@ -15,8 +18,10 @@ from __future__ import annotations
 import asyncio
 import time
 
+from src.infra.execution.runner import run_blocking
 from src.utils.logger import log_warning
 
+from .legacy_scope import retire_legacy_scope_sandboxes_once
 from .registry import runtime_provider
 from .store import ExecutionSession, ExecutionSessionStore, durable_execution_store
 
@@ -51,20 +56,20 @@ async def run_execution_reaper_once(
     for provider, timeout in (("docker", docker_timeout_s), ("e2b", e2b_timeout_s)):
         expired.extend(
             row.session_id
-            for row in store.list_provider(provider)
+            for row in await run_blocking(store.list_provider, provider)
             if current - row.last_activity >= timeout
         )
 
     stopped = 0
     for session_id in expired:
         # Re-read: the owner may have retained or refreshed the row meanwhile.
-        row = store.get(session_id)
+        row = await run_blocking(store.get, session_id)
         if row is None:
             continue
         if not row.resource_id:
             # A worker died after atomically claiming the session but before a
             # provider resource was created. There is nothing external to stop.
-            store.delete(session_id)
+            await run_blocking(store.delete, session_id)
             stopped += 1
             continue
         # Cleanup is idempotent, so API replicas may race safely; the durable
@@ -77,22 +82,26 @@ async def run_execution_reaper_once(
                 f"will retry: {type(exc).__name__}"
             )
             continue
-        store.delete(session_id)
+        await run_blocking(store.delete, session_id)
         stopped += 1
     return stopped
 
 
-def start_execution_reaper(*, interval_s: int = 60):
+def start_sandbox_reaper(*, interval_s: int = 60):
     stop_event = asyncio.Event()
 
     async def loop() -> None:
         while not stop_event.is_set():
-            try:
-                await run_execution_reaper_once()
-            except Exception as exc:
-                # A transient provider/DB failure must not permanently kill the
-                # recovery loop; the next pass retries the durable record.
-                log_warning(f"[SandboxExecutionReaper] pass failed; will retry: {exc}")
+            # Independent passes: one failing never skips the other. A transient
+            # provider/DB failure must not kill the loop; durable rows retry.
+            for name, reap in (
+                ("SandboxExecutionReaper", run_execution_reaper_once),
+                ("LegacyScopeSandbox", retire_legacy_scope_sandboxes_once),
+            ):
+                try:
+                    await reap()
+                except Exception as exc:
+                    log_warning(f"[{name}] pass failed; will retry: {exc}")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=max(1, interval_s))
             except TimeoutError:

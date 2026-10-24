@@ -44,7 +44,6 @@ export interface CreateMenuProps {
   onCreateAgent?: () => void;
   onCreateMcp?: () => void;
   onCreateSandbox?: () => void;
-  onCreateSshTerminal?: () => void;
 }
 
 interface MenuItemProps {
@@ -218,13 +217,6 @@ const McpIcon = () => (
   </svg>
 );
 
-const SandboxIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--po-warning)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="4 17 10 11 4 5" />
-    <line x1="12" y1="19" x2="20" y2="19" />
-  </svg>
-);
-
 export function CreateMenu({
   x,
   y,
@@ -248,7 +240,6 @@ export function CreateMenu({
   onCreateAgent,
   onCreateMcp,
   onCreateSandbox,
-  onCreateSshTerminal,
 }: CreateMenuProps) {
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -421,21 +412,6 @@ export function CreateMenu({
             <Divider />
 
             <div style={{ padding: '6px 16px 2px', fontSize: 10, fontWeight: 600, color: 'var(--po-text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Connect via terminal
-            </div>
-            <MenuItem
-              icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--po-text-subtle)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>}
-              label="SSH Terminal"
-              sublabel="Remote dev over SSH"
-              onClick={() => {
-                onCreateSshTerminal?.();
-                onClose();
-              }}
-            />
-
-            <Divider />
-
-            <div style={{ padding: '6px 16px 2px', fontSize: 10, fontWeight: 600, color: 'var(--po-text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Expose data
             </div>
             <MenuItem
@@ -444,19 +420,6 @@ export function CreateMenu({
               sublabel="Expose this folder to MCP clients"
               onClick={() => {
                 onCreateMcp?.();
-                onClose();
-              }}
-            />
-            <MenuItem
-              icon={<SandboxIcon />}
-              label="Sandbox"
-              sublabel="Run tools with this folder mounted"
-              onClick={() => {
-                // Sandbox is a scope-level Remote Dev (SSH) card on the Access
-                // page, not a connector — route to it like the SSH Terminal
-                // entry (onCreateSandbox would open a sync-config panel, which
-                // does not fit a sandbox).
-                onCreateSshTerminal?.();
                 onClose();
               }}
             />

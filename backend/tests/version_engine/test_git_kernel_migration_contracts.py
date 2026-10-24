@@ -1016,8 +1016,12 @@ def test_legacy_mcp_and_sandbox_runtime_packages_are_retired() -> None:
     assert "INSERT INTO public.access_surfaces" in migration
     assert "DROP TABLE IF EXISTS public.mcps CASCADE" in migration
 
+    # Sandbox sessions are durable and shared by every worker; there is no
+    # process-local session store to select any more.
     config = (BACKEND_ROOT / "src/config.py").read_text(encoding="utf-8")
-    assert 'SCOPE_SANDBOX_STORE: Literal["memory", "supabase"] = "supabase"' in config
+    assert "SCOPE_SANDBOX_STORE" not in config
+    store = (BACKEND_ROOT / "src/platform/sandbox/store.py").read_text(encoding="utf-8")
+    assert "return SupabaseExecutionSessionStore()" in store
 
 
 def test_mcp_transport_has_one_backend_runtime_and_one_binding_store() -> None:

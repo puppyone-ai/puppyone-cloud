@@ -376,6 +376,19 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         assert local_workspace[category]["added"] == local_workspace[category]["changed"] == {}
         for name, digest in local_workspace[category]["removed"].items():
             assert expected["contract"][category].pop(name) == digest
+    # Scope Sandbox SSH is retired exactly; Hosted Workspace SSH grants under
+    # /projects/{project_id}/workbench/ssh-grants are unchanged.
+    scope_sandbox = json.loads(
+        Path(__file__).with_name("scope_sandbox_retirement_contract_delta.json").read_text()
+    )
+    assert set(scope_sandbox["paths"]["removed"]) == {
+        f"/api/v1/scope-sandboxes/{action}" for action in ("connect", "providers", "status", "revoke")
+    }
+    assert set(scope_sandbox["schemas"]["removed"]) == {"ConnectRequest", "RevokeRequest"}
+    for category in ("paths", "schemas"):
+        assert scope_sandbox[category]["added"] == scope_sandbox[category]["changed"] == {}
+        for name, digest in scope_sandbox[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 
