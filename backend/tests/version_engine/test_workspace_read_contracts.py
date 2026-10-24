@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
@@ -21,18 +21,18 @@ from tests.authorization_fakes import authorization_for, install_authorization
 async def test_head_authorizes_before_read_and_never_reads_history(allowed):
     auth = authorization_for(*(["p"] if allowed else []))
     auth.authorize = Mock(wraps=auth.authorize)
-    admin = SimpleNamespace(get_project_head_commit_id=AsyncMock(return_value="a" * 40))
+    admin = SimpleNamespace(get_project_head_commit_id=Mock(return_value="a" * 40))
     admin.for_grant = lambda grant: admin
     manager = SimpleNamespace(get_native_service=Mock(return_value=None))
     call = get_project_head("p", admin, auth, SimpleNamespace(user_id="user-1"), manager)
     if allowed:
         response = await call
         assert response.data == {"project_id": "p", "head_commit_id": "a" * 40}
-        admin.get_project_head_commit_id.assert_awaited_once_with("p")
+        admin.get_project_head_commit_id.assert_called_once_with("p")
     else:
         with pytest.raises(NotFoundException):
             await call
-        admin.get_project_head_commit_id.assert_not_awaited()
+        admin.get_project_head_commit_id.assert_not_called()
     auth.authorize.assert_called_once_with("p", "user-1", ProjectAction.HISTORY_READ)
 
 
@@ -41,7 +41,7 @@ def test_preview_is_opt_in_bounded_and_keeps_full_content_contract():
     app.include_router(history_router, prefix="/api/v1/content")
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id="user-1")
     admin = SimpleNamespace(
-        get_commit_content=AsyncMock(return_value=b'{"value":"' + b"x" * 100 + b'"}')
+        get_commit_content=Mock(return_value=b'{"value":"' + b"x" * 100 + b'"}')
     )
     admin.for_grant = lambda grant: admin
     app.dependency_overrides[get_version_admin_service] = lambda: admin

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.infra.execution.runner import run_blocking
 from src.platform.synchronize.github.importer import import_branch
 from src.platform.synchronize.github.repository import GithubSyncRepository
 from src.utils.logger import log_error, log_info
@@ -22,7 +23,7 @@ async def execute_synchronize_github_pull(
     Unexpected exceptions propagate to ARQ; domain failures retain their durable
     log/status instead of inventing a successful ImportJob result.
     """
-    binding = await GithubSyncRepository().get_by_id(synchronize_github_binding_id)
+    binding = await run_blocking(GithubSyncRepository().get_by_id, synchronize_github_binding_id)
     if not binding:
         log_error(f"[github-pull-job] binding {synchronize_github_binding_id} not found")
         return {"status": "skipped", "reason": "binding_not_found",

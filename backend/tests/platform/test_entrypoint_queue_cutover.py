@@ -90,14 +90,14 @@ async def test_serialized_payload_outside_reported_queues_blocks_cutover(redis):
 
 async def test_synchronize_worker_consumes_real_github_job_not_import_queue(redis, monkeypatch):
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
     from arq.worker import Worker
     from arq.jobs import Job
     from src.platform.synchronize.github import jobs
     from src.platform.synchronize.worker import WorkerSettings
 
     binding = SimpleNamespace(id="binding-1")
-    repository = SimpleNamespace(get_by_id=AsyncMock(return_value=binding))
+    repository = SimpleNamespace(get_by_id=MagicMock(return_value=binding))
     pull = AsyncMock(return_value=SimpleNamespace(status="success", git_sha="sha-1"))
     monkeypatch.setattr(jobs, "GithubSyncRepository", lambda: repository)
     monkeypatch.setattr(jobs, "import_branch", pull)
@@ -112,7 +112,7 @@ async def test_synchronize_worker_consumes_real_github_job_not_import_queue(redi
         result = await Job(github_id, redis).result(timeout=2)
         assert result["synchronize_github_binding_id"] == "binding-1"
         assert result["git_sha"] == "sha-1"
-        repository.get_by_id.assert_awaited_once_with("binding-1")
+        repository.get_by_id.assert_called_once_with("binding-1")
         pull.assert_awaited_once()
         assert await redis.zrange(imports.queue_name, 0, -1) == [import_id.encode()]
         assert worker.jobs_complete == 1

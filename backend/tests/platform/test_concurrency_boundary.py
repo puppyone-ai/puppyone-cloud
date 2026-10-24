@@ -180,3 +180,47 @@ def test_blocking_only_routes_and_dependencies_are_plain_functions():
         "a handler/dependency that only blocks is a plain def (FastAPI runs it in "
         "the shared thread pool):\n" + "\n".join(violations)
     )
+
+
+# The synchronous data core: repositories and the Version Engine. Async code
+# lives at the edges and calls into it with run_blocking/run_owned.
+_ASYNC_EDGES_IN_CORE = {
+    # WebSocket fan-out and Redis pub/sub for commit notifications.
+    "version_engine/derived/notifications.py": "async-only WebSocket/Redis clients",
+    # ETL runtime state shares ARQ's async Redis connection.
+    "platform/upload/state/repository.py": "async Redis client shared with ARQ",
+    # Unreferenced modules kept until ISSUE-123 A4 deletes them.
+    "version_engine/infrastructure/async_context.py": "unreferenced; pending deletion",
+    "version_engine/write_engine/cas_backoff.py": "unreferenced; pending deletion",
+}
+
+
+def _is_data_core(relative: str) -> bool:
+    name = relative.rsplit("/", 1)[-1]
+    return (
+        relative.startswith("version_engine/")
+        or name == "repository.py"
+        or name.endswith("_repository.py")
+        or "/repositories/" in relative
+    )
+
+
+def test_repositories_and_version_engine_are_synchronous():
+    violations = []
+    for path, tree in _python_files():
+        relative = path.relative_to(SOURCE).as_posix()
+        if not _is_data_core(relative) or relative in _ASYNC_EDGES_IN_CORE:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef):
+                violations.append(f"{relative}:{node.lineno} async def {node.name}")
+            elif isinstance(node, ast.Import) and any(a.name == "asyncio" for a in node.names):
+                violations.append(f"{relative}:{node.lineno} import asyncio")
+    assert violations == [], "\n".join(violations)
+
+
+def test_async_edges_in_the_core_are_still_async():
+    # Keep the allowlist honest: a module that became synchronous leaves it.
+    for relative in _ASYNC_EDGES_IN_CORE:
+        tree = ast.parse((SOURCE / relative).read_text(encoding="utf-8"))
+        assert any(isinstance(node, ast.AsyncFunctionDef) for node in ast.walk(tree)), relative

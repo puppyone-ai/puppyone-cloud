@@ -19,7 +19,7 @@ from src.platform.synchronize.service import SynchronizeService
 async def test_github_result_cannot_claim_another_execution_binding(monkeypatch, method):
     service = github_service.GithubSyncService.__new__(github_service.GithubSyncService)
     service._bindings = SimpleNamespace(
-        get_by_project=AsyncMock(return_value={"id": "expected-binding"})
+        get_by_project=MagicMock(return_value={"id": "expected-binding"})
     )
     result = github_contracts.SynchronizeGithubResult(
         synchronize_github_binding_id="another-binding",
@@ -109,7 +109,7 @@ async def test_github_pull_replay_does_not_fabricate_version_commit_from_git_sha
         get_tree_recursive=AsyncMock(),
     )
     logs = SimpleNamespace(
-        find_successful_sha=AsyncMock(
+        find_successful_sha=MagicMock(
             return_value={
                 "synchronize_github_binding_id": "github-binding",
                 "version_commit_id": version_commit,
@@ -134,7 +134,7 @@ async def test_github_pull_replay_does_not_fabricate_version_commit_from_git_sha
     assert result.git_sha == "external-git-sha"
     assert result.version_commit_id == version_commit
     assert result.files_changed == 0
-    logs.find_successful_sha.assert_awaited_once_with(
+    logs.find_successful_sha.assert_called_once_with(
         "github-binding", "inbound", "external-git-sha"
     )
     api.get_tree_recursive.assert_not_awaited()

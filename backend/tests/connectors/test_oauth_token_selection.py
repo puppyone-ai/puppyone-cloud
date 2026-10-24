@@ -104,14 +104,15 @@ async def test_google_oauth_services_keep_non_refreshable_rows_without_expiry():
     assert await service.is_token_expired("user-1") is False
 
 
-async def test_oauth_repository_runs_supabase_queries_off_the_event_loop():
-    import threading
+def test_oauth_repository_is_synchronous_and_keeps_upsert_semantics():
+    import inspect
 
     from src.provider.oauth.models import OAuthConnectionCreate
     from src.provider.oauth.repository import OAuthRepository
 
-    loop_thread = threading.get_ident()
-    query_threads = []
+    assert not any(
+        inspect.iscoroutinefunction(member) for _, member in inspect.getmembers(OAuthRepository)
+    )
     now = "2026-10-24T00:00:00+00:00"
     row = {
         "id": 7,
@@ -121,6 +122,7 @@ async def test_oauth_repository_runs_supabase_queries_off_the_event_loop():
         "created_at": now,
         "updated_at": now,
     }
+    queries = []
 
     class Query:
         def __init__(self, data):
@@ -130,7 +132,7 @@ async def test_oauth_repository_runs_supabase_queries_off_the_event_loop():
             return lambda *args, **kwargs: self
 
         def execute(self):
-            query_threads.append(threading.get_ident())
+            queries.append(self.data)
             return SimpleNamespace(data=self.data)
 
     class Client:
@@ -145,13 +147,36 @@ async def test_oauth_repository_runs_supabase_queries_off_the_event_loop():
     repository = OAuthRepository.__new__(OAuthRepository)
     repository.supabase = Client()
 
-    created = await repository.create(
+    created = repository.create(
         OAuthConnectionCreate(user_id="user-1", provider="github", access_token="token")
     )
-    found = await repository.get_by_user_and_provider("user-1", "github")
-    deleted = await repository.delete(7)
+    found = repository.get_by_user_and_provider("user-1", "github")
+    deleted = repository.delete(7)
 
     assert created.id == found.id == 7
     assert deleted is True
-    assert len(query_threads) == 4  # lookup + insert, lookup, delete
-    assert loop_thread not in query_threads
+    assert len(queries) == 4  # lookup + insert, lookup, delete
+
+
+async def test_oauth_services_reach_the_repository_off_the_event_loop():
+    import threading
+
+    from src.provider.oauth.gmail_service import GmailOAuthService
+
+    loop_thread = threading.get_ident()
+    threads = []
+
+    class Repository:
+        def get_by_user_and_provider(self, user_id, provider):
+            threads.append(threading.get_ident())
+            assert (user_id, provider) == ("user-1", "gmail")
+
+        def delete_by_user_and_provider(self, user_id, provider):
+            threads.append(threading.get_ident())
+            return True
+
+    service = GmailOAuthService.__new__(GmailOAuthService)
+    service.repository = Repository()
+    assert await service.get_connection("user-1") is None
+    assert await service.disconnect("user-1") is True
+    assert threads and loop_thread not in threads

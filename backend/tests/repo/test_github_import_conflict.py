@@ -26,11 +26,11 @@ def setup_import(monkeypatch, *, receipt=None, head="current"):
         get_tree_recursive=AsyncMock(return_value=([], False)),
     )
     logs = SimpleNamespace(
-        find_successful_sha=AsyncMock(return_value=None),
-        latest_successful_import=AsyncMock(return_value={"version_commit_id": "previous"}),
-        record=AsyncMock(),
+        find_successful_sha=Mock(return_value=None),
+        latest_successful_import=Mock(return_value={"version_commit_id": "previous"}),
+        record=Mock(),
     )
-    binding_repo = SimpleNamespace(update_watermark=AsyncMock())
+    binding_repo = SimpleNamespace(update_watermark=Mock())
     ops = Mock()
     ops._grant = object()
     ops.producer_request_key.return_value = "stable-native-request"
@@ -111,8 +111,8 @@ async def test_lost_log_after_success_replays_without_reading_or_overwriting_new
     api.get_tree_recursive.assert_not_awaited()
     ops.open_read.assert_not_called()
     ops.bulk_write.assert_not_awaited()
-    assert logs.record.await_args.kwargs["version_commit_id"] == "already-published"
-    binding_repo.update_watermark.assert_awaited_once()
+    assert logs.record.call_args.kwargs["version_commit_id"] == "already-published"
+    binding_repo.update_watermark.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -141,4 +141,4 @@ async def test_incomplete_snapshot_cannot_publish_or_delete_existing_files(
         )
     ops.bulk_write.assert_not_awaited()
     ops.open_read.assert_not_called()
-    binding_repo.update_watermark.assert_not_awaited()
+    binding_repo.update_watermark.assert_not_called()

@@ -212,7 +212,7 @@ async def _do_export(
     files, head = await run_blocking(_read_native_export, project_id, user_id)
     if not files:
         msg = "version scope is empty — nothing to export"
-        await sync_log.record(
+        await run_blocking(sync_log.record,
             binding_id,
             direction="outbound",
             status="failed",
@@ -277,7 +277,7 @@ async def _do_export(
     )
 
     files_changed = len(tree_entries)
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="outbound",
         status="success",
@@ -285,7 +285,7 @@ async def _do_export(
         version_commit_id=head,
         files_changed=files_changed,
     )
-    await binding_repo.update_watermark(
+    await run_blocking(binding_repo.update_watermark,
         binding_id,
         last_pushed_sha=new_git_sha,
         last_pushed_at=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -310,7 +310,7 @@ async def _record_failure(
     binding_id: str,
     error: str,
 ) -> SynchronizeGithubResult:
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="outbound",
         status="failed",

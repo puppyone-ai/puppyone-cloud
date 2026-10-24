@@ -5,7 +5,7 @@ import hmac
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -30,10 +30,10 @@ class Memory:
         self.logs = []
         self.writes = []
 
-    async def get_by_project(self, project_id):
+    def get_by_project(self, project_id):
         return self.rows.get(project_id)
 
-    async def upsert(self, project_id, fields):
+    def upsert(self, project_id, fields):
         now = datetime.now(UTC)
         row = {
             "id": f"github-binding-{len(self.writes) + 1}",
@@ -47,17 +47,17 @@ class Memory:
         self.writes.append(dict(row))
         return row
 
-    async def delete_by_project(self, project_id):
+    def delete_by_project(self, project_id):
         return self.rows.pop(project_id, None) is not None
 
-    async def find_by_repo(self, owner, name):
+    def find_by_repo(self, owner, name):
         return [
             row
             for row in self.rows.values()
             if (row["github_repo_owner"], row["github_repo_name"]) == (owner, name)
         ]
 
-    async def list_recent(self, binding_id, *, limit, offset):
+    def list_recent(self, binding_id, *, limit, offset):
         rows = [row for row in self.logs if row["synchronize_github_binding_id"] == binding_id]
         return rows[offset : offset + limit], len(rows)
 
@@ -68,7 +68,7 @@ def environment(monkeypatch):
     monkeypatch.setattr(services, "GithubSyncRepository", lambda: memory)
     monkeypatch.setattr(services, "GithubSyncLogRepository", lambda: memory)
     monkeypatch.setattr(hooks, "GithubSyncRepository", lambda: memory)
-    oauth = AsyncMock(return_value=SimpleNamespace(user_id="user-1", provider="github"))
+    oauth = MagicMock(return_value=SimpleNamespace(user_id="user-1", provider="github"))
     monkeypatch.setattr(legacy, "OAuthRepository", lambda: SimpleNamespace(get_by_id=oauth))
     executions = []
 

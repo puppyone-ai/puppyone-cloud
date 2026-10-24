@@ -6,17 +6,18 @@ import asyncio
 import threading
 from contextvars import ContextVar
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
 from src.exceptions import NotFoundException
+from src.infra.execution.runner import run_owned
+from src.platform.access.adapters.api.history import get_commit_content
 from src.platform.activity.dependencies import get_activity_service
 from src.platform.activity.public_router import router as activity_router
 from src.platform.auth.dependencies import get_current_user
-from src.platform.access.adapters.api.history import get_commit_content
 from src.version_engine.read.admin import VersionAdminService
 from tests.authorization_fakes import authorization_for
 
@@ -72,7 +73,8 @@ async def test_history_read_runs_off_loop_and_preserves_request_context():
 
     admin = VersionAdminService(object(), grant=object())
     admin._read = read
-    assert await admin.get_commit_history("p1") == []
+    # The Version Engine read is synchronous; the HTTP edge owns it off-loop.
+    assert await run_owned(admin.get_commit_history, "p1") == []
 
 
 @pytest.mark.asyncio
@@ -87,7 +89,7 @@ async def test_history_authorization_runs_off_loop_and_still_guards_content(allo
         return original(project_id, user_id)
 
     authorization._repository.load_project_facts = load_facts
-    admin = SimpleNamespace(get_commit_content=AsyncMock(return_value=b"hello"))
+    admin = SimpleNamespace(get_commit_content=Mock(return_value=b"hello"))
 
     def bind(grant):
         assert grant.project_id == "p1"
@@ -105,8 +107,8 @@ async def test_history_authorization_runs_off_loop_and_still_guards_content(allo
     if allowed:
         result = await call
         assert result.data["content_text"] == "hello"
-        admin.get_commit_content.assert_awaited_once()
+        admin.get_commit_content.assert_called_once()
     else:
         with pytest.raises(NotFoundException):
             await call
-        admin.get_commit_content.assert_not_awaited()
+        admin.get_commit_content.assert_not_called()

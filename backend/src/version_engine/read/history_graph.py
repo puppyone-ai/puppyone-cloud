@@ -8,7 +8,6 @@ to response schemas.
 
 from __future__ import annotations
 
-from src.infra.execution.runner import run_owned
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.history_cache import HistoryGraphCache
 from src.version_engine.read.history_cursor import HistoryCursorCodec, history_snapshot_id
@@ -44,12 +43,8 @@ class HistoryGraphService:
         self._cursor_codec = cursor_codec or HistoryCursorCodec()
         self._max_traversal_nodes = max_traversal_nodes
 
-    async def get_page(
-        self, project_id, *, limit, cursor="", grant=None, summary=False, cancel_when=None
-    ):
-        return await run_owned(
-            self._native_page, project_id, grant, limit, cursor, summary, cancel_when=cancel_when
-        )
+    def get_page(self, project_id, *, limit, cursor="", grant=None, summary=False):
+        return self._native_page(project_id, grant, limit, cursor, summary)
 
     def _native_page(self, project_id, grant, limit, cursor, summary=False):
         state = self._cursor_codec.decode(cursor, project_id=project_id) if cursor else None
@@ -127,8 +122,8 @@ class HistoryGraphService:
             "changes_loaded": False,
         }
 
-    async def get_detail(self, project_id, commit_id, *, grant, cancel_when=None):
-        return await run_owned(self._detail, project_id, commit_id, grant, cancel_when=cancel_when)
+    def get_detail(self, project_id, commit_id, *, grant):
+        return self._detail(project_id, commit_id, grant)
 
     def _detail(self, project_id, commit_id, grant):
         with open_tree_read(self._repos, project_id, grant, bulk=True) as reader:

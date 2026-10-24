@@ -1,9 +1,7 @@
 """OAuth repository for database operations."""
 
 from datetime import datetime
-from typing import Optional
 
-from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.provider.oauth.models import (
     OAuthConnection,
@@ -48,10 +46,10 @@ def _select_preferred_connection_row(rows: list[dict]) -> dict | None:
 
 
 class OAuthRepository:
-    """Repository for OAuth connection operations.
+    """Synchronous repository for OAuth connections.
 
-    The public API is async for service callers; the synchronous Supabase
-    client always runs in a worker thread, never on the event loop.
+    Async services call it through ``run_blocking`` so the Supabase client
+    never runs on the event loop.
     """
 
     TABLE = "oauth_connections"
@@ -60,36 +58,9 @@ class OAuthRepository:
         supabase_client = SupabaseClient()
         self.supabase = supabase_client.get_client()
 
-    async def create(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
+    def create(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
         """Create, or refresh the existing, OAuth connection for a user/provider."""
-        return await run_blocking(self._create_sync, connection_create)
-
-    async def get_by_id(self, connection_id: int) -> Optional[OAuthConnection]:
-        """Get OAuth connection by ID."""
-        return await run_blocking(self._get_by_id_sync, connection_id)
-
-    async def get_by_user_and_provider(
-        self, user_id: str, provider: str
-    ) -> Optional[OAuthConnection]:
-        """Get OAuth connection by user ID and provider."""
-        return await run_blocking(self._get_by_user_and_provider_sync, user_id, provider)
-
-    async def update(
-        self, connection_id: int, update_data: OAuthConnectionUpdate
-    ) -> OAuthConnection:
-        """Update OAuth connection."""
-        return await run_blocking(self._update_sync, connection_id, update_data)
-
-    async def delete(self, connection_id: int) -> bool:
-        """Delete OAuth connection."""
-        return await run_blocking(self._delete_sync, connection_id)
-
-    async def delete_by_user_and_provider(self, user_id: str, provider: str) -> bool:
-        """Delete OAuth connection by user ID and provider."""
-        return await run_blocking(self._delete_by_user_and_provider_sync, user_id, provider)
-
-    def _create_sync(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
-        existing = self._get_by_user_and_provider_sync(
+        existing = self.get_by_user_and_provider(
             connection_create.user_id, connection_create.provider
         )
         if existing:
@@ -103,7 +74,7 @@ class OAuthRepository:
                 bot_id=connection_create.bot_id,
                 metadata=connection_create.metadata,
             )
-            return self._update_sync(existing.id, update_data)
+            return self.update(existing.id, update_data)
 
         data = {
             "user_id": connection_create.user_id,
@@ -124,7 +95,8 @@ class OAuthRepository:
             raise Exception("Failed to create OAuth connection")
         return OAuthConnection(**response.data[0])
 
-    def _get_by_id_sync(self, connection_id: int) -> OAuthConnection | None:
+    def get_by_id(self, connection_id: int) -> OAuthConnection | None:
+        """Get OAuth connection by ID."""
         response = (
             self.supabase.table(self.TABLE).select("*").eq("id", connection_id).execute()
         )
@@ -132,9 +104,10 @@ class OAuthRepository:
             return None
         return OAuthConnection(**response.data[0])
 
-    def _get_by_user_and_provider_sync(
+    def get_by_user_and_provider(
         self, user_id: str, provider: str
     ) -> OAuthConnection | None:
+        """Get OAuth connection by user ID and provider."""
         response = (
             self.supabase.table(self.TABLE)
             .select("*")
@@ -147,9 +120,10 @@ class OAuthRepository:
             return None
         return OAuthConnection(**row)
 
-    def _update_sync(
+    def update(
         self, connection_id: int, update_data: OAuthConnectionUpdate
     ) -> OAuthConnection:
+        """Update OAuth connection."""
         data = {}
         if update_data.access_token is not None:
             data["access_token"] = update_data.access_token
@@ -175,11 +149,13 @@ class OAuthRepository:
             raise Exception("Failed to update OAuth connection")
         return OAuthConnection(**response.data[0])
 
-    def _delete_sync(self, connection_id: int) -> bool:
+    def delete(self, connection_id: int) -> bool:
+        """Delete OAuth connection."""
         response = self.supabase.table(self.TABLE).delete().eq("id", connection_id).execute()
         return len(response.data) > 0
 
-    def _delete_by_user_and_provider_sync(self, user_id: str, provider: str) -> bool:
+    def delete_by_user_and_provider(self, user_id: str, provider: str) -> bool:
+        """Delete OAuth connection by user ID and provider."""
         response = (
             self.supabase.table(self.TABLE)
             .delete()

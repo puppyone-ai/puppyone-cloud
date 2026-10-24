@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 
 import httpx
 
+from src.infra.execution.runner import run_blocking
 from src.platform.synchronize.github.public_schemas import SynchronizeGithubResult
 from src.platform.synchronize.github.repository import (
     GithubSyncLogRepository,
@@ -143,7 +144,7 @@ async def import_branch(
             files_changed=None,
             error_message=str(e),
         )
-        await sync_log.record(
+        await run_blocking(sync_log.record,
             binding_id,
             direction="inbound",
             status="conflict",
@@ -186,7 +187,7 @@ async def _do_import(
     git_tree_sha = branch_info["commit"]["commit"]["tree"]["sha"]
 
     # Idempotency: webhook deliveries retry on non-200; reject duplicate sha.
-    prior = await sync_log.find_successful_sha(binding_id, "inbound", git_sha)
+    prior = await run_blocking(sync_log.find_successful_sha, binding_id, "inbound", git_sha)
     if prior:
         log_info(f"[GithubImport] sha {git_sha[:12]} already imported, skipping")
         return SynchronizeGithubResult(
@@ -223,7 +224,7 @@ async def _do_import(
                 f"large for the recursive endpoint (truncated). Per-directory "
                 f"paging is not yet implemented."
             )
-            await sync_log.record(
+            await run_blocking(sync_log.record,
                 binding_id,
                 direction="inbound",
                 status="failed",
@@ -244,7 +245,7 @@ async def _do_import(
         with ops.open_read(project_id, ops._grant) as reader:
             base = reader.get_read_revision(project_id)
             existing = [e.path for e in reader.list_tree(project_id) if e.type != "folder"]
-        last = await sync_log.latest_successful_import(binding_id)
+        last = await run_blocking(sync_log.latest_successful_import, binding_id)
         last_commit = (last or {}).get("version_commit_id")
         if not force and last_commit and last_commit != base["expected_oid"]:
             raise ImportConflict(version_head=base["expected_oid"] or "", last_imported=last_commit)
@@ -266,7 +267,7 @@ async def _do_import(
     version_commit_id = write_result.commit_id or None
     files_changed = len(write_result.paths)
 
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="inbound",
         status="success",
@@ -274,7 +275,7 @@ async def _do_import(
         version_commit_id=version_commit_id,
         files_changed=files_changed,
     )
-    await binding_repo.update_watermark(
+    await run_blocking(binding_repo.update_watermark,
         binding_id,
         last_pulled_sha=git_sha,
         last_pulled_at=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -337,14 +338,14 @@ def _is_lfs_pointer(content: bytes) -> bool:
 async def _load_oauth_token(oauth_id: int) -> dict | None:
     """Pull access_token (refreshing on demand) for the bound OAuth row.
 
-    Uses :meth:`OAuthRepository.get_by_id` which is async-native, returns
+    Uses :meth:`OAuthRepository.get_by_id` (synchronous, run off-loop), returns
     a typed ``OAuthConnection``, and avoids the older raw-table-query
     path that depended on a private ``.client`` attribute the repository
     doesn't expose.
     """
     try:
         repo = OAuthRepository()
-        connection = await repo.get_by_id(oauth_id)
+        connection = await run_blocking(repo.get_by_id, oauth_id)
         if not connection:
             return None
         # The importer downstream only needs ``access_token`` plus a
@@ -370,7 +371,7 @@ async def _record_failure(
     *,
     error: str,
 ) -> SynchronizeGithubResult:
-    await sync_log.record(
+    await run_blocking(sync_log.record,
         binding_id,
         direction="inbound",
         status="failed",
