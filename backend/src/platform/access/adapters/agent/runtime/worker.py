@@ -5,6 +5,7 @@ import logging
 from uuid import uuid4
 
 from src.infra.execution.process import start_process_concurrency
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
@@ -123,7 +124,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER):
                     shared_first = not shared_first
                 run = None
                 for claim in claims:
-                    run = await asyncio.to_thread(claim, worker=worker_id)
+                    run = await run_blocking(claim, worker=worker_id)
                     if run is not None:
                         break
                 if run is None:

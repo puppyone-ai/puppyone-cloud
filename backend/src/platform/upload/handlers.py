@@ -81,6 +81,7 @@ from src.platform.upload.schemas import (
 )
 from src.platform.upload.service import ETLService
 from src.platform.upload.tasks.models import ETLTaskStatus
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -825,13 +826,13 @@ async def init_multipart_upload(
     # all per-file inserts saves (N-1) × ~400ms in etl_rules
     # queries alone for an N-file batch. The lookup itself is sync
     # Supabase work so we offload to a thread.
-    default_rule_id = await asyncio.to_thread(
+    default_rule_id = await run_blocking(
         etl_service.get_default_rule_id_for_user,
         current_user.user_id,
     )
 
     upload_job_repo = UploadJobRepository()
-    upload_job_id = await asyncio.to_thread(
+    upload_job_id = await run_blocking(
         upload_job_repo.create_job,
         project_id=request.project_id,
         created_by=current_user.user_id,
@@ -886,10 +887,10 @@ async def init_multipart_upload(
 
             try:
                 # ``create_pending_upload_task`` is sync (Supabase
-                # REST), so wrap in to_thread to actually
+                # REST), so wrap in run_blocking to actually
                 # parallelize. With ``default_rule_id`` pre-resolved,
                 # this collapses to a single uploads INSERT per task.
-                task = await asyncio.to_thread(
+                task = await run_blocking(
                     etl_service.create_pending_upload_task,
                     user_id=current_user.user_id,
                     project_id=request.project_id,
@@ -905,7 +906,7 @@ async def init_multipart_upload(
                     default_rule_id=default_rule_id,
                     upload_job_id=upload_job_id,
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_job_repo.create_item,
                     upload_job_id=upload_job_id,
                     item_id=str(task.task_id),
@@ -972,7 +973,7 @@ async def init_multipart_upload(
 
     if first_error is not None:
         with contextlib.suppress(Exception):
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_job_repo.mark_job_failed,
                 upload_job_id,
                 f"upload/init failed: {first_error}",
@@ -990,7 +991,7 @@ async def init_multipart_upload(
                     f"batch failure {r.s3_key}: {abort_err}"
                 )
             try:
-                await asyncio.to_thread(
+                await run_blocking(
                     etl_service.task_repository.delete_task,
                     r.task_id,
                 )
@@ -1225,12 +1226,12 @@ async def complete_upload(
             upload_job_id = task.metadata.get("upload_job_id")
             if upload_job_id:
                 upload_repo = UploadJobRepository()
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     str(task.task_id),
                     f"S3 complete_multipart_upload failed: {e}",
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.refresh_job_from_items,
                     upload_job_id,
                 )
@@ -1250,12 +1251,12 @@ async def complete_upload(
             upload_job_id = task.metadata.get("upload_job_id")
             if upload_job_id:
                 upload_repo = UploadJobRepository()
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     str(task.task_id),
                     message,
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.refresh_job_from_items,
                     upload_job_id,
                 )
@@ -1283,12 +1284,12 @@ async def complete_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_repo.mark_item_failed,
                 str(task.task_id),
                 "Finalize timed out writing to ObjectStore",
             )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
         raise HTTPException(status_code=504, detail="Finalize timed out writing to ObjectStore")
 
     if not result.get("ok"):
@@ -1296,12 +1297,12 @@ async def complete_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_repo.mark_item_failed,
                 str(task.task_id),
                 str(result.get("error") or "Finalize failed"),
             )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to finalize upload: {result.get('error', 'unknown error')}",
@@ -1310,12 +1311,12 @@ async def complete_upload(
     upload_job_id = task.metadata.get("upload_job_id")
     if upload_job_id:
         upload_repo = UploadJobRepository()
-        await asyncio.to_thread(
+        await run_blocking(
             upload_repo.mark_item_completed,
             str(task.task_id),
             result_path=result.get("path") or task.metadata.get("mount_path"),
         )
-        await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+        await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
 
     return UploadCompleteResponse(
         task_id=str(task.task_id),
@@ -1588,19 +1589,19 @@ async def complete_upload_batch(
         if upload_job_id:
             touched_upload_jobs.add(upload_job_id)
             if result.status == IngestStatus.COMPLETED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_completed,
                     item.task_id,
                     result_path=result.path,
                 )
             elif result.status == IngestStatus.CANCELLED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_cancelled,
                     item.task_id,
                     "Upload skipped",
                 )
             elif result.status == IngestStatus.FAILED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     item.task_id,
                     result.error or "Upload failed",
@@ -1608,7 +1609,7 @@ async def complete_upload_batch(
         ordered.append(result)
 
     for upload_job_id in touched_upload_jobs:
-        await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+        await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
 
     return UploadCompleteBatchResponse(items=ordered)
 
@@ -1650,12 +1651,12 @@ async def abort_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_repo.mark_item_cancelled,
                 str(task.task_id),
                 "Upload aborted by client",
             )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
 
     return UploadAbortResponse(task_id=str(task.task_id), cancelled=True)
 

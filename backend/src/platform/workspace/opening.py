@@ -10,6 +10,8 @@ import copy
 import time
 from datetime import UTC, datetime
 
+from src.infra.execution.runner import run_blocking
+
 from .errors import WorkspaceError
 from .execution.timing import workspace_event, workspace_stage
 from .execution.worker_port import WorkerDisconnected
@@ -80,7 +82,7 @@ class WorkspaceOpening:
         try:
             while True:
                 started = time.monotonic()
-                context, _ = await asyncio.to_thread(
+                context, _ = await run_blocking(
                     self.service.context, user, project, ProjectAction.CONTENT_READ
                 )
                 row = context["workbench"]
@@ -145,7 +147,7 @@ class WorkspaceOpening:
         service = self.service
         if context is None:
             with workspace_stage("opening.admission"):
-                context, _ = await asyncio.to_thread(
+                context, _ = await run_blocking(
                     service.context, user, project, ProjectAction.CONTENT_READ
                 )
         row = context["workbench"]
@@ -169,12 +171,12 @@ class WorkspaceOpening:
                 with workspace_stage("opening.root"):
                     root = await service.filesystem.operation(host, {"action": "list", "path": ""})
                 with workspace_stage("opening.confirm"):
-                    current, _ = await asyncio.to_thread(
+                    current, _ = await run_blocking(
                         service.context, user, project, ProjectAction.AGENT_RUN
                     )
                     if not same_runtime(row, current["workbench"]):
                         raise WorkerDisconnected("Workspace changed during opening")
-                    row = await asyncio.to_thread(
+                    row = await run_blocking(
                         service.repository.finish_open, row, current["revision"]
                     )
             return row, root

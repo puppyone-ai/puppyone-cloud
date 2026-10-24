@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
 
 from .errors import WorkspaceError
@@ -55,7 +56,7 @@ class WorkspaceConnections:
         self.shell_factory = shell_factory
 
     async def authorize(self, user, project, workbench, generation):
-        context, _ = await asyncio.to_thread(
+        context, _ = await run_blocking(
             self.workspace.context, user, project, ProjectAction.AGENT_RUN
         )
         row = context["workbench"]
@@ -75,7 +76,7 @@ class WorkspaceConnections:
         identity = str(UUID(identity))
         row, revision = await self.authorize(user, project, workbench, generation)
         handle = await self.workspace.connection(row, capabilities={"workspace_shell"})
-        connection = await asyncio.to_thread(self.repository.reserve, identity, row, revision)
+        connection = await run_blocking(self.repository.reserve, identity, row, revision)
         shell = self.shell_factory(connection)
         try:
             await shell.connect(handle)
@@ -95,11 +96,11 @@ class WorkspaceConnections:
             connection["workbench_id"],
             connection["generation"],
         )
-        await asyncio.to_thread(self.repository.update, connection, "renew")
+        await run_blocking(self.repository.update, connection, "renew")
         await shell.control("heartbeat")
 
     async def cleanup(self, connection, shell=None, *, expired=False):
-        current = await asyncio.to_thread(
+        current = await run_blocking(
             self.repository.update, connection, "expire" if expired else "stop"
         )
         if current["state"] == "released" or (expired and current["state"] == "active"):
@@ -109,13 +110,13 @@ class WorkspaceConnections:
         try:
             async with asyncio.timeout(30):
                 await shell.stop()
-                await asyncio.to_thread(self.repository.update, connection, "release")
+                await run_blocking(self.repository.update, connection, "release")
         finally:
             if owned:
                 await shell.close()
 
     async def reap(self):
-        for connection in await asyncio.to_thread(self.repository.pending):
+        for connection in await run_blocking(self.repository.pending):
             try:
                 await self.cleanup(connection, expired=True)
             except Exception:

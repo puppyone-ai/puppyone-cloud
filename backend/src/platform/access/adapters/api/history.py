@@ -12,10 +12,10 @@ import json as _json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.concurrency import run_in_threadpool
 
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.api.helpers import display_git_path
 from src.platform.access.repository_schemas import (
     DiffResponse,
@@ -61,7 +61,7 @@ async def get_project_head(
     current_user: CurrentUser = Depends(get_current_user),
     repo_manager: VersionRepoManager = Depends(get_repo_manager),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     from src.infra.execution.runner import run_owned
@@ -112,7 +112,7 @@ async def get_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
@@ -231,7 +231,7 @@ async def get_commit_detail(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     try:
@@ -262,7 +262,7 @@ async def get_commit_content(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
@@ -273,7 +273,7 @@ async def get_commit_content(
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    return await run_in_threadpool(
+    return await run_blocking(
         _format_commit_content, clean_path, commit_id, content, preview_bytes
     )
 
@@ -337,7 +337,7 @@ async def diff_commits(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
     version_admin = version_admin.for_grant(grant)
@@ -380,7 +380,7 @@ async def rollback(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    grant = await run_in_threadpool(
+    grant = await run_blocking(
         authorization.authorize, project_id, current_user.user_id, ProjectAction.CONTENT_WRITE
     )
     ops = ProductOperationAdapter(repo_manager).for_grant(grant)

@@ -1,6 +1,6 @@
 """Count actual database HTTP attempts, including exceptions and retries.
 
-Context is copied by asyncio.to_thread; the accumulator is shared and locked.
+Context is copied by run_blocking; the accumulator is shared and locked.
 No query strings, SQL bodies, tokens or user content enter measurements.
 """
 

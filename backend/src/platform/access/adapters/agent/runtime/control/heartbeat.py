@@ -2,6 +2,7 @@
 
 import asyncio
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.instrumentation import database_stage
 from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 from src.platform.access.adapters.agent.runtime.control.ports import RenewalPort
@@ -19,7 +20,7 @@ class ExecutionLease:
 
     async def check(self, run):
         try:
-            status = await asyncio.to_thread(self.port.renew_execution, run)
+            status = await run_blocking(self.port.renew_execution, run)
         except Exception as exc:
             # A failed renewal never grants permission to continue.
             raise EndRun("outcome_unknown", "execution_fenced") from exc

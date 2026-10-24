@@ -10,6 +10,7 @@ import sys
 
 from src.config import settings
 from src.infra.dependency_diagnostics import dependency_failure, network_environment
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.repository import AuthorizationRepository
 
 from ..repository import WorkbenchRepository
@@ -39,15 +40,15 @@ async def check():
             # Read an intentionally absent identity to prove the exact RPC and
             # transport used by project verification, without granting access.
             absent = "00000000-0000-0000-0000-000000000000"
-            await asyncio.to_thread(AuthorizationRepository().load_project_facts, absent, absent)
+            await run_blocking(AuthorizationRepository().load_project_facts, absent, absent)
             stage = "workspace_database"
             # This RPC exists only after the durable-open migration. It does not
             # claim or wake any workspace and is safe in a release health probe.
-            await asyncio.to_thread(WorkbenchRepository().pending, provider.name)
+            await run_blocking(WorkbenchRepository().pending, provider.name)
             stage = "workspace_readiness_database"
             # Null revision fails before row locks or writes. Missing functions,
             # changed signatures and transport failures must block activation.
-            await asyncio.to_thread(WorkbenchRepository().verify_opening_contract)
+            await run_blocking(WorkbenchRepository().verify_opening_contract)
         return dict(
             provider=provider.name,
             artifact=artifact,

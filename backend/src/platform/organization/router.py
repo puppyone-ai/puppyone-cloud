@@ -1,4 +1,3 @@
-import asyncio
 import os
 from urllib.parse import urlsplit, urlunsplit
 
@@ -7,6 +6,7 @@ from fastapi import APIRouter, Depends, Request, status
 from src.common_schemas import ApiResponse
 from src.config import settings
 from src.exceptions import ForbiddenException
+from src.infra.execution.runner import run_blocking
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.entitlements.dependencies import get_entitlement_service
@@ -117,7 +117,7 @@ async def create_organization(
     org_service: OrganizationService = Depends(get_org_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    org = await asyncio.to_thread(
+    org = await run_blocking(
         org_service.create,
         name=payload.name,
         slug=payload.slug,
@@ -205,7 +205,7 @@ async def delete_organization(
     org_service: OrganizationService = Depends(get_org_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    await asyncio.to_thread(org_service.delete, org_id, current_user.user_id)
+    await run_blocking(org_service.delete, org_id, current_user.user_id)
     return ApiResponse.success(message="Organization deleted")
 
 

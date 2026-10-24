@@ -28,6 +28,7 @@ from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopP
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
 from src.platform.workspace.execution.worker_port import WorkerLifecycle, WorkerLost
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +87,12 @@ class RunSupervisor:
 
     async def write(self, kind, payload=None, **patch):
         async with self.lock:
-            self.run = await asyncio.to_thread(self.repo.write, self.run, kind, payload, **patch)
+            self.run = await run_blocking(self.repo.write, self.run, kind, payload, **patch)
         return self.run
 
     async def command(self, method, *args, **kwargs):
         async with self.lock:
-            reply = await asyncio.to_thread(method, self.run, *args, **kwargs)
+            reply = await run_blocking(method, self.run, *args, **kwargs)
             self.run = reply["run"]
         status = reply.get("status", {})
         if code := status.get("code"):
@@ -154,7 +155,7 @@ class RunSupervisor:
                         ],
                     )
                 batch_id, length, events = self.pending_batch
-                self.run = await asyncio.to_thread(
+                self.run = await run_blocking(
                     self.repo.append_events_batch,
                     self.run,
                     events,
@@ -246,7 +247,7 @@ class RunSupervisor:
                 with suppress(asyncio.CancelledError, Exception):
                     await task
         if outcome:
-            current = await asyncio.to_thread(self.repo.get, run["id"])
+            current = await run_blocking(self.repo.get, run["id"])
             if (
                 not current
                 or current["execution_id"] != run["execution_id"]
@@ -261,7 +262,7 @@ class RunSupervisor:
                     await self.billing.detach_session(self.run["billing_run_id"])
                 return
             self.run = current
-            tools = await asyncio.to_thread(self.repo.tools, run["id"])
+            tools = await run_blocking(self.repo.tools, run["id"])
             if any(t["state"] == "executing" for t in tools) or (
                 self.run["state"] == "publishing" and outcome[1] != "publication_rejected"
             ):
@@ -292,7 +293,7 @@ class RunSupervisor:
         if self.value is None and self.run["checkpoint"]:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
         saved = True
-        for execution in await asyncio.to_thread(self.repo.executions, self.run["id"]):
+        for execution in await run_blocking(self.repo.executions, self.run["id"]):
             resource = execution["resource"]
             if not resource:
                 continue
@@ -347,7 +348,7 @@ class RunSupervisor:
                 retain_resource=not saved,
             )
             return
-        self.execution = self.run.get("_execution") or await asyncio.to_thread(
+        self.execution = self.run.get("_execution") or await run_blocking(
             self.repo.load_execution, self.run["id"]
         )
         self.context = self.admission.evaluate(
@@ -390,7 +391,7 @@ class RunSupervisor:
                 # complete acknowledged state. Quiesce the old process before
                 # cleanup; a late file mutation cannot join the new execution.
                 await self.worker_lifecycle.cleanup(execution["resource"])
-                await asyncio.to_thread(self.repo.cleaned, execution["id"])
+                await run_blocking(self.repo.cleaned, execution["id"])
         resume = bool(self.run["checkpoint"])
         if resume:
             self.value = await self.checkpoints.load(self.run, self.run["checkpoint"])
@@ -417,7 +418,7 @@ class RunSupervisor:
             with database_stage("workspace_prepare"):
                 self.value = {
                     **self.loop.initial_state(),
-                    **await asyncio.to_thread(self.publication.capture, self.run, grant),
+                    **await run_blocking(self.publication.capture, self.run, grant),
                 }
             previous = self.execution["previous"]
             if previous and previous["checkpoint"]:
@@ -492,7 +493,7 @@ class RunSupervisor:
                 )
         await self.write("resource", {}, resource=resource)
         definitions = (
-            await asyncio.to_thread(self.bound_tools.definitions, self.run)
+            await run_blocking(self.bound_tools.definitions, self.run)
             if self.bound_tools
             else []
         )
@@ -814,7 +815,7 @@ class RunSupervisor:
                     }
                 ]
                 if completed_execution
-                else await asyncio.to_thread(self.repo.executions, self.run["id"])
+                else await run_blocking(self.repo.executions, self.run["id"])
             )
             for execution in executions:
                 if execution["fence"] > self.run["fence"]:
@@ -829,14 +830,14 @@ class RunSupervisor:
                         else:
                             await self.worker_lifecycle.cleanup(execution["resource"])
                 if not completed_execution:
-                    await asyncio.to_thread(self.repo.cleaned, execution["id"])
+                    await run_blocking(self.repo.cleaned, execution["id"])
         if self.run["billing_run_id"] and not retain_resource:
             await self.billing.finish_session(self.run["billing_run_id"])
         if self.workspace and self.workspace.row is None and not retain_resource:
-            await asyncio.to_thread(self.repo.workspace_recovered, self.run)
+            await run_blocking(self.repo.workspace_recovered, self.run)
         snapshot = {**self.run["snapshot"], "code": code, "resource_retained": retain_resource}
         async with self.lock:
-            self.run = await asyncio.to_thread(
+            self.run = await run_blocking(
                 self.repo.complete_run,
                 self.run,
                 state=state,

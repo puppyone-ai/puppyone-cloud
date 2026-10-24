@@ -21,7 +21,7 @@ from src.platform.workspace.scopes.provider import SandboxState
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
 )
-from src.infra.execution.runner import await_owned
+from src.infra.execution.runner import await_owned, run_blocking
 
 _logger = logging.getLogger("puppyone.project_deletion")
 
@@ -284,7 +284,7 @@ class ProjectDeletionCleanupWorker:
         # local caches from durable deletion tombstones. No replica-local
         # observation is allowed to claim global deletion completion.
         await self._reconcile_host_tombstones()
-        jobs = await asyncio.to_thread(
+        jobs = await run_blocking(
             self._repository.claim,
             worker_id=self._worker_id,
             limit=1,
@@ -305,7 +305,7 @@ class ProjectDeletionCleanupWorker:
                 prefixes = _validated_project_prefixes(job)
                 phase = str(job.get("phase") or "")
                 if phase == "drain":
-                    outcome = await asyncio.to_thread(
+                    outcome = await run_blocking(
                         self._repository.drain,
                         job_id=job_id,
                         worker_id=self._worker_id,
@@ -317,7 +317,7 @@ class ProjectDeletionCleanupWorker:
                         )
                         if ingest_snapshot.errors:
                             raise RuntimeError("External ingest ownership snapshot is incomplete")
-                        persisted = await asyncio.to_thread(
+                        persisted = await run_blocking(
                             self._repository.persist_external_ingest_snapshot,
                             job_id=job_id,
                             worker_id=self._worker_id,
@@ -328,7 +328,7 @@ class ProjectDeletionCleanupWorker:
                                 "Project deletion resource snapshot was not persisted"
                             )
                         job["external_ingest_resources"] = ingest_snapshot.to_dict()
-                        outcome = await asyncio.to_thread(
+                        outcome = await run_blocking(
                             self._repository.drain,
                             job_id=job_id,
                             worker_id=self._worker_id,
@@ -384,7 +384,7 @@ class ProjectDeletionCleanupWorker:
                         await self._schedule_verification(job)
                         verification_scheduled += 1
                     else:
-                        acknowledged = await asyncio.to_thread(
+                        acknowledged = await run_blocking(
                             self._repository.complete,
                             job_id=job_id,
                             worker_id=self._worker_id,
@@ -396,7 +396,7 @@ class ProjectDeletionCleanupWorker:
                     raise RuntimeError(f"Project deletion job has invalid phase {phase!r}")
             except Exception as exc:
                 failed += 1
-                await asyncio.to_thread(
+                await run_blocking(
                     self._repository.fail,
                     job_id=job_id,
                     worker_id=self._worker_id,
@@ -427,7 +427,7 @@ class ProjectDeletionCleanupWorker:
         ):
             raise RuntimeError("Project deletion job is missing its durable quiescence interval")
         verify_after_seconds = raw_quiescence
-        acknowledged = await asyncio.to_thread(
+        acknowledged = await run_blocking(
             self._repository.schedule_verification,
             job_id=job_id,
             worker_id=self._worker_id,
@@ -481,7 +481,7 @@ class ProjectDeletionCleanupWorker:
 
     async def _reconcile_host_tombstones(self) -> None:
         try:
-            project_ids = await asyncio.to_thread(self._repository.host_cleanup_tombstones)
+            project_ids = await run_blocking(self._repository.host_cleanup_tombstones)
         except Exception as exc:
             _logger.warning(
                 "project_host_tombstone_scan_failed",

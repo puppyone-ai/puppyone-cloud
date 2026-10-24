@@ -1,8 +1,8 @@
 """Run-owned tasks on a lifecycle-owned computer, using the durable task ledger."""
 
-import asyncio
 from typing import Any, Protocol
 
+from src.infra.execution.runner import run_blocking
 from src.platform.workspace.execution.workbench_task import WorkbenchTask
 from src.platform.workspace.execution.worker_port import WorkerLost
 
@@ -34,7 +34,7 @@ class SharedTasks:
         self.row = None
 
     async def workbench(self, run):
-        row = await asyncio.to_thread(self.repository.workbench, run["workbench_id"])
+        row = await run_blocking(self.repository.workbench, run["workbench_id"])
         if not row or row["user_id"] != run["user_id"] or row["project_id"] != run["project_id"]:
             raise PermissionError("Shared workbench ownership mismatch")
         return row
@@ -62,7 +62,7 @@ class SharedTasks:
         await self.owner.check(row)
         # SQL acquisition revalidates state/generation and occupancy atomically.
         # Only ensure_running above may change resource state; task attachment cannot.
-        bound = await asyncio.to_thread(self.repository.acquire, run, self.row["generation"])
+        bound = await run_blocking(self.repository.acquire, run, self.row["generation"])
         worker = await self.connect(run, self.row, bound)
         return worker, {**value, "workbench": identity, "recovery": None}
 
@@ -107,7 +107,7 @@ class SharedTasks:
             await self.owner.check(self.row)
 
     async def close(self, run, worker=None, *, predecessors_only=False):
-        for bound in await asyncio.to_thread(self.repository.active, run):
+        for bound in await run_blocking(self.repository.active, run):
             if predecessors_only and bound["execution_id"] == run["execution_id"]:
                 continue
             current = (
@@ -120,4 +120,4 @@ class SharedTasks:
             await current.stop()
             # Never release on timeout/lease expiry or merely on a missing handle.
             # An ambiguous stop leaves the exact identity for fenced takeover.
-            await asyncio.to_thread(self.repository.released, run, bound)
+            await run_blocking(self.repository.released, run, bound)

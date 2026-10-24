@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import fcntl
 import json
 import os
@@ -12,6 +11,7 @@ import tempfile
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
+from src.infra.execution.runner import run_blocking
 from src.version_engine.domain.errors import ObjectNotFoundError
 from src.version_engine.storage.io_strategy import IOStorageStrategy
 from src.version_engine.storage.object_stream import object_batches
@@ -410,20 +410,20 @@ class ObjectStore:
         if callable(async_put):
             await async_put(sha1, loose)
         else:
-            await asyncio.to_thread(self._backend.put, sha1, loose)
+            await run_blocking(self._backend.put, sha1, loose)
         return sha1
 
     async def async_get(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get, h)
+        return await run_blocking(self.get, h)
 
     async def async_exists(self, h: str) -> bool:
-        return await asyncio.to_thread(self.exists, h)
+        return await run_blocking(self.exists, h)
 
     async def async_all_hashes(self) -> list[str]:
-        return await asyncio.to_thread(self.all_hashes)
+        return await run_blocking(self.all_hashes)
 
     async def async_count(self) -> tuple[int, int]:
-        return await asyncio.to_thread(self.count)
+        return await run_blocking(self.count)
 
     async def async_put_loose(self, h: str, loose: bytes) -> None:
         if h == self._empty_tree_id:
@@ -432,10 +432,10 @@ class ObjectStore:
         if callable(async_put):
             await async_put(h, loose)
         else:
-            await asyncio.to_thread(self._backend.put, h, loose)
+            await run_blocking(self._backend.put, h, loose)
 
     async def async_get_loose(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get_loose, h)
+        return await run_blocking(self.get_loose, h)
 
 
 @contextmanager

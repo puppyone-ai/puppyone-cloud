@@ -1,9 +1,9 @@
 """OAuth repository for database operations."""
 
-import asyncio
 from datetime import datetime
 from typing import Optional
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.provider.oauth.models import (
     OAuthConnection,
@@ -62,31 +62,31 @@ class OAuthRepository:
 
     async def create(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
         """Create, or refresh the existing, OAuth connection for a user/provider."""
-        return await asyncio.to_thread(self._create_sync, connection_create)
+        return await run_blocking(self._create_sync, connection_create)
 
     async def get_by_id(self, connection_id: int) -> Optional[OAuthConnection]:
         """Get OAuth connection by ID."""
-        return await asyncio.to_thread(self._get_by_id_sync, connection_id)
+        return await run_blocking(self._get_by_id_sync, connection_id)
 
     async def get_by_user_and_provider(
         self, user_id: str, provider: str
     ) -> Optional[OAuthConnection]:
         """Get OAuth connection by user ID and provider."""
-        return await asyncio.to_thread(self._get_by_user_and_provider_sync, user_id, provider)
+        return await run_blocking(self._get_by_user_and_provider_sync, user_id, provider)
 
     async def update(
         self, connection_id: int, update_data: OAuthConnectionUpdate
     ) -> OAuthConnection:
         """Update OAuth connection."""
-        return await asyncio.to_thread(self._update_sync, connection_id, update_data)
+        return await run_blocking(self._update_sync, connection_id, update_data)
 
     async def delete(self, connection_id: int) -> bool:
         """Delete OAuth connection."""
-        return await asyncio.to_thread(self._delete_sync, connection_id)
+        return await run_blocking(self._delete_sync, connection_id)
 
     async def delete_by_user_and_provider(self, user_id: str, provider: str) -> bool:
         """Delete OAuth connection by user ID and provider."""
-        return await asyncio.to_thread(self._delete_by_user_and_provider_sync, user_id, provider)
+        return await run_blocking(self._delete_by_user_and_provider_sync, user_id, provider)
 
     def _create_sync(self, connection_create: OAuthConnectionCreate) -> OAuthConnection:
         existing = self._get_by_user_and_provider_sync(

@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 import cachetools
 
 from src.infra.execution.context import checkpoint, current_execution
+from src.infra.execution.runner import run_blocking
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
 from src.utils.logger import log_error, log_warning
@@ -370,7 +371,7 @@ class CachedStorageBackend(StorageBackend):
 
             async def _fetch(h: str) -> None:
                 async with sem:
-                    fetched[h] = await asyncio.to_thread(self._inner.get, h)
+                    fetched[h] = await run_blocking(self._inner.get, h)
 
             await asyncio.gather(*[_fetch(h) for h in remaining])
 
@@ -1336,7 +1337,7 @@ class S3StorageBackend(StorageBackend):
             remaining = [h for h in unique if locations[h] is None]
             if remaining:
                 locations.update(
-                    await asyncio.to_thread(self._lookup_many_object_locations, remaining)
+                    await run_blocking(self._lookup_many_object_locations, remaining)
                 )
 
         sem = asyncio.Semaphore(concurrency)
@@ -1914,7 +1915,7 @@ class S3StorageBackend(StorageBackend):
                             f"native location registration failed: {exc}"
                         ) from exc
                 else:
-                    await asyncio.to_thread(
+                    await run_blocking(
                         lambda batch=chunk: (
                             self._supabase.client.table(OBJECT_LOCATIONS_TABLE)
                             .upsert(
@@ -2077,7 +2078,7 @@ class S3StorageBackend(StorageBackend):
             # A known-bad object is no longer a trusted closure boundary,
             # including when this audit is read-only. Fail closed if fencing
             # the dependent proofs fails; never delete first.
-            await asyncio.to_thread(self.invalidate_proofs, [h])
+            await run_blocking(self.invalidate_proofs, [h])
             if not heal:
                 return "corrupt"
             try:

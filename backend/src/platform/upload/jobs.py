@@ -33,6 +33,7 @@ from src.platform.upload.state.models import ETLPhase, ETLRuntimeState
 from src.platform.upload.state.repository import ETLStateRepositoryRedis
 from src.platform.upload.tasks.models import ETLTaskResult, ETLTaskStatus
 from src.file_operations.operation_adapter import BlobRef
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ async def _head_object_size(s3, key: str) -> int:
     def _head():
         return s3.client.head_object(Bucket=s3.bucket_name, Key=key)
 
-    response = await asyncio.to_thread(_head)
+    response = await run_blocking(_head)
     size = response["ContentLength"]
     if type(size) is not int or size < 0:
         raise S3OperationError("invalid upload staging source size")
@@ -228,7 +229,7 @@ async def etl_ocr_job(ctx: dict, task_id: str | int) -> dict:
             # durable discovery sources contain the exact same handle.
             await state_repo.set(state)
             task.metadata.update(metadata)
-            persisted = await asyncio.to_thread(repo.update_task, task)
+            persisted = await run_blocking(repo.update_task, task)
             if persisted is None:
                 raise RuntimeError("Unable to persist OCR provider lifecycle in SQL")
 
@@ -812,7 +813,7 @@ async def finalize_uploads_to_version_batch(
     # Task PATCH (Supabase REST) and Redis state writes are
     # independent per task, so we fan them out under the same
     # semaphore as Phase 2. ``repo.update_task`` is sync (boto-style
-    # Supabase client) so we wrap it in ``to_thread`` to actually
+    # Supabase client) so we wrap it in ``run_blocking`` to actually
     # parallelize — without that, every PATCH would serialize on
     # the event loop's blocking call. For 3 files this saves
     # ~600ms; for 100 files it saves ~30s.
@@ -833,7 +834,7 @@ async def finalize_uploads_to_version_batch(
             )
         )
         task.path = mount_path
-        await asyncio.to_thread(repo.update_task, task)
+        await run_blocking(repo.update_task, task)
 
         state.status = ETLTaskStatus.COMPLETED
         state.phase = ETLPhase.FINALIZE

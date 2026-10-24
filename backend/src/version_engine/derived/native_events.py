@@ -7,11 +7,11 @@ object publication rights. A stale projection cannot overwrite a newer ref view.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.search.text_indexer import _chunk_text, _decode_for_index
 from src.utils.logger import log_warning
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
@@ -97,14 +97,14 @@ async def process_native_events(*, repo_manager=None, limit=20):
     manager = repo_manager or build_worker_version_engine_container().repo_manager
     control = RefAuthorityRepository(manager._supabase.client)
     token = str(uuid.uuid4())
-    rows = await asyncio.to_thread(
+    rows = await run_blocking(
         control.call, "claim_native_projection_events", p_token=token, p_limit=limit
     )
     processed = 0
     for row in rows:
         project = row["project_id"]
         try:
-            head, sequence = await asyncio.to_thread(rebuild_projection, manager, project, token)
+            head, sequence = await run_blocking(rebuild_projection, manager, project, token)
             await NotificationManager.get().broadcast_commit_update(
                 project,
                 "",
@@ -113,7 +113,7 @@ async def process_native_events(*, repo_manager=None, limit=20):
                 changes=[],
                 message="Repository refs changed",
             )
-            await asyncio.to_thread(
+            await run_blocking(
                 control.call,
                 "finish_native_projection_events",
                 p_project=project,
@@ -124,7 +124,7 @@ async def process_native_events(*, repo_manager=None, limit=20):
         except Exception as exc:
             log_warning(f"[native-projection] retry project={project}: {type(exc).__name__}")
         finally:
-            await asyncio.to_thread(
+            await run_blocking(
                 control.call, "release_native_projection_events", p_project=project, p_token=token
             )
     return processed

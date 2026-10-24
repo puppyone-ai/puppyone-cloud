@@ -5,6 +5,7 @@ import logging
 
 from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.workspace.execution.worker_port import WorkerLost
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class SessionWorkspace:
     async def worker(self, run, factory):
         # A deployment default only selects NEW resources. An existing Session
         # keeps its provider and artifact even after switching the default.
-        row = await asyncio.to_thread(self.repository.workspace, run["session_id"])
+        row = await run_blocking(self.repository.workspace, run["session_id"])
         if row and row["binding"]:
             binding, resource = row["binding"], row["resource"] or {}
             return factory(
@@ -30,7 +31,7 @@ class SessionWorkspace:
         return factory(run["execution_id"], run["project_id"])
 
     async def transition(self, run, state, resource=None):
-        self.row = await asyncio.to_thread(
+        self.row = await run_blocking(
             self.repository.workspace_transition, run, self.row, state, resource
         )
 
@@ -40,7 +41,7 @@ class SessionWorkspace:
         async with asyncio.timeout(180):
             while True:
                 try:
-                    self.row = await asyncio.to_thread(
+                    self.row = await run_blocking(
                         self.repository.workspace_acquire, run, binding
                     )
                     break
@@ -52,7 +53,7 @@ class SessionWorkspace:
             if self.row["resource"]:
                 await worker.cleanup(self.row["resource"], store=worker.store)
             await self.transition(run, "retired")
-            self.row = await asyncio.to_thread(self.repository.workspace_acquire, run, binding)
+            self.row = await run_blocking(self.repository.workspace_acquire, run, binding)
         if self.row["resource"] and self.row["state"] == "resuming":
             try:
                 await worker.resume(self.row["resource"])
@@ -62,7 +63,7 @@ class SessionWorkspace:
                 await self.transition(run, "cleanup_pending")
                 await worker.cleanup(self.row["resource"], store=worker.store)
                 await self.transition(run, "retired")
-                self.row = await asyncio.to_thread(self.repository.workspace_acquire, run, binding)
+                self.row = await run_blocking(self.repository.workspace_acquire, run, binding)
             else:
                 await self.transition(run, "running", worker.resource)
                 return dict(worker.resource)
@@ -107,11 +108,11 @@ class SessionWorkspace:
 async def reap_workspaces(repository, lifecycle):
     """Bounded indexed claims. Repeated kill is safe; uncertain ACK stays owned."""
     retired = 0
-    for row in await asyncio.to_thread(repository.workspace_due):
+    for row in await run_blocking(repository.workspace_due):
         try:
             if row["resource"]:
                 await lifecycle.cleanup(row["resource"])
-            retired += bool(await asyncio.to_thread(repository.workspace_retired, row))
+            retired += bool(await run_blocking(repository.workspace_retired, row))
         except asyncio.CancelledError:
             raise
         except Exception:

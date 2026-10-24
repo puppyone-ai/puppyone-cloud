@@ -11,10 +11,10 @@ Designed to be lightweight and non-blocking: the async wrappers run the
 synchronous Supabase insert in a worker thread.
 """
 
-import asyncio
 from datetime import datetime
 from typing import Any
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase import get_supabase_client
 from src.utils.logger import logger
 
@@ -95,7 +95,7 @@ async def log_bash_execution(
     if output:
         output_preview = output[:500] + "..." if len(output) > 500 else output
 
-    await asyncio.to_thread(
+    await run_blocking(
         log_agent_call,
         call_type="bash",
         user_id=user_id,
@@ -130,7 +130,7 @@ async def log_tool_call(
     if output:
         output_preview = output[:500] + "..." if len(output) > 500 else output
 
-    await asyncio.to_thread(
+    await run_blocking(
         log_agent_call,
         call_type="tool",
         user_id=user_id,
@@ -159,7 +159,7 @@ async def log_llm_call(
     error_message: str | None = None,
 ) -> None:
     """Log an LLM API call."""
-    await asyncio.to_thread(
+    await run_blocking(
         log_agent_call,
         call_type="llm",
         user_id=user_id,

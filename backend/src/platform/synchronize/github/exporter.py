@@ -25,11 +25,10 @@ a follow-up).
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 from src.exceptions import AppException
-from src.infra.execution.runner import await_owned
+from src.infra.execution.runner import await_owned, run_blocking
 from src.platform.project.write_lease import (
     ProjectWriteLease,
     ProjectWriteLeaseFactory,
@@ -210,7 +209,7 @@ async def _do_export(
     binding_id = binding["id"]
 
     # 1. List the version scope's current contents.
-    files, head = await asyncio.to_thread(_read_native_export, project_id, user_id)
+    files, head = await run_blocking(_read_native_export, project_id, user_id)
     if not files:
         msg = "version scope is empty — nothing to export"
         await sync_log.record(

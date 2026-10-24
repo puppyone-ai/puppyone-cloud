@@ -8,6 +8,7 @@ import asyncio
 import time
 from contextlib import suppress
 
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.instrumentation import database_stage
 from src.platform.workspace.execution.store import ExecutionSession, durable_execution_store
 from src.platform.workspace.execution.worker_port import WorkerLost
@@ -183,7 +184,7 @@ class PiWorker(ControlChannel):
 
     async def retain(self):
         """Transfer resource deletion from the idle reaper to the durable run owner."""
-        await asyncio.to_thread(self.store.delete, self.execution_id)
+        await run_blocking(self.store.delete, self.execution_id)
 
     @staticmethod
     async def resolve_resources(resource):

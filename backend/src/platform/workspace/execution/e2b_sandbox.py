@@ -1,12 +1,13 @@
 """E2B cloud sandbox implementation."""
 
-import asyncio
 import inspect
 import json
 import os
 import shlex
 import time
 from typing import Any, Callable, Optional
+
+from src.infra.execution.runner import run_blocking
 
 from .base import SandboxBase
 from .store import (
@@ -438,7 +439,7 @@ async def _call_maybe_async(func: Callable[..., Any], *args, **kwargs):
     """Run synchronous calls in a thread; directly await async calls"""
     if inspect.iscoroutinefunction(func):
         return await func(*args, **kwargs)
-    result = await asyncio.to_thread(func, *args, **kwargs)
+    result = await run_blocking(func, *args, **kwargs)
     if inspect.isawaitable(result):
         return await result
     return result

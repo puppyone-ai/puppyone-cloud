@@ -8,7 +8,6 @@ are deliberately separate and verified operations.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import re
@@ -17,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from src.infra.execution.runner import await_owned
+from src.infra.execution.runner import await_owned, run_blocking
 from src.infra.file_processing.mineru.config import mineru_config
 from src.infra.file_processing.ocr.base import (
     OCRProvider,
@@ -282,7 +281,7 @@ class ExternalIngestCleanup:
         for task_id in cache_task_ids:
             try:
                 if await await_owned(
-                    asyncio.to_thread(self.cache.delete, task_id)
+                    run_blocking(self.cache.delete, task_id)
                 ):
                     deleted_cache_ids.append(task_id)
             except Exception as exc:
@@ -300,7 +299,7 @@ class ExternalIngestCleanup:
         for task_id in cache_task_ids:
             try:
                 if await await_owned(
-                    asyncio.to_thread(self.cache.exists, task_id)
+                    run_blocking(self.cache.exists, task_id)
                 ):
                     errors.append(f"MineRU cache still exists for {task_id}")
             except Exception as exc:

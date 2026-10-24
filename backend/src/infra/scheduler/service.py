@@ -2,7 +2,6 @@
 Scheduler service for managing scheduled agent executions.
 """
 
-import asyncio
 import contextlib
 from datetime import datetime
 from typing import Optional
@@ -16,6 +15,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.scheduler.config import scheduler_settings
 from src.infra.scheduler.jobs import (
     execute_agent_task,
@@ -240,7 +240,7 @@ class SchedulerService:
             return
 
         try:
-            agents = await asyncio.to_thread(_scheduled_agent_rows)
+            agents = await run_blocking(_scheduled_agent_rows)
             log_info(f"📋 Found {len(agents)} schedule agents to load")
 
             for agent in agents:
@@ -360,7 +360,7 @@ class SchedulerService:
             return
 
         try:
-            scheduled = await asyncio.to_thread(_scheduled_sync_rows)
+            scheduled = await run_blocking(_scheduled_sync_rows)
 
             log_info(f"Found {len(scheduled)} scheduled syncs to load")
 

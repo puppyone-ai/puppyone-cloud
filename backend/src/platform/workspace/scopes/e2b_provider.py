@@ -23,11 +23,11 @@ implementation; its exact SDK calls SHOULD be validated against the installed
 
 from __future__ import annotations
 
-import asyncio
 import posixpath
 import re
 from typing import Protocol
 
+from src.infra.execution.runner import run_blocking
 from src.platform.workspace.scopes.provider import (
     ConnectionInfo,
     ProviderCapabilities,
@@ -98,37 +98,37 @@ class E2BProvider(SandboxProvider):
     # The E2BClient is synchronous (the e2b SDK is blocking), so every call is
     # offloaded to a thread to avoid blocking the event loop.
     async def create(self, spec: SandboxSpec) -> SandboxInfo:
-        sandbox_id = await asyncio.to_thread(self._client.create, spec)
+        sandbox_id = await run_blocking(self._client.create, spec)
         return SandboxInfo(sandbox_id, SandboxState.RUNNING, self._connection(sandbox_id, spec.ssh_port))
 
     async def start(self, sandbox_id: str) -> SandboxInfo:
-        await asyncio.to_thread(self._client.resume, sandbox_id)
+        await run_blocking(self._client.resume, sandbox_id)
         return SandboxInfo(sandbox_id, SandboxState.RUNNING, self._connection(sandbox_id))
 
     async def stop(self, sandbox_id: str) -> SandboxInfo:
-        await asyncio.to_thread(self._client.pause, sandbox_id)
+        await run_blocking(self._client.pause, sandbox_id)
         return SandboxInfo(sandbox_id, SandboxState.STOPPED)
 
     async def destroy(self, sandbox_id: str) -> None:
-        await asyncio.to_thread(self._client.kill, sandbox_id)
+        await run_blocking(self._client.kill, sandbox_id)
 
     async def status(self, sandbox_id: str) -> SandboxInfo:
-        state = await asyncio.to_thread(self._client.get_state, sandbox_id)
+        state = await run_blocking(self._client.get_state, sandbox_id)
         return SandboxInfo(sandbox_id, state)
 
     async def exec(self, sandbox_id: str, command: str, *, background: bool = False) -> dict:
-        return await asyncio.to_thread(self._client.exec, sandbox_id, command, background)
+        return await run_blocking(self._client.exec, sandbox_id, command, background)
 
     async def write_secret(
         self, sandbox_id: str, relative_path: str, value: str
     ) -> None:
         path = _home_secret_path(self._username, relative_path)
-        await asyncio.to_thread(self._client.write_file, sandbox_id, path, value)
+        await run_blocking(self._client.write_file, sandbox_id, path, value)
 
     async def extend(self, sandbox_id: str) -> None:
         # E2B sandboxes auto-kill at their timeout; reset it so an active
         # session isn't reclaimed underneath us.
-        await asyncio.to_thread(self._client.set_timeout, sandbox_id)
+        await run_blocking(self._client.set_timeout, sandbox_id)
 
 
 class SdkE2BClient(E2BClient):

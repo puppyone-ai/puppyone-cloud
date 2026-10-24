@@ -3,18 +3,18 @@ Internal API Router
 Called by internal services (e.g., MCP Server), authenticated via SECRET
 """
 
-import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from src.internal.dependencies import verify_internal_secret
 from src.content.table.dependencies import get_table_service
 from src.exceptions import AppException
+from src.infra.execution.runner import run_blocking
 from src.infra.search.dependencies import get_search_service
 from src.infra.search.schemas import SearchToolQueryInput, SearchToolQueryResponse
 from src.infra.supabase.dependencies import get_supabase_repository
 from src.infra.turbopuffer.internal_router import router as turbopuffer_internal_router
+from src.internal.dependencies import verify_internal_secret
 from src.platform.authorization.service import redacted_project_ref
 from src.platform.billing.facts import BillingFactsService
 from src.platform.entitlements.dependencies import get_entitlement_service
@@ -175,7 +175,7 @@ async def verify_billing_organization_access(
     dependencies=[Depends(verify_internal_secret)],
 )
 async def get_billing_organization_facts(org_id: str):
-    facts = await asyncio.to_thread(BillingFactsService().get, org_id)
+    facts = await run_blocking(BillingFactsService().get, org_id)
     return {"ok": True, "data": facts.model_dump(mode="json")}
 
 

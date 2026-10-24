@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import socket
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.project.control_plane import ProjectControlPlaneRepository
 from src.platform.project.orchestration import initialize_project_tree_sync
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseFactory
@@ -64,7 +64,7 @@ class ProjectInitializationReconciler:
         project_id: str,
         error: str,
     ) -> ProjectInitializationSummary:
-        outcome = await asyncio.to_thread(
+        outcome = await run_blocking(
             self._repository.abandon_initialization,
             project_id=project_id,
             operation_key=operation_key,
@@ -94,7 +94,7 @@ class ProjectInitializationReconciler:
         project_id: str,
         error: str,
     ) -> ProjectInitializationSummary:
-        recorded = await asyncio.to_thread(
+        recorded = await run_blocking(
             self._repository.dead_letter_initialization,
             operation_key=operation_key,
             actor_user_id=actor_user_id,
@@ -119,7 +119,7 @@ class ProjectInitializationReconciler:
         attempts: int,
         error: str,
     ) -> ProjectInitializationSummary:
-        await asyncio.to_thread(
+        await run_blocking(
             self._repository.fail_initialization,
             operation_key=operation_key,
             actor_user_id=actor_user_id,
@@ -134,7 +134,7 @@ class ProjectInitializationReconciler:
         *,
         lease_seconds: int = 300,
     ) -> ProjectInitializationSummary:
-        operations = await asyncio.to_thread(
+        operations = await run_blocking(
             self._repository.claim_initializations,
             worker_id=self._worker_id,
             limit=1,
@@ -154,7 +154,7 @@ class ProjectInitializationReconciler:
             if not operation_key or not actor_user_id or not project_id:
                 raise RuntimeError("Project initialization operation is malformed")
             if publication_mode == "deferred":
-                outcome = await asyncio.to_thread(
+                outcome = await run_blocking(
                     self._repository.abort_deferred_publication,
                     project_id=project_id,
                     operation_key=operation_key,
@@ -190,12 +190,12 @@ class ProjectInitializationReconciler:
                 initialization_actor=actor_user_id,
                 initialization_worker=self._worker_id,
             ):
-                await asyncio.to_thread(
+                await run_blocking(
                     initialize_project_tree_sync,
                     self._version_engine,
                     project_id,
                 )
-                outcome = await asyncio.to_thread(
+                outcome = await run_blocking(
                     self._repository.complete_initialization,
                     project_id=project_id,
                     operation_key=operation_key,

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from src.config import settings
 from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
+from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
 
 from .errors import access_failure
@@ -110,11 +111,11 @@ class WorkbenchLifecycle:
             await self.filesystem.operation(host, {"action": "list", "path": ""})
 
     async def request(self, user, project, row=None):
-        context, _ = await asyncio.to_thread(self.context, user, project, ProjectAction.AGENT_RUN)
+        context, _ = await run_blocking(self.context, user, project, ProjectAction.AGENT_RUN)
         row = (
             row
             or context["workbench"]
-            or await asyncio.to_thread(self.repository.default, user, project, context["revision"])
+            or await run_blocking(self.repository.default, user, project, context["revision"])
         )
         if row["user_id"] != user or row["project_id"] != project:
             raise PermissionError("Workbench ownership mismatch")
@@ -125,7 +126,7 @@ class WorkbenchLifecycle:
             raise WorkspaceUnavailable("workbench_requires_recovery")
         if row["state"] == "running":
             try:
-                row = await asyncio.to_thread(self.repository.activity, row, context["revision"])
+                row = await run_blocking(self.repository.activity, row, context["revision"])
                 async with asyncio.timeout(35):
                     with workspace_stage("opening.files_ready"):
                         await self.ready(row)
@@ -140,7 +141,7 @@ class WorkbenchLifecycle:
             "provider": provider.name,
             "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
         }
-        return await asyncio.to_thread(
+        return await run_blocking(
             self.repository.request_open, row, binding, context["revision"]
         )
 
@@ -159,24 +160,24 @@ class WorkbenchLifecycle:
                     )
                     break
                 await asyncio.sleep(0.25)
-                row = await asyncio.to_thread(self.repository.get, row["id"])
+                row = await run_blocking(self.repository.get, row["id"])
             await self.check(row)
             await self.ready(row)
             return row
 
     async def progress(self, row, phase):
-        await asyncio.to_thread(self.repository.progress, row, phase)
+        await run_blocking(self.repository.progress, row, phase)
 
     async def execute(self, original):
         deadline = datetime.fromisoformat(original["open_deadline"])
         remaining = (deadline - datetime.now(UTC)).total_seconds()
         if remaining <= 0:
-            await asyncio.to_thread(self.repository.expire_open, original)
+            await run_blocking(self.repository.expire_open, original)
             return
         if original["state"] == "pausing":
             return  # The same lifecycle's maintenance finishes pause before wake.
         with workspace_stage("opening.claim"):
-            claimed = await asyncio.to_thread(self.repository.begin_open, original)
+            claimed = await run_blocking(self.repository.begin_open, original)
         if not claimed["acquired"]:
             return
         row = claimed["workbench"]
@@ -184,7 +185,7 @@ class WorkbenchLifecycle:
         async def heartbeat():
             while True:
                 await asyncio.sleep(30)
-                current = await asyncio.to_thread(self.repository.get, row["id"])
+                current = await run_blocking(self.repository.get, row["id"])
                 if current["operation_id"] != row["operation_id"] or not current["open_requested"]:
                     raise WorkspaceUnavailable("workbench_operation_replaced")
                 await self.progress(current, current["operation_phase"])
@@ -210,14 +211,14 @@ class WorkbenchLifecycle:
         except Exception as exc:
             code, retryable = failure(exc)
             self.checked_until = 0
-            current = await asyncio.to_thread(self.repository.get, row["id"])
+            current = await run_blocking(self.repository.get, row["id"])
             if (
                 current
                 and current.get("open_requested")
                 and current["operation_id"] == row["operation_id"]
             ):
                 with suppress(Exception):
-                    await asyncio.to_thread(
+                    await run_blocking(
                         self.repository.progress, current, "failed", code, retryable
                     )
             logger.exception(
@@ -245,7 +246,7 @@ class WorkbenchLifecycle:
                     # Failed credentials are recorded on the claimed operation;
                     # they must not strand every pending request in the queue.
                     provider = self.providers(None)
-                    for row in await asyncio.to_thread(self.repository.pending, provider.name):
+                    for row in await run_blocking(self.repository.pending, provider.name):
                         if row["id"] not in self.active and len(self.active) < 4:
                             task = asyncio.create_task(run(row))
                             self.active[row["id"]] = task
@@ -287,13 +288,13 @@ class WorkbenchLifecycle:
         if row["state"] == "allocating":
             fresh = row["resource"] is None
             if fresh:
-                target = await asyncio.to_thread(
+                target = await run_blocking(
                     self.transport.describe, row["project_id"], grant, target_ref=row["target_ref"]
                 )
                 source = (
                     target
                     if target["expected_oid"]
-                    else await asyncio.to_thread(self.transport.describe, row["project_id"], grant)
+                    else await run_blocking(self.transport.describe, row["project_id"], grant)
                 )
                 host.resource["initialization"] = {
                     "project_id": row["project_id"],
@@ -305,11 +306,11 @@ class WorkbenchLifecycle:
                 }
                 host.resource["git_base"] = source
                 # Allocation intent, seed and exact generation survive response loss.
-                row = await asyncio.to_thread(
+                row = await run_blocking(
                     self.repository.transition, row, "allocating", host.resource
                 )
                 await host.create()
-                row = await asyncio.to_thread(
+                row = await run_blocking(
                     self.repository.transition, row, "allocating", host.resource
                 )
             else:
@@ -329,7 +330,7 @@ class WorkbenchLifecycle:
         async def exchange(frame):
             if "git-receive-pack" in frame.get("path", ""):
                 raise PermissionError("Workspace initialization has no publication capability")
-            _, current = await asyncio.to_thread(
+            _, current = await run_blocking(
                 self.context, row["user_id"], row["project_id"], ProjectAction.CONTENT_READ
             )
             return await self.transport.exchange(
@@ -353,10 +354,10 @@ class WorkbenchLifecycle:
             # Automation is consumed in its worker, so its file connection is
             # already owned by that consumer; there is no HTTP handoff.
             await self.ready({**row, "resource": host.resource})
-            await asyncio.to_thread(
+            await run_blocking(
                 self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
             )
-            return await asyncio.to_thread(self.repository.ready, row, host.resource)
+            return await run_blocking(self.repository.ready, row, host.resource)
         return row
 
     async def _preserve_failed_start(self, row):
@@ -381,7 +382,7 @@ class WorkbenchLifecycle:
                 ):
                     raise WorkerDisconnected("Workspace settlement awaits confirmation")
             if row["state"] != "retained":
-                await asyncio.to_thread(
+                await run_blocking(
                     self.repository.transition,
                     row,
                     "retained",
@@ -403,18 +404,18 @@ class WorkbenchLifecycle:
             meter_id(row), retry=True
         ):
             raise WorkerDisconnected("Workspace settlement awaits confirmation")
-        paused = await asyncio.to_thread(self.repository.transition, row, "paused", host.resource)
-        await asyncio.to_thread(self.repository.progress, paused, "paused")
+        paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
+        await run_blocking(self.repository.progress, paused, "paused")
 
     async def reap(self):
         provider = await self.preflight()
-        for row in await asyncio.to_thread(self.repository.due, provider.name):
+        for row in await run_blocking(self.repository.due, provider.name):
             if row.get("open_requested") and row["state"] != "pausing":
                 continue
             owned = None
             try:
                 if row["state"] == "running":
-                    claimed = await asyncio.to_thread(self.repository.idle, row)
+                    claimed = await run_blocking(self.repository.idle, row)
                     if claimed["acquired"]:
                         owned = claimed["workbench"]
                         await self.pause(owned)
@@ -435,7 +436,7 @@ class WorkbenchLifecycle:
                     except Exception as exc:
                         if not access_failure(exc):
                             raise
-                        claimed = await asyncio.to_thread(
+                        claimed = await run_blocking(
                             self.repository.lifecycle_claim, row, suspend=True
                         )
                         if claimed["acquired"]:
@@ -446,7 +447,7 @@ class WorkbenchLifecycle:
                 elif row["state"] in {"pausing", "allocating", "resuming", "retained"}:
                     # Pausing/starting may belong to another API/worker. Only an
                     # expired fenced claim may be taken over after a crash.
-                    claimed = await asyncio.to_thread(self.repository.lifecycle_claim, row)
+                    claimed = await run_blocking(self.repository.lifecycle_claim, row)
                     if claimed["acquired"]:
                         current = owned = claimed["workbench"]
                         if current["state"] == "pausing":
@@ -456,11 +457,11 @@ class WorkbenchLifecycle:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                current = await asyncio.to_thread(self.repository.get, row["id"])
+                current = await run_blocking(self.repository.get, row["id"])
                 if owned and current and current.get("operation_id") == owned["operation_id"]:
                     with suppress(Exception):
                         code, retryable = failure(exc)
-                        await asyncio.to_thread(
+                        await run_blocking(
                             self.repository.progress, current, "failed", code, retryable
                         )
                 logger.exception("workbench_maintenance_retry", extra={"workbench_id": row["id"]})

@@ -5,6 +5,7 @@ import asyncio
 from fastapi import HTTPException
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.admission import Admission, digest
 from src.platform.access.adapters.agent.runtime.control.models import public_run
 from src.platform.access.adapters.agent.runtime.control.ports import RunStore
@@ -127,7 +128,7 @@ class AgentService:
         from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
 
         while True:
-            value = await asyncio.to_thread(self.view, user_id, run_id, after)
+            value = await run_blocking(self.view, user_id, run_id, after)
             run = value["run"]
             sequence = run["sequence"]
             if after > sequence or after < max(0, sequence - 512):

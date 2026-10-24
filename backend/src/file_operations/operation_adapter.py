@@ -7,7 +7,6 @@ actual RuntimeGrant. Every write goes through NativeOperationWriter.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -96,10 +95,10 @@ class ProductOperationAdapter(ProductQueries):
         return open_query_session(self, project_id)
 
     async def native_ref_metadata(self, project_id, grant):
-        return await asyncio.to_thread(self._repos.get_native_ref_metadata, project_id, grant)
+        return await run_blocking(self._repos.get_native_ref_metadata, project_id, grant)
 
     async def native_operation_status(self, project_id, grant, request_key):
-        return await asyncio.to_thread(
+        return await run_blocking(
             self._repos.get_native_operation_status, project_id, grant, request_key
         )
 
@@ -119,14 +118,14 @@ class ProductOperationAdapter(ProductQueries):
         from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 
         admitted_actor(grant, project_id, write=False)
-        service = await asyncio.to_thread(self._repos.get_native_service, project_id)
+        service = await run_blocking(self._repos.get_native_service, project_id)
         if service is None:
             raise RuntimeError("repository migration required")
         writer = NativeOperationWriter(service)
         request = dict(
             request_key=request_key, base=base, input_sha256=input_sha256, message=message
         )
-        result = await asyncio.to_thread(writer.replay, grant, **request)
+        result = await run_blocking(writer.replay, grant, **request)
         if result is not None:
             return result
         admitted_actor(grant, project_id, write=True)
@@ -185,14 +184,14 @@ class ProductOperationAdapter(ProductQueries):
                     revision = reader.get_read_revision(project_id)
             return revision
 
-        base = await asyncio.to_thread(starting_revision)
+        base = await run_blocking(starting_revision)
         if self._operation_key:
             # Durable task identity plus logical step. Input digest is checked
             # separately: changing a retry's content cannot create a new task.
             key = self.producer_request_key(operation, message)
             actor = admitted_actor(grant, project_id, write=False)
-            service = await asyncio.to_thread(self._repos.get_native_service, project_id)
-            base = await asyncio.to_thread(
+            service = await run_blocking(self._repos.get_native_service, project_id)
+            base = await run_blocking(
                 service.control.producer_base, project_id, actor, key, digest, base
             )
         else:

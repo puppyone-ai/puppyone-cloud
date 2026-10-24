@@ -7,13 +7,13 @@ a Human JWT is not a Runtime credential.
 
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from httpx import HTTPError
 from postgrest.exceptions import APIError
 
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.git.auth import resolve_git_project_auth
 from src.platform.access.repository_schemas import (
     NativeOperationStatusEnvelope,
@@ -44,7 +44,7 @@ async def read_git_operation_status(
     if not isinstance(grant, RuntimeGrant):
         raise HTTPException(status_code=403, detail="Runtime grant required")
     try:
-        result = await asyncio.to_thread(manager.get_native_operation_status, project_id, grant, str(request_key))
+        result = await run_blocking(manager.get_native_operation_status, project_id, grant, str(request_key))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="Repository action denied") from exc
     except APIError as exc:
@@ -75,7 +75,7 @@ async def read_git_repository_refs(
     if not isinstance(grant, RuntimeGrant):
         raise HTTPException(403, "Runtime grant required", headers=headers)
     try:
-        result = await asyncio.to_thread(manager.get_native_ref_metadata, project_id, grant)
+        result = await run_blocking(manager.get_native_ref_metadata, project_id, grant)
     except PermissionError as exc:
         raise HTTPException(403, "Repository action denied", headers=headers) from exc
     except APIError as exc:

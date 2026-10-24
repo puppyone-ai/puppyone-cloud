@@ -3,7 +3,7 @@ TurbopufferSearchService
 
 Notes:
 - This service provides async-first interfaces; underneath it uses the synchronous turbopuffer SDK
-  by default, wrapped with `asyncio.to_thread` to avoid blocking the event loop
+  by default, called through `run_blocking` to avoid blocking the event loop
   (can be replaced if the SDK provides a native async client in the future)
 - This service does not expose turbopuffer SDK model objects externally; return values are normalized
   to this module's schemas

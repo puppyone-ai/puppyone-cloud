@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import time
 from collections.abc import Callable, Iterable
@@ -12,7 +11,7 @@ from src.infra.chunking.config import ChunkingConfig
 from src.infra.chunking.repository import ChunkRepository, ensure_chunks_for_pointer
 from src.infra.chunking.schemas import Chunk
 from src.infra.chunking.service import ChunkingService, iter_large_string_nodes_for_chunking
-from src.infra.execution.runner import run_owned
+from src.infra.execution.runner import run_blocking, run_owned
 from src.infra.llm.embedding_service import EmbeddingService
 from src.infra.s3.service import S3Service
 from src.infra.search.source import IndexSource, open_index_source
@@ -413,7 +412,7 @@ class SearchService:
                     chunk_ids.append(int(cid))
             except (TypeError, ValueError):
                 pass
-        chunks = await asyncio.to_thread(self._chunk_repo.get_by_ids, chunk_ids)
+        chunks = await run_blocking(self._chunk_repo.get_by_ids, chunk_ids)
         chunk_text_by_id = {int(c.id): c.chunk_text for c in chunks}
 
         out: list[dict[str, Any]] = []
@@ -811,7 +810,7 @@ class SearchService:
             except (TypeError, ValueError):
                 pass
 
-        chunks = await asyncio.to_thread(self._chunk_repo.get_by_ids, chunk_ids)
+        chunks = await run_blocking(self._chunk_repo.get_by_ids, chunk_ids)
         chunk_text_by_id = {int(c.id): c.chunk_text for c in chunks}
 
         # 3) Build output with file information

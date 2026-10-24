@@ -5,7 +5,6 @@ See ``__init__.py`` for the architecture rationale (Option C).
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import hmac
@@ -17,10 +16,12 @@ from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
 from src.config import settings
+from src.exceptions import AppException, ErrorCode
+from src.infra.execution.runner import run_blocking
+from src.infra.s3.service import S3Service
 from src.platform.access.adapters.mcp_endpoint.schemas import McpAccessItem
 from src.platform.access.adapters.mcp_endpoint.service import McpEndpointService
-from src.exceptions import AppException, ErrorCode
-from src.infra.s3.service import S3Service
+from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.service import EntitlementService
@@ -33,7 +34,6 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.repository_target.scope_service import ScopeService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
@@ -341,7 +341,7 @@ class LandingService:
             ticket=ticket,
             org_id=org_id,
         )
-        replay = await asyncio.to_thread(
+        replay = await run_blocking(
             self._control_plane.preflight_project_creation,
             operation_key=operation_key,
             actor_user_id=user_id,
@@ -372,7 +372,7 @@ class LandingService:
         content_sha256 = hashlib.sha256(md_bytes).hexdigest()
         api_key = _landing_mcp_api_key(ticket_id=operation_key, user_id=user_id)
 
-        project_limit = await asyncio.to_thread(
+        project_limit = await run_blocking(
             self._entitlements.enforced_limit_value,
             org_id,
             "projects.max",
@@ -393,7 +393,7 @@ class LandingService:
             project_id = str(project.id)
             # A single named leaf scope == the "separate repo" the user sees,
             # and is the narrowest scope for everything written under it.
-            await asyncio.to_thread(
+            await run_blocking(
                 ScopeService().create,
                 project_id=project_id,
                 name=spec.scope_path,
@@ -411,7 +411,7 @@ class LandingService:
                 source_channel="upload",
             )
 
-            endpoint_holder["endpoint"] = await asyncio.to_thread(
+            endpoint_holder["endpoint"] = await run_blocking(
                 McpEndpointService().create_endpoint,
                 project_id=project_id,
                 name=f"{spec.kind}-mcp",
@@ -453,7 +453,7 @@ class LandingService:
             initialize=initialize,
         )
         if publication.replayed:
-            replay = await asyncio.to_thread(
+            replay = await run_blocking(
                 self._control_plane.preflight_project_creation,
                 operation_key=operation_key,
                 actor_user_id=user_id,
@@ -473,7 +473,7 @@ class LandingService:
         endpoint = endpoint_holder.get("endpoint")
         if endpoint is None:
             raise RuntimeError("Completed landing claim is missing its MCP endpoint")
-        await asyncio.to_thread(
+        await run_blocking(
             self._authorization.authorize,
             project_id,
             user_id,
@@ -512,14 +512,14 @@ class LandingService:
         # The journal's org membership check is not sufficient for a private
         # Project. Re-evaluate the human grant before deriving or revealing the
         # deterministic machine credential.
-        await asyncio.to_thread(
+        await run_blocking(
             self._authorization.authorize,
             project_id,
             user_id,
             ProjectAction.PROJECT_READ,
         )
         api_key = _landing_mcp_api_key(ticket_id=operation_key, user_id=user_id)
-        credential = await asyncio.to_thread(
+        credential = await run_blocking(
             AccessCredentialRepository().get_active_by_token,
             api_key,
         )
@@ -532,7 +532,7 @@ class LandingService:
         ):
             self._raise_rotated_credential(project_id=project_id, endpoint_id=endpoint_id)
 
-        endpoint = await asyncio.to_thread(
+        endpoint = await run_blocking(
             McpEndpointService().get_endpoint,
             endpoint_id,
         )

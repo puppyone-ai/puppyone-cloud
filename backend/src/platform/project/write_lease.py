@@ -19,6 +19,7 @@ from uuid import uuid4
 from fastapi import Depends, Request
 
 from src.exceptions import AppException, ErrorCode
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.bootstrap.container import VersionEngineContainer
 from src.version_engine.bootstrap.dependencies import get_version_engine_container
@@ -171,7 +172,7 @@ class ProjectWriteLease:
         if self.reuse_active and active_project_write_lease(self.project_id) is not None:
             self._reused = True
             return self
-        outcome = await asyncio.to_thread(
+        outcome = await run_blocking(
             self.repository.acquire,
             project_id=self.project_id,
             lease_id=self.lease_id,
@@ -206,7 +207,7 @@ class ProjectWriteLease:
                 if interval is None:
                     interval = min(60, max(10, self.ttl_seconds // 3))
                 await asyncio.sleep(interval)
-                renewed = await asyncio.to_thread(
+                renewed = await run_blocking(
                     self.repository.renew,
                     lease_id=self.lease_id,
                     holder_id=self.holder_id,
@@ -238,7 +239,7 @@ class ProjectWriteLease:
             with suppress(asyncio.CancelledError):
                 await self._heartbeat
         release_task = asyncio.create_task(
-            asyncio.to_thread(
+            run_blocking(
                 self.repository.release,
                 lease_id=self.lease_id,
                 holder_id=self.holder_id,

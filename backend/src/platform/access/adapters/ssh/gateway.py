@@ -9,6 +9,8 @@ from pathlib import Path
 
 import asyncssh
 
+from src.infra.execution.runner import run_blocking
+
 from .config import ssh_settings
 from .hosted import build_hosted_ssh, public_key
 
@@ -153,8 +155,8 @@ async def run():
         raise RuntimeError("SSH host key does not match the advertised public key")
     # Validate the additive schema before accepting public connections.
     async with asyncio.timeout(15):
-        await asyncio.to_thread(service.connections.repository.pending)
-        await asyncio.to_thread(service.grants.get, "00000000-0000-0000-0000-000000000000")
+        await run_blocking(service.connections.repository.pending)
+        await run_blocking(service.grants.get, "00000000-0000-0000-0000-000000000000")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):

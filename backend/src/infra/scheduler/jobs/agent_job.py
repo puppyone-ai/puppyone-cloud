@@ -4,6 +4,7 @@ import asyncio
 import logging
 from uuid import uuid4
 
+from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.authorization.models import ProjectAction
@@ -17,7 +18,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
     from src.platform.authorization.factory import build_authorization_service
 
     client = SupabaseClient().client
-    surface = await asyncio.to_thread(
+    surface = await run_blocking(
         AccessSurfaceRepository(client).get_agent_with_project, agent_id
     )
     if surface is None:
@@ -28,7 +29,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
     if not user_id:
         return {"status": "failed", "error": "Agent has no associated user"}
     try:
-        authorized = await asyncio.to_thread(
+        authorized = await run_blocking(
             build_authorization_service().allows,
             surface["project_id"],
             user_id,
@@ -48,7 +49,7 @@ async def _execute_agent_task_async(agent_id: str) -> dict:
         from src.platform.access.adapters.agent.dependencies import get_agent_service
 
         service = get_agent_service()
-        result = await asyncio.to_thread(
+        result = await run_blocking(
             service.submit,
             user_id,
             SubmitRun(

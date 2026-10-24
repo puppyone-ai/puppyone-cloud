@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.common_schemas import ApiResponse
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
 from src.platform.access.adapters.git.auth import (
     request_actor,
@@ -117,7 +118,7 @@ async def _record_git_fetch_audit(
         ),
         "service": "upload-pack",
     }
-    await asyncio.to_thread(repo.record_audit, "git_fetch", actor, detail)
+    await run_blocking(repo.record_audit, "git_fetch", actor, detail)
 
 
 def _git_receive_max_body_bytes(project_id: str) -> int:
