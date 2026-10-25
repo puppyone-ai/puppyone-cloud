@@ -11,25 +11,25 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .errors import WorkspaceUnavailable
-from .registry import PROVIDERS, default_provider, runtime_provider
+from .registry import PROVIDERS, runtime_provider, workspace_providers
 
 NOT_CONFIGURED = "workbench_provider_not_configured"
 
 
 async def require_binding(
-    binding: Mapping, resource: Mapping | None = None, *, default_only: bool = False
+    binding: Mapping, resource: Mapping | None = None, *, workspace_only: bool = False
 ) -> None:
     """Raise WorkspaceUnavailable(NOT_CONFIGURED) unless this process can serve it.
 
-    ``default_only`` requires the deployment's default provider, for owners that
-    operate only that provider (workspace lifecycle).
+    ``workspace_only`` requires a provider served by this workspace deployment,
+    including explicitly retained providers for pre-existing bindings.
     """
     name = binding.get("provider")
     try:
-        selected = default_provider() if default_only else None
+        selected = workspace_providers() if workspace_only else ()
     except ValueError as exc:
         raise WorkspaceUnavailable(NOT_CONFIGURED) from exc
-    if name not in PROVIDERS or (default_only and name != selected):
+    if name not in PROVIDERS or (workspace_only and name not in selected):
         raise WorkspaceUnavailable(NOT_CONFIGURED)
     provider = runtime_provider(name)
     try:

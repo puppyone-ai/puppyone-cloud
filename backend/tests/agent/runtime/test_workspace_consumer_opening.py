@@ -9,7 +9,9 @@ import pytest
 from postgrest.exceptions import APIError
 
 from src.platform.workspace.admission import AdmissionSnapshots
+from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.repository import WorkbenchRepository
 from src.platform.workspace.service import WorkbenchService
 
 
@@ -125,6 +127,49 @@ async def test_changed_revision_reauthorizes_before_any_file_access():
         await service.file_operation("owner", "project", "one", {"action": "list", "path": ""})
     service.channels.borrow.assert_not_called()
     assert service.snapshots.get("owner", "project") is None
+
+
+@pytest.mark.asyncio
+async def test_cached_running_admission_returns_conflict_after_concurrent_pause():
+    service, row, context = fixture()
+    row.update(state="running", open_requested=False)
+    service.snapshots.put("owner", "project", context)
+    repository = WorkbenchRepository(client=Mock())
+    repository.command = Mock(
+        side_effect=APIError(
+            {
+                "code": "55000",
+                "message": "workbench_not_running",
+                "details": None,
+                "hint": None,
+            }
+        )
+    )
+    service.repository.activity = repository.activity
+    with pytest.raises(WorkspaceError) as caught:
+        await service.file_operation("owner", "project", "one", {"action": "list", "path": ""})
+    assert caught.value.status_code == 409 and caught.value.code == "workbench_not_running"
+    service.channels.borrow.assert_not_called()
+    service.repository.request_open.assert_not_called()
+    assert service.snapshots.get("owner", "project") is None
+
+
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        ("42501", "permission denied"),
+        ("P0001", "agent_context_changed"),
+        ("55000", "unrelated database failure"),
+    ],
+)
+def test_activity_does_not_hide_other_database_failures(code, message):
+    _, row, context = fixture()
+    repository = WorkbenchRepository(client=Mock())
+    error = APIError({"code": code, "message": message, "details": None, "hint": None})
+    repository.command = Mock(side_effect=error)
+    with pytest.raises(APIError) as caught:
+        repository.activity(row, context["revision"])
+    assert caught.value is error
 
 
 def test_snapshot_bounds_expiry_and_identity(monkeypatch):

@@ -10,6 +10,7 @@ COPY workbench-shell.mjs workbench-shell.py ./
 COPY workbench-controller.mjs workbench-task.mjs workbench-signals.mjs workbench-signals.py workbench-git.mjs ./
 COPY shared-git.mjs workbench-git-layout.mjs workbench-state.mjs workbench-initialize.mjs workbench-lifecycle.mjs ./
 COPY workbench-files.mjs workbench-files.py workbench-file-client.mjs workbench-files-supervisor.mjs fly-init.mjs ./
+COPY sprites-init.mjs sprites-control.py ./
 COPY providers/docker-recovery.mjs ./providers/
 COPY runtime-contract.mjs write-runtime-manifest.mjs ./
 RUN node write-runtime-manifest.mjs

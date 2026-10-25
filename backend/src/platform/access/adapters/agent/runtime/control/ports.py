@@ -11,7 +11,7 @@ class BindingCapability(Protocol):
     """Raise WorkspaceUnavailable unless this process can operate the binding."""
 
     async def __call__(
-        self, binding: Row, resource: Row | None = None, *, default_only: bool = False
+        self, binding: Row, resource: Row | None = None, *, workspace_only: bool = False
     ) -> None: ...
 
 

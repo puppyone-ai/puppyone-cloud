@@ -180,6 +180,9 @@
       "platform/repository_target/scope_router.py": {
         "auto_suggest_scopes::ops.list_dir": 1
       },
+      "platform/sandbox/providers/sprites/provider.py": {
+        "load_bundle::path.stat": 1
+      },
       "platform/synchronize/engine.py": {
         "SynchronizeEngine._target_exists_as_file::ops.read_file": 1
       },

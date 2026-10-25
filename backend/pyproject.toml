@@ -47,6 +47,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "e2b==2.53.1",
     "asyncssh>=2.21,<3",
+    "websockets>=15,<16",
 ]
 
 [project.scripts]

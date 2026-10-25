@@ -510,6 +510,7 @@ dependencies = [
     { name = "supabase" },
     { name = "uvicorn" },
     { name = "watchdog" },
+    { name = "websockets" },
     { name = "zipstream-ng" },
 ]
 
@@ -556,6 +557,7 @@ requires-dist = [
     { name = "supabase", specifier = ">=2.25.0" },
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
+    { name = "websockets", specifier = ">=15,<16" },
     { name = "zipstream-ng", specifier = ">=1.9.0" },
 ]
 

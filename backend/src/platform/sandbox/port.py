@@ -45,6 +45,7 @@ def resource_identity(resource: dict) -> str:
                 "image_id",
                 "template",
                 "volume_id",
+                "sprites_id",
             )
         },
         sort_keys=True,

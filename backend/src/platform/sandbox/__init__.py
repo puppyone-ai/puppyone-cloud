@@ -33,7 +33,13 @@ from .port import (
     resource_identity,
 )
 from .reaper import reclamation_passes, run_execution_reaper_once
-from .registry import PROVIDERS, close_provider_transports, default_provider, runtime_provider
+from .registry import (
+    PROVIDERS,
+    close_provider_transports,
+    default_provider,
+    runtime_provider,
+    workspace_providers,
+)
 from .resources import destroy_resource, resource_absent
 from .store import ExecutionSession, ExecutionSessionStore, durable_execution_store
 from .timing import workspace_event, workspace_stage
@@ -63,5 +69,6 @@ __all__ = [
     "run_execution_reaper_once",
     "runtime_provider",
     "workspace_event",
+    "workspace_providers",
     "workspace_stage",
 ]
