@@ -325,3 +325,73 @@ async def test_a_lost_disk_retires_the_generation_for_a_fresh_open():
         await lifecycle._start_host(row, SimpleNamespace(org_id="org"), host)
     assert error.value.code == "workbench_disk_lost" and error.value.retryable
     repo.disk_lost.assert_called_once()
+
+
+def running_row(**overrides):
+    row = dict(
+        id="workspace",
+        user_id="user",
+        project_id="project",
+        generation="generation",
+        version=7,
+        compute_epoch=2,
+        operation_id="op",
+        state="running",
+        owner_deleted_at=None,
+        open_requested=False,
+        resource=resource(),
+    )
+    row.update(overrides)
+    return row
+
+
+async def test_maintenance_pauses_a_running_workspace_whose_compute_was_lost():
+    # The Machine was deleted out of band: the health probe proves compute is gone.
+    row = running_row()
+    owned = {**row, "state": "pausing", "version": 8}
+    lifecycle, repo, runtime = owner(
+        [row],
+        idle=Mock(return_value={"acquired": False, "workbench": row}),
+        lifecycle_claim=Mock(return_value={"acquired": True, "workbench": owned}),
+    )
+    runtime.connect_task = AsyncMock(side_effect=WorkerLost("Machine was destroyed"))
+    runtime.renew = AsyncMock()
+    lifecycle.channel_factory = Mock(
+        return_value=SimpleNamespace(runtime=runtime, resource=row["resource"])
+    )
+    lifecycle.service.connection = AsyncMock()
+    lifecycle.billing.resume_session = AsyncMock()
+    lifecycle.pause = AsyncMock()
+    await lifecycle.reap()
+    repo.lifecycle_claim.assert_called_once_with(row, suspend=True)
+    lifecycle.pause.assert_awaited_once_with(owned)
+
+
+async def test_opening_a_running_workspace_with_lost_compute_is_retryable():
+    row = running_row()
+    lifecycle, _, _ = owner(activity=Mock(return_value=row))
+    lifecycle.service.context = Mock(return_value=({"workbench": row, "revision": "r"}, None))
+    lifecycle.channels.is_healthy = Mock(return_value=False)
+    lifecycle.ready = AsyncMock(side_effect=WorkerLost("Machine was destroyed"))
+    with pytest.raises(WorkspaceUnavailable) as error:
+        await lifecycle.request("user", "project")
+    # Clients retry "preparing"; maintenance pauses it and the retry recreates compute.
+    assert error.value.code == "workbench_preparing" and error.value.retryable
+
+
+async def test_file_requests_on_lost_compute_are_retryable_not_server_errors():
+    from contextlib import asynccontextmanager
+
+    from src.platform.workspace.errors import WorkspaceError
+    from src.platform.workspace.service import _borrowed
+
+    @asynccontextmanager
+    async def borrow(row):
+        raise WorkerLost("Machine was destroyed")
+        yield  # pragma: no cover
+
+    with pytest.raises(WorkspaceError) as error:
+        async with _borrowed(SimpleNamespace(borrow=borrow), running_row()):
+            pass
+    assert error.value.status_code == 503
+    assert error.value.detail == {"code": "workbench_preparing", "retryable": True}
