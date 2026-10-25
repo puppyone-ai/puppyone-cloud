@@ -50,3 +50,19 @@ def test_sprites_only_hosted_agent_validates_its_own_credentials():
     value.SANDBOX_REAPER_ENABLED = False
     with pytest.raises(ValueError, match="SANDBOX_REAPER_ENABLED"):
         value.enforce_hosted_sandbox_safety()
+
+
+@pytest.mark.parametrize("role", ["upload_worker", "import_worker", "synchronize_worker", "mcp_server"])
+def test_roles_without_workspaces_need_no_workspace_credentials(role):
+    # Staging incident: the Sprites default crashed these workers, which hold none.
+    for provider in ("sprites", "fly"):
+        value = hosted(SERVICE_ROLE=role, CLOUD_AGENT_SANDBOX_PROVIDER=provider)
+        assert value.enforce_hosted_sandbox_safety() is value
+    with pytest.raises(ValueError, match="no Docker fallback"):
+        hosted(SERVICE_ROLE=role, CLOUD_AGENT_SANDBOX_PROVIDER="docker").enforce_hosted_sandbox_safety()
+
+
+@pytest.mark.parametrize("role", ["api", "agent_worker", "ssh_gateway"])
+def test_workspace_roles_still_fail_fast_without_provider_credentials(role):
+    with pytest.raises(ValueError, match="SPRITES_TOKEN"):
+        hosted(SERVICE_ROLE=role, CLOUD_AGENT_SANDBOX_PROVIDER="sprites").enforce_hosted_sandbox_safety()

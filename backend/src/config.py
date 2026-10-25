@@ -12,6 +12,9 @@ from src.version_engine.domain.git_pack_limits import (
     MAX_RECEIVE_PACK_BYTES,
 )
 
+# Roles that operate Agent workspaces (open, files, SSH, lifecycle).
+WORKSPACE_ROLES = frozenset({"api", "agent_worker", "ssh_gateway"})
+
 
 class Settings(BaseSettings):
     FILE_READ_CONCURRENCY: int = Field(default=8, ge=1, le=128)
@@ -361,7 +364,11 @@ class Settings(BaseSettings):
                 )
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
-            if self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
+            if self.SERVICE_ROLE not in WORKSPACE_ROLES:
+                # Upload, import, synchronize and the MCP transport never operate a
+                # workspace: they neither hold nor validate its provider credentials.
+                pass
+            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
                 if not self.CLOUD_AGENT_FLY_APP or not self.CLOUD_AGENT_FLY_TOKEN:
                     raise ValueError(
                         "Fly Cloud Agent requires CLOUD_AGENT_FLY_APP and CLOUD_AGENT_FLY_TOKEN"
@@ -421,6 +428,9 @@ class Settings(BaseSettings):
     # - "auto": Auto-select (use E2B if E2B_API_KEY is available, otherwise use Docker)
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
+    # Process role chosen by scripts/start-service.sh. Only roles that operate
+    # Agent workspaces hold and validate the workspace provider's credentials.
+    SERVICE_ROLE: str = "api"
     # Only new Agent workspaces use this default. Existing bindings remain pinned.
     CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
     # Existing bindings remain on their provider; new workspaces use the default above.
