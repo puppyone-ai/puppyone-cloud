@@ -2,7 +2,7 @@ import { createDesktopContext } from './desktop-context';
 import { createBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getOAuthCallbackUrl } from '@/lib/auth-urls';
-import { authEvent, backendAuthError } from '../auth-errors';
+import { authEvent } from '../auth-errors';
 import { createLoginCoordinator } from '../login-coordinator';
 import { oauthCallbackUrl, readLoginIntent, type SignInProvider } from '../login-intent';
 
@@ -21,6 +21,7 @@ export function createBrowserLogin(location: URL, storage: Storage, fetcher: typ
   });
   let enabled: SignInProvider[] = ['email'];
   let initialization: Promise<SignInProvider[]> | null = null;
+  let providerDiscovery: Promise<SignInProvider[]> | null = null;
   return {
     client,
     intent,
@@ -28,6 +29,10 @@ export function createBrowserLogin(location: URL, storage: Storage, fetcher: typ
     initialize(): Promise<SignInProvider[]> {
       initialization ??= initialize();
       return initialization;
+    },
+    discoverProviders(): Promise<SignInProvider[]> {
+      providerDiscovery ??= discoverProviders();
+      return providerDiscovery;
     },
     async signInWithProvider(provider: 'google' | 'github') {
       if (!enabled.includes(provider))
@@ -50,23 +55,28 @@ export function createBrowserLogin(location: URL, storage: Storage, fetcher: typ
     },
   };
   async function initialize(): Promise<SignInProvider[]> {
-    if (location.pathname !== '/login') return enabled;
-    const response = await fetcher('/api/backend/api/v1/auth/methods', {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok)
-      throw backendAuthError(
-        await response.json().catch(() => null),
-        'Sign-in methods are temporarily unavailable.'
-      );
-    const providers = (await response.json())?.data?.providers;
-    enabled = ['email', 'google', 'github'].filter(
-      name =>
-        Array.isArray(providers) &&
-        providers.includes(name) &&
-        (process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY !== 'true' || name === 'email')
-    ) as SignInProvider[];
+    // Email is the baseline sign-in path and never waits on the network.
+    return enabled;
+  }
+
+  async function discoverProviders(): Promise<SignInProvider[]> {
+    // Optional OAuth buttons are discovered after the form is usable, so a slow
+    // or failing capability probe cannot block email sign-in.
+    if (location.pathname !== '/login' || process.env.NEXT_PUBLIC_AUTH_EMAIL_ONLY === 'true')
+      return enabled;
+    try {
+      const response = await fetcher('/api/backend/api/v1/auth/methods', {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.ok) {
+        const providers = (await response.json())?.data?.providers;
+        if (Array.isArray(providers))
+          enabled = ['email', ...(['google', 'github'] as const).filter(name => providers.includes(name))];
+      }
+    } catch {
+      // Advisory only: the actual sign-in request reports real failures.
+    }
     return enabled;
   }
 }

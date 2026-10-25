@@ -163,18 +163,41 @@ it('Desktop uses the exact existing email-first UI and never reads Web cookies',
   expect(fetcher.mock.calls.some(([url]) => String(url).includes('/auth/desktop'))).toBe(false);
 });
 
-it('failed initialization is actionable and cannot submit a half-initialized login', async () => {
-  fetcher.mockImplementation(async () =>
-    Response.json(
-      { detail: 'Sign-in request expired. Start sign-in again from Desktop.' },
-      { status: 400 }
-    )
-  );
-  mount();
+it('failed Desktop initialization is actionable and cannot submit a half-initialized login', async () => {
+  auth.getSession = vi.fn(async () => ({
+    data: { session: null },
+    error: new Error('Sign-in request expired. Start sign-in again from Desktop.'),
+  }));
+  mount(true);
   await screen.findByText('Sign-in request expired. Start sign-in again from Desktop.');
   expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(
     true
   );
+});
+
+it('Web email sign-in stays available when provider discovery fails', async () => {
+  fetcher.mockImplementation(async (url: string) => {
+    if (url.endsWith('/auth/methods')) return Response.json({ detail: 'down' }, { status: 503 });
+    throw new Error('Unexpected request: ' + url);
+  });
+  mount();
+  await waitFor(() =>
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false)
+  );
+  expect(screen.queryByText('Continue with Google')).toBeNull();
+  expect(screen.queryByText(/temporarily unavailable/i)).toBeNull();
+});
+
+it('a stale Web session does not block signing in again', async () => {
+  auth.getSession = vi.fn(async () => ({
+    data: { session: null },
+    error: new Error('Invalid Refresh Token: Refresh Token Not Found'),
+  }));
+  mount();
+  await waitFor(() =>
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false)
+  );
+  expect(screen.queryByText(/Invalid Refresh Token/)).toBeNull();
 });
 
 it('email signup and OTP converge on the same Web completion', async () => {
