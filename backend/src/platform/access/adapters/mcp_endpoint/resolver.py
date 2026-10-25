@@ -13,11 +13,12 @@ from fastapi import HTTPException
 
 from src.exceptions import ErrorCode
 from src.infra.supabase.dependencies import get_supabase_client
-from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.credential_repository import AccessCredentialRepository
-from src.platform.repository_target.scope_repository import RepositoryScopeRepository
-
 from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.policy import resolve_mcp_fs_allowed_tools
+from src.platform.access.surface_repository import AccessSurfaceRepository
+from src.platform.authorization.models import ProjectAction
+from src.platform.repository_target.scope_repository import RepositoryScopeRepository
 
 
 @dataclass(frozen=True)
@@ -84,20 +85,71 @@ def _resolve_surface(key: str) -> tuple[dict, dict]:
     return surface, policy
 
 
+def _owner_grant(project_id: str, owner: str):
+    """The endpoint's delegated authority: its owner's current Project grant.
+
+    An MCP key is a shared credential issued by a Project member. It never
+    outlives that member's access: removal denies it and a Viewer downgrade
+    makes it read-only, exactly like the member's own Git credentials.
+    Storage failures propagate as retryable 503s, never as an empty grant.
+    """
+    from src.platform.authorization.factory import build_authorization_service
+
+    return build_authorization_service(get_supabase_client()).resolve_project_grant(
+        project_id, owner
+    )
+
+
 def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
     key = (api_key or "").strip()
     if not key.startswith("mcp_"):
         raise HTTPException(status_code=401, detail="Invalid MCP API key")
 
-    _resolve_surface(key)
+    surface, policy = _resolve_surface(key)
+    if surface.get("scope_id"):
+        # A non-root Scope view needs the native repository Scope implementation.
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "code": "native_scope_not_available",
+                "message": "Scoped MCP filesystems require the new repository Scope implementation",
+            },
+        )
 
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "code": "native_scope_not_available",
-            "message": "Scoped MCP filesystems require the new repository Scope implementation",
-        },
+    project_id = surface["project_id"]
+    owner = surface.get("created_by") or ""
+    grant = _owner_grant(project_id, owner) if owner else None
+    if grant is None or not grant.allows(ProjectAction.CONTENT_READ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "mcp_owner_access_revoked",
+                "message": "The MCP endpoint's owner no longer has access to this Project",
+            },
+        )
+
+    # The endpoint policy may narrow its owner's authority, never widen it.
+    accesses = (policy.get("fs_policy") or {}).get("accesses") or []
+    policy_writable = surface.get("kind") == "agent" or any(
+        not bool(access.get("readonly", True)) for access in accesses
     )
+    mode = "rw" if policy_writable and grant.allows(ProjectAction.CONTENT_WRITE) else "ro"
+    context = ScopedFsContext(
+        api_key=key,
+        endpoint_id=surface["id"],
+        endpoint_name=surface.get("name") or "MCP Access Surface",
+        project_id=project_id,
+        user_id=owner,
+        scope_id="",
+        scope_path="",
+        mode=mode,
+        exclude=[],
+        allowed_tools=resolve_mcp_fs_allowed_tools(
+            policy.get("tools_policy") if surface.get("kind") == "mcp" else None,
+            writable=mode == "rw",
+        ),
+    )
+    return ResolvedMcpRuntime(context=context, surface_kind=surface["kind"], surface=surface)
 
 
 def resolve_mcp_scoped_fs_context(api_key: str) -> ScopedFsContext:
