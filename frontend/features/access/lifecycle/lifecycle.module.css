@@ -1,0 +1,19 @@
+.panel { display: flex; flex-direction: column; gap: 20px; padding: 20px; color: var(--po-text); font-family: var(--po-font-sans); font-size: 13px; }
+.section { display: flex; flex-direction: column; gap: 10px; }
+.heading { margin: 0; font-size: 14px; font-weight: 600; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.card { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--po-border-subtle); border-radius: 8px; }
+.muted { color: var(--po-text-muted); margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.button, .select { font: inherit; color: inherit; background: var(--po-control); border: 1px solid var(--po-border); border-radius: 6px; padding: 6px 10px; }
+.button { cursor: pointer; }
+.select { max-width: 100%; min-width: 0; }
+.button:hover { background: var(--po-hover); }
+.button:disabled { opacity: .45; cursor: default; }
+.button:focus-visible, .select:focus-visible, .link:focus-visible { outline: 2px solid var(--po-text-muted); outline-offset: 2px; }
+.error { color: var(--po-danger, #e76767); margin: 0; line-height: 1.5; }
+.link { width: 100%; box-sizing: border-box; color: var(--po-text); background: var(--po-inset); border: 1px solid var(--po-border-subtle); border-radius: 6px; padding: 8px; font: 12px var(--po-font-mono); }
+.portal { min-height: 100vh; display: grid; place-items: center; background: var(--po-canvas); padding: 24px; }
+.portalCard { width: min(100%, 520px); background: var(--po-panel); border: 1px solid var(--po-border); border-radius: 12px; }
+.title { margin: 0; font-size: 20px; font-weight: 600; }
+.code { font: 12px var(--po-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--po-inset); padding: 12px; border-radius: 6px; }
