@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -220,3 +221,35 @@ async def test_retired_search_tools_are_unknown_to_the_runtime(monkeypatch):
         )
     assert exc.value.status_code == 400
     assert exc.value.detail["code"] == "UNKNOWN_TOOL"
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_bind_reads_and_writes_to_the_endpoint_grant(monkeypatch):
+    # Staging E2E: an unbound ProductOperationAdapter refused every MCP read and
+    # write ("Project grant required"). Both adapters must carry the runtime grant.
+    grant = object()
+    runtime = ResolvedMcpRuntime(context=_ctx("rw"), surface_kind="mcp", surface={}, grant=grant)
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
+    bound = []
+
+    class Adapter:
+        def for_grant(self, value):
+            bound.append(value)
+            return self
+
+    class Service:
+        def __init__(self, ops, commands):
+            self.ops, self.commands = ops, commands
+
+        async def call(self, ctx, name, arguments):
+            assert isinstance(self.commands, mcp_runtime.VersionWriteCommandService)
+            return {"ok": True}
+
+    monkeypatch.setattr(mcp_runtime, "ScopedFsService", Service)
+    result = await mcp_runtime.call_runtime_tool(
+        mcp_runtime.RuntimeCallRequest(api_key="mcp_key", name="fs_ls", arguments={}),
+        ops=Adapter(),
+        commands=SimpleNamespace(ops=Adapter()),
+    )
+    assert result["structuredContent"] == {"ok": True}
+    assert bound == [grant, grant]

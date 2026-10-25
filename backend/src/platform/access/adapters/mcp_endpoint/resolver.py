@@ -17,7 +17,13 @@ from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.filesystem.context import ScopedFsContext
 from src.platform.access.filesystem.policy import resolve_mcp_fs_allowed_tools
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.models import (
+    ProjectAction,
+    RuntimeGrant,
+    RuntimeMode,
+    RuntimePrincipal,
+)
+from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
 
 
@@ -26,6 +32,8 @@ class ResolvedMcpRuntime:
     context: ScopedFsContext
     surface_kind: str
     surface: dict
+    # Binds every read and publication to this endpoint's narrowed authority.
+    grant: RuntimeGrant | None = None
 
 
 def _list_project_scopes(project_id: str) -> list[dict]:
@@ -57,8 +65,8 @@ def _merge_scope_excludes(user_excludes, scope_path: str, all_scopes: list[dict]
     return list(dict.fromkeys(list(user_excludes) + carved))
 
 
-def _resolve_surface(key: str) -> tuple[dict, dict]:
-    """Return the authenticated surface and its provider-specific policy."""
+def _resolve_surface(key: str) -> tuple[dict, dict, dict]:
+    """Return the authenticated surface, its provider-specific policy and the credential."""
 
     sb = get_supabase_client()
     credential = AccessCredentialRepository(sb).get_active_by_token(key)
@@ -82,7 +90,7 @@ def _resolve_surface(key: str) -> tuple[dict, dict]:
         )
         policy_rows = policy_resp.data or []
         policy = policy_rows[0] if policy_rows else {}
-    return surface, policy
+    return surface, policy, credential
 
 
 def _owner_grant(project_id: str, owner: str):
@@ -105,7 +113,7 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
     if not key.startswith("mcp_"):
         raise HTTPException(status_code=401, detail="Invalid MCP API key")
 
-    surface, policy = _resolve_surface(key)
+    surface, policy, credential = _resolve_surface(key)
     if surface.get("scope_id"):
         # A non-root Scope view needs the native repository Scope implementation.
         raise HTTPException(
@@ -149,7 +157,30 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
             writable=mode == "rw",
         ),
     )
-    return ResolvedMcpRuntime(context=context, surface_kind=surface["kind"], surface=surface)
+    target = ProjectRootTarget(project_id=project_id)
+    grant = RuntimeGrant(
+        principal=RuntimePrincipal(
+            principal_id=surface["id"],
+            credential_kind="bearer_token",
+            credential_id=credential.get("id"),
+        ),
+        target=target,
+        repository_view=ResolvedRepositoryView(
+            # The Project root's upper bound is the repository; the mode narrows it.
+            target=target,
+            path_prefix="",
+            excludes=(),
+            max_mode=RuntimeMode.READ_WRITE.value,
+        ),
+        mode=RuntimeMode(_mode_value(mode)),
+    )
+    return ResolvedMcpRuntime(
+        context=context, surface_kind=surface["kind"], surface=surface, grant=grant
+    )
+
+
+def _mode_value(mode: str) -> str:
+    return RuntimeMode.READ_WRITE.value if mode == "rw" else RuntimeMode.READ.value
 
 
 def resolve_mcp_scoped_fs_context(api_key: str) -> ScopedFsContext:
