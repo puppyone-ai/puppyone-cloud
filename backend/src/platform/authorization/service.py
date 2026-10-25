@@ -45,7 +45,8 @@ def validate_access_shape(target, capabilities, channels):
                  and AccessCapability.REPOSITORY_READ in capabilities
                  and AccessChannel.SSH not in channels)
     elif target == "workspace":
-        valid = (capabilities <= {AccessCapability.WORKSPACE_READ, AccessCapability.WORKSPACE_WRITE, AccessCapability.WORKSPACE_SHELL}
+        valid = (capabilities <= {AccessCapability.WORKSPACE_READ, AccessCapability.WORKSPACE_WRITE,
+                                  AccessCapability.WORKSPACE_SHELL, AccessCapability.WORKSPACE_WAKE}
                  and AccessCapability.WORKSPACE_READ in capabilities
                  and channels <= {AccessChannel.SSH, AccessChannel.MCP}
                  and (AccessCapability.WORKSPACE_SHELL not in capabilities or AccessCapability.WORKSPACE_WRITE in capabilities)

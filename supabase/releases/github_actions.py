@@ -11,6 +11,7 @@ ROLES = {
     "api", "frontend", "agent_worker", "upload_worker", "import_worker",
     "synchronize_worker", "mcp_server",
 }
+OPTIONAL_ROLES = {"ssh_gateway"}
 
 
 def release_images(source: dict[str, str]) -> dict[str, str] | None:
@@ -56,8 +57,9 @@ def prepare(source: dict[str, str]) -> Path:
     if "backup_bucket" in config and not isinstance(config["backup_bucket"], str):
         raise TypeError("Release configuration backup_bucket must be a bucket name")
     railway = config.get("railway", {})
-    if not all(railway.get(key) for key in ("project_id", "environment_id")) or (
-        set(railway.get("services", {})) != ROLES
+    roles = set(railway.get("services", {}))
+    if not all(railway.get(key) for key in ("project_id", "environment_id")) or not (
+        ROLES <= roles <= ROLES | OPTIONAL_ROLES
     ):
         raise ValueError("Release configuration needs the complete Railway inventory")
     images = release_images(source)

@@ -16,7 +16,7 @@
   },
   "schemas": {
     "AccessApplication": "fd0fcfc9cca18cbae4e7fd091d9294ed3dd5d58d752fdbdcc694740a731e1406",
-    "AccessCapability": "663da890ed122ff44577b2ad928a40c7191b0ffe7f38f3db2bb539bd7668398a",
+    "AccessCapability": "51bdb9810cfde7a55488940d559d00325ada55bd0d12204fa806a883a066b3ed",
     "AccessChannel": "3d272e97d63352aa746a11125121637bd8a15ded5145ff519423419613f1c7d4",
     "AccessDecision": "1495c8ecd6f587875f444a21fad6528c06d78b00ae502385a8a11501fb75d7f4",
     "CredentialRenewal": "4950a8b54c50105e177e03f282ec463984ee1552116fa34dd3c220f5836e8004",

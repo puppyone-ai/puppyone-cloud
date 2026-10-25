@@ -160,7 +160,7 @@
         "run_git.check::os.stat": 1
       },
       "platform/access/adapters/ssh/gateway.py": {
-        "run::path.stat": 1
+        "load_host_key::path.stat": 1
       },
       "platform/access/filesystem/indexed_grep.py": {
         "run_indexed_grep_payload::ops.get_head_commit_id": 1

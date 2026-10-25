@@ -8,7 +8,8 @@ import { accessRequest, loadAccess, projectAccess, newInvitation, invitationLink
 import styles from './lifecycle.module.css';
 
 const describe = (record: AccessRecord) => record.target_kind === 'workspace'
-  ? 'Hosted workspace · files and shell' : `Repository · ${record.capabilities?.includes('repository.write') ? 'read and write' : 'read only'}`;
+  ? `Hosted workspace · files and shell${record.capabilities?.includes('workspace.wake') ? ' · may resume it' : ''}`
+  : `Repository · ${record.capabilities?.includes('repository.write') ? 'read and write' : 'read only'}`;
 
 export function AccessManagement({ projectId }: { projectId: string }) {
   const { userId, session } = useAuth();
@@ -19,6 +20,7 @@ function Management({ projectId, userId }: { projectId: string; userId: string }
   const { data, error, isLoading, mutate } = useSWR(userId ? ['access-lifecycle', userId, projectId] : null,
     () => loadAccess(projectId), { refreshInterval: 10_000 });
   const [target, setTarget] = useState('repository-read');
+  const [allowWake, setAllowWake] = useState(false);
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -39,7 +41,7 @@ function Management({ projectId, userId }: { projectId: string; userId: string }
     if (!pendingInvitation.current) {
       const workspace = target === 'workspace' ? (await workspaceStatus(projectId)).workspace : null;
       if (target === 'workspace' && !workspace) throw new Error('Open your hosted workspace first.');
-      pendingInvitation.current = newInvitation(workspace?.id, target !== 'repository-write');
+      pendingInvitation.current = newInvitation(workspace?.id, target !== 'repository-write', allowWake);
     }
     const invitation = pendingInvitation.current;
     await accessRequest('POST', `${base}/invitations`, invitation);
@@ -61,6 +63,11 @@ function Management({ projectId, userId }: { projectId: string; userId: string }
       </div>
       <p className={styles.muted}>One applicant, valid for 7 days. You approve access after they apply.</p>
       {target === 'workspace' && <p className={styles.muted}>The agent can run commands and edit all files in your hosted workspace. Open it first if it has not been created.</p>}
+      {target === 'workspace' && <label className={styles.muted}>
+        <input type="checkbox" checked={allowWake} disabled={busy}
+          onChange={event => { setAllowWake(event.target.checked); pendingInvitation.current = undefined; setLink(''); }} />
+        {' '}Allow it to resume my workspace when paused (uses my compute)
+      </label>}
       {link && <div className={styles.actions}>
         <input className={styles.link} aria-label="Invitation link" readOnly value={link} onFocus={event => event.target.select()} />
         <button className={styles.button} onClick={() => void navigator.clipboard.writeText(link).catch(() => setActionError('Select and copy the invitation link.'))}>Copy link</button>

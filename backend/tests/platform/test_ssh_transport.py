@@ -63,10 +63,12 @@ class NativeAccess:
         )
 
     @asynccontextmanager
-    async def open(self, identity):
+    async def open(self, identity, notify=None):
         if self.used:
             raise PermissionError("Used")
         self.used = True
+        if getattr(self, "resume_notice", None):
+            await notify(self.resume_notice)
         shell = NativeShell(self.directory)
         try:
             yield {"id": identity}, shell

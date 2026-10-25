@@ -28,6 +28,9 @@ ROLES = {
     "synchronize_worker",
     "mcp_server",
 }
+# Optional roles join the inventory when the environment deploys them.
+OPTIONAL_ROLES = {"ssh_gateway"}
+INGRESS_ROLES = ("api", "mcp_server", "frontend", "ssh_gateway")
 # Images published by the release workflow's `images` job, pinned by digest.
 IMAGE_REPOSITORIES = {
     "backend": "ghcr.io/puppyone-ai/puppyone-cloud-backend",
@@ -35,7 +38,7 @@ IMAGE_REPOSITORIES = {
 }
 
 
-def release_images(images: dict | None) -> dict[str, str] | None:
+def release_images(images: dict | None, roles=ROLES) -> dict[str, str] | None:
     """Map every role to its digest-pinned image, or None for commit builds."""
     if images is None:
         return None
@@ -44,14 +47,16 @@ def release_images(images: dict | None) -> dict[str, str] | None:
     for component, repository in IMAGE_REPOSITORIES.items():
         if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", images[component]):
             raise ValueError("Release images must be digest-pinned published images")
-    return {role: images["frontend" if role == "frontend" else "backend"] for role in sorted(ROLES)}
+    return {role: images["frontend" if role == "frontend" else "backend"] for role in sorted(roles)}
 
 
 class Hosted:
     def __init__(self, root: Path, config: dict, database):
         self.root, self.config, self.db = root, config, database
-        if set(config["railway"]["services"]) != ROLES:
+        roles = set(config["railway"]["services"])
+        if not ROLES <= roles <= ROLES | OPTIONAL_ROLES:
             raise ValueError("Complete API, frontend and worker inventory is required")
+        self.roles = roles
         ids = [entry["id"] for entry in config["railway"]["services"].values()]
         if len(ids) != len(set(ids)):
             raise ValueError("Release service roles must identify distinct deployments")
@@ -63,7 +68,7 @@ class Hosted:
             or any(not isinstance(q, str) or not q.strip() for q in queues)
         ):
             raise ValueError("Declare each of the Upload, Import and Synchronize queues")
-        self.images = release_images(config.get("images"))
+        self.images = release_images(config.get("images"), roles)
         self.railway = Railway(config["railway"], config["railway_token"])
         self.redis = redis.Redis.from_url(
             config["redis_url"], socket_timeout=10, socket_connect_timeout=10
@@ -178,7 +183,8 @@ class Hosted:
         # work finish while its consumers are still running.
         # Synchronize is a consumer; its periodic producer lives in the API.
         # Keep it alive until its delayed/retry/in-flight queue is empty too.
-        ingress = ["api", "mcp_server", "frontend"]
+        roles = getattr(self, "roles", ROLES)
+        ingress = [role for role in INGRESS_ROLES if role in roles]
         ingress_evidence = self.railway.stop(ingress)
         deadline = time.monotonic() + self.config.get("drain_timeout_seconds", 900)
         while time.monotonic() < deadline:
@@ -196,7 +202,7 @@ class Hosted:
             time.sleep(2)
         else:
             raise TimeoutError("Existing work did not drain; schema was not changed")
-        workers = sorted(ROLES - set(ingress))
+        workers = sorted(roles - set(ingress))
         worker_evidence = self.railway.stop(workers)
         # Provider-confirmed process exit precedes the lease/in-flight fence.
         deadline = time.monotonic() + self.config.get("drain_timeout_seconds", 900)

@@ -236,6 +236,8 @@ class AccessCapability(StrEnum):
     WORKSPACE_READ = "workspace.read"
     WORKSPACE_WRITE = "workspace.write"
     WORKSPACE_SHELL = "workspace.shell"
+    # Resume the owner's paused workspace; compute is billed to the owner.
+    WORKSPACE_WAKE = "workspace.wake"
 
 
 @dataclass(frozen=True, slots=True)
