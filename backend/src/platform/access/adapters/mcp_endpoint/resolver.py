@@ -114,8 +114,9 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
         raise HTTPException(status_code=401, detail="Invalid MCP API key")
 
     surface, policy, credential = _resolve_surface(key)
-    if surface.get("scope_id"):
-        # A non-root Scope view needs the native repository Scope implementation.
+    if surface.get("scope_id") or surface.get("kind") != "mcp":
+        # A non-root Scope view needs the native repository Scope implementation;
+        # legacy Agent-surface keys stay closed, as the database admits MCP only.
         raise HTTPException(
             status_code=501,
             detail={
@@ -138,8 +139,9 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
 
     # The endpoint policy may narrow its owner's authority, never widen it.
     accesses = (policy.get("fs_policy") or {}).get("accesses") or []
-    policy_writable = surface.get("kind") == "agent" or any(
-        not bool(access.get("readonly", True)) for access in accesses
+    # Writable only for an explicit ``readonly: false`` (the database rule).
+    policy_writable = any(
+        isinstance(access, dict) and access.get("readonly") is False for access in accesses
     )
     mode = "rw" if policy_writable and grant.allows(ProjectAction.CONTENT_WRITE) else "ro"
     context = ScopedFsContext(
@@ -153,7 +155,7 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
         mode=mode,
         exclude=[],
         allowed_tools=resolve_mcp_fs_allowed_tools(
-            policy.get("tools_policy") if surface.get("kind") == "mcp" else None,
+            policy.get("tools_policy"),
             writable=mode == "rw",
         ),
     )
