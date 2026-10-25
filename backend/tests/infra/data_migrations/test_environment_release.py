@@ -406,6 +406,8 @@ def test_backup_bucket_must_be_proven_private(public_acl, public_policy):
         "wrong_reply",
         "approval",
         "missing_workbench_route",
+        "async_open",
+        "failed_open",
         "missing_live_file",
         "wrong_live_save",
         "published_changed",
@@ -431,6 +433,9 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
             result = {"access_token": "synthetic"}
         elif request.method == "POST" and path.endswith("/projects/"):
             result = {"id": "owned"}
+        elif path.endswith("/access/surfaces/enable-target"):
+            assert body == {"target": {"kind": "project_root", "project_id": "owned"}}
+            result = [{"kind": "git_remote"}, {"kind": "cli"}]
         elif path.endswith("/write"):
             saved["content"] = body["content"]
             result = {"commit_id": "git-commit"}
@@ -451,6 +456,15 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
             }
             if agent_state == "different_workspace" and saved.get("agent_started"):
                 workspace["id"] = "different-workbench"
+            polled = request.method == "GET" and bool(request.url.params.get("wait_seconds"))
+            if request.method == "POST" and agent_state in {"async_open", "failed_open"}:
+                # The API records the open intent; the sandbox module starts it.
+                workspace = {**workspace, "state": "retired",
+                             "operation": {"pending": True, "phase": "queued", "error": None}}
+            elif agent_state == "failed_open" and polled:
+                workspace = {**workspace, "state": "retired",
+                             "operation": {"pending": False, "phase": "failed",
+                                           "error": "workbench_start_timeout"}}
             result = workspace if request.method == "POST" else {"workspace": workspace}
         elif path.endswith("/workbench/files"):
             result = {"entries": [{"name": "release-check.md"}]}
@@ -476,7 +490,7 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
         elif request.method == "GET" and path.endswith("/agents/runs/run"):
             result = {
                 "state": "succeeded"
-                if agent_state in {"succeeded", "wrong_reply", "different_workspace"}
+                if agent_state in {"succeeded", "wrong_reply", "different_workspace", "async_open"}
                 else agent_state,
                 "snapshot": {
                     "text": saved["live"] if agent_state != "wrong_reply" else saved["content"]
@@ -501,7 +515,7 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
         "password": "synthetic",
         "org_id": "owned",
     }
-    if agent_state == "succeeded":
+    if agent_state in {"succeeded", "async_open"}:
         receipt = accept(config)
         assert receipt["agent_reply"] is True
         assert receipt["live_files_read_write"] is True
