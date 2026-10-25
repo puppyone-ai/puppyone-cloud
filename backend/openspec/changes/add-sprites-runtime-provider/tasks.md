@@ -49,11 +49,23 @@
   deleted and absence verified.
 - Complete regression on the read-only-socket fix: 3570 passed, 956 skipped,
   420 deselected. Metadata-handling changes have additional focused regressions.
+- The 46 metadata/provider/archive/default/configuration tests passed. The next
+  real run passed consecutive Agent reuse and reached verified warm pause. Its
+  natural-cold wait was stopped and the owned resource deleted: the platform has
+  no bounded cold-eviction deadline. Final acceptance separately covers warm
+  reopen and official checkpoint restore of an exact paused fixture, including
+  proof that an unrelated process is lost before reopening the same saved files.
+  Natural cold eviction remains an explicit optional soak check, not a claim
+  inferred from intermittent cold metadata. This does not add checkpoint usage
+  to the runtime's normal lifecycle.
+- Read-only preflight with Qubits' actual local configuration passed for Sprites
+  authentication/artifact and the authorization/workspace database RPC contracts.
 
 ## Enablement gates
 - [x] Build and export the actual worker bundle successfully.
 - [ ] Run hosted acceptance, including task management-socket isolation, native
-  file edits and pause/reopen preservation; separately verify a cold wake.
+  file edits and warm pause/reopen preservation; separately verify recovery after
+  provider-level process reset from the exact saved filesystem.
 - [x] Make Sprites the source/example default and implement retained-provider
   admission, Agent capability checks, open dispatch and maintenance for old Fly
   bindings. Focused cutover/provider regressions: 70 passed.

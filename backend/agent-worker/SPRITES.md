@@ -117,7 +117,7 @@ local Docker/Postgres acceptance prerequisites:
 
 ```sh
 CLOUD_AGENT_TEST_SPRITES=1 \
-CLOUD_AGENT_TEST_SPRITES_COLD=1 \
+CLOUD_AGENT_TEST_SPRITES_COLD=restore \
 CLOUD_AGENT_SPRITES_TEST_RECEIPT=/tmp/sprites-acceptance.json \
 uv run pytest -q -s tests/agent/workbench_acceptance/accept_sprites.py
 ```
@@ -128,11 +128,17 @@ reuse, pause, and reopen with the same files. Model responses are scripted;
 provider, worker, file APIs and persistence are real. It is not billing or load
 acceptance. Initial hosted checks exposed read-only socket and stale metadata
 compatibility issues, both covered by the implementation and regression checks.
-The final hosted receipt is required to establish complete cold-wake acceptance.
-The cold check polls metadata for up to 30 minutes without opening a VM session,
-then the shared scenario verifies the saved files and a changed kernel boot ID
-after explicit reopen. Omitting
-`CLOUD_AGENT_TEST_SPRITES_COLD=1` exercises ordinary pause/reopen only.
+The final hosted receipts are required for activation. `restore` runs two owned
+fixtures: ordinary warm pause/reopen, and an official checkpoint restore of the
+already-paused fixture before product reopen. The latter verifies that an
+unrelated process was lost and the saved live files remain usable after runtime
+reconstruction. This is a deterministic recovery test, not evidence of the
+platform's natural cold-eviction timing; checkpoints are not used by the runtime
+provider's normal pause/resume path. Receipts get `-warm` and `-restore` suffixes.
+`CLOUD_AGENT_TEST_SPRITES_COLD=1` separately opts into waiting up to 30 minutes for
+natural cold eviction and checking a changed kernel boot ID. The platform does
+not promise a bounded warm-to-cold interval. Omitting the setting exercises
+ordinary pause/reopen only.
 
 API references: [WebSocket exec](https://docs.fly.io/sprites/api/websockets/execute-command),
 [task holds](https://docs.fly.io/sprites/keeping-sprites-running),

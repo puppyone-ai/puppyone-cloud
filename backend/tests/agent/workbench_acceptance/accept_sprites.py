@@ -1,7 +1,11 @@
 """Opt-in hosted Sprites acceptance; the shared scenario exercises real product entry."""
 
 import asyncio
+import json
 import os
+from pathlib import Path
+from urllib.parse import quote
+from uuid import uuid4
 
 import pytest
 
@@ -34,10 +38,13 @@ def sprites_configuration():
 
 
 class SpritesProbe:
-    def __init__(self):
+    def __init__(self, mode):
         self.provider = SpritesRuntimeProvider()
+        self.mode = mode
         self.cold_observed = False
         self.initial_boot = None
+        self.restore_id = None
+        self.witness = None
 
     egress_probe = """
 import os, socket
@@ -82,7 +89,37 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
             lambda value: value["status"] in {"warm", "cold"} and value.get("last_running_at"),
             timeout=120,
         )
-        if os.environ.get("CLOUD_AGENT_TEST_SPRITES_COLD") == "1":
+        if self.mode == "restore" and self.restore_id is None:
+            # Natural cold eviction has no bounded user-controlled deadline.
+            # Restore an exact snapshot of this already-paused fixture instead,
+            # and prove that an unrelated process did not survive the reset.
+            path = self.provider._path(resource)
+            comment = "puppyone-cold-acceptance-" + str(uuid4())
+            await self.provider.transport.request(
+                "POST", path + "/checkpoint", stream=True, json={"comment": comment}
+            )
+            checkpoints = await self.provider.transport.request("GET", path + "/checkpoints")
+            matches = [item for item in checkpoints if item.get("comment") == comment]
+            assert len(matches) == 1 and not matches[0].get("health"), checkpoints
+            self.restore_id = matches[0]["id"]
+            nonce = str(uuid4())
+            script = """
+import json, subprocess, sys
+p = subprocess.Popen(['python3', '-c', 'import time; time.sleep(600)', sys.argv[1]],
+    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    start_new_session=True)
+print(json.dumps({'pid': p.pid, 'nonce': sys.argv[1]}))
+"""
+            self.witness = json.loads(
+                await self.provider._exec(resource, "python3", "-c", script, nonce)
+            )
+            await self.provider.transport.request(
+                "POST",
+                path + "/checkpoints/" + quote(self.restore_id, safe="") + "/restore",
+                stream=True,
+            )
+            print("SPRITES_CHECKPOINT_RESET_COMPLETED", flush=True)
+        if self.mode == "natural":
             # Metadata GET does not wake compute. Let the real platform reach
             # cold; a service restart is not evidence of a cloud cold wake.
             async with asyncio.timeout(1800):
@@ -109,7 +146,7 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
             # response. cleanup() verifies all ownership labels before deletion.
             host = WorkbenchChannel(row)
             try:
-                if self.cold_observed and receipt["result"] == "runtime_passed_cleanup_pending":
+                if receipt["result"] == "runtime_passed_cleanup_pending":
                     resumed_boot = (
                         await self.provider._exec(
                             host.resource, "cat", "/proc/sys/kernel/random/boot_id"
@@ -118,6 +155,26 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
                     receipt["cold_boot_changed"] = bool(
                         self.initial_boot and resumed_boot and self.initial_boot != resumed_boot
                     )
+                    if self.witness is not None:
+                        script = """
+import json, pathlib, sys
+try:
+    command = pathlib.Path('/proc/' + sys.argv[1] + '/cmdline').read_bytes()
+except FileNotFoundError:
+    command = b''
+print(json.dumps({'prior_process_alive': sys.argv[2].encode() in command}))
+"""
+                        check = json.loads(
+                            await self.provider._exec(
+                                host.resource,
+                                "python3",
+                                "-c",
+                                script,
+                                str(self.witness["pid"]),
+                                self.witness["nonce"],
+                            )
+                        )
+                        receipt["process_reset_verified"] = not check["prior_process_alive"]
             finally:
                 await self.provider.cleanup(host.resource)
                 await eventually(
@@ -129,10 +186,25 @@ for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4
                 )
                 deleted.append(host.resource["resource_id"])
         receipt["cold_observed"] = self.cold_observed
+        receipt["recovery_method"] = self.mode
+        receipt["restore_checkpoint"] = self.restore_id
         receipt["cleanup"] = "test Project's owned Sprites absent; verified with metadata GET"
         if self.cold_observed and receipt["result"] == "runtime_passed_cleanup_pending":
             assert receipt.get("cold_boot_changed"), "Cold acceptance requires a new kernel boot"
+        if self.mode == "restore" and receipt["result"] == "runtime_passed_cleanup_pending":
+            assert receipt.get("process_reset_verified"), "Old process survived checkpoint reset"
 
 
-async def test_sprites_chat_live_files_publication_and_resume(entry, monkeypatch):
-    await accept_runtime(entry, monkeypatch, SpritesProbe())
+@pytest.mark.parametrize(
+    "mode",
+    ["warm", "restore"]
+    if os.environ.get("CLOUD_AGENT_TEST_SPRITES_COLD") == "restore"
+    else ["natural" if os.environ.get("CLOUD_AGENT_TEST_SPRITES_COLD") == "1" else "warm"],
+)
+async def test_sprites_chat_live_files_publication_and_resume(entry, monkeypatch, mode):
+    if destination := os.environ.get("CLOUD_AGENT_SPRITES_TEST_RECEIPT"):
+        path = Path(destination)
+        monkeypatch.setenv(
+            "CLOUD_AGENT_SPRITES_TEST_RECEIPT", str(path.with_stem(path.stem + "-" + mode))
+        )
+    await accept_runtime(entry, monkeypatch, SpritesProbe(mode))
