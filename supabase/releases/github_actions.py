@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 ROLES = {
     "api", "frontend", "agent_worker", "upload_worker", "import_worker",
     "synchronize_worker", "mcp_server",
 }
+
+
+def release_images(source: dict[str, str]) -> dict[str, str] | None:
+    """Digest-pinned images the `images` job published for this exact commit."""
+    backend = source.get("RELEASE_BACKEND_IMAGE", "")
+    frontend = source.get("RELEASE_FRONTEND_IMAGE", "")
+    if not backend and not frontend:
+        return None
+    commit = source.get("GITHUB_SHA")
+    if not commit or source.get("RELEASE_IMAGES_SOURCE") != commit:
+        raise ValueError("Release images were not built from this source")
+    for value, name in ((backend, "backend"), (frontend, "frontend")):
+        if not re.fullmatch(
+            rf"ghcr\.io/puppyone-ai/puppyone-cloud-{name}@sha256:[0-9a-f]{{64}}", value
+        ):
+            raise ValueError("Release images must be digest-pinned published images")
+    return {"backend": backend, "frontend": frontend}
 
 
 def prepare(source: dict[str, str]) -> Path:
@@ -30,15 +48,23 @@ def prepare(source: dict[str, str]) -> Path:
         config.get("format_version") != 1 or config.get("environment") != environment
     ):
         raise ValueError("Release configuration belongs to a different environment")
-    for key in ("railway_token", "redis_url", "backup_bucket"):
+    for key in ("railway_token", "redis_url"):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError("Release configuration is missing " + key)
+    # Only breaking (quiescing) releases take a recovery point; the coordinator
+    # proves the versioned backup bucket before it stops anything.
+    if "backup_bucket" in config and not isinstance(config["backup_bucket"], str):
+        raise TypeError("Release configuration backup_bucket must be a bucket name")
     railway = config.get("railway", {})
     if not all(railway.get(key) for key in ("project_id", "environment_id")) or (
         set(railway.get("services", {})) != ROLES
     ):
         raise ValueError("Release configuration needs the complete Railway inventory")
-    for key in ("frontend_build_args", "migration_environment", "acceptance"):
+    images = release_images(source)
+    if images:
+        config["images"] = images
+    required = ("migration_environment", "acceptance")
+    for key in required + (() if images else ("frontend_build_args",)):
         if not isinstance(config.get(key), dict):
             raise TypeError("Release configuration is missing " + key)
     for key in ("api_url", "org_id", "email", "password"):

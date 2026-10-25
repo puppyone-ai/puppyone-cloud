@@ -51,14 +51,24 @@ def validate_contract(repo_root: Path) -> list[str]:
             or "uses: ./.github/workflows/_environment-release.yml" not in source
         ):
             errors.append(f"{environment} must invoke the shared coordinator on every push")
-    for name in ("railway.toml", "nixpacks.toml"):
+    for name in ("railway.toml", "nixpacks.toml", "Dockerfile", "scripts/start-service.sh"):
         source = (repo_root / "backend" / name).read_text()
         if "supabase db push" in source.lower():
             errors.append("Application build/start must not apply migrations")
-    railway = (repo_root / "backend/railway.toml").read_text()
-    for role in REQUIRED_ROLES - {"api"}:
-        if role not in railway:
-            errors.append(f"Missing worker start dispatch: {role}")
+    # One dispatcher starts every role, whether Railway builds the repository
+    # (railway.toml) or runs the published image (Dockerfile CMD).
+    dispatcher = (repo_root / "backend/scripts/start-service.sh").read_text()
+    for role in REQUIRED_ROLES:
+        if f"  {role})\n    exec " not in dispatcher:
+            errors.append(f"Missing exec'd start dispatch: {role}")
+    if 'startCommand = "sh scripts/start-service.sh"' not in (
+        repo_root / "backend/railway.toml"
+    ).read_text():
+        errors.append("railway.toml must start roles through scripts/start-service.sh")
+    if 'CMD ["/app/scripts/start-service.sh"]' not in (
+        repo_root / "backend/Dockerfile"
+    ).read_text():
+        errors.append("The hosted image must start roles through scripts/start-service.sh")
     return errors
 
 

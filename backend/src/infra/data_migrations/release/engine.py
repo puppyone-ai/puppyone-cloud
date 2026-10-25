@@ -14,6 +14,8 @@ class Target(Protocol):
     def prepare_build(self, source: str) -> None: ...
     def pending(self, phase: Phase) -> bool: ...
     def requires_quiescence(self, pending: list[Phase]) -> bool: ...
+    def prepare_recovery(self) -> None: ...
+    def deferred(self) -> list[str]: ...
     def checkpoint(self, name: str, result: dict | None = None) -> None: ...
     def quiesce(self) -> dict: ...
     def backup(self) -> dict: ...
@@ -55,6 +57,10 @@ class Release:
                 # pause. Pure additive SQL releases keep the old application live.
                 pending = [p for p in self.plan.phases if target.pending(p)]
                 if target.requires_quiescence(pending):
+                    # Recovery storage is proven before any service stops.
+                    phase_name = "recovery-preflight"
+                    target.prepare_recovery()
+                    fence()
                     phase_name = "quiesce"
                     result = target.quiesce()
                     fence()
@@ -87,7 +93,14 @@ class Release:
                 fence()
                 target.checkpoint(phase_name, acceptance)
                 target.complete(source)
-                return {"state": "accepted", "source_sha": source, "acceptance": acceptance}
+                return {
+                    "state": "accepted",
+                    "source_sha": source,
+                    "acceptance": acceptance,
+                    # Explicitly reported so acceptance is never read as
+                    # completion of a phase the environment deferred.
+                    "deferred_data_phases": target.deferred(),
+                }
             except Exception as error:
                 # A disconnected owner must not overwrite a successor's journal.
                 # Keep the original exception when the ownership probe also fails.

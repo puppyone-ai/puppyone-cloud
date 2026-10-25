@@ -15,6 +15,14 @@ an accepted application deployment receipt for a database-only run. Pending
 Contract SQL or SQL with declared data prerequisites always routes to the full coordinator and fails if its
 required infrastructure is unavailable; it cannot fall back to uncoordinated SQL.
 
+An environment with the GitHub variable `RELEASE_IMAGES=enabled` builds its
+application images once per commit in the `images` job: one backend image for
+every backend role and one frontend image per environment (Next.js inlines
+`NEXT_PUBLIC_*` at build time). Both are smoke-tested, then published to GHCR
+pinned by digest. The coordinator points each Railway service at those digests
+and verifies the running digest; Railway never rebuilds them. Environments
+without the variable keep exact-commit repository builds.
+
 ## Migration merge admission
 
 Before production merge, CI starts the last accepted target version in disposable Docker,
@@ -102,6 +110,14 @@ runs its complete ordered plan before accepting an application release.
 New SQL that depends on data transformation must declare that dependency;
 unready destructive cleanup stays outside active schema history.
 
+The only exception is a reviewed, source-controlled deferral in
+`supabase/releases/deferred-data.json`. Staging adopted the native engine through
+bounded per-project selections, so it defers the whole-environment
+`native-inventory` and destructive `native-recovery` phases. A deferred phase is
+never executed, skipped with a receipt or reported complete; the accepted
+result lists it under `deferred_data_phases`. Pending SQL that requires a
+deferred artifact still fails the release. Production cannot declare deferrals.
+
 Ordinary additive releases keep the application online. Data migrations and
 Contract SQL use a maintenance window. Consumers must keep running until their
 queues drain; the Synchronize worker is a consumer, while its periodic
@@ -118,9 +134,11 @@ connection between operations. Immutable data artifacts retain their own
 transaction or advisory locks and restart-safe checkpoints.
 
 Application build/start never performs schema mutation. Railway's Automatic
-Deployments setting is disabled for coordinator-owned services; their GitHub
-repository connection stays attached. The full coordinator checks the
-provider's actual autodeploy status and repository source before a coordinated cutover. Independent application
+Deployments setting is disabled for coordinator-owned services. Repository-built
+services keep their GitHub connection attached; image-built services have no
+repository connection and run only the digest the coordinator sets. The full
+coordinator checks the provider's actual autodeploy status and source (repository
+or published image) before a coordinated cutover. Independent application
 autodeploy must not race a migration; enabling application release requires
 coordinator ownership, and its job depends on successful database admission. The
 coordinator explicitly deploys its immutable commit, checks every service's
@@ -194,7 +212,11 @@ it never guesses whether a legacy source is an Import, Synchronize binding or
 both. Such input must be prepared for the historical cutover before release.
 New releases after that Contract do not require those classifications again.
 
-Breaking upgrades stop writers before taking their recovery point. The backup
+Only breaking upgrades take a recovery point. Their recovery storage (a separate
+private versioned backup bucket and a versioned object bucket) is proven before
+any service stops, so an environment without it fails while still online.
+Ordinary additive releases neither need nor inspect it. Breaking upgrades stop
+writers before taking their recovery point. The backup
 includes Cloud public data, Auth identities and migration/release histories;
 it is restore-tested in a disposable PostgreSQL container before mutation.
 Hosted backups use a separate private, versioned object bucket and are read
@@ -253,8 +275,18 @@ following infrastructure contract:
 - An environment-scoped `PUPPYONE_RELEASE_CONFIG` secret containing the
   existing format-version-1 release configuration: environment identity,
   Railway project token and full API/frontend/Agent/Upload/Import/Synchronize/MCP
-  service inventory, Redis queue names, S3 and private versioned backup storage,
-  public frontend build arguments and a dedicated acceptance account.
+  service inventory, Redis queue names, S3 storage, a dedicated acceptance
+  account and, only for breaking releases, a private versioned backup bucket.
+  Repository-built environments also declare public frontend build arguments;
+  image environments instead set `RELEASE_IMAGES=enabled` and the
+  `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`
+  (plus optional `NEXT_PUBLIC_AUTH_EMAIL_ONLY`, `NEXT_PUBLIC_DEV_MODE`) GitHub
+  environment variables and the `NEXT_PUBLIC_SUPABASE_ANON_KEY` environment
+  secret (public by design, but kept out of public run logs), and give Railway pull
+  access to the GHCR packages (`railway.registry_credentials` with a
+  `read:packages` token, or public packages). Image-sourced services run the
+  image's start dispatcher, so their health checks, draining time and restart
+  policy are service settings rather than `railway.toml`.
   Existing `DATABASE_URL`, `SUPABASE_PROJECT_ID`, `SUPABASE_ACCESS_TOKEN` and
   `SUPABASE_SERVICE_ROLE_KEY` environment secrets bind database authority;
   the JSON document cannot override that binding. After candidate CI passes,

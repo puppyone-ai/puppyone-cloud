@@ -49,6 +49,11 @@ class Docker:
     def prepare_build(self, source):
         self.command("build")
 
+    def prepare_recovery(self):
+        # The owned rehearsal backs up to its private directory; its object
+        # store is a disposable fixture volume, not hosted recovery storage.
+        return None
+
     def quiesce(self):
         self.command("stop", "--timeout", "120", *self.applications)
         running = self.command("ps", "--status", "running", "--services").splitlines()

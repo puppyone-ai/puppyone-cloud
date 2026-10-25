@@ -89,6 +89,12 @@ class Target:
     def requires_quiescence(self, pending):
         return bool(pending) and not self.online
 
+    def prepare_recovery(self):
+        self.event("recovery")
+
+    def deferred(self):
+        return []
+
     def checkpoint(self, name, result=None):
         self.event("checkpoint:" + name)
 
@@ -133,6 +139,7 @@ def test_upgrade_orders_cutover_and_is_a_noop_after_acceptance():
     assert operations == [
         "begin",
         "build",
+        "recovery",
         "quiesce",
         "backup",
         "expand",
@@ -152,6 +159,7 @@ def test_upgrade_orders_cutover_and_is_a_noop_after_acceptance():
     "failure,forbidden",
     [
         ("build", "quiesce"),
+        ("recovery", "quiesce"),
         ("quiesce", "backup"),
         ("backup", "expand"),
         ("expand", "copy"),
@@ -198,6 +206,8 @@ def test_additive_upgrade_keeps_existing_application_online():
     target = Target(online=True)
     Release(ReleasePlan((PLAN.phases[0],), "sum", frozenset({"1"})), target).run(SOURCE)
     assert "quiesce" not in target.events and "backup" not in target.events
+    # Recovery storage is irrelevant to an online release and never checked.
+    assert "recovery" not in target.events
     assert target.accepted
 
 
@@ -502,3 +512,254 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
         with pytest.raises(RuntimeError):
             accept(config)
     assert calls[-1] == ("DELETE", "/api/v1/projects/owned")
+
+
+# --- Recovery storage is a breaking-release requirement, checked before stopping.
+
+
+def _hosted_with_buckets(versioning, backup_bucket="private-backup"):
+    target = object.__new__(Hosted)
+    target.config = {
+        "migration_environment": {"S3_BUCKET_NAME": "objects"},
+        **({"backup_bucket": backup_bucket} if backup_bucket is not None else {}),
+    }
+    target.s3 = SimpleNamespace(
+        get_bucket_versioning=lambda Bucket: {"Status": versioning},
+        get_bucket_acl=lambda **_: {"Grants": []},
+        get_bucket_policy_status=lambda **_: {"PolicyStatus": {"IsPublic": False}},
+    )
+    return target
+
+
+@pytest.mark.parametrize(
+    "versioning,backup_bucket", [("Suspended", "private-backup"), ("Enabled", None), ("Enabled", "objects")]
+)
+def test_breaking_release_requires_separate_versioned_recovery_storage(versioning, backup_bucket):
+    with pytest.raises(ValueError):
+        _hosted_with_buckets(versioning, backup_bucket).prepare_recovery()
+
+
+def test_versioned_private_recovery_storage_is_accepted():
+    assert _hosted_with_buckets("Enabled").prepare_recovery() is None
+
+
+def test_ordinary_preflight_never_inspects_object_storage(monkeypatch):
+    target = object.__new__(Hosted)
+    target.root = ROOT
+    target.config = {"environment": "staging", "supabase_project_id": "qextonmjqbhxgokmjbio",
+                     "supabase_url": "https://qextonmjqbhxgokmjbio.supabase.co"}
+    target.images = None
+    target.db = SimpleNamespace(assert_supabase_target=lambda **_: None)
+    target.railway = SimpleNamespace(preflight=lambda images=None: {})
+    target.redis = SimpleNamespace(ping=lambda: True)
+    target.s3 = SimpleNamespace()  # Any storage call would raise AttributeError.
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/qubits")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    head = SOURCE
+    monkeypatch.setattr(
+        "src.infra.data_migrations.release.hosted.subprocess.check_output",
+        lambda command, **_: head if "rev-parse" in command else b"",
+    )
+    target.preflight(SOURCE)
+
+
+def test_unavailable_recovery_storage_fails_before_any_service_stops():
+    target = Target("recovery")
+    with pytest.raises(RuntimeError, match="recovery"):
+        Release(PLAN, target).run(SOURCE)
+    assert "quiesce" not in target.events and "backup" not in target.events
+    assert not target.accepted
+
+
+# --- Reviewed per-environment deferral of historical data phases.
+
+from src.infra.data_migrations.release.deferral import (  # noqa: E402
+    load_deferred_phases,
+    require_no_deferred_prerequisite,
+)
+
+
+def _deferral_root(tmp_path, document):
+    (tmp_path / "supabase/releases").mkdir(parents=True)
+    (tmp_path / "supabase/releases/deferred-data.json").write_text(__import__("json").dumps(document))
+    return tmp_path
+
+
+def _declaration(environments):
+    return {"format_version": 1, "environments": environments}
+
+
+def test_staging_defers_only_reviewed_data_phases(tmp_path):
+    root = _deferral_root(
+        tmp_path, _declaration({"staging": {"phases": ["copy"], "reason": "bounded rollout"}})
+    )
+    assert load_deferred_phases(root, "staging", PLAN) == {"copy"}
+    assert load_deferred_phases(root, None, PLAN) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "environments",
+    [
+        {"production": {"phases": ["copy"], "reason": "never"}},
+        {"staging": {"phases": ["expand"], "reason": "schema is not deferrable"}},
+        {"staging": {"phases": ["unknown"], "reason": "not in the plan"}},
+        {"staging": {"phases": ["copy"], "reason": ""}},
+        {"staging": {"phases": ["copy", "copy"], "reason": "duplicate"}},
+    ],
+)
+def test_invalid_or_production_deferral_is_rejected(tmp_path, environments):
+    root = _deferral_root(tmp_path, _declaration(environments))
+    with pytest.raises(ValueError):
+        load_deferred_phases(root, "staging", PLAN)
+
+
+def test_pending_sql_cannot_depend_on_a_deferred_transformation(tmp_path):
+    migration = tmp_path / "20990101000000_contract.sql"
+    migration.write_text("-- requires-data-migration: copy\nSELECT 1;\n")
+    with pytest.raises(ValueError, match="deferred"):
+        require_no_deferred_prerequisite([migration], frozenset({"copy"}), PLAN)
+    require_no_deferred_prerequisite([migration], frozenset(), PLAN)
+
+
+def test_deferred_phase_is_neither_executed_nor_reported_complete():
+    target = object.__new__(DatabaseTarget)
+    target.plan = PLAN
+    target.deferred_phases = frozenset({"copy"})
+    target.schema_executor = SimpleNamespace(applied=lambda: {"1"}, pending=lambda _: [])
+    target.db = SimpleNamespace(receipt=lambda _: None)
+    target.catalog = SimpleNamespace(get=lambda _: SimpleNamespace(checksum="sum"))
+    assert not target.pending(PLAN.phases[1])
+    assert target.deferred() == ["copy"]
+
+
+def test_checked_in_deferral_matches_the_release_plan():
+    plan = ReleasePlan.load(ROOT)
+    assert load_deferred_phases(ROOT, "staging", plan) == {"native-inventory", "native-recovery"}
+    assert load_deferred_phases(ROOT, "production", plan) == frozenset()
+
+
+# --- Image releases: one published digest per component, verified on Railway.
+
+from src.infra.data_migrations.release.hosted import release_images  # noqa: E402
+
+BACKEND = "ghcr.io/puppyone-ai/puppyone-cloud-backend@sha256:" + "1" * 64
+FRONTEND = "ghcr.io/puppyone-ai/puppyone-cloud-frontend@sha256:" + "2" * 64
+
+
+def test_release_images_map_every_backend_role_to_one_digest():
+    images = release_images({"backend": BACKEND, "frontend": FRONTEND})
+    assert images["frontend"] == FRONTEND
+    assert {images[role] for role in ROLES - {"frontend"}} == {BACKEND}
+    assert release_images(None) is None
+
+
+@pytest.mark.parametrize(
+    "images",
+    [
+        {"backend": BACKEND},
+        {"backend": "ghcr.io/puppyone-ai/puppyone-cloud-backend:latest", "frontend": FRONTEND},
+        {"backend": "docker.io/other/backend@sha256:" + "1" * 64, "frontend": FRONTEND},
+    ],
+)
+def test_mutable_or_foreign_release_images_are_rejected(images):
+    with pytest.raises(ValueError):
+        release_images(images)
+
+
+def test_image_release_points_service_at_digest_and_verifies_running_image():
+    import json
+
+    calls = []
+
+    def handler(request):
+        call = json.loads(request.content)
+        calls.append(call)
+        query = call["query"]
+        if "serviceInstanceUpdate" in query:
+            assert call["variables"]["i"]["source"] == {"image": BACKEND}
+            return httpx.Response(200, json={"data": {"serviceInstanceUpdate": True}})
+        if "serviceInstanceDeployV2" in query:
+            assert "commitSha" not in query
+            return httpx.Response(200, json={"data": {"serviceInstanceDeployV2": "deployment"}})
+        if "deployment(id:" in query:
+            meta = {"image": BACKEND, "imageDigest": "sha256:" + "1" * 64}
+            return httpx.Response(
+                200, json={"data": {"deployment": {"id": "deployment", "status": "SUCCESS", "meta": meta}}}
+            )
+        return httpx.Response(
+            200,
+            json={"data": {"serviceInstance": {"latestDeployment": {
+                "id": "old", "status": "SUCCESS", "meta": {"image": FRONTEND}}}}},
+        )
+
+    assert railway(handler).deploy(SOURCE, images={"api": BACKEND}) == {"api": "deployment"}
+    # Point the service at the digest first, then deploy that configuration.
+    update = next(i for i, c in enumerate(calls) if "serviceInstanceUpdate" in c["query"])
+    deploy = next(i for i, c in enumerate(calls) if "serviceInstanceDeployV2" in c["query"])
+    assert update < deploy
+    assert sum("serviceInstanceUpdate" in c["query"] for c in calls) == 1
+
+
+def test_image_release_rejects_a_service_running_a_different_digest():
+    def handler(request):
+        import json
+
+        query = json.loads(request.content)["query"]
+        if "serviceInstanceUpdate" in query:
+            return httpx.Response(200, json={"data": {"serviceInstanceUpdate": True}})
+        if "serviceInstanceDeployV2" in query:
+            return httpx.Response(200, json={"data": {"serviceInstanceDeployV2": "deployment"}})
+        if "deployment(id:" in query:
+            meta = {"image": FRONTEND, "imageDigest": "sha256:" + "2" * 64}
+            return httpx.Response(
+                200, json={"data": {"deployment": {"id": "deployment", "status": "SUCCESS", "meta": meta}}}
+            )
+        return httpx.Response(200, json={"data": {"serviceInstance": {"latestDeployment": None}}})
+
+    with pytest.raises(RuntimeError, match="differs"):
+        railway(handler).deploy(SOURCE, images={"api": BACKEND})
+
+
+def test_image_release_is_idempotent_for_an_already_running_digest():
+    def handler(request):
+        import json
+
+        query = json.loads(request.content)["query"]
+        assert "serviceInstanceUpdate" not in query and "serviceInstanceDeployV2" not in query
+        meta = {"image": BACKEND, "imageDigest": "sha256:" + "1" * 64}
+        if "deployment(id:" in query:
+            return httpx.Response(
+                200, json={"data": {"deployment": {"id": "current", "status": "SUCCESS", "meta": meta}}}
+            )
+        return httpx.Response(
+            200,
+            json={"data": {"serviceInstance": {"latestDeployment": {
+                "id": "current", "status": "SUCCESS", "meta": meta}}}},
+        )
+
+    assert railway(handler).deploy(SOURCE, images={"api": BACKEND}) == {"api": "current"}
+
+
+@pytest.mark.parametrize(
+    "source,valid",
+    [
+        ({"repo": None, "image": BACKEND}, True),
+        ({"repo": "puppyone-ai/puppyone-cloud", "image": None}, False),
+        ({"repo": None, "image": "docker.io/library/busybox:latest"}, False),
+    ],
+)
+def test_image_release_requires_image_sourced_services(source, valid):
+    client = railway(
+        lambda _: httpx.Response(
+            200,
+            json={"data": {
+                "serviceInstanceAutoDeployStatus": {"enabled": False},
+                "serviceInstance": {"source": source, "latestDeployment": None},
+            }},
+        )
+    )
+    if valid:
+        assert client.preflight(images={"api": BACKEND}) == {"api": None}
+    else:
+        with pytest.raises(ValueError, match="image"):
+            client.preflight(images={"api": BACKEND})

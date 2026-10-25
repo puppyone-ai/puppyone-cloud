@@ -243,7 +243,7 @@ def test_release_credentials_use_protected_environment_and_private_temporary_fil
     release = shared["jobs"]["release"]
     assert release["environment"] == "${{ inputs.environment }}"
     assert release["runs-on"] == "ubuntu-24.04"
-    assert release["needs"] == ["database", "sandbox_image"]
+    assert release["needs"] == ["database", "sandbox_image", "images"]
     command = next(s["run"] for s in release["steps"] if s.get("name") == "Run the shared upgrade and acceptance program")
     assert "src.infra.data_migrations.release" in command
     assert "$RUNNER_TEMP/puppyone-release-private/configuration.json" in command
