@@ -213,3 +213,12 @@ def test_images_job_builds_once_and_publishes_with_the_workflow_token_only():
     assert names.index("Smoke-test the frontend image") < names.index("Publish the images")
     configuration = next(s for s in jobs["release"]["steps"] if s.get("id") == "configuration")
     assert configuration["env"]["RELEASE_BACKEND_IMAGE"] == "${{ needs.images.outputs.backend }}"
+
+
+def test_workflows_fetch_the_postgresql_signing_key_from_its_published_location():
+    # apt.postgresql.org/media/keys/ returns 404; the key is published on www.
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        text = workflow.read_text()
+        assert "apt.postgresql.org/media/keys" not in text, workflow.name
+    release = (ROOT / ".github/workflows/_environment-release.yml").read_text()
+    assert "https://www.postgresql.org/media/keys/ACCC4CF8.asc" in release
