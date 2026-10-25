@@ -16,6 +16,7 @@ from src.platform.access.lifecycle_schemas import CredentialRenewal, InvitationC
 from src.platform.access.sessions import AccessSessions
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.service import validate_access_shape
+from src.platform.workspace.errors import WorkspaceError
 
 
 @pytest.mark.parametrize(
@@ -107,10 +108,11 @@ async def test_managed_ssh_renews_after_ticket_expiry_only_with_current_parent()
     assert await service.validate(identity) == ticket
     assert authority.authorize.call_args.kwargs["session"] == identity
     authority.authorize.side_effect = PermissionError("revoked")
-    with pytest.raises(PermissionError):
-        await service.validate(identity)
-    with pytest.raises(PermissionError):
-        await service.validate(identity, unused=True)
+    # A revoked parent is an expected ending the transport can explain.
+    for unused in (False, True):
+        with pytest.raises(WorkspaceError) as denied:
+            await service.validate(identity, unused=unused)
+        assert denied.value.code == "access_denied"
 
 
 async def test_failed_cleanup_does_not_starve_other_sessions():

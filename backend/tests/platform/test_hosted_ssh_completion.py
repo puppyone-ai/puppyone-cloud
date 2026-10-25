@@ -266,3 +266,24 @@ async def test_a_pasted_public_key_with_a_comment_authenticates():
     grant["public_key"] = public_key(pasted)
     assert grant["public_key"] == public_key(key.export_public_key())
     assert await access.authenticate(grant["id"], key)
+
+
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("access_workspace_unavailable", "access_workspace_unavailable"),
+        ("some other conflict detail", "access_invalid_state"),
+    ],
+)
+def test_a_paused_workspace_without_wake_is_an_actionable_refusal(message, code):
+    from fastapi import HTTPException
+    from postgrest.exceptions import APIError
+
+    from src.platform.access.grant_repository import AccessRepository
+
+    client = Mock()
+    client.rpc.return_value.execute.side_effect = APIError({"message": message, "code": "55000"})
+    with pytest.raises(HTTPException) as refused:
+        AccessRepository(client).call("access_issue_credential")
+    assert refused.value.status_code == 409
+    assert refused.value.detail == {"code": code}  # Only fixed codes, never database text.

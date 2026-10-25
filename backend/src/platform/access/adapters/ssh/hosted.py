@@ -1,10 +1,13 @@
 """Public-key delegation to one existing private Hosted Workspace."""
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
+
+from src.exceptions import PermissionException
 from src.infra.execution.runner import run_blocking
 from src.platform.access.composition import build_workbench_service
 from src.platform.access.credential_repository import SshCredentialRepository
@@ -23,6 +26,23 @@ def public_key(value):
         return normalize_ssh_public_key(value)
     except ValueError as exc:
         raise WorkspaceError(422, {"code": "ssh_ed25519_public_key_required"}) from exc
+
+
+@contextmanager
+def access_denials():
+    """Authority refusals become one product code the transport can show.
+
+    Revocation, expiry, an owner disconnect, a single-session conflict or a
+    lapsed owner entitlement all end delegated access; none is a fault.
+    """
+    try:
+        yield
+    except (PermissionError, PermissionException) as exc:
+        raise WorkspaceError(403, {"code": "access_denied"}) from exc
+    except HTTPException as exc:
+        if exc.status_code not in (401, 403):
+            raise
+        raise WorkspaceError(403, {"code": "access_denied"}) from exc
 
 
 # Existing callers keep their import while persistence belongs to shared Access.
@@ -119,6 +139,10 @@ class HostedSshAccess:
         Authentication and session admission run before the workspace may be
         resumed, so they validate authority without requiring a running VM.
         """
+        with access_denials():
+            return await self._check(identity, unused=unused, running=running)
+
+    async def _check(self, identity, *, unused, running):
         grant = await run_blocking(self.grants.get, str(UUID(identity)))
         if (
             not grant
@@ -205,7 +229,8 @@ class HostedSshAccess:
     async def renew(self, connection, shell):
         async with asyncio.timeout(10):
             await self.validate(connection["id"])
-            await self.connections.renew(connection, shell)
+            with access_denials():
+                await self.connections.renew(connection, shell)
 
     async def revoke(self, user, project, identity):
         await run_blocking(
