@@ -49,4 +49,16 @@
 - [x] Make Sprites the source/example default and implement retained-provider
   admission, Agent capability checks, open dispatch and maintenance for old Fly
   bindings. Focused cutover/provider regressions: 70 passed.
-- [ ] Run the completed integration checks and merge the verified commit into qubits.
+- [x] Run the completed integration checks and merge the verified commit into qubits.
+
+## Local activation
+- Verified code and hosted receipts were fast-forwarded into local `qubits`
+  at `b69646c8`. The existing frontend edit was preserved.
+- The ignored local backend environment now selects `sprites`, retains `fly`,
+  and uses the verified bundle above. The full authenticated token is stored only
+  in that local environment file with mode 0600; it is absent from tracked changes.
+- The old local API and worker were stopped gracefully. The existing paired
+  workspace launcher restarted both from the same configuration snapshot.
+  Both preflights selected Sprites; the Agent/sandbox worker startup reported
+  provider `sprites`, and the local API returned HTTP 200 with status `ready`.
+- No remote branch push or hosted application deployment was performed.
