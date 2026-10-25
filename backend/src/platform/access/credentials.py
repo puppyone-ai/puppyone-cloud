@@ -102,6 +102,10 @@ def normalize_ssh_public_key(value):
         key = asyncssh.import_public_key(value)
         if key.get_algorithm() != "ssh-ed25519":
             raise ValueError("Ed25519 public key required")
+        # A comment (``user@host``) is not part of the key. Keys received over
+        # SSH carry none, so a comment-sensitive verifier would reject a key a
+        # user pasted from ``~/.ssh/id_ed25519.pub``.
+        key.set_comment(None)
         return key.export_public_key().decode().strip()
     except (ValueError, asyncssh.KeyImportError) as exc:
         raise ValueError("Ed25519 public key required") from exc

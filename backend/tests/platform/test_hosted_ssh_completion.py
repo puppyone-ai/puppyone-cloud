@@ -258,3 +258,11 @@ def test_gateway_no_longer_runs_its_own_reclamation_loop():
     import inspect
 
     assert "reap" not in inspect.getsource(gateway.run)
+
+
+async def test_a_pasted_public_key_with_a_comment_authenticates():
+    access, key, grant, _, _ = service(state="running")
+    pasted = key.export_public_key().decode().strip() + " someone@laptop"
+    grant["public_key"] = public_key(pasted)
+    assert grant["public_key"] == public_key(key.export_public_key())
+    assert await access.authenticate(grant["id"], key)
