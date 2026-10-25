@@ -1,0 +1,9 @@
+{
+  "format_version": 1,
+  "environments": {
+    "staging": {
+      "phases": ["native-inventory", "native-recovery"],
+      "reason": "Qubits adopted the native engine through bounded per-project selections (20261008_qubits_agent_current_tree) instead of the whole-environment inventory. The global inventory and its destructive recovery archive are a separate reviewed operator cutover; ordinary application releases must not start them. Unselected projects keep returning explicit native-readiness errors."
+    }
+  }
+}

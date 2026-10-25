@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -27,6 +28,23 @@ ROLES = {
     "synchronize_worker",
     "mcp_server",
 }
+# Images published by the release workflow's `images` job, pinned by digest.
+IMAGE_REPOSITORIES = {
+    "backend": "ghcr.io/puppyone-ai/puppyone-cloud-backend",
+    "frontend": "ghcr.io/puppyone-ai/puppyone-cloud-frontend",
+}
+
+
+def release_images(images: dict | None) -> dict[str, str] | None:
+    """Map every role to its digest-pinned image, or None for commit builds."""
+    if images is None:
+        return None
+    if not isinstance(images, dict) or set(images) != set(IMAGE_REPOSITORIES):
+        raise ValueError("Release images need the backend and frontend digests")
+    for component, repository in IMAGE_REPOSITORIES.items():
+        if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", images[component]):
+            raise ValueError("Release images must be digest-pinned published images")
+    return {role: images["frontend" if role == "frontend" else "backend"] for role in sorted(ROLES)}
 
 
 class Hosted:
@@ -45,6 +63,7 @@ class Hosted:
             or any(not isinstance(q, str) or not q.strip() for q in queues)
         ):
             raise ValueError("Declare each of the Upload, Import and Synchronize queues")
+        self.images = release_images(config.get("images"))
         self.railway = Railway(config["railway"], config["railway_token"])
         self.redis = redis.Redis.from_url(
             config["redis_url"], socket_timeout=10, socket_connect_timeout=10
@@ -85,18 +104,24 @@ class Hosted:
             and self.config["supabase_project_id"] == "qextonmjqbhxgokmjbio"
         ):
             raise ValueError("Production release cannot target the Qubits database")
-        self.railway.preflight()
+        self.railway.preflight(images=self.images)
         self.redis.ping()
+
+    def prepare_recovery(self):
+        """Recovery storage for a breaking release; checked before anything stops.
+
+        Ordinary additive releases take no recovery point and never reach this.
+        """
+        backup_bucket = self.config.get("backup_bucket")
+        if not isinstance(backup_bucket, str) or not backup_bucket.strip():
+            raise ValueError("A breaking release needs a private versioned backup bucket")
         # A DB restore alone cannot recover bytes overwritten/deleted in S3.
-        for bucket in (
-            self.config["backup_bucket"],
-            self.config["migration_environment"]["S3_BUCKET_NAME"],
-        ):
+        for bucket in (backup_bucket, self.config["migration_environment"]["S3_BUCKET_NAME"]):
             if self.s3.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
                 raise ValueError(
                     "Release recovery requires versioned private object and backup buckets"
                 )
-        if self.config["backup_bucket"] == self.config["migration_environment"]["S3_BUCKET_NAME"]:
+        if backup_bucket == self.config["migration_environment"]["S3_BUCKET_NAME"]:
             raise ValueError("Database backups must use a separate private bucket")
         self.verify_private_backup_bucket()
 
@@ -121,6 +146,10 @@ class Hosted:
                 raise ValueError("Backup bucket policy is not private")
 
     def prepare_build(self, source):
+        if self.images:
+            # The images job built, smoke-tested and published these digests
+            # for this exact source before this job started; nothing rebuilds.
+            return
         # Build before touching the database. Railway deploys the same pinned
         # source through its configured builder, then its SHA is checked again.
         for component in ("backend", "frontend"):
@@ -235,7 +264,7 @@ class Hosted:
         return document
 
     def deploy(self, source):
-        self.railway.deploy(source)
+        self.railway.deploy(source, images=self.images)
 
     def accept(self):
         return accept(self.config["acceptance"])

@@ -172,11 +172,117 @@ jobs:
           printf '%s' "$FLY_API_TOKEN" | docker login registry.fly.io --username x --password-stdin >/dev/null
           trap 'docker logout registry.fly.io >/dev/null 2>&1' EXIT
           python3 backend/scripts/sandbox_image_release.py --image "puppyone-sandbox:$GITHUB_SHA" --app "$FLY_APP"
+  images:
+    name: Build and publish application images
+    # One build per commit, before any deployment. The release job points every
+    # Railway service at these digests; Railway does not rebuild anything, and
+    # promotion reuses the backend digest. Environments without the
+    # RELEASE_IMAGES=enabled variable keep building from the repository.
+    needs: admission
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      enabled: ${{ steps.config.outputs.enabled }}
+      backend: ${{ steps.publish.outputs.backend }}
+      frontend: ${{ steps.publish.outputs.frontend }}
+    env:
+      BACKEND_REPOSITORY: ghcr.io/puppyone-ai/puppyone-cloud-backend
+      FRONTEND_REPOSITORY: ghcr.io/puppyone-ai/puppyone-cloud-frontend
+      RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Detect image release configuration
+        id: config
+        env:
+          RELEASE_IMAGES: ${{ vars.RELEASE_IMAGES }}
+        run: |
+          if [ "$RELEASE_IMAGES" = enabled ]; then echo 'enabled=true' >> "$GITHUB_OUTPUT"; else echo 'enabled=false' >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - name: Build the backend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          docker build --platform linux/amd64 --build-arg SOURCE_SHA="$GITHUB_SHA" \
+            -t "$BACKEND_REPOSITORY:$GITHUB_SHA" backend
+      - name: Smoke-test the backend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          image="$BACKEND_REPOSITORY:$GITHUB_SHA"
+          # Every role's entry module imports and the external clients exist.
+          docker run --rm -e INTERNAL_API_SECRET=image-smoke-test-only --entrypoint sh "$image" -c '
+            set -e
+            /opt/venv/bin/fly version
+            git --version
+            test "$PUPPYONE_BUILD_ID" = "'"$GITHUB_SHA"'"
+            python -c "import src.main, mcp_service.server, src.platform.access.adapters.agent.runtime.worker, src.platform.upload.worker, src.platform.imports.worker, src.platform.synchronize.worker"
+          '
+          # Unknown roles fail closed instead of starting the API.
+          status=0; docker run --rm -e SERVICE_ROLE=unsupported "$image" || status=$?
+          test "$status" = 64
+      - name: Build the frontend image
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_AUTH_EMAIL_ONLY: ${{ vars.NEXT_PUBLIC_AUTH_EMAIL_ONLY }}
+          NEXT_PUBLIC_DEV_MODE: ${{ vars.NEXT_PUBLIC_DEV_MODE }}
+        run: |
+          set -euo pipefail
+          # Public endpoints are inlined at build time; a missing one would ship
+          # a frontend whose server-side auth redirects fail.
+          for name in NEXT_PUBLIC_API_URL NEXT_PUBLIC_APP_URL NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY; do
+            test -n "${!name}" || { echo "::error::Configure $name for this GitHub environment"; exit 1; }
+          done
+          version=$(python3 -c 'import json; print(json.load(open("version.json"))["version"])')
+          docker build --platform linux/amd64 \
+            --build-arg SOURCE_SHA="$GITHUB_SHA" --build-arg APP_VERSION="$version" \
+            --build-arg NEXT_PUBLIC_API_URL --build-arg NEXT_PUBLIC_APP_URL \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY \
+            --build-arg NEXT_PUBLIC_AUTH_EMAIL_ONLY --build-arg NEXT_PUBLIC_DEV_MODE \
+            -t "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA" frontend
+      - name: Smoke-test the frontend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          docker run -d --name frontend-smoke -p 127.0.0.1:3000:3000 "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA"
+          trap 'docker rm -f frontend-smoke >/dev/null 2>&1' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs frontend-smoke | tail -n 50
+          exit 1
+      - name: Publish the images
+        id: publish
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          docker push --quiet "$BACKEND_REPOSITORY:$GITHUB_SHA"
+          docker push --quiet "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA"
+          backend=$(docker inspect --format '{{index .RepoDigests 0}}' "$BACKEND_REPOSITORY:$GITHUB_SHA")
+          frontend=$(docker inspect --format '{{index .RepoDigests 0}}' "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA")
+          [[ "$backend" =~ ^${BACKEND_REPOSITORY}@sha256:[0-9a-f]{64}$ ]]
+          [[ "$frontend" =~ ^${FRONTEND_REPOSITORY}@sha256:[0-9a-f]{64}$ ]]
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          { echo '### Application images'; echo "- backend: \`$backend\`"; echo "- frontend: \`$frontend\`"; } >> "$GITHUB_STEP_SUMMARY"
   release:
     name: Upgrade and accept ${{ inputs.environment }}
     # Release credentials belong to the protected environment. PR workflows
     # never invoke this job; GitHub supplies a fresh VM for each release.
-    needs: [database, sandbox_image]
+    needs: [database, sandbox_image, images]
     if: >-
       needs.database.outputs.schema_state == 'coordinated_release_required' ||
       needs.database.outputs.application_configured == 'true'
@@ -230,6 +336,9 @@ jobs:
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+          RELEASE_BACKEND_IMAGE: ${{ needs.images.outputs.backend }}
+          RELEASE_FRONTEND_IMAGE: ${{ needs.images.outputs.frontend }}
+          RELEASE_IMAGES_SOURCE: ${{ needs.images.outputs.enabled == 'true' && github.sha || '' }}
         run: python3 supabase/releases/github_actions.py
       - name: Record an environment release attempt
         id: attempt
@@ -290,7 +399,7 @@ jobs:
   result:
     name: Database migration result
     if: always()
-    needs: [admission, database, sandbox_image, release]
+    needs: [admission, database, sandbox_image, images, release]
     runs-on: ubuntu-24.04
     steps:
       - name: Report database and application outcomes separately
@@ -303,6 +412,8 @@ jobs:
           RELEASE_RESULT: ${{ needs.release.result }}
           SANDBOX_RESULT: ${{ needs.sandbox_image.result }}
           SANDBOX_ENABLED: ${{ needs.sandbox_image.outputs.enabled }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          IMAGES_ENABLED: ${{ needs.images.outputs.enabled }}
         with:
           script: |
             const e = process.env;
@@ -315,8 +426,10 @@ jobs:
                 ['Database', databaseReady ? 'Migrated and verified' : 'Not completed'],
                 ['Application', required ? e.RELEASE_RESULT : 'Not configured; no application deployment performed'],
                 ['Sandbox image', e.SANDBOX_ENABLED === 'true' ? e.SANDBOX_RESULT : 'Not configured for this environment'],
+                ['Application images', e.IMAGES_ENABLED === 'true' ? e.IMAGES_RESULT : 'Not configured; services build from the repository'],
                 ['Source', context.sha]
               ]).write();
             if (!databaseReady) core.setFailed('Database migration did not complete; inspect the failed prerequisite or migration job.');
             else if (required && e.RELEASE_RESULT !== 'success') core.setFailed('Database is ready, but application release failed.');
             else if (e.SANDBOX_ENABLED === 'true' && e.SANDBOX_RESULT !== 'success') core.setFailed('Database is ready, but the sandbox image was not published.');
+            else if (['failure', 'cancelled'].includes(e.IMAGES_RESULT)) core.setFailed('Database is ready, but the application images were not published.');

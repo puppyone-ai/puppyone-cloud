@@ -169,7 +169,7 @@ def test_schema_job_requires_only_database_credentials_and_never_a_release_confi
     assert "schema_only" in steps[sql_index]["run"]
     assert all("continue-on-error" not in s for s in steps)
     release = workflow["jobs"]["release"]
-    assert release["needs"] == ["database", "sandbox_image"]
+    assert release["needs"] == ["database", "sandbox_image", "images"]
     assert "coordinated_release_required" in release["if"]
     assert "application_configured" in release["if"]
 

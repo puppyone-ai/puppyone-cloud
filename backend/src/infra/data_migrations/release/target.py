@@ -9,20 +9,34 @@ from pathlib import Path
 from ..catalog import DataMigrationCatalog
 from ..database import PsqlClient
 from ..runner import DataMigrationRunner
+from .deferral import load_deferred_phases, require_no_deferred_prerequisite
 from .journal import Journal
 from .plan import Phase, ReleasePlan
 from .schema import Schema
 
 
 class DatabaseTarget:
-    def __init__(self, root: Path, database: PsqlClient, platform, environment: dict[str, str]):
+    # Plain-database stages (schema_only) never defer anything.
+    deferred_phases: frozenset[str] = frozenset()
+
+    def __init__(
+        self,
+        root: Path,
+        database: PsqlClient,
+        platform,
+        environment: dict[str, str],
+        *,
+        release_environment: str | None = None,
+    ):
         self.root, self.db, self.platform = root, database, platform
         self.environment = dict(environment)
+        self.release_environment = release_environment
         self.schema_executor = Schema(root, database)
         self.journal = Journal(root, database)
         self.catalog = DataMigrationCatalog(root)
         self.runner = DataMigrationRunner(self.catalog, database, environment=environment)
         self.plan = None
+        self.deferred_phases: frozenset[str] = frozenset()
 
     def lock(self):
         # All environments targeting the same physical DB share this lock.
@@ -31,8 +45,23 @@ class DatabaseTarget:
     def begin(self, source: str, plan: ReleasePlan) -> bool:
         self.platform.preflight(source)
         self.plan = plan
+        self.deferred_phases = load_deferred_phases(self.root, self.release_environment, plan)
+        if self.deferred_phases:
+            require_no_deferred_prerequisite(
+                self.schema_executor.pending("latest"), self.deferred_phases, plan
+            )
         self.runner.source_sha = source
         return self.journal.begin(source, plan.checksum)
+
+    def deferred(self) -> list[str]:
+        """Deferred phases that remain incomplete; reported, never marked done."""
+        if not self.plan:
+            return []
+        return [
+            phase.id
+            for phase in self.plan.phases
+            if phase.id in self.deferred_phases and self._pending(phase)
+        ]
 
     def prepare_build(self, source: str) -> None:
         print(json.dumps({"release_phase": "build", "state": "running"}), flush=True)
@@ -40,6 +69,11 @@ class DatabaseTarget:
         self.schema_executor.adopt()
 
     def pending(self, phase: Phase) -> bool:
+        if phase.kind == "data" and phase.id in self.deferred_phases:
+            return False
+        return self._pending(phase)
+
+    def _pending(self, phase: Phase) -> bool:
         if phase.kind == "schema":
             return bool(self.schema_executor.pending(phase.value))
         applied = self.schema_executor.applied()
@@ -69,6 +103,11 @@ class DatabaseTarget:
     def checkpoint(self, name: str, result: dict | None = None) -> None:
         self.journal.checkpoint(name, result)
         print(json.dumps({"release_phase": name, "state": "completed"}), flush=True)
+
+    def prepare_recovery(self) -> None:
+        # Checked before quiescence: an environment that cannot take a complete
+        # recovery point fails without stopping any service.
+        self.platform.prepare_recovery()
 
     def quiesce(self) -> dict:
         evidence = self.platform.quiesce()
