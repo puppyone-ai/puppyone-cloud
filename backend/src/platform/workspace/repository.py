@@ -181,6 +181,25 @@ class WorkbenchRepository:
             action="pause",
         )
 
+    def reclaim_claim(self, row):
+        """Claim a deleted owner's workspace for destruction once unoccupied."""
+        return self.command(
+            "reclaim_claim",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+        )
+
+    def disk_lost(self, row):
+        """Retire a generation whose compute and disk the provider confirmed gone."""
+        return self.command(
+            "disk_lost",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+            operation=row["operation_id"],
+        )
+
     def lifecycle_claim(self, row, *, suspend=False):
         return self.command(
             "suspend" if suspend else "reconcile_claim",

@@ -76,8 +76,10 @@ class Admission:
             "readonly": view.get("max_mode", "r") != "rw",
             "model": config.get("llm_model") or settings.CLOUD_AGENT_DEFAULT_MODEL,
             "system_prompt": config.get("system_prompt") or "",
-            "tool_ids": sorted(t["tool_id"] for t in value["tools"] if t["enabled"]),
-            "tool_definitions": [t["definition"] for t in value["tools"] if t["enabled"]],
+            # Agents carry no bound tools: Search Tools were retired with the
+            # vector search backend. The keys keep the persisted policy shape.
+            "tool_ids": [],
+            "tool_definitions": [],
             "max_tokens": settings.CLOUD_AGENT_MAX_TOKENS,
             "context_window": settings.CLOUD_AGENT_CONTEXT_WINDOW,
         }

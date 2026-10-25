@@ -9,13 +9,15 @@ ToolTypeKey = Literal[
     "get_data_schema",
     "get_all_data",
     "query_data",
-    "search",
     "create",
     "update",
     "delete",
     "preview",
     "select",
 ]
+# Search Tools were retired with the vector search backend. Existing rows stay
+# readable (and deletable) but can no longer be created or switched to.
+StoredToolType = ToolTypeKey | Literal["search"]
 
 
 ToolCategory = Literal["builtin", "custom"]
@@ -34,7 +36,7 @@ class ToolCreate(BaseModel):
     type: ToolTypeKey = Field(
         ...,
         description="Tool type (note: shell_access has been moved to the agent_bash table)",
-        examples=["search", "create", "query_data", "custom_script"],
+        examples=["create", "query_data", "custom_script"],
     )
 
     name: str = Field(..., description="Unique tool invocation name (should be unique within the same MCP)")
@@ -52,7 +54,6 @@ class ToolCreate(BaseModel):
         description=(
             "Extension config (by tool.type convention).\n\n"
             "- Binding info for custom multi-node tools is stored here: bound_nodes: [{path, role, alias}]\n"
-            "- Note: Search Tool index build status is no longer written to tool.metadata; it is maintained by a separate index task status table.\n"
         ),
         examples=[{"preview_keys": ["id", "title"]}, {"bound_nodes": [{"path": "xxx", "role": "source"}]}],
     )
@@ -101,7 +102,7 @@ class ToolOut(BaseModel):
     path: str | None = None
     json_path: str = ""
 
-    type: ToolTypeKey
+    type: StoredToolType
     name: str
     alias: str | None = None
     description: str | None = None

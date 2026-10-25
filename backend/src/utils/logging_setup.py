@@ -140,6 +140,10 @@ def _intercept_stdlib_logging(log_level: str, disable_uvicorn_access: bool) -> N
     if disable_uvicorn_access:
         logging.getLogger("uvicorn.access").disabled = True
 
+    # httpx logs every request at INFO; a worker's idle claim loop alone emits
+    # two such lines a second. Request lines stay available at DEBUG.
+    logging.getLogger("httpx").setLevel(logging.NOTSET if log_level == "DEBUG" else logging.WARNING)
+
 
 def setup_logging() -> None:
     """

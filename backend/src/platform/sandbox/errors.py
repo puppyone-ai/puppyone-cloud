@@ -5,6 +5,10 @@ class WorkerLost(RuntimeError):
     """Provider no longer has an unconfirmed filesystem to preserve."""
 
 
+class WorkspaceDiskLost(WorkerLost):
+    """The provider confirmed the workspace disk is gone, not only its compute."""
+
+
 class WorkerDisconnected(ConnectionError):
     """Transport loss does not prove the provider's working copy is gone."""
 

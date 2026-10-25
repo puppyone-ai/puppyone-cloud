@@ -25,10 +25,6 @@ class DashboardTool(BaseModel):
     id: str
     name: str
     type: str | None = None
-    index_status: str | None = None
-    chunks_count: int | None = None
-    total_files: int | None = None
-    indexed_files: int | None = None
 
 
 class DashboardUpload(BaseModel):
@@ -75,43 +71,10 @@ def _fetch_tools(sb, project_id: str) -> list[DashboardTool]:
         .eq("project_id", project_id)
         .execute()
     ).data
-    index_map = _build_index_map(sb, tool_rows)
-    tools: list[DashboardTool] = []
-    for tool in tool_rows:
-        index = index_map.get(tool["id"])
-        tools.append(DashboardTool(
-            id=tool["id"],
-            name=tool["name"],
-            type=tool.get("type"),
-            index_status=index["status"] if index else None,
-            chunks_count=index.get("chunks_count") if index else None,
-            total_files=index.get("total_files") if index else None,
-            indexed_files=index.get("indexed_files") if index else None,
-        ))
-    return tools
-
-
-def _build_index_map(sb, tool_rows: list) -> dict[str, dict]:
-    search_tool_ids = [tool["id"] for tool in tool_rows if tool.get("type") == "search"]
-    if not search_tool_ids:
-        return {}
-    rows = (
-        sb.table("search_index_tasks")
-        .select("id, status, result")
-        .in_("id", search_tool_ids)
-        .execute()
-    ).data
-    status_map = {"running": "indexing", "completed": "ready", "failed": "error", "pending": "pending"}
-    result = {}
-    for row in rows:
-        metadata = row.get("result") or {}
-        result[row["id"]] = {
-            "status": status_map.get(row.get("status", ""), row.get("status", "")),
-            "chunks_count": metadata.get("chunks_count"),
-            "total_files": metadata.get("total_files"),
-            "indexed_files": metadata.get("indexed_files"),
-        }
-    return result
+    return [
+        DashboardTool(id=tool["id"], name=tool["name"], type=tool.get("type"))
+        for tool in tool_rows
+    ]
 
 
 def _fetch_uploads(sb, project_id: str) -> list[DashboardUpload]:
@@ -119,21 +82,13 @@ def _fetch_uploads(sb, project_id: str) -> list[DashboardUpload]:
     upload_rows = (
         sb.table("uploads")
         .select("id, status, type, progress, message")
-        .neq("type", "search_index")
+        .neq("type", "search_index")  # Legacy rows of the retired Search Tools.
         .eq("project_id", project_id)
         .in_("status", ["pending", "running"])
         .limit(20)
         .execute()
     ).data
-    search_rows = (
-        sb.table("search_index_tasks")
-        .select("id, status, progress, message")
-        .eq("project_id", project_id)
-        .in_("status", ["pending", "running"])
-        .limit(20)
-        .execute()
-    ).data or []
-    rows = (upload_rows or []) + [{**row, "type": "search_index"} for row in search_rows]
+    rows = upload_rows or []
     return [
         DashboardUpload(
             id=row["id"],

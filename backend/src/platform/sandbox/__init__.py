@@ -22,7 +22,7 @@ proves this process's configuration can operate a persisted binding.
 """
 
 from .bindings import require_binding
-from .errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
+from .errors import WorkerDisconnected, WorkerLost, WorkspaceDiskLost, WorkspaceUnavailable
 from .port import (
     RESOURCE_POOLS,
     SEND_TIMEOUT,
@@ -50,6 +50,7 @@ __all__ = [
     "RuntimeTransition",
     "WorkerDisconnected",
     "WorkerLost",
+    "WorkspaceDiskLost",
     "WorkspaceUnavailable",
     "close_provider_transports",
     "default_provider",

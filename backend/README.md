@@ -35,7 +35,7 @@ graph TB
         C4[Table<br/>结构化数据]
         C5[Tool<br/>工具注册]
         C6[Agent<br/>Agent 执行]
-        C7[Search<br/>向量检索]
+        C7[Search<br/>自建文本索引]
     end
 
     subgraph "集成层"
@@ -48,7 +48,6 @@ graph TB
     subgraph "基础设施层"
         E1[Supabase<br/>PostgreSQL + Auth]
         E2[S3<br/>对象存储]
-        E3[Turbopuffer<br/>向量数据库]
         E4[LiteLLM<br/>统一 LLM 网关]
     end
 
@@ -56,7 +55,7 @@ graph TB
     A2 -->|HTTP REST| B
     B --> C1 & C2 & C3 & C4 & C5 & C6 & C7
     C6 --> D1 & D4
-    C7 --> E3
+    C7 --> E1
     D2 --> E1 & E2 & E4
     D3 --> E1
     C3 --> E2
@@ -72,7 +71,6 @@ graph TB
 | 包管理 | uv |
 | 数据库 | Supabase (PostgreSQL) |
 | 对象存储 | AWS S3 / LocalStack (本地) |
-| 向量搜索 | Turbopuffer |
 | LLM 网关 | LiteLLM (多模型统一接口) |
 | 任务队列 | ARQ (基于 Redis 的异步队列) |
 | 定时任务 | APScheduler |
@@ -105,10 +103,8 @@ backend/
 │   │   ├── file/                 # 文件摄取 (MineRU + LLM 清洗)
 │   │   └── saas/                 # SaaS 平台同步 (Notion/GitHub 等)
 │   │
-│   ├── search/                   # 向量搜索 (Turbopuffer + RRF 混合检索)
-│   ├── chunking/                 # 文本分块
+│   ├── search/                   # 自建文本索引 (由提交构建)
 │   ├── llm/                      # LLM 服务 (生成 + Embedding)
-│   ├── turbopuffer/              # Turbopuffer 客户端封装
 │   │
 │   ├── oauth/                    # OAuth 集成 (Notion/GitHub/Google/Linear/Airtable)
 │   ├── s3/                       # S3 存储服务 (上传/下载/分片上传/预签名URL)
@@ -308,14 +304,10 @@ Notion / GitHub / Google (Sheets, Gmail, Drive, Calendar, Docs) / Linear / Airta
 - **URL 摄取**: 通过 Firecrawl 抓取网页内容
 - **异步处理**: ARQ 任务队列，独立 Worker 进程
 
-### 向量搜索
+### 搜索
 
-基于 Turbopuffer 的混合检索系统：
-
-- **文本分块**: 可配置 chunk size/overlap 的文本分块
-- **向量索引**: 异步索引，支持增量更新
-- **混合检索**: RRF (Reciprocal Rank Fusion) 融合向量与关键词搜索
-- **文件夹搜索**: 支持按文件夹范围限定搜索
+搜索走自建的文本索引（`infra/search/text_indexer.py`），由版本提交增量构建。
+基于 Turbopuffer 的向量检索和 Search Tool 已下线，Agent 与 MCP 不再暴露语义搜索工具。
 
 ### Agent 执行引擎
 

@@ -407,6 +407,39 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & lifecycle[category].keys()
         expected["contract"][category].update(lifecycle[category])
+    # Search Tools and the vector (Turbopuffer) backend are retired exactly. Tool
+    # type enums lose "search" (ToolOut keeps reading existing rows) and the
+    # dashboard drops index fields; every other wire stays identical.
+    search = json.loads(
+        Path(__file__).with_name("search_tool_retirement_contract_delta.json").read_text()
+    )
+    assert set(search["paths"]["removed"]) == {
+        "/api/v1/tools/search",
+        "/api/v1/tools/{tool_id}/search-index",
+        "/internal/tools/{tool_id}/search",
+        "/internal/turbopuffer/config",
+        "/internal/turbopuffer/namespaces",
+        *(
+            f"/internal/turbopuffer/namespaces/{{namespace}}{suffix}"
+            for suffix in (
+                "", "/delete_all", "/metadata", "/multi_query", "/query", "/recall",
+                "/warm_cache", "/write",
+            )
+        ),
+    }
+    assert set(search["schemas"]["removed"]) == {
+        "ApiResponse_SearchIndexTaskOut_", "ApiResponse_dict_str__Any__", "SearchChunk",
+        "SearchIndexTaskOut", "SearchResultItem", "SearchToolQueryInput",
+        "SearchToolQueryResponse",
+    }
+    assert set(search["schemas"]["changed"]) == {"DashboardTool", "ToolCreate", "ToolOut", "ToolUpdate"}
+    assert search["paths"]["changed"] == search["paths"]["added"] == search["schemas"]["added"] == {}
+    for category in ("paths", "schemas"):
+        for name, digest in search[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
+        for name, change in search[category]["changed"].items():
+            assert expected["contract"][category][name] == change["before"]
+            expected["contract"][category][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

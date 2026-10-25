@@ -162,15 +162,13 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("PUT", "/api/v1/tables/{table_id}/data"): _human(ProjectAction.CONTENT_WRITE),
     ("DELETE", "/api/v1/tables/{table_id}/data"): _human(ProjectAction.CONTENT_WRITE),
 
-    # Tools and search indexes derive Project from path/tool id.
+    # Tools derive Project from path/tool id.
     ("GET", "/api/v1/tools/"): _human(ProjectAction.AGENT_READ),
     ("POST", "/api/v1/tools/"): _human(ProjectAction.AGENT_MANAGE),
     ("GET", "/api/v1/tools/by-path/{path:path}"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/api/v1/tools/{tool_id}"): _human(ProjectAction.AGENT_READ),
     ("PUT", "/api/v1/tools/{tool_id}"): _human(ProjectAction.AGENT_MANAGE),
     ("DELETE", "/api/v1/tools/{tool_id}"): _human(ProjectAction.AGENT_MANAGE),
-    ("POST", "/api/v1/tools/search"): _human(ProjectAction.AGENT_MANAGE),
-    ("GET", "/api/v1/tools/{tool_id}/search-index"): _human(ProjectAction.AGENT_READ),
 
     # Agent control plane and chat sessions.
     ("POST", "/api/v1/agents/runs"): _human(ProjectAction.AGENT_RUN),
@@ -215,7 +213,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("POST", "/internal/tables/{table_id}/context-data"): _human(ProjectAction.CONTENT_WRITE),
     ("PUT", "/internal/tables/{table_id}/context-data"): _human(ProjectAction.CONTENT_WRITE),
     ("DELETE", "/internal/tables/{table_id}/context-data"): _human(ProjectAction.CONTENT_WRITE),
-    ("POST", "/internal/tools/{tool_id}/search"): _human(ProjectAction.CONTENT_READ),
     ("GET", "/api/v1/nodes/project-audit-logs"): _human(ProjectAction.HISTORY_READ),
     ("GET", "/api/v1/nodes/{path:path}/audit-logs"): _human(ProjectAction.HISTORY_READ),
 })
