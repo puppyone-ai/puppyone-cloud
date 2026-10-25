@@ -10,6 +10,7 @@ PROVIDERS = {
     "docker": (".providers.docker", "DockerRuntimeProvider"),
     "e2b": (".providers.e2b", "E2BRuntimeProvider"),
     "fly": (".providers.fly", "FlyRuntimeProvider"),
+    "sprites": (".providers.sprites", "SpritesRuntimeProvider"),
 }
 
 
@@ -22,6 +23,21 @@ def default_provider() -> str:
     if selected not in PROVIDERS:
         raise ValueError(f"Unsupported Agent sandbox provider: {selected}")
     return selected
+
+
+def workspace_providers(default: str | None = None) -> tuple[str, ...]:
+    """Default for new workspaces plus explicitly retained providers for old bindings."""
+    selected = default if default is not None else default_provider()
+    existing = [
+        name.strip()
+        for name in settings.CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS.split(",")
+        if name.strip()
+    ]
+    if any(name not in PROVIDERS for name in existing):
+        raise ValueError("Unsupported existing workspace provider")
+    if settings.APP_ENV in {"staging", "production"} and "docker" in {selected, *existing}:
+        raise ValueError("Hosted workspaces cannot use Docker")
+    return tuple(dict.fromkeys([selected, *existing]))
 
 
 def runtime_provider(name: str | None = None) -> RuntimeProvider:

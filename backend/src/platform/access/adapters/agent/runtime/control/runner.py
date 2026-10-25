@@ -7,6 +7,7 @@ from contextlib import suppress
 from uuid import uuid4
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.instrumentation import DatabaseTrace, database_stage, database_trace
 from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun, ExecutionLease
@@ -27,13 +28,12 @@ from src.platform.access.adapters.agent.runtime.dispatch import (
     MAX_DISPATCH_ATTEMPTS,
 )
 from src.platform.access.adapters.agent.runtime.execution.port import BoundToolPort, ExecutionPort
-from src.platform.workspace.filesystem.port import FilesystemPort
 from src.platform.access.adapters.agent.runtime.loop.port import LoopPort, LoopProtocolError
 from src.platform.managed_ai.contracts import InferenceFailed, ModelChunk
 from src.platform.managed_ai.schemas import CompletionRequest
 from src.platform.sandbox import WorkspaceUnavailable
 from src.platform.workspace.execution.worker_port import WorkerLifecycle, WorkerLost
-from src.infra.execution.runner import run_blocking
+from src.platform.workspace.filesystem.port import FilesystemPort
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +353,7 @@ class RunSupervisor:
             row = await self.shared_tasks.workbench(self.run)
             if row["state"] != "retired" and row.get("binding"):
                 # The workspace lifecycle operates only the deployment default.
-                await self.capability(row["binding"], row.get("resource"), default_only=True)
+                await self.capability(row["binding"], row.get("resource"), workspace_only=True)
             return
         row = await run_blocking(self.repo.workspace, self.run["session_id"])
         if row and row.get("binding"):

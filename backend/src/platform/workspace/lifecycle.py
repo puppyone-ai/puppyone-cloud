@@ -15,7 +15,7 @@ from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
-from src.platform.sandbox import workspace_stage
+from src.platform.sandbox import workspace_providers, workspace_stage
 
 from .errors import access_failure
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
@@ -67,7 +67,7 @@ class WorkbenchLifecycle:
         )
         self.channel_factory, self.providers = service.channel_factory, service.providers
         self.channels, self.check = service.channels, service.check
-        self.checked_until = 0
+        self.checked_until = {}
         self.preflight_lock = asyncio.Lock()
         self.active = {}
         # Last poll of this pool's open queue: (pending requests, oldest age in seconds).
@@ -84,8 +84,11 @@ class WorkbenchLifecycle:
             "provider": provider.name,
             "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
         }
-        if binding["provider"] != provider.name:
+        if binding["provider"] not in workspace_providers(provider.name):
             raise WorkspaceUnavailable("workbench_provider_not_configured")
+        if binding["provider"] != provider.name:
+            provider = self.providers(binding["provider"])
+        cache_key = (binding["provider"], binding["artifact"])
         try:
             if not provider.capabilities.shared_workspace or not provider.capabilities.native_files:
                 raise ValueError("Workspace capabilities required")
@@ -97,11 +100,11 @@ class WorkbenchLifecycle:
                 if (
                     not connected
                     and not (row or {}).get("resource")
-                    and time.monotonic() >= self.checked_until
+                    and time.monotonic() >= self.checked_until.get(cache_key, 0)
                 ):
                     async with asyncio.timeout(20):
                         await provider.preflight(binding["artifact"])
-                    self.checked_until = time.monotonic() + 30
+                    self.checked_until[cache_key] = time.monotonic() + 30
         except ValueError as exc:
             raise WorkspaceUnavailable("workbench_provider_not_configured") from exc
         except WorkspaceUnavailable:
@@ -226,7 +229,7 @@ class WorkbenchLifecycle:
             raise
         except Exception as exc:
             code, retryable = failure(exc)
-            self.checked_until = 0
+            self.checked_until.clear()
             current = await run_blocking(self.repository.get, row["id"])
             if (
                 current
@@ -234,9 +237,7 @@ class WorkbenchLifecycle:
                 and current["operation_id"] == row["operation_id"]
             ):
                 with suppress(Exception):
-                    await run_blocking(
-                        self.repository.progress, current, "failed", code, retryable
-                    )
+                    await run_blocking(self.repository.progress, current, "failed", code, retryable)
             logger.exception(
                 "workbench_start_failed", extra={"workbench_id": row["id"], "code": code}
             )
@@ -259,7 +260,7 @@ class WorkbenchLifecycle:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self.checked_until = 0
+                self.checked_until.clear()
                 logger.exception("workbench_dispatch_failed", extra={"workbench_id": row["id"]})
 
         try:
@@ -268,9 +269,14 @@ class WorkbenchLifecycle:
                     # Failed credentials are recorded on the claimed operation;
                     # they must not strand every pending request in the queue.
                     provider = self.providers(None)
-                    rows = await run_blocking(
-                        self.repository.pending, provider.name, settings.AGENT_WORKER_POOL
-                    )
+                    rows = []
+                    for name in workspace_providers(provider.name):
+                        rows.extend(
+                            await run_blocking(
+                                self.repository.pending, name, settings.AGENT_WORKER_POOL
+                            )
+                        )
+                    rows.sort(key=lambda row: (row.get("updated_at", ""), row["id"]))
                     self.pending_snapshot = pending_snapshot(rows)
                     for row in rows:
                         if row["id"] not in self.active and len(self.active) < 4:
@@ -282,7 +288,7 @@ class WorkbenchLifecycle:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    self.checked_until = 0
+                    self.checked_until.clear()
                     logger.exception("workbench_provider_preflight_failed")
                     await asyncio.sleep(5)
                 await asyncio.sleep(0.5)
@@ -436,14 +442,21 @@ class WorkbenchLifecycle:
         await run_blocking(self.repository.progress, paused, "paused")
 
     async def reap(self):
-        provider = await self.preflight()
-        for row in await run_blocking(
-            self.repository.due, provider.name, settings.AGENT_WORKER_POOL
-        ):
+        for name in workspace_providers(self.providers(None).name):
+            try:
+                await self._reap_provider(name)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("workbench_provider_maintenance_failed", extra={"provider": name})
+
+    async def _reap_provider(self, name):
+        for row in await run_blocking(self.repository.due, name, settings.AGENT_WORKER_POOL):
             if row.get("open_requested") and row["state"] != "pausing":
                 continue
             owned = None
             try:
+                await self.preflight(row, connected=True)
                 if row["state"] == "running":
                     claimed = await run_blocking(self.repository.idle, row)
                     if claimed["acquired"]:

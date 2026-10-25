@@ -348,8 +348,17 @@ class Settings(BaseSettings):
     def enforce_hosted_sandbox_safety(self):
         """Hosted deployments may never fall back to a shared-kernel Docker sandbox."""
         if self.APP_ENV in {"staging", "production"}:
+            existing = {
+                name.strip()
+                for name in self.CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS.split(",")
+                if name.strip()
+            }
+            if not existing <= {"fly", "e2b", "sprites"}:
+                raise ValueError("Hosted existing sandbox providers must be Fly, E2B or Sprites")
             if self.CLOUD_AGENT_SANDBOX_PROVIDER == "docker":
-                raise ValueError("Hosted Cloud Agent requires E2B or Fly (no Docker fallback)")
+                raise ValueError(
+                    "Hosted Cloud Agent requires E2B, Fly or Sprites (no Docker fallback)"
+                )
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
             if self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
@@ -359,6 +368,11 @@ class Settings(BaseSettings):
                     )
                 if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", self.CLOUD_AGENT_FLY_IMAGE):
                     raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
+            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "sprites":
+                if not self.CLOUD_AGENT_SPRITES_TOKEN or not self.CLOUD_AGENT_SPRITES_BUNDLE:
+                    raise ValueError("Sprites requires CLOUD_AGENT_SPRITES_TOKEN and worker bundle")
+                if not re.fullmatch(r"[a-f0-9]{64}", self.CLOUD_AGENT_SPRITES_SHA256):
+                    raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
             elif not self.E2B_API_KEY:
                 raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
             if not self.SANDBOX_REAPER_ENABLED:
@@ -408,7 +422,9 @@ class Settings(BaseSettings):
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
     # Only new Agent workspaces use this default. Existing bindings remain pinned.
-    CLOUD_AGENT_SANDBOX_PROVIDER: str = "auto"
+    CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
+    # Existing bindings remain on their provider; new workspaces use the default above.
+    CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
@@ -416,6 +432,10 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
+    CLOUD_AGENT_SPRITES_TOKEN: str = ""
+    # Immutable Linux worker bundle, built by agent-worker/build_sprites_bundle.py.
+    CLOUD_AGENT_SPRITES_BUNDLE: str = ""
+    CLOUD_AGENT_SPRITES_SHA256: str = ""
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""

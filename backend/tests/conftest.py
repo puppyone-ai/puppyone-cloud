@@ -17,6 +17,10 @@ os.environ.setdefault("SKIP_AUTH", "true")
 # Tests opt into managed inference explicitly; a developer's .env must not
 # combine a paid gateway with the collection-time test authentication bypass.
 os.environ.setdefault("MANAGED_AI_ENABLED", "false")
+# Runtime tests explicitly choose hosted providers when needed. Ordinary tests
+# use the local provider and cannot accidentally allocate the new paid default.
+os.environ.setdefault("CLOUD_AGENT_SANDBOX_PROVIDER", "docker")
+os.environ.setdefault("CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS", "")
 # Unit tests must never write transport caches into the developer's home.
 # PID isolation also prevents concurrent pytest workers from sharing locks or
 # stale refs while still allowing cache behavior to be exercised.
@@ -34,7 +38,5 @@ os.environ.setdefault(
 from src.config import settings as _settings  # noqa: E402,F401
 
 if not _configured_git_cache:
-    _settings.GIT_VIEW_CACHE_DIR = Path(
-        f"/tmp/puppyone-git-view-cache-{os.getpid()}"
-    )
+    _settings.GIT_VIEW_CACHE_DIR = Path(f"/tmp/puppyone-git-view-cache-{os.getpid()}")
     os.environ.pop("PUPPYONE_GIT_VIEW_CACHE_DIR", None)

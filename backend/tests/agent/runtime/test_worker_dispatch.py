@@ -62,13 +62,13 @@ class FakeProvider:
 async def test_binding_capability_is_a_local_configuration_check(monkeypatch):
     provider = FakeProvider()
     monkeypatch.setattr(bindings, "runtime_provider", lambda name: provider)
-    monkeypatch.setattr(bindings, "default_provider", lambda: "fly")
+    monkeypatch.setattr(bindings, "workspace_providers", lambda: ("fly",))
     await bindings.require_binding({"provider": "fly", "artifact": "pinned"})
     provider.aclose.assert_awaited_once()
 
     for binding, options in [
         ({"provider": "unknown", "artifact": "pinned"}, {}),
-        ({"provider": "docker", "artifact": "pinned"}, {"default_only": True}),
+        ({"provider": "docker", "artifact": "pinned"}, {"workspace_only": True}),
     ]:
         with pytest.raises(WorkspaceUnavailable) as caught:
             await bindings.require_binding(binding, **options)

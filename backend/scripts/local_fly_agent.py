@@ -27,10 +27,18 @@ class LocalFlyAgent:
         app = environment.get("CLOUD_AGENT_FLY_APP", "")
         token = environment.get("CLOUD_AGENT_FLY_TOKEN", "")
         cli = environment.get("CLOUD_AGENT_FLY_CLI", "fly")
-        provider = environment.get("CLOUD_AGENT_SANDBOX_PROVIDER", "auto")
+        provider = environment.get("CLOUD_AGENT_SANDBOX_PROVIDER", "sprites")
         if provider == "auto":
             provider = environment.get("SANDBOX_TYPE", "auto")
-        desired = identity(app, token, cli) if provider == "fly" and app and token else None
+        existing = {
+            name.strip()
+            for name in environment.get("CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS", "fly").split(",")
+        }
+        desired = (
+            identity(app, token, cli)
+            if (provider == "fly" or "fly" in existing) and app and token
+            else None
+        )
         if self.configuration != desired or (self.process and self.process.poll() is not None):
             self.close()
         if desired is None:

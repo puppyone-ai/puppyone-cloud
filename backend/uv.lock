@@ -511,6 +511,7 @@ dependencies = [
     { name = "turbopuffer" },
     { name = "uvicorn" },
     { name = "watchdog" },
+    { name = "websockets" },
     { name = "zipstream-ng" },
 ]
 
@@ -558,6 +559,7 @@ requires-dist = [
     { name = "turbopuffer", specifier = ">=1.12.0" },
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "watchdog", specifier = ">=6.0.0" },
+    { name = "websockets", specifier = ">=15,<16" },
     { name = "zipstream-ng", specifier = ">=1.9.0" },
 ]
 

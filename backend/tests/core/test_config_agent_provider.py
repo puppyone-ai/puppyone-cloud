@@ -34,3 +34,19 @@ def test_fly_only_hosted_agent_requires_its_own_credentials():
 def test_hosted_agent_cannot_fall_back_to_docker(provider):
     with pytest.raises(ValueError):
         hosted(CLOUD_AGENT_SANDBOX_PROVIDER=provider).enforce_hosted_sandbox_safety()
+
+
+def test_sprites_only_hosted_agent_validates_its_own_credentials():
+    value = hosted(CLOUD_AGENT_SANDBOX_PROVIDER="sprites")
+    with pytest.raises(ValueError, match="SPRITES_TOKEN"):
+        value.enforce_hosted_sandbox_safety()
+    value.CLOUD_AGENT_SPRITES_TOKEN = "fixture"
+    value.CLOUD_AGENT_SPRITES_BUNDLE = "/opt/runtime/worker.tar.gz"
+    with pytest.raises(ValueError, match="SHA256"):
+        value.enforce_hosted_sandbox_safety()
+    value.CLOUD_AGENT_SPRITES_SHA256 = "a" * 64
+    assert value.enforce_hosted_sandbox_safety() is value
+    assert value.E2B_API_KEY == ""
+    value.SANDBOX_REAPER_ENABLED = False
+    with pytest.raises(ValueError, match="SANDBOX_REAPER_ENABLED"):
+        value.enforce_hosted_sandbox_safety()

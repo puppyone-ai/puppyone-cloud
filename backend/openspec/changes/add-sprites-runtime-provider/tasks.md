@@ -1,0 +1,48 @@
+## Implementation
+- [x] Implement the registered provider and bounded async exec transport.
+- [x] Package and bootstrap the existing immutable worker on persistent storage.
+- [x] Verify ownership, pause/resume, cleanup, transport and configuration contracts.
+- [x] Document activation, preservation semantics and hosted acceptance limits.
+- [x] Run applicable checks and record the results.
+
+## Verification notes
+- Backend regression after default/cutover changes (`not e2e and not integration
+  and not network`): 3562 passed, 956 skipped, 420 deselected.
+- 70 provider/cutover/worker/configuration tests passed. After the installer
+  compatibility and stdin transport fixes, 28 provider/archive tests and 13
+  config/archive tests passed.
+- 22 real PostgreSQL/PostgREST integration tests passed for workspace ownership,
+  durable opening and worker dispatch.
+- The existing native file acceptance passed all 4 scenarios against the new
+  linux/amd64 image, including actual Agent/Bash saves, another Agent/terminal
+  reading them, editor updates, file watches, conflicts and path confinement.
+- The read entrypoint audit passed after reviewing the local artifact `stat` site.
+- Changed Python files passed Ruff; the worker passed Node syntax checking;
+  bootstrap/build/control scripts passed Python compilation; OpenSpec strict
+  validation passed.
+- Docker recovered. The linux/amd64 worker image built and the 71,705,397-byte
+  bundle exported successfully. Bundle SHA-256:
+  `74d411bada465debba9aecf9136df5d3a460dd70f57b029eb8f4da1a2ba5b2f7`.
+- The actual bundle passed isolated Linux-container acceptance for installation,
+  retry, root socket ownership/UID isolation, firewall setup, native file saves,
+  hold create/release, file preservation across service restart/remount, and
+  rejecting artifact replacement. See `sprites-local-receipt.json`.
+- Container acceptance exposed an older-Python tarfile incompatibility. The
+  installer now extracts regular files before confined links, rejects traversal
+  and special entries, and receives code over stdin rather than a long exec URL.
+- Hosted Sprites acceptance is authorized and implemented (including an opt-in
+  real cold wait), but cannot run until the Sprites token is configured. No cloud
+  resources were created and no deployment's runtime configuration was changed.
+
+## Enablement gates
+- [x] Build and export the actual worker bundle successfully.
+- [ ] Run hosted acceptance, including task management-socket isolation, native
+  file edits and pause/reopen preservation; separately verify a cold wake.
+- [x] Make Sprites the source/example default and implement retained-provider
+  admission, Agent capability checks, open dispatch and maintenance for old Fly
+  bindings. Focused cutover/provider regressions: 70 passed.
+- [ ] Run the completed integration checks and merge the verified commit into qubits.
+
+Review correction: management-socket mode alone did not enforce root ownership.
+Startup now verifies the parent directory and socket type, then sets root
+ownership and mode 0600. This change still requires hosted compatibility testing.
