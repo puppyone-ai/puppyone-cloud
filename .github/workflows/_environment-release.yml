@@ -231,7 +231,8 @@ jobs:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
           NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # Public by design (shipped to browsers), but kept out of public run logs.
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           NEXT_PUBLIC_AUTH_EMAIL_ONLY: ${{ vars.NEXT_PUBLIC_AUTH_EMAIL_ONLY }}
           NEXT_PUBLIC_DEV_MODE: ${{ vars.NEXT_PUBLIC_DEV_MODE }}
         run: |
