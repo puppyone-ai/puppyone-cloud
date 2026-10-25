@@ -17,7 +17,6 @@ import {
 import type { NodeInfo } from '@/lib/contentTreeApi';
 
 const TOOL_TYPES: McpToolType[] = [
-  'search',
   'query_data',
   'get_all_data',
   'create',

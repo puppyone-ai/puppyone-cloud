@@ -45,7 +45,6 @@ ContextBase 后端是一个基于 **FastAPI** 的 Python 服务，为 LLM Agent 
 - **包管理**: uv (`pyproject.toml`)
 - **数据库**: Supabase (PostgreSQL)
 - **存储**: AWS S3 / LocalStack
-- **向量搜索**: Turbopuffer
 - **LLM 网关**: LiteLLM
 
 ## 架构（Git-Native Version Engine）
@@ -119,7 +118,7 @@ backend/
 │   │   ├── supabase/          # Supabase 客户端
 │   │   ├── s3/                # S3 存储
 │   │   ├── llm/               # LLM 服务
-│   │   ├── search/            # 向量搜索
+│   │   ├── search/            # 自建文本索引（由提交构建）
 │   │   └── scheduler/         # 定时任务
 │   │
 │   └── utils/                 # 工具模块
@@ -154,8 +153,8 @@ access_tools                   platform/access/filesystem
 - **传输层**：`mcp_service` 只处理协议、session、通知和 RPC 适配，不解析
   agent/endpoint 配置，不缓存凭证，不读取产品数据。
 - **能力层**：`src/platform/access/adapters/mcp_endpoint/runtime.py` 是唯一工具注册和调用入口；既有 CLI/MCP
-  文件工具由 `platform/access/filesystem` 提供。MCP resolver 对 native Scope 继续返回 501。绑定的 search 工具只读取
-  由同一 scope 内容构建的索引，并再次验证 tool path 位于该 scope 内。
+  文件工具由 `platform/access/filesystem` 提供。MCP resolver 对 native Scope 继续返回 501。MCP 只暴露文件工具；
+  Search Tool 已随 Turbopuffer 向量搜索一起下线，不再暴露给 MCP 或 Agent。
 - **配置层**：agent 与 MCP endpoint 都是 `access_surfaces`；API key 只在
   `access_surface_credentials` 以 hash 保存和认证；自定义工具绑定只在
   `access_tools`。

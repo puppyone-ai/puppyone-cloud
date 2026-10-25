@@ -1,0 +1,51 @@
+{
+  "paths": {
+    "added": {},
+    "changed": {},
+    "removed": {
+      "/api/v1/tools/search": "7dd9d98b5996279893f73fcbcd1280d729145cbf14f5fa6892c854455d2c4be7",
+      "/api/v1/tools/{tool_id}/search-index": "d7f914eb826d97df7076bb8d8efe8e4b5f434f7fc0d95a092e1c2b0127d4e000",
+      "/internal/tools/{tool_id}/search": "e7e068084d4fb329c3be6fe5eac58cbe6f9b96d9d58ff2ef325bb73cfa110138",
+      "/internal/turbopuffer/config": "5abb39d7a6851fa96bcd806d4d84a1af0455fcfe7270961a8ed3f714f7d26383",
+      "/internal/turbopuffer/namespaces": "036466b5d646f8c478e36327b4ce6643630a7e1fed6018cbdcb9663645f58c9b",
+      "/internal/turbopuffer/namespaces/{namespace}": "ce1c46732d5c7961724254723a67827fed45d0bcc13134159c02d9330e89cfdc",
+      "/internal/turbopuffer/namespaces/{namespace}/delete_all": "7cb0e6a3ff268d38729b3b83381166bc0b078dc141a1bc8113e1c597d4f95376",
+      "/internal/turbopuffer/namespaces/{namespace}/metadata": "e465327720138dfdd04728f0c2ad6f326734f49a6323723c7fcb904234b1a7ab",
+      "/internal/turbopuffer/namespaces/{namespace}/multi_query": "687f5eb274f73b25a05892a133c6af18d55513e9c2ad6ff4ae10d7eaf81ecb9b",
+      "/internal/turbopuffer/namespaces/{namespace}/query": "4052136cb3c45a87e80a7e0611b143e49278e9404d907c667a36bb5a8b4d798e",
+      "/internal/turbopuffer/namespaces/{namespace}/recall": "71ca5e0666b92bd524ea27154b50009c42e83bf86bc49326213b09c23a924bef",
+      "/internal/turbopuffer/namespaces/{namespace}/warm_cache": "e724569911ac006acee500f9e551ff16534f8ec020b8e16a6e29317bc0ac32e4",
+      "/internal/turbopuffer/namespaces/{namespace}/write": "dcfb573e2e8579ce2d906e0b304ff15362af7a7ec04b5613240bd37e0c5a02d6"
+    }
+  },
+  "schemas": {
+    "added": {},
+    "changed": {
+      "DashboardTool": {
+        "after": "5029cf4dfaf38e3900846e4c1134f21d23994f75fdc80fed2bc119c7c5559bdd",
+        "before": "eedc547439b99a5cfad6220269b2ef07a0a58f4e34758d2580a72f523493be39"
+      },
+      "ToolCreate": {
+        "after": "a643bafed5429df80f579840ac2590dccf60702b233360e377c4b7862f208624",
+        "before": "9878412c916b104feb140200bf5a017f021df0383af5758fd03b34f90bc5280d"
+      },
+      "ToolOut": {
+        "after": "b7977ba6a3b2badc0e4ff40a1ba55c5e9f9923c3630ec0dd91c472320e662009",
+        "before": "0438704fb9835916f164c8313d85e519b054bf7a21f904b4ff72850bb23d2b7f"
+      },
+      "ToolUpdate": {
+        "after": "8253974581bd41a5ddfb77ff3b822854b4dfa016ecac0e0b3545e0dd4eb659c6",
+        "before": "1a91f8996359658c041eb6fa96efdbcda4f9c277d02ce9ec71c7bb5b1d27feec"
+      }
+    },
+    "removed": {
+      "ApiResponse_SearchIndexTaskOut_": "bb0eec85a0933ffbf75b554f7555fb6054aa1ff47f6e481d72021e2b35c52adb",
+      "ApiResponse_dict_str__Any__": "4c919899dfdfec0c837a9eff5d6654600ca189c971c4c74ced4c0a3250c6acc0",
+      "SearchChunk": "4b7e74585760744554dab731a82b4baf99d604c6d5b79c04d6a82294a557e75a",
+      "SearchIndexTaskOut": "62f11046b46709356fc7209380d83ca0f2e82afdc2f7b5a34cc71b0aa86b15a4",
+      "SearchResultItem": "fdd0d0d055f14e8b1ddf3c3ab0dd0658a73af70724773628b429c9b63074596c",
+      "SearchToolQueryInput": "e310c4e046f93541fc31747334a037e7ad31f560487d147c526517e849c9034e",
+      "SearchToolQueryResponse": "de238031cb87566e312e541d1f627b8fd3f2bcf6d172837f03aa8478fb177156"
+    }
+  }
+}

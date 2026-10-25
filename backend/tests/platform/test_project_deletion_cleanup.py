@@ -496,28 +496,7 @@ def test_project_prefix_contract_is_exact_and_includes_every_owned_namespace():
 
 
 @pytest.mark.asyncio
-async def test_external_cleaner_deletes_search_namespaces_and_sandbox_handles():
-    class Search:
-        def __init__(self):
-            self.namespaces = {
-                f"project_{PROJECT_ID}_path_docs",
-                f"project_{PROJECT_ID}_folder_root",
-                "project_other_path_keep",
-            }
-
-        async def list_namespaces(self, *, prefix, **_kwargs):
-            return SimpleNamespace(
-                namespaces=[
-                    SimpleNamespace(id=value)
-                    for value in sorted(self.namespaces)
-                    if value.startswith(prefix)
-                ],
-                next_cursor=None,
-            )
-
-        async def delete_namespace(self, namespace):
-            self.namespaces.discard(namespace)
-
+async def test_external_cleaner_destroys_sandbox_handles():
     class Resources:
         def __init__(self):
             self.destroyed: set[tuple[str, str, str]] = set()
@@ -528,12 +507,8 @@ async def test_external_cleaner_deletes_search_namespaces_and_sandbox_handles():
         async def resource_absent(self, provider, resource_id, *, pool):
             return (provider, resource_id, pool) in self.destroyed
 
-    search = Search()
     resources = Resources()
-    cleaner = ProjectExternalResourceCleaner(
-        search=search,  # type: ignore[arg-type]
-        sandbox_resources=resources,
-    )
+    cleaner = ProjectExternalResourceCleaner(sandbox_resources=resources)
     job = _job(phase="purge")
     job["sandbox_resources"] = [
         {"kind": "scope", "provider": "e2b", "resource_id": "sandbox-1"},
@@ -543,7 +518,6 @@ async def test_external_cleaner_deletes_search_namespaces_and_sandbox_handles():
 
     await cleaner.purge(job)
 
-    assert search.namespaces == {"project_other_path_keep"}
     # Retired Scope Sandbox machines belong to their own provider account;
     # execution resources belong to the Cloud Agent runtime account.
     assert resources.destroyed == {
@@ -570,9 +544,7 @@ async def test_docker_cleanup_removes_container_instead_of_only_stopping(
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
-    cleaner = ProjectExternalResourceCleaner(
-        search=SimpleNamespace(),  # type: ignore[arg-type]
-    )
+    cleaner = ProjectExternalResourceCleaner()
 
     await cleaner._destroy_sandbox(
         {"kind": "execution", "provider": "docker", "resource_id": "container-1"}

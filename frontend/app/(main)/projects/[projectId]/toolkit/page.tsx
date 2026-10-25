@@ -5,7 +5,7 @@
  *
  * Redesigned with flexible filtering:
  * - Single unified list of all tools
- * - Filter bar at top (Type, Context, Status)
+ * - Filter bar at top (Type, Context)
  * - Search bar integrated into the filter row
  * - Minimalist styling
  */
@@ -20,8 +20,6 @@ import {
   Tool,
   McpToolType,
   TOOL_INFO,
-  getSearchIndexStatus,
-  SearchIndexTask,
 } from '@/lib/mcpApi';
 import { listDir, type NodeInfo } from '@/lib/contentTreeApi';
 import { SIDEBAR_ROW_TYPOGRAPHY } from '@/lib/uiTypography';
@@ -34,7 +32,6 @@ import { CountBadge } from '@/components/ui/CountBadge';
 // ================= Types =================
 
 type ToolFilterType = 'all' | McpToolType;
-type StatusFilter = 'all' | 'active' | 'indexing' | 'error';
 
 // ================= Tool Type Config =================
 
@@ -47,13 +44,6 @@ type ToolTypeConfig = {
 };
 
 const AVAILABLE_TOOL_TYPES: ToolTypeConfig[] = [
-  {
-    key: 'search',
-    label: 'Search',
-    description: 'AI-powered search across content',
-    icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>,
-    color: 'var(--po-accent)',
-  },
   {
     key: 'get_all_data',
     label: 'Get Content',
@@ -214,7 +204,6 @@ function FilterDropdown({
 
 function ToolRow({
   tool,
-  searchStatus,
   nodeName,
   onClick,
   active,
@@ -222,7 +211,6 @@ function ToolRow({
   onDelete
 }: {
   tool: Tool;
-  searchStatus?: SearchIndexTask | null;
   nodeName?: string;
   onClick: () => void;
   active: boolean;
@@ -232,22 +220,8 @@ function ToolRow({
   const config = getToolConfig(tool.type);
   const color = config?.color || 'var(--po-text-subtle)';
 
-  // Status Logic
-  let statusTone: StatusDotTone = 'success';
-  let statusText = 'Active';
-
-  if (tool.type === 'search' && searchStatus) {
-    if (searchStatus.status === 'ready') {
-      statusTone = 'success';
-      statusText = 'Ready';
-    } else if (searchStatus.status === 'indexing') {
-      statusTone = 'warning';
-      statusText = 'Indexing';
-    } else if (searchStatus.status === 'error') {
-      statusTone = 'danger';
-      statusText = 'Error';
-    }
-  }
+  const statusTone: StatusDotTone = 'success';
+  const statusText = 'Active';
 
   return (
     <div
@@ -552,20 +526,19 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchStatuses, setSearchStatuses] = useState<Record<string, SearchIndexTask>>({});
 
   // Filter State
   const [typeFilter, setTypeFilter] = useState<ToolFilterType>('all');
   const [contextFilter, setContextFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // UI State
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
 
-  // Deprecated tool types that should be hidden
-  const DEPRECATED_TOOL_TYPES = ['query_data', 'preview', 'select', 'get_data_schema', 'custom_script'];
+  // Deprecated tool types that should be hidden. Search Tools were retired with
+  // the vector search backend; their stored rows no longer do anything.
+  const DEPRECATED_TOOL_TYPES = ['query_data', 'preview', 'select', 'get_data_schema', 'custom_script', 'search'];
 
   // Fetch tools and nodes
   const fetchTools = useCallback(async () => {
@@ -574,14 +547,6 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
     try {
       const data = await getToolsByProjectId(projectId);
       setTools(data);
-
-      // Fetch status for search tools
-      const searchTools = data.filter(t => t.type === 'search');
-      const statuses: Record<string, SearchIndexTask> = {};
-      await Promise.all(searchTools.map(async (tool) => {
-        try { statuses[tool.id] = await getSearchIndexStatus(tool.id); } catch {}
-      }));
-      setSearchStatuses(statuses);
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to load tools');
@@ -618,14 +583,6 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
       // Context Filter
       if (contextFilter !== 'all' && tool.path !== contextFilter) return false;
 
-      // Status Filter
-      if (statusFilter !== 'all') {
-        const status = searchStatuses[tool.id];
-        if (statusFilter === 'active' && status?.status !== 'ready' && tool.type === 'search') return false;
-        if (statusFilter === 'indexing' && status?.status !== 'indexing') return false;
-        if (statusFilter === 'error' && status?.status !== 'error') return false;
-      }
-
       // Search Query
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -634,7 +591,7 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
 
       return true;
     });
-  }, [tools, typeFilter, contextFilter, statusFilter, searchQuery, searchStatuses]);
+  }, [tools, typeFilter, contextFilter, searchQuery]);
 
   // Count by type (for filter chips)
   const typeCounts = useMemo(() => {
@@ -672,7 +629,7 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
   };
 
   const getNodeName = (tool: Tool) => {
-    // Extract from description like "Semantic search index for reactflow"
+    // Extract from description like "Read content for reactflow"
     const match = tool.description?.match(/for (.+)$/);
     return match ? match[1] : tool.path?.slice(0, 8) || '-';
   };
@@ -734,7 +691,7 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
           ))}
         </div>
 
-        {/* Context & Status Filters - Right Aligned if possible, or just flow */}
+        {/* Context Filter - Right Aligned if possible, or just flow */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
           {/* Context Filter */}
           {uniqueContexts.length > 0 && (
@@ -748,19 +705,6 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
               onChange={setContextFilter}
             />
           )}
-
-          {/* Status Filter */}
-          <FilterDropdown
-            label="Status"
-            value={statusFilter}
-            options={[
-              { value: 'all', label: 'All Status' },
-              { value: 'active', label: 'Active' },
-              { value: 'indexing', label: 'Indexing' },
-              { value: 'error', label: 'Error' },
-            ]}
-            onChange={(v) => setStatusFilter(v as StatusFilter)}
-          />
 
           {/* Refresh */}
           <button onClick={fetchTools} disabled={loading}
@@ -819,7 +763,6 @@ export default function ToolkitPage({ params }: { params: Promise<{ projectId: s
             <ToolRow
               key={tool.id}
               tool={tool}
-              searchStatus={searchStatuses[tool.id]}
               nodeName={getNodeName(tool)}
               onClick={() => setSelectedToolId(tool.id === selectedToolId ? null : tool.id)}
               active={selectedToolId === tool.id}

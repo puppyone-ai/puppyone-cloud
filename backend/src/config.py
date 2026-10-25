@@ -621,10 +621,6 @@ class Settings(BaseSettings):
     PUBLISH_KEY_LENGTH: int = 16
     PUBLISH_CACHE_TTL_SECONDS: int = 10
 
-    # Search Tool indexing (async)
-    # - Only used for async indexing wait_for timeout control, preventing background tasks from hanging indefinitely
-    SEARCH_INDEX_TIMEOUT_SECONDS: int = 120
-
     # Git-native version engine hardening.
     VERSION_OUTBOX_ENABLED: bool = True
     VERSION_OUTBOX_INTERVAL_SECONDS: int = 30

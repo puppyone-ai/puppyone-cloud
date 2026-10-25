@@ -140,7 +140,7 @@ backend/
 │   │
 │   ├── content/               # Content node tree (folder/JSON/MD/file)
 │   │   └── table/             #     Structured data tables (JSON Pointer)
-│   ├── tool/                  # Tool registration & search index
+│   ├── tool/                  # Tool registration
 │   │
 │   ├── provider/              # External-source adapters, OAuth, database capabilities
 │   │
@@ -159,11 +159,9 @@ backend/
 │   │   ├── supabase/          #   Supabase client & repository facade
 │   │   ├── s3/                #   S3 storage service
 │   │   ├── llm/               #   LLM service (generation + embedding)
-│   │   ├── search/            #   Vector search (Turbopuffer + RRF)
-│   │   ├── chunking/          #   Text chunking
+│   │   ├── search/            #   Self-hosted text index built from commits
 │   │   ├── security/          #   Security module (AES-256-GCM)
 │   │   ├── scheduler/         #   Scheduled tasks (APScheduler)
-│   │   ├── turbopuffer/       #   Turbopuffer vector DB client
 │   │   └── mcp_health.py      #   Remote MCP transport health probe only
 │   ├── ingest/                # File ingestion ETL (MineRU + LLM)
 │   ├── context_publish/       # Public JSON publishing (short links)
@@ -209,7 +207,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
 | `access_surface_credentials` | `platform/access/credential_repository.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
-| `chunks` | `chunking/repository.py` | Text chunks for search |
+| `chunks` | _(retired — vector search removed; table kept until main stops reading it)_ | Legacy text chunks |
 | `uploads` | `upload/file/tasks/repository.py` | File upload/ingest tasks |
 | `etl_rules` | `upload/file/rules/repository_supabase.py` | ETL transformation rules |
 | `context_publishes` | `supabase/context_publish/repository.py` | Public JSON short links |
@@ -221,7 +219,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
 | `audit_logs` | `version_engine/infrastructure/supabase/audit_repository.py` | Audit trail |
-| `search_index_tasks` | `project/dashboard_router.py` | Search indexing tasks |
+| `search_index_tasks` | _(retired with Search Tools; no runtime reader)_ | Legacy search indexing tasks |
 | `ingest_tasks` | `project/dashboard_router.py` | Ingestion tasks |
 | `agent_logs` | `analytics/service.py` | Agent usage analytics |
 | `access_logs` | `analytics/service.py`, `analytics/router.py` | API access analytics |
@@ -234,7 +232,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/projects` | project | Project CRUD & members & dashboard |
 | `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Versioned content tree, write, history, diff, rollback |
 | `/api/v1/tables` | table | Data tables & JSON Pointer operations |
-| `/api/v1/tools` | tool | Tool registration & search index |
+| `/api/v1/tools` | tool | Tool registration (Search Tools retired: stored rows are read/delete only) |
 | `/api/v1/agents` | platform/access/adapters/agent | Agent SSE streaming chat |
 | `/api/v1/agent-config` | platform/access/adapters/agent/config | Agent CRUD & access permissions |
 | `/api/v1/mcp` | platform/access/adapters/agent/mcp | MCP v3 tool binding & proxy |

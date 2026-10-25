@@ -7,7 +7,6 @@ provider fixture; no external-provider deletion capability is claimed here.
 import json
 import os
 import uuid
-from types import SimpleNamespace
 
 import pytest
 from redis.asyncio import Redis
@@ -99,16 +98,12 @@ async def test_bare_delete_waits_for_io_and_settles_usage_after_verified_purge(
     assert git.run("ls-remote", remote, check=False).returncode != 0
     redis = Redis.from_url(os.environ["ETL_REDIS_URL"])
 
-    class EmptySearch:
-        async def list_namespaces(self, **_kwargs):
-            return SimpleNamespace(namespaces=[])
-
     try:
         with owned_s3() as (s3, _api):
             worker = ProjectDeletionCleanupWorker(
                 ProjectDeletionJobRepository(),
                 s3,
-                ProjectExternalResourceCleaner(search=EmptySearch()),
+                ProjectExternalResourceCleaner(),
                 ProjectHostCleanupPort(
                     workspace_base_dir=tmp_path / "workspaces",
                     git_view_cache_dir=tmp_path / "cache",

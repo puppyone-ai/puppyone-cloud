@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -42,7 +40,6 @@ async def test_moved_runtime_keeps_internal_gate_before_credential_lookup(
     for dependency in (
         mcp_runtime.get_product_operation_adapter,
         mcp_runtime.get_version_write_command_service,
-        mcp_runtime.get_search_service,
     ):
         app.dependency_overrides[dependency] = lambda: None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -95,7 +92,6 @@ def _runtime(ctx: ScopedFsContext, kind: str = "mcp") -> ResolvedMcpRuntime:
 
 def test_runtime_tools_list_returns_complete_mcp_contract(monkeypatch):
     monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("rw")))
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
     result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     tools = {tool["name"]: tool for tool in result["tools"]}
@@ -113,7 +109,6 @@ def test_runtime_tools_list_returns_complete_mcp_contract(monkeypatch):
 
 def test_runtime_tools_list_hides_mutations_for_readonly_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("ro")))
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
     result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     names = {tool["name"] for tool in result["tools"]}
@@ -129,7 +124,6 @@ def test_runtime_tools_list_respects_endpoint_tool_policy(monkeypatch):
         "resolve_mcp_runtime",
         lambda _key: _runtime(_ctx_with_tools("rw", frozenset({"fs_ls", "fs_rm"}))),
     )
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
     result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     names = {tool["name"] for tool in result["tools"]}
@@ -212,72 +206,17 @@ async def test_scoped_fs_grep_uses_shared_indexed_backend(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_custom_search_is_dispatched_by_backend_runtime(monkeypatch):
-    runtime = _runtime(_ctx("rw"), kind="agent")
-    tool = SimpleNamespace(
-        id="tool-1",
-        name="search_docs",
-        type="search",
-        project_id="proj-1",
-        path="docs",
-        json_path="",
-        input_schema=None,
-        output_schema=None,
-        description="Search docs",
-    )
-    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [({}, tool)])
-    monkeypatch.setattr(
-        mcp_runtime.SearchIndexTaskRepository,
-        "get_by_tool_id",
-        lambda _self, _tool_id: None,
-    )
-    search = SimpleNamespace(search_scope=AsyncMock(return_value={"results": []}))
-
-    result = await mcp_runtime.call_runtime_tool(
-        mcp_runtime.RuntimeCallRequest(
-            api_key="mcp_key",
-            name="tool_search_docs",
-            arguments={"query": "hello", "top_k": 3},
-        ),
-        ops=None,
-        commands=None,
-        search_service=search,
-    )
-
-    assert result["structuredContent"] == {"results": []}
-    search.search_scope.assert_awaited_once_with(
-        project_id="proj-1",
-        path="docs",
-        tool_json_path="",
-        query="hello",
-        top_k=3,
-    )
-
-
-@pytest.mark.asyncio
-async def test_custom_search_cannot_escape_or_enter_excluded_scope(monkeypatch):
-    runtime = _runtime(_ctx("rw"), kind="agent")
-    tool = SimpleNamespace(
-        id="tool-1",
-        name="search_private",
-        type="search",
-        project_id="proj-1",
-        path="docs/private",
-        json_path="",
-    )
-    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [({}, tool)])
+async def test_retired_search_tools_are_unknown_to_the_runtime(monkeypatch):
+    # Search Tools were retired with the vector backend: only fs_* tools execute.
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("rw")))
 
     with pytest.raises(HTTPException) as exc:
         await mcp_runtime.call_runtime_tool(
             mcp_runtime.RuntimeCallRequest(
-                api_key="mcp_key",
-                name="tool_search_private",
-                arguments={"query": "secret"},
+                api_key="mcp_key", name="tool_search_docs", arguments={"query": "hello"}
             ),
             ops=None,
             commands=None,
-            search_service=SimpleNamespace(),
         )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "UNKNOWN_TOOL"

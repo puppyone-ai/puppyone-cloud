@@ -96,16 +96,8 @@
       "infra/data_migrations/release/backup.py": {
         "create_backup::destination.stat": 1
       },
-      "infra/search/source.py": {
-        "IndexSource.check_live::read.get_head_commit_id": 1,
-        "IndexSource.content::read.read_file": 1,
-        "IndexSource.entries::read.list_tree": 1
-      },
       "platform/access/adapters/agent/config/metadata.py": {
         "read_path_metadata::read.stat": 1
-      },
-      "platform/access/adapters/agent/runtime/execution/tools.py": {
-        "BoundTools.execute::read.stat": 1
       },
       "platform/access/adapters/api/read.py": {
         "download.chunks::read.read_file": 1,

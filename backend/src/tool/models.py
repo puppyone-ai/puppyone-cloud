@@ -18,7 +18,7 @@ class Tool(BaseModel):
     path: str | None = None  # version path
     json_path: str = ""  # JSON internal path (e.g. /users/0)
 
-    type: str  # Tool type: search, query_data, create, update, delete, custom_script, etc. (note: shell_access moved to agent_bash)
+    type: str  # Tool type: query_data, create, update, delete, custom_script, etc. (note: shell_access moved to agent_bash)
     name: str
     alias: str | None = None
     description: str | None = None

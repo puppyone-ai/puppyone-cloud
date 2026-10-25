@@ -1,9 +1,10 @@
 /**
  * Tool API 客户端
- * 管理 Tool 实体（绑定到数据节点的可调用能力）的增删改查 + 搜索索引构建。
+ * 管理 Tool 实体（绑定到数据节点的可调用能力）的增删改查。
  *
  * Tool：绑定到数据路径的能力，type ∈ get_data_schema / get_all_data / query_data /
- * search / create / update / delete / preview / select / custom_script。
+ * create / update / delete / preview / select / custom_script。
+ * Search Tool 已随向量搜索后端一起下线：旧行仍可读取和删除，但不能再创建。
  * 被项目级 Toolkit 与 chat runtime 使用。
  *
  * 注：旧的 MCP 实例 / 绑定 API（/api/v1/mcp/*）已退役 —— MCP endpoint 现由项目级
@@ -22,13 +23,15 @@ export type McpToolType =
   | 'get_data_schema'
   | 'get_all_data'
   | 'query_data'
-  | 'search'
   | 'create'
   | 'update'
   | 'delete'
   | 'preview'
   | 'select'
   | 'custom_script';
+
+// 已存储的工具类型：包含已下线、只读的 'search'
+export type StoredToolType = McpToolType | 'search';
 
 // 工具分类
 export type ToolCategory = 'builtin' | 'custom';
@@ -39,7 +42,6 @@ export interface McpToolPermissions {
   get_data_schema?: boolean;
   get_all_data?: boolean;
   query_data?: boolean;
-  search?: boolean;
   preview?: boolean;
   select?: boolean;
   create?: boolean;
@@ -68,7 +70,7 @@ export interface Tool {
 
   path: string | null;  // 绑定的节点路径
   json_path: string;
-  type: McpToolType;
+  type: StoredToolType;
   name: string;
   alias?: string | null;
   description?: string | null;
@@ -122,37 +124,6 @@ export interface ToolUpdateRequest {
 }
 
 // ============================================
-// Search Index 类型定义
-// ============================================
-
-export interface SearchIndexTask {
-  tool_id: string;
-  status: 'pending' | 'indexing' | 'ready' | 'error';
-  started_at: string | null;
-  finished_at: string | null;
-  nodes_count: number | null;
-  chunks_count: number | null;
-  indexed_chunks_count: number | null;
-  folder_path?: string | null;
-  total_files?: number | null;
-  indexed_files?: number | null;
-  last_error: string | null;
-}
-
-// ============================================
-// MCP API 函数
-// ============================================
-
-/**
- * 获取 Search Tool 的索引构建状态
- */
-export async function getSearchIndexStatus(
-  toolId: string
-): Promise<SearchIndexTask> {
-  return get<SearchIndexTask>(`/api/v1/tools/${toolId}/search-index`);
-}
-
-// ============================================
 // Tool API 函数
 // ============================================
 
@@ -198,16 +169,6 @@ export async function createTool(request: ToolCreateRequest): Promise<Tool> {
 }
 
 /**
- * 创建 Search Tool（异步索引版本）
- * 
- * 与 createTool 不同，此函数会触发后台异步索引构建（Chunking + Embedding + Upsert）。
- * 索引状态通过 getSearchIndexStatus() 轮询获取。
- */
-export async function createSearchTool(request: ToolCreateRequest): Promise<Tool> {
-  return post<Tool>('/api/v1/tools/search', request);
-}
-
-/**
  * 更新 Tool
  */
 export async function updateTool(
@@ -237,12 +198,6 @@ export const TOOL_INFO: Record<
   McpToolType,
   { label: string; description: string; appliesTo: string[] }
 > = {
-  // Primary tool - works on ALL content types
-  search: { 
-    label: 'Search', 
-    description: 'AI-powered search across content',
-    appliesTo: ['folder', 'json', 'markdown'],
-  },
   // Read tools
   get_data_schema: { 
     label: 'Get Schema', 

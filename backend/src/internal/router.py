@@ -9,10 +9,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from src.content.table.dependencies import get_table_service
 from src.exceptions import AppException
-from src.infra.search.dependencies import get_search_service
-from src.infra.search.schemas import SearchToolQueryInput, SearchToolQueryResponse
-from src.infra.supabase.dependencies import get_supabase_repository
-from src.infra.turbopuffer.internal_router import router as turbopuffer_internal_router
 from src.internal.dependencies import verify_internal_secret
 from src.platform.authorization.service import redacted_project_ref
 from src.platform.billing.facts import BillingFactsService
@@ -31,7 +27,6 @@ PROJECT_SCOPED_INTERNAL_ENDPOINTS = {
     "/internal/table/{table_id}",
     "/internal/tables/{table_id}/context-schema",
     "/internal/tables/{table_id}/context-data",
-    "/internal/tools/{tool_id}/search",
 }
 
 
@@ -115,13 +110,6 @@ def _enforce_acting_user_table_access(
     return user_id
 
 
-# ============================================================
-# Turbopuffer internal debug endpoints
-# ============================================================
-router.include_router(
-    turbopuffer_internal_router,
-    dependencies=[Depends(verify_internal_secret)],
-)
 
 
 @router.post(
@@ -357,84 +345,6 @@ async def delete_table_context_data(
         return {"message": "Deleted successfully", "data": data}
     except HTTPException:
         raise
-    except AppException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.message) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-# ============================================================
-# Search Tool internal endpoints (called by mcp_service v2)
-# ============================================================
-
-
-@router.post(
-    "/tools/{tool_id}/search",
-    response_model=SearchToolQueryResponse,
-    summary="Execute Search Tool (ANN retrieval)",
-    description=(
-        "Execute semantic vector retrieval (ANN) by tool_id, returning structured results.\n\n"
-        "Key points for frontend/callers:\n"
-        "- This is an Internal API endpoint, requiring `X-Internal-Secret` authentication;\n"
-        "- Tool must be `type=search` and must have a bound `path`;\n"
-        "- Returned `results[*].json_path` is **relative to tool.json_path in RFC6901 format**, for frontend scoped positioning."
-    ),
-    dependencies=[Depends(verify_internal_secret)],
-)
-async def search_tool(
-    tool_id: str,
-    payload: SearchToolQueryInput,
-    request: Request,
-    supabase_repo=Depends(get_supabase_repository),
-    search_service=Depends(get_search_service),
-):
-    tool = supabase_repo.get_tool(tool_id)
-    if not tool:
-        raise HTTPException(status_code=404, detail="Tool not found")
-
-    if (tool.type or "").strip() != "search":
-        raise HTTPException(status_code=400, detail="Tool is not a search tool")
-
-    node_path = tool.path or ""
-    if not node_path:
-        raise HTTPException(status_code=400, detail="tool.path is missing")
-
-    project_id = tool.project_id or ""
-    if not project_id:
-        raise HTTPException(status_code=400, detail="tool.project_id is missing")
-    _enforce_acting_user_project_access(request, project_id)
-
-    try:
-        from src.infra.search.index_task_repository import SearchIndexTaskRepository
-        from src.infra.supabase.client import SupabaseClient
-
-        sb_client = SupabaseClient().get_client()
-        task_repo = SearchIndexTaskRepository(sb_client)
-        task = task_repo.get_by_tool_id(str(tool_id))
-
-        is_folder_search = bool(task and task.folder_path)
-    except Exception:
-        is_folder_search = False
-
-    try:
-        if is_folder_search:
-            results = await search_service.search_folder(
-                project_id=project_id,
-                folder_path=node_path,
-                query=payload.query,
-                top_k=payload.top_k,
-            )
-        else:
-            results = await search_service.search_scope(
-                project_id=project_id,
-                path=node_path,
-                tool_json_path=tool.json_path or "",
-                query=payload.query,
-                top_k=payload.top_k,
-            )
-        return {"query": payload.query, "results": results}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message) from e
     except Exception as e:
