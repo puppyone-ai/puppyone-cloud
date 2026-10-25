@@ -40,6 +40,15 @@
   passed actual read-only-socket container acceptance, including private-alias
   isolation and restoring mounts before reading saved files. The 42 focused
   provider/archive/default/configuration regressions passed.
+- The rebuilt bundle passed real Agent/editor live writes, watch, task isolation
+  and Git publication. A second task exposed stale provider state observations:
+  a separate held/running-process probe alternated between running and an old
+  cold creation record. Attachment now retries metadata only; pause cannot skip
+  hold release based on a stale record. Cold acceptance also requires a changed
+  kernel boot ID after reopening. All probe and failed-scenario resources were
+  deleted and absence verified.
+- Complete regression on the read-only-socket fix: 3570 passed, 956 skipped,
+  420 deselected. Metadata-handling changes have additional focused regressions.
 
 ## Enablement gates
 - [x] Build and export the actual worker bundle successfully.

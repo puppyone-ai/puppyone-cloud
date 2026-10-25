@@ -197,9 +197,17 @@ class SpritesRuntimeProvider:
 
     async def running_connection(self, host):
         self.validate(host.artifact, host.resource)
-        row = await self.inspect(host.resource)
-        if row["status"] != "running":
-            raise WorkerDisconnected("Workbench lifecycle must wake the Sprite")
+        # Real metadata replicas can return an older cold/warm observation while
+        # an exec and a task hold are still active. Retry read-only observations;
+        # never issue exec to repair a genuinely sleeping workspace here.
+        async with asyncio.timeout(10):
+            for attempt in range(8):
+                row = await self.inspect(host.resource)
+                if row["status"] == "running":
+                    break
+                if attempt == 7:
+                    raise WorkerDisconnected("Workbench lifecycle must wake the Sprite")
+                await asyncio.sleep(0.25)
         await self._control(host, "ready")
         return RuntimeConnection(resource_identity(host.resource))
 
@@ -261,41 +269,44 @@ class SpritesRuntimeProvider:
         await self.pause_resource(host)
 
     async def pause_resource(self, host):
-        row = await self.inspect(host.resource)
-        if row["status"] not in {"warm", "cold"}:
-            await self._control(host, "release")
-            service_path = self._path(host.resource) + "/services/" + SERVICE
-            service = await self.transport.request("GET", service_path)
-            if (service.get("state") or {}).get("status") not in {"stopped", "failed"}:
-                try:
-                    await self.transport.request(
-                        "POST", service_path + "/stop", stream=True, params={"timeout": "5s"}
-                    )
-                except FileExistsError:
-                    # A previous pause may have completed after its caller lost
-                    # the response. Only accept a conflict after observing stop.
-                    service = await self.transport.request("GET", service_path)
-                    if (service.get("state") or {}).get("status") not in {"stopped", "failed"}:
-                        raise WorkerDisconnected("Sprites file service did not stop") from None
-            # API processes may still have a watch bridge. These sessions belong
-            # solely to this lifecycle-fenced VM; pause admission excludes occupants.
-            sessions = await self.transport.request("GET", self._path(host.resource) + "/exec")
-            for session in sessions.get("sessions", []):
+        await self.inspect(host.resource)
+        # A stale cold observation must not skip releasing a live hold or leave
+        # the file service running. Pause owns lifecycle I/O and always performs
+        # the release/stop protocol before trusting an idle observation.
+        await self._control(host, "release")
+        service_path = self._path(host.resource) + "/services/" + SERVICE
+        service = await self.transport.request("GET", service_path)
+        if (service.get("state") or {}).get("status") not in {"stopped", "failed"}:
+            try:
                 await self.transport.request(
-                    "POST",
-                    self._path(host.resource)
-                    + "/exec/"
-                    + quote(str(session["id"]), safe="")
-                    + "/kill",
-                    json={"signal": "SIGKILL", "timeout": 1},
-                    stream=True,
-                    missing=True,
+                    "POST", service_path + "/stop", stream=True, params={"timeout": "5s"}
                 )
-            # Metadata GET does not open a VM session. Never claim paused while
-            # another hold/connection still keeps compute billable.
-            async with asyncio.timeout(120):
-                while (await self.inspect(host.resource))["status"] not in {"warm", "cold"}:  # noqa: ASYNC110 — external API has no event subscription
-                    await asyncio.sleep(1)
+            except FileExistsError:
+                # A previous pause may have completed after its caller lost
+                # the response. Only accept a conflict after observing stop.
+                service = await self.transport.request("GET", service_path)
+                if (service.get("state") or {}).get("status") not in {"stopped", "failed"}:
+                    raise WorkerDisconnected("Sprites file service did not stop") from None
+        # API processes may still have a watch bridge. These sessions belong
+        # solely to this lifecycle-fenced VM; pause admission excludes occupants.
+        sessions = await self.transport.request("GET", self._path(host.resource) + "/exec")
+        for session in sessions.get("sessions", []):
+            await self.transport.request(
+                "POST",
+                self._path(host.resource) + "/exec/" + quote(str(session["id"]), safe="") + "/kill",
+                json={"signal": "SIGKILL", "timeout": 1},
+                stream=True,
+                missing=True,
+            )
+        # Metadata GET does not open a VM session. Never claim paused while
+        # another hold/connection still keeps compute billable. A cold record
+        # with no observed run is the stale creation snapshot, not a pause ACK.
+        async with asyncio.timeout(120):
+            while True:
+                row = await self.inspect(host.resource)
+                if row["status"] in {"warm", "cold"} and row.get("last_running_at"):
+                    break
+                await asyncio.sleep(1)
         return RuntimeTransition(resource_identity(host.resource), True, False)
 
     async def resolve(self, resource):

@@ -73,6 +73,9 @@ Subsequent wakes reuse the installed artifact and files, without package downloa
   `SANDBOX_REAPER_INTERVAL_S` setting controls legacy cleanup, not this hold.
 - Pause releases the hold, stops the managed file service, terminates remaining
   exec bridges, and waits up to two minutes for platform status `warm` or `cold`.
+  Real metadata reads can briefly return an older cold/warm observation. Active
+  attachment retries metadata without waking compute; pause always performs the
+  release/stop protocol and rejects a stale creation snapshot as its idle ACK.
   An error or timeout does not report a successful pause. Resume explicitly wakes
   the Sprite and verifies the file service before admitting requests.
 - Existing idle policy is unchanged. Saving a file does not immediately suspend
@@ -123,10 +126,12 @@ This reuses the Fly/E2B product scenario: authenticated Agent execution, concurr
 editor read/write, file watch, task egress isolation, Git publication, workspace
 reuse, pause, and reopen with the same files. Model responses are scripted;
 provider, worker, file APIs and persistence are real. It is not billing or load
-acceptance. Hosted acceptance has not been run for this change; local protocol
-tests alone do not prove the provider's root/mount/firewall or cold-wake behavior.
+acceptance. Initial hosted checks exposed read-only socket and stale metadata
+compatibility issues, both covered by the implementation and regression checks.
+The final hosted receipt is required to establish complete cold-wake acceptance.
 The cold check polls metadata for up to 30 minutes without opening a VM session,
-then the shared scenario verifies the saved files after explicit reopen. Omitting
+then the shared scenario verifies the saved files and a changed kernel boot ID
+after explicit reopen. Omitting
 `CLOUD_AGENT_TEST_SPRITES_COLD=1` exercises ordinary pause/reopen only.
 
 API references: [WebSocket exec](https://docs.fly.io/sprites/api/websockets/execute-command),

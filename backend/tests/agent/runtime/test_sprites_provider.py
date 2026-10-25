@@ -66,6 +66,7 @@ def metadata(resource, *, status="running"):
         "id": "unique-id",
         "name": resource["resource_id"],
         "status": status,
+        "last_running_at": "2026-10-25T00:00:00Z",
         "labels": SpritesRuntimeProvider._labels(resource),
     }
 
@@ -167,6 +168,25 @@ async def test_file_attachment_does_not_wake_a_sleeping_sprite(configured):
     transport.execute.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_connection_retries_stale_metadata_without_waking(configured):
+    host = host_for(configured)
+    transport = SimpleNamespace(
+        request=AsyncMock(
+            side_effect=[
+                metadata(host.resource, status="cold"),
+                metadata(host.resource, status="warm"),
+                metadata(host.resource),
+            ]
+        ),
+        execute=AsyncMock(),
+    )
+    await SpritesRuntimeProvider(transport=transport).running_connection(host)
+    assert transport.request.await_count == 3
+    transport.execute.assert_awaited_once()
+    assert transport.execute.call_args.args[1][-2:] == ["ready", host.artifact]
+
+
 def test_connection_identity_includes_immutable_sprite_id(configured):
     resource = host_for(configured).resource
     connection = RuntimeConnection(resource_identity(resource))
@@ -175,7 +195,8 @@ def test_connection_identity_includes_immutable_sprite_id(configured):
 
 
 @pytest.mark.asyncio
-async def test_pause_releases_hold_watch_and_confirms_platform_idle(configured):
+@pytest.mark.parametrize("initial_status", ["running", "warm", "cold"])
+async def test_pause_releases_hold_watch_and_confirms_platform_idle(configured, initial_status):
     host = host_for(configured)
     calls, inspections = [], 0
 
@@ -189,7 +210,7 @@ async def test_pause_releases_hold_watch_and_confirms_platform_idle(configured):
         if path.endswith("/stop") or path.endswith("/kill"):
             return None
         inspections += 1
-        return metadata(host.resource, status="running" if inspections == 1 else "warm")
+        return metadata(host.resource, status=initial_status if inspections == 1 else "warm")
 
     transport = SimpleNamespace(request=request, execute=AsyncMock(return_value=""))
     result = await SpritesRuntimeProvider(transport=transport).pause_resource(host)
@@ -198,6 +219,33 @@ async def test_pause_releases_hold_watch_and_confirms_platform_idle(configured):
     assert any(path.endswith("watch-session/kill") for _, path in calls)
     assert all(method != "DELETE" for method, _ in calls)
     assert inspections == 2
+
+
+@pytest.mark.asyncio
+async def test_pause_does_not_accept_stale_creation_as_idle(configured):
+    host = host_for(configured)
+    observations = iter(
+        [
+            metadata(host.resource),
+            {**metadata(host.resource, status="cold"), "last_running_at": None},
+            metadata(host.resource, status="warm"),
+        ]
+    )
+    inspected = []
+
+    async def request(method, path, **kwargs):
+        if path.endswith("/services/puppyone-files"):
+            return {"state": {"status": "stopped"}}
+        if path.endswith("/exec"):
+            return {"sessions": []}
+        row = next(observations)
+        inspected.append(row)
+        return row
+
+    await SpritesRuntimeProvider(
+        transport=SimpleNamespace(request=request, execute=AsyncMock())
+    ).pause_resource(host)
+    assert len(inspected) == 3
 
 
 @pytest.mark.asyncio
