@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, ShieldCheck } from 'lucide-react';
 import { PanelShell } from '@/components/chrome/PanelShell';
 import { DesktopChromeAction } from '@/components/chrome/DesktopChrome';
 import { PageLoading } from '@/components/loading';
@@ -19,6 +19,7 @@ import { CreateAccessModal } from '@/features/access/components/CreateAccessModa
 import { ScopeSidebar } from '@/features/access/components/ScopeSidebar';
 import { ScopeDetailPanel } from '@/features/access/components/ScopeDetailPanel';
 import { AccessLoadError, NoConnectorsState } from '@/features/access/components/page-shell';
+import { AccessManagement } from '@/features/access/lifecycle/AccessManagement';
 
 export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const panel = useProjectSession(state => state.panel);
@@ -28,6 +29,8 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
   const canManageAccess = projectAllows(project, 'access_surface.manage')
     && projectAllows(project, 'scope.manage');
   const [createOpen, setCreateOpen] = useState(false);
+  const [clientsOpen, setClientsOpen] = useState(false);
+  const canManageClients = projectAllows(project, 'access_surface.rotate_secret');
   const [enablingTargetKey, setEnablingTargetKey] = useState<string | null>(null);
   const [enableError, setEnableError] = useState<string | null>(null);
   const {
@@ -75,6 +78,8 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
     setCreateOpen(panel.type === 'access_list' && panel.view === 'create');
   }, [panel]);
 
+  useEffect(() => { setClientsOpen(false); }, [projectId, panel]);
+
   useEffect(() => {
     if (!requestedScope) return;
     setSelectedTargetKey(repositoryViewKey(requestedScope));
@@ -118,8 +123,8 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
 
   const title = (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <span>{detailOpen && requestedScope ? requestedScope.name : 'Access'}</span>
-      {!detailOpen && <CountBadge value={sortedScopes.length} size='md' tone='neutral' />}
+        <span>{clientsOpen ? 'Agent access' : detailOpen && requestedScope ? requestedScope.name : 'Access'}</span>
+      {!detailOpen && !clientsOpen && <CountBadge value={sortedScopes.length} size='md' tone='neutral' />}
     </span>
   );
   const createAction = canManageAccess && !detailOpen ? (
@@ -135,10 +140,13 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
       <PanelShell
         title={title}
         onClose={onClose}
-        onBack={detailOpen ? openOverview : undefined}
-        headerRight={createAction}
+        onBack={clientsOpen ? () => setClientsOpen(false) : detailOpen ? openOverview : undefined}
+        headerRight={!clientsOpen ? <>
+          {canManageClients && <DesktopChromeAction label='Manage agent access' icon={<ShieldCheck size={15} strokeWidth={2} />} onClick={() => setClientsOpen(true)} />}
+          {createAction}
+        </> : undefined}
       >
-        {loadError ? (
+        {clientsOpen && canManageClients ? <AccessManagement key={projectId} projectId={projectId} /> : loadError ? (
           <AccessLoadError error={loadError} onRetry={() => { void refresh(); }} />
         ) : loading ? (
           <PageLoading variant='fill' label='Loading access' />

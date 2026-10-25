@@ -107,7 +107,9 @@ describe('canonical Access surface client', () => {
         else if (/\.(ts|tsx)$/.test(file)) {
           const source = readFileSync(file, 'utf8');
           expect(source, file).not.toMatch(/\/connectors(?:[/'"`?])/);
-          expect(source, file).not.toMatch(/\/api\/v1\/access\/(?!surfaces(?:[/'"`?]|$))/);
+          // Registered identities and approval applications are separate canonical
+          // lifecycle resources, not the retired generic /access/{id} surface API.
+          expect(source, file).not.toMatch(/\/api\/v1\/access\/(?!(?:surfaces|registrations|requests)(?:[/'"`?]|$))/);
           expect(source, file).not.toMatch(/\bConnectorRun\b|\bSyncEndpointInfo\b/);
         }
       }

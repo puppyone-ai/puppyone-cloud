@@ -48,7 +48,7 @@ describe('structured node state convergence', () => {
   });
 
   it('clears old access points when a non-structured file is selected', () => {
-    query.tools = [{ type: 'search', json_path: '/items' } as Tool];
+    query.tools = [{ type: 'query_data', json_path: '/items' } as Tool];
     const hook = mount({ ...defaults, activeNodeType: 'json', activeFormatDefaultViewer: 'json-table' });
     expect(hook.result.current.accessPoints).toHaveLength(1);
     hook.rerender(defaults);
@@ -57,9 +57,9 @@ describe('structured node state convergence', () => {
 
   it('initializes the same file path independently for each project', () => {
     const props = { ...defaults, activeNodeId: 'table.json', activeNodeType: 'json', activeFormatDefaultViewer: 'json-table' };
-    query.tools = [{ type: 'search', json_path: '/a' } as Tool];
+    query.tools = [{ type: 'query_data', json_path: '/a' } as Tool];
     const hook = mount(props);
-    query.tools = [{ type: 'search', json_path: '/b' } as Tool];
+    query.tools = [{ type: 'query_data', json_path: '/b' } as Tool];
     hook.rerender({ ...props, projectId: 'project-b' });
     expect(hook.result.current.accessPoints.map(p => p.path)).toEqual(['/b']);
   });
@@ -68,7 +68,7 @@ describe('structured node state convergence', () => {
     const props = { ...defaults, activeNodeType: 'json', activeFormatDefaultViewer: 'json-table' };
     query.tools = [];
     const hook = mount(props);
-    const edited = [{ id: 'draft', path: '/draft', permissions: { search: true } }];
+    const edited = [{ id: 'draft', path: '/draft', permissions: { query_data: true } }];
     act(() => hook.result.current.setAccessPoints(edited));
     hook.rerender({ ...props });
     expect(hook.result.current.accessPoints).toEqual(edited);
@@ -79,7 +79,7 @@ describe('structured node state convergence', () => {
     query.error = new Error('temporarily unavailable');
     const hook = mount(props);
     query.error = undefined;
-    query.tools = [{ type: 'search', json_path: '/recovered' } as Tool];
+    query.tools = [{ type: 'query_data', json_path: '/recovered' } as Tool];
     hook.rerender({ ...props });
     expect(hook.result.current.accessPoints.map(p => p.path)).toEqual(['/recovered']);
   });

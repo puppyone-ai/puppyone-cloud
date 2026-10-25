@@ -51,9 +51,11 @@ activated by this suite. Three-provider connection contract tests are offline
 and do not substitute for live provider acceptance.
 
 Activation requires migration `20261023020000`, a matching runtime artifact,
-and a separate gateway process (`puppyone-ssh` or `railway.ssh.toml`). Set the
-`WORKSPACE_SSH_` public host/port, pinned public host key and persistent private
-host-key file (mode `0600`) in the API/gateway environments as applicable. API
+and a separate gateway process (`puppyone-ssh` locally; deployed environments run
+`SERVICE_ROLE=ssh_gateway` from the backend image, released by the pipeline as the
+optional `ssh_gateway` role). Set the `WORKSPACE_SSH_` public host/port and pinned
+public host key, and the private host key as the `WORKSPACE_SSH_HOST_KEY` secret
+(or a persistent `0600` key file) in the API/gateway environments as applicable. API
 grants are disabled until an endpoint and host key are configured. Never disable
 client host-key checking. The gateway must retain provider transport access and
 database service credentials; clients receive neither.

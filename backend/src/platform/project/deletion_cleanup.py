@@ -14,7 +14,6 @@ from src.infra.file_processing.ocr.external_cleanup import (
 )
 from src.infra.s3.service import S3Service, get_s3_service_instance
 from src.infra.supabase.client import SupabaseClient
-from src.infra.turbopuffer.service import TurbopufferSearchService
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
 )
@@ -166,45 +165,16 @@ class ProjectDeletionJobRepository:
 class ProjectExternalResourceCleaner:
     """Idempotently purge and verify non-S3 provider resources."""
 
-    def __init__(
-        self,
-        *,
-        search: TurbopufferSearchService | None = None,
-        sandbox_resources=None,
-    ) -> None:
-        self._search = search or TurbopufferSearchService()
+    def __init__(self, *, sandbox_resources=None) -> None:
         # destroy_resource/resource_absent by provider, id and owning pool.
         self._sandbox = sandbox_resources or sandbox
 
     async def purge(self, job: dict[str, Any]) -> None:
-        search_prefixes, sandboxes = _validated_external_resources(job)
-        for prefix in search_prefixes:
-            # Deletion mutates the result set. Re-read the first page until it
-            # is empty; a cursor from a pre-delete page can skip namespaces.
-            previous_ids: tuple[str, ...] | None = None
-            while True:
-                page = await self._search.list_namespaces(
-                    prefix=prefix,
-                    page_size=100,
-                )
-                ids = tuple(str(namespace.id) for namespace in page.namespaces)
-                if ids and ids == previous_ids:
-                    raise RuntimeError("Search namespace deletion made no observable progress")
-                for namespace in page.namespaces:
-                    await self._search.delete_namespace(namespace.id)
-                if not page.namespaces:
-                    break
-                previous_ids = ids
-        for resource in sandboxes:
+        for resource in _validated_sandbox_resources(job):
             await self._destroy_sandbox(resource)
 
     async def absent(self, job: dict[str, Any]) -> bool:
-        search_prefixes, sandboxes = _validated_external_resources(job)
-        for prefix in search_prefixes:
-            page = await self._search.list_namespaces(prefix=prefix, page_size=1)
-            if page.namespaces:
-                return False
-        for resource in sandboxes:
+        for resource in _validated_sandbox_resources(job):
             if not await self._sandbox_absent(resource):
                 return False
         return True
@@ -554,19 +524,12 @@ def _validated_project_prefixes(job: dict[str, Any]) -> tuple[str, ...]:
     return prefixes
 
 
-def _validated_external_resources(
-    job: dict[str, Any],
-) -> tuple[tuple[str, ...], tuple[dict[str, str], ...]]:
+def _validated_sandbox_resources(job: dict[str, Any]) -> tuple[dict[str, str], ...]:
+    # The job's search_namespace_prefixes column is historical: the vector
+    # search backend was retired, so there is no external index to purge.
     project_id = str(job.get("project_id") or "")
     if not _STORAGE_SEGMENT.fullmatch(project_id):
         raise RuntimeError("Project deletion job has an invalid Project id")
-    raw_prefixes = job.get("search_namespace_prefixes")
-    expected = (
-        f"project_{project_id}_path_",
-        f"project_{project_id}_folder_",
-    )
-    if not isinstance(raw_prefixes, list) or tuple(raw_prefixes) != expected:
-        raise RuntimeError("Project deletion job has invalid search namespace prefixes")
     raw_resources = job.get("sandbox_resources")
     if not isinstance(raw_resources, list):
         raise RuntimeError("Project deletion job has invalid sandbox resources")
@@ -589,7 +552,7 @@ def _validated_external_resources(
             raise RuntimeError("Project deletion job has invalid sandbox resources")
         seen.add(identity)
         resources.append({"kind": kind, "provider": provider, "resource_id": resource_id})
-    return expected, tuple(resources)
+    return tuple(resources)
 
 
 _STORAGE_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")

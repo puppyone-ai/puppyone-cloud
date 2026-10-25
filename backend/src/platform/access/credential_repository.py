@@ -54,6 +54,32 @@ def mask_access_token(prefix: str | None, last4: str | None) -> str:
     return f"{prefix}_{'•' * 8}{last4}"
 
 
+class SshCredentialRepository:
+    """Single-use SSH login proof; durable authorization lives in access_grants."""
+
+    def __init__(self, client=None):
+        if client is None:
+            from src.infra.supabase.dependencies import get_supabase_client
+
+            client = get_supabase_client()
+        self.client = client
+
+    def create(self, row):
+        return self.client.table("workspace_ssh_grants").insert(row).execute().data[0]
+
+    def get(self, identity):
+        rows = self.client.table("workspace_ssh_grants").select("*").eq("id", identity).limit(1).execute().data
+        return rows[0] if rows else None
+
+    def consume(self, identity):
+        return self.client.rpc("workspace_ssh_grant_consume", {"p_id": identity}).execute().data
+
+    def revoke(self, identity, user, project):
+        return (self.client.table("workspace_ssh_grants")
+                .update({"revoked_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", identity).eq("user_id", user).eq("project_id", project).execute().data)
+
+
 class AccessCredentialRepository:
     def __init__(self, supabase_client=None):
         if supabase_client is None:
@@ -116,6 +142,13 @@ class AccessCredentialRepository:
         if not rows:
             return None
         credential = rows[0]
+        if credential.get("access_grant_id"):
+            credential = self._client.rpc(
+                "access_managed_credential",
+                {"p_key_hash": credential["key_hash"], "p_channel": "mcp"},
+            ).execute().data
+            if not credential:
+                return None
         if credential.get("credential_lifecycle") == "user":
             user_mode = self._user_credential_mode_if_authorized(credential)
             if user_mode is None:
@@ -124,7 +157,7 @@ class AccessCredentialRepository:
         return credential
 
     def resolve_git_runtime_credential(
-        self, raw_token: str
+        self, raw_token: str, *, channel: str = "git"
     ) -> Optional[dict[str, Any]]:
         """Resolve a Git HTTP token into already-narrowed runtime facts.
 
@@ -138,8 +171,8 @@ class AccessCredentialRepository:
         if callable(rpc):
             for token_hash in access_token_hash_candidates(raw_token):
                 response = rpc(
-                    "resolve_git_runtime_credential",
-                    {"p_key_hash": token_hash},
+                    "resolve_access_git_credential",
+                    {"p_key_hash": token_hash, "p_channel": channel},
                 ).execute()
                 rows = response.data or []
                 if rows:
@@ -151,6 +184,10 @@ class AccessCredentialRepository:
             credential_type="git_http_token",
         )
         if not credential:
+            return None
+        if credential.get("access_grant_id"):
+            # The table-backed branch is solely a legacy unit-test seam. Managed
+            # authority requires the transactional database resolver above.
             return None
         surfaces = (
             self._client.table("access_surfaces")

@@ -10,7 +10,7 @@ from src.platform.authorization.factory import build_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.sandbox import runtime_provider, workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
-from src.platform.workspace.execution.worker_port import WorkerDisconnected
+from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
 
 from .admission import AdmissionSnapshots
@@ -18,6 +18,17 @@ from .errors import WorkspaceError
 from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
+
+
+@asynccontextmanager
+async def _borrowed(channels, row):
+    try:
+        async with channels.borrow(row) as host:
+            yield host
+    except WorkerLost as exc:
+        # Compute is gone and the disk is the workspace: maintenance pauses it,
+        # and reopening recreates compute on the same disk.
+        raise WorkspaceError(503, {"code": "workbench_preparing", "retryable": True}) from exc
 
 
 class WorkbenchAdmission:
@@ -194,7 +205,7 @@ class WorkbenchService(WorkbenchAdmission):
                     # Revision changed: load fresh facts, never use the old grant.
                 else:
                     await self.billing.check_session(meter_id(row))
-                    async with self.channels.borrow(row) as host:
+                    async with _borrowed(self.channels, row) as host:
                         yield host
                     return
         with workspace_stage("files.admission"):
@@ -205,7 +216,7 @@ class WorkbenchService(WorkbenchAdmission):
                     self.repository.activity, row, context["revision"], write=write
                 )
         await self.billing.check_session(meter_id(row))
-        async with self.channels.borrow(row) as host:
+        async with _borrowed(self.channels, row) as host:
             yield host
 
     async def close(self):

@@ -15,7 +15,7 @@ from uuid import UUID
 
 from src.config import settings
 from src.infra.execution.runner import run_blocking
-from src.platform.sandbox.errors import WorkerDisconnected
+from src.platform.sandbox.errors import WorkerDisconnected, WorkspaceDiskLost
 from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
@@ -320,6 +320,14 @@ class SpritesRuntimeProvider:
     async def cleanup(self, resource):
         if await self.inspect(resource, missing=True) is not None:
             await self.transport.request("DELETE", self._path(resource), missing=True)
+
+    async def recreate(self, host):
+        # A Sprite's filesystem lives and dies with the Sprite, and Fly manages its
+        # hibernation and wake. A missing Sprite means the workspace itself is gone.
+        raise WorkspaceDiskLost("The Sprite and its filesystem no longer exist")
+
+    async def destroy_workspace(self, resource):
+        await self.cleanup(resource)
 
     async def _identity_resource(self, resource_id, pool):
         if pool != "runtime":

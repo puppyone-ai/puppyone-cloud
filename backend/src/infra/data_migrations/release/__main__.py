@@ -42,7 +42,7 @@ def main():
     environment["RELEASE_PRIVATE_ARTIFACTS"] = config["private_artifacts"]
     db = PsqlClient(config["database_url"], base_environment=environment)
     platform = Hosted(root, config, db)
-    target = DatabaseTarget(root, db, platform, environment)
+    target = DatabaseTarget(root, db, platform, environment, release_environment=args.environment)
     private_logs = Path(config["private_artifacts"])
     private_logs.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = private_logs / (args.source + ".log")

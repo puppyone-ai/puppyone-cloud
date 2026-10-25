@@ -565,6 +565,8 @@ class Settings(BaseSettings):
     ACCESS_CREDENTIAL_HASH_SECRET: str = "ContextBase-access-credential-development-secret"
     # Verification only during key rotation; new credentials always use the primary key.
     ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET: str = ""
+    # Enable issuance only after every API/gateway replica understands parent grants.
+    ACCESS_LIFECYCLE_ENABLED: bool = False
 
     # Product entitlements / billing enforcement.
     # disabled: open-source/self-hosted default, no product limits enforced.
@@ -638,10 +640,6 @@ class Settings(BaseSettings):
     PUBLISH_DEFAULT_EXPIRES_DAYS: int = 7
     PUBLISH_KEY_LENGTH: int = 16
     PUBLISH_CACHE_TTL_SECONDS: int = 10
-
-    # Search Tool indexing (async)
-    # - Only used for async indexing wait_for timeout control, preventing background tasks from hanging indefinitely
-    SEARCH_INDEX_TIMEOUT_SECONDS: int = 120
 
     # Git-native version engine hardening.
     VERSION_OUTBOX_ENABLED: bool = True

@@ -37,7 +37,6 @@ from src.platform.access.adapters.agent.runtime.control.workspace import (
 )
 from src.platform.access.adapters.agent.runtime.dispatch import worker_identity
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
-from src.platform.access.adapters.agent.runtime.execution.tools import BoundTools
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
@@ -57,18 +56,6 @@ logger = logging.getLogger(__name__)
 _DEFAULT_OWNER = object()
 ROLES = frozenset({"agent", "sandbox"})
 STATS_INTERVAL_SECONDS = 60
-
-
-def build_bound_tools(admission, engine):
-    from src.infra.llm.dependencies import get_embedding_service
-    from src.infra.search.dependencies import get_search_service
-    from src.infra.supabase.dependencies import get_supabase_client
-    from src.infra.turbopuffer.dependencies import get_turbopuffer_search_service
-
-    search = get_search_service(admission.authorization, engine.product_operations(),
-                                get_supabase_client(), get_embedding_service(),
-                                get_turbopuffer_search_service())
-    return BoundTools(admission, search)
 
 
 async def _until(stop, seconds):
@@ -121,12 +108,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER, stop=None, roles=None):
         sandbox = SandboxModule(
             workbench_owner,
             pool=identity.pool,
-            passes=[
-                (
-                    "session_workspace_retirement",
-                    lambda: reap_workspaces(repository, PiWorker, pool=identity.pool),
-                )
-            ],
+            passes=sandbox_passes(repository, workbench_owner, identity.pool),
         )
         modules.append(asyncio.create_task(sandbox.serve(stop=stop, grace=grace)))
     if "agent" in roles:
@@ -147,6 +129,30 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER, stop=None, roles=None):
             await concurrency.stop()
 
 
+def sandbox_passes(repository, workbench_owner, pool):
+    """Reclamation owned by the sandbox module (provider operations included)."""
+    from src.config import settings
+    from src.platform.access.sessions import reclaim_external_connections
+
+    passes = [
+        (
+            "session_workspace_retirement",
+            lambda: reap_workspaces(repository, PiWorker, pool=pool),
+        ),
+        (
+            "external_connection_reclamation",
+            lambda: reclaim_external_connections(workbench_owner, pool),
+        ),
+    ]
+    if settings.PROJECT_DELETION_CLEANUP_ENABLED:
+        # Destroys deleted Projects' machines, so it runs where lifecycle
+        # credentials live; an API with connect-only credentials disables it.
+        from src.platform.project.deletion_cleanup import process_project_deletion_cleanup
+
+        passes.append(("project_deletion_cleanup", process_project_deletion_cleanup))
+    return passes
+
+
 async def serve_agent(repository, engine, workbench_owner, *, identity, stop, grace):
     """Agent module: claim and supervise Runs of this pool until ``stop``."""
     from src.config import settings
@@ -156,7 +162,6 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
     publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
     billing = get_runtime_metering_service()
-    bound_tools = build_bound_tools(admission, engine)
     claim_as = identity.claim()
     active = {}  # task -> claimed run
     shared_first = False
@@ -183,7 +188,6 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
                 publication,
                 inference,
                 billing,
-                bound_tools=bound_tools,
                 loop=PiLoop(),
                 execution=SandboxExecution(),
                 filesystem=filesystem,

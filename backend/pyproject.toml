@@ -34,7 +34,6 @@ dependencies = [
     "supabase>=2.25.0",
     "uvicorn>=0.38.0",
     "arq>=0.26.3",
-    "turbopuffer>=1.12.0",
     "aiohttp>=3.13.2",
     "aiohappyeyeballs>=2.6.1",
     "anthropic>=0.76.0",

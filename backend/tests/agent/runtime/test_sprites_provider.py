@@ -433,3 +433,26 @@ async def test_exec_closed_without_exit_is_not_success():
         with pytest.raises(WorkerDisconnected, match="exit"):
             await transport.execute("fixture", ["echo", "test"])
         assert transport.request.call_args.args[1].endswith("/exec/18/kill")
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_owners_workspace_destroys_only_its_owned_sprite(configured):
+    host = host_for(configured)
+    transport = SimpleNamespace(
+        request=AsyncMock(side_effect=[metadata(host.resource), None]), execute=AsyncMock()
+    )
+    provider = SpritesRuntimeProvider(transport=transport)
+    await provider.destroy_workspace(host.resource)
+    methods = [call.args[0] for call in transport.request.await_args_list]
+    assert methods == ["GET", "DELETE"]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_sprite_is_a_lost_workspace_not_recreatable_compute(configured):
+    from src.platform.sandbox.errors import WorkspaceDiskLost
+
+    transport = SimpleNamespace(request=AsyncMock(), execute=AsyncMock())
+    provider = SpritesRuntimeProvider(transport=transport)
+    with pytest.raises(WorkspaceDiskLost):
+        await provider.recreate(host_for(configured))
+    transport.request.assert_not_awaited()

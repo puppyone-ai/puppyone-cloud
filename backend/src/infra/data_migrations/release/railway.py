@@ -1,8 +1,12 @@
 """Railway boundary for an explicitly configured environment and service inventory.
 
 No secret enumeration, automatic service discovery, or latest-branch deployment.
-The coordinator owns deployment; GitHub autodeploy must be disabled while the
-repository connection remains attached for exact-commit deployments.
+The coordinator owns deployment in one of two source modes:
+
+- commit: services stay connected to the repository with autodeploy disabled;
+  Railway builds the exact candidate commit for each service.
+- image: services run published images; the coordinator points every service
+  at the digest built once for the candidate and verifies the running digest.
 """
 
 from __future__ import annotations
@@ -41,13 +45,13 @@ class Railway:
             raise RuntimeError("Railway release request failed")
         return body["data"]
 
-    def preflight(self) -> dict:
+    def preflight(self, images: dict[str, str] | None = None) -> dict:
         actual = {}
         for role, service in self.config["services"].items():
             data = self.query(
                 "query($p:String!,$e:String!,$s:String!){"
                 "serviceInstanceAutoDeployStatus(projectId:$p,environmentId:$e,serviceId:$s){enabled}"
-                "serviceInstance(environmentId:$e,serviceId:$s){source{repo} latestDeployment{id status meta}}}",
+                "serviceInstance(environmentId:$e,serviceId:$s){source{repo image} latestDeployment{id status meta}}}",
                 {
                     "p": self.config["project_id"],
                     "e": self.config["environment_id"],
@@ -59,7 +63,14 @@ class Railway:
                     "Independent Railway autodeploy must be disabled before coordinator activation"
                 )
             instance = data["serviceInstance"]
-            if (instance.get("source") or {}).get("repo") != "puppyone-ai/puppyone-cloud":
+            source = instance.get("source") or {}
+            if images:
+                repository = images[role].split("@", 1)[0]
+                if source.get("repo") or not (source.get("image") or "").startswith(
+                    repository + "@"
+                ):
+                    raise ValueError("Release service must run the published release image")
+            elif source.get("repo") != "puppyone-ai/puppyone-cloud":
                 raise ValueError(
                     "Release service must remain connected to the candidate repository"
                 )
@@ -109,9 +120,17 @@ class Railway:
             self.sleep(2)
         raise TimeoutError("Old Railway deployments did not stop")
 
-    def deploy(self, source: str) -> dict:
+    @staticmethod
+    def _matches(meta: dict | None, source: str, image: str | None) -> bool:
+        meta = meta or {}
+        if image is None:
+            return meta.get("commitHash") == source
+        return meta.get("image") == image and meta.get("imageDigest") == image.split("@", 1)[1]
+
+    def deploy(self, source: str, images: dict[str, str] | None = None) -> dict:
         expected = {}
         for role, service in self.config["services"].items():
+            image = images[role] if images else None
             data = self.query(
                 "query($e:String!,$s:String!){serviceInstance(environmentId:$e,serviceId:$s){latestDeployment{id status meta}}}",
                 {"e": self.config["environment_id"], "s": service["id"]},
@@ -119,21 +138,35 @@ class Railway:
             if (
                 data
                 and data["status"] == "SUCCESS"
-                and (data.get("meta") or {}).get("commitHash") == source
+                and self._matches(data.get("meta"), source, image)
             ):
                 expected[role] = data["id"]
                 continue
-            deployment_id = self.query(
-                "mutation($e:String!,$s:String!,$sha:String!){serviceInstanceDeployV2(environmentId:$e,serviceId:$s,commitSha:$sha)}",
-                {"e": self.config["environment_id"], "s": service["id"], "sha": source},
-            )["serviceInstanceDeployV2"]
+            if image is None:
+                deployment_id = self.query(
+                    "mutation($e:String!,$s:String!,$sha:String!){serviceInstanceDeployV2(environmentId:$e,serviceId:$s,commitSha:$sha)}",
+                    {"e": self.config["environment_id"], "s": service["id"], "sha": source},
+                )["serviceInstanceDeployV2"]
+            else:
+                update = {"source": {"image": image}}
+                if self.config.get("registry_credentials"):
+                    update["registryCredentials"] = self.config["registry_credentials"]
+                self.query(
+                    "mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$i)}",
+                    {"s": service["id"], "e": self.config["environment_id"], "i": update},
+                )
+                deployment_id = self.query(
+                    "mutation($e:String!,$s:String!){serviceInstanceDeployV2(environmentId:$e,serviceId:$s)}",
+                    {"e": self.config["environment_id"], "s": service["id"]},
+                )["serviceInstanceDeployV2"]
             if not isinstance(deployment_id, str) or not deployment_id:
                 raise RuntimeError("Railway did not accept the candidate deployment")
             expected[role] = deployment_id
         deadline = self.clock() + self.config.get("deploy_timeout_seconds", 1800)
         while self.clock() < deadline:
             complete = True
-            for deployment_id in expected.values():
+            for role, deployment_id in expected.items():
+                image = images[role] if images else None
                 deployment = self.query(
                     "query($id:String!){deployment(id:$id){id status meta}}",
                     {"id": deployment_id},
@@ -144,12 +177,11 @@ class Railway:
                     raise RuntimeError("Candidate deployment failed")
                 elif deployment["status"] != "SUCCESS":
                     complete = False
-                elif (
-                    deployment["id"] != deployment_id
-                    or (deployment.get("meta") or {}).get("commitHash") != source
+                elif deployment["id"] != deployment_id or not self._matches(
+                    deployment.get("meta"), source, image
                 ):
                     raise RuntimeError(
-                        "Candidate deployment source differs from the requested commit"
+                        "Candidate deployment source differs from the requested release"
                     )
             if complete:
                 return expected

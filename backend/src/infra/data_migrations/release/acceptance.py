@@ -8,13 +8,39 @@ from uuid import uuid4
 
 import httpx
 
+# Initial allocation budget for a first workspace (machine, volume, checkout).
+WORKBENCH_START_SECONDS = 240
+
+
+def open_workbench(call, endpoint: str, *, clock=time.monotonic) -> dict:
+    """Follow the Desktop's opening protocol: request, then long-poll status.
+
+    The API only records the open intent (202 with a pending operation); the
+    worker's sandbox module starts the machine. A failed or abandoned operation
+    fails acceptance instead of waiting for the deadline.
+    """
+    workspace = call("POST", endpoint, timeout=60)
+    deadline = clock() + WORKBENCH_START_SECONDS
+    while (workspace or {}).get("state") != "running":
+        operation = (workspace or {}).get("operation") or {}
+        if operation.get("phase") == "failed" or operation.get("error"):
+            raise RuntimeError("Acceptance workspace failed to start")
+        if not operation.get("pending"):
+            raise RuntimeError("Acceptance workspace open is not progressing")
+        if clock() >= deadline:
+            raise TimeoutError("Acceptance workspace did not start")
+        workspace = call("GET", endpoint, params={"wait_seconds": 20}, timeout=60).get(
+            "workspace"
+        )
+    return workspace
+
 
 def accept_workbench(call, project_id: str, published: str) -> tuple[dict, str]:
     """Exercise the Desktop's live-file path before declaring a release usable."""
     endpoint = f"/projects/{project_id}/workbench"
     # This GET must exist even before the user's first workspace is allocated.
     call("GET", endpoint)
-    workspace = call("POST", endpoint, timeout=180)
+    workspace = open_workbench(call, endpoint)
     if (
         workspace.get("project_id") != project_id
         or workspace.get("state") != "running"
@@ -78,6 +104,15 @@ def accept(config: dict) -> dict:
         run_id = None
         terminal = False
         try:
+            # Clients enable the Project-root Git and CLI surfaces before using
+            # Agent; a Cloud workspace clones through that Git surface.
+            surfaces = call(
+                "POST",
+                f"/projects/{project_id}/access/surfaces/enable-target",
+                json={"target": {"kind": "project_root", "project_id": project_id}},
+            )
+            if {surface.get("kind") for surface in surfaces} < {"git_remote", "cli"}:
+                raise RuntimeError("Acceptance project access was not enabled")
             nonce = "release-" + uuid4().hex
             written = call(
                 "POST",

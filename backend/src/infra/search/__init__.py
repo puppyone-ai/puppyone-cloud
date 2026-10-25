@@ -1,6 +1,4 @@
-"""Search module.
+"""Search: the self-hosted text index (``text_indexer``) built from commits.
 
-Provides:
-- Search Tool indexing (chunking + embedding + turbopuffer write)
-- Search Tool query (ANN vector search + chunk_text backfill via chunk_id DB lookup)
+The vector (Turbopuffer) semantic search and its Search Tools were retired.
 """

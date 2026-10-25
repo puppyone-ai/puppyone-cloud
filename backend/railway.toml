@@ -40,11 +40,14 @@ builder = "NIXPACKS"
 #   so the same image can run them as separate services
 # - MCP Server service sets MAIN_SERVICE_URL to the API service URL
 # - API and MCP Server services share INTERNAL_API_SECRET
-# - agent_worker is exec'd so SIGTERM reaches it: it stops claiming, finishes
-#   or hands off Runs within CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS (default 20),
-#   then releases their leases. drainingSeconds (SIGTERM to SIGKILL) must exceed
-#   that grace; without the window, successors wait for lease expiry instead.
-startCommand = "sh -c 'case \"${SERVICE_ROLE:-api}\" in agent_worker) exec python -m src.platform.access.adapters.agent.runtime.worker ;; upload_worker) arq src.platform.upload.worker.WorkerSettings ;; import_worker) arq src.platform.imports.worker.WorkerSettings ;; synchronize_worker) arq src.platform.synchronize.worker.WorkerSettings ;; mcp_server) uvicorn mcp_service.server:app --host 0.0.0.0 --port ${PORT} --no-access-log ;; api) uvicorn src.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY:-2} --no-access-log ;; *) echo \"Unsupported SERVICE_ROLE; upgrade worker configuration\" >&2; exit 64 ;; esac'"
+# - Role dispatch lives in scripts/start-service.sh, shared with the hosted
+#   image (backend/Dockerfile) so both deployment paths start the same process.
+# - Every role is exec'd so SIGTERM reaches it. agent_worker stops claiming,
+#   finishes or hands off Runs within CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS
+#   (default 20), then releases their leases. drainingSeconds (SIGTERM to
+#   SIGKILL) must exceed that grace; without the window, successors wait for
+#   lease expiry instead.
+startCommand = "sh scripts/start-service.sh"
 drainingSeconds = 45
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

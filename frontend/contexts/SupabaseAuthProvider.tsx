@@ -77,11 +77,16 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
         .initialize()
         .then(async providers => {
           const { data, error } = await login.client.auth.getSession();
-          if (error) throw error;
+          // A stale Web session may fail to refresh while the user is signing
+          // in again; only a Desktop return requires a valid session.
+          if (error && login.intent.kind === 'desktop') throw error;
           if (!active) return;
           setAvailableProviders(providers);
-          setSession(data.session);
+          setSession(error ? null : data.session);
           setIsAuthReady(true);
+          void login.discoverProviders().then(discovered => {
+            if (active) setAvailableProviders(discovered);
+          });
         })
         .catch(error => {
           if (!active) return;

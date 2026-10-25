@@ -53,7 +53,7 @@ def test_access_point_root_credential_is_current_and_scope_is_not_widened(monkey
     )
     monkeypatch.setattr(SupabaseClient, "__new__", lambda cls: SimpleNamespace(client=object()))
     monkeypatch.setattr(
-        AccessCredentialRepository, "resolve_git_runtime_credential", lambda _self, _token: row
+        AccessCredentialRepository, "resolve_git_runtime_credential", lambda _self, _token, *, channel="git": row
     )
     project, auth = access_point.resolve_access_point("token")
     assert project == "project-1"

@@ -15,7 +15,7 @@ from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.models import ProjectAction
-from src.platform.sandbox import workspace_providers, workspace_stage
+from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
 
 from .errors import access_failure
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
@@ -148,6 +148,11 @@ class WorkbenchLifecycle:
                 # Recheck the same identity/epoch and current authorization
                 # after potentially slow network I/O, before reporting ready.
                 await self.check(row)
+            except WorkerLost as exc:
+                # Compute is gone and the disk is the workspace: maintenance
+                # pauses it within one pass, and the retried open recreates
+                # compute on the same disk.
+                raise WorkspaceUnavailable("workbench_preparing", retryable=True) from exc
             except (WorkerDisconnected, TimeoutError) as exc:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
@@ -357,7 +362,10 @@ class WorkbenchLifecycle:
                 # Recovered intents carry the original pinned artifact.
                 await host.runtime.resume(host)
         elif row["state"] == "resuming":
-            await host.runtime.resume(host)
+            try:
+                await host.runtime.resume(host)
+            except WorkerLost:
+                row = await self._recreate(row, host)
         else:
             raise WorkerDisconnected("Workspace lifecycle transition is not startable")
 
@@ -393,6 +401,42 @@ class WorkbenchLifecycle:
             )
             return await run_blocking(self.repository.ready, row, host.resource)
         return row
+
+    async def _recreate(self, row, host):
+        """Compute is replaceable; the disk is the workspace.
+
+        The intent is persisted before the provider call, so a lost create reply
+        is adopted by exact generation metadata on the next attempt, never
+        duplicated. Only a confirmed missing disk retires the generation.
+        """
+        intent = {**host.resource, "allocation_pending": True, "image_id": host.artifact}
+        row = await run_blocking(self.repository.transition, row, "resuming", intent)
+        host.resource = intent
+        try:
+            with workspace_stage("opening.recreate_compute"):
+                await host.runtime.recreate(host)
+        except WorkspaceDiskLost:
+            await run_blocking(self.repository.disk_lost, row)
+            logger.warning("workbench_disk_lost", extra={"workbench_id": row["id"]})
+            raise WorkspaceUnavailable("workbench_disk_lost", retryable=True) from None
+        logger.warning("workbench_compute_recreated", extra={"workbench_id": row["id"]})
+        return await run_blocking(self.repository.transition, row, "resuming", host.resource)
+
+    async def destroy(self, row):
+        """Destroy the compute and disk of a workspace whose owner was deleted."""
+        await self.channels.invalidate(row["id"])
+        if row["resource"] is not None:
+            host = self.channel_factory(row)
+            try:
+                await host.runtime.destroy_workspace(row["resource"])
+            finally:
+                await host.runtime.aclose()
+        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
+            meter_id(row), retry=True
+        ):
+            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        await run_blocking(self.repository.transition, row, "retired")
+        logger.info("workbench_owner_deleted_destroyed", extra={"workbench_id": row["id"]})
 
     async def _preserve_failed_start(self, row):
         host = self.channel_factory(row)
@@ -452,11 +496,24 @@ class WorkbenchLifecycle:
 
     async def _reap_provider(self, name):
         for row in await run_blocking(self.repository.due, name, settings.AGENT_WORKER_POOL):
-            if row.get("open_requested") and row["state"] != "pausing":
+            if (
+                row.get("open_requested")
+                and row["state"] != "pausing"
+                and not row.get("owner_deleted_at")
+            ):
                 continue
             owned = None
             try:
                 await self.preflight(row, connected=True)
+                if row.get("owner_deleted_at"):
+                    # Deletion means deletion: no restore path exists for a
+                    # deleted Project or user, so nothing is preserved.
+                    if row["state"] in {"retained", "cleanup_pending"}:
+                        claimed = await run_blocking(self.repository.reclaim_claim, row)
+                        if claimed["acquired"]:
+                            owned = claimed["workbench"]
+                            await self.destroy(owned)
+                    continue
                 if row["state"] == "running":
                     claimed = await run_blocking(self.repository.idle, row)
                     if claimed["acquired"]:
@@ -477,7 +534,10 @@ class WorkbenchLifecycle:
                         finally:
                             await host.runtime.aclose()
                     except Exception as exc:
-                        if not access_failure(exc):
+                        # Revoked access and lost compute both end the session.
+                        # Pausing lost compute verifies the disk survives; the
+                        # next open recreates compute on it.
+                        if not (access_failure(exc) or isinstance(exc, WorkerLost)):
                             raise
                         claimed = await run_blocking(
                             self.repository.lifecycle_claim, row, suspend=True
