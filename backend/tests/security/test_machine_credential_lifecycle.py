@@ -216,7 +216,8 @@ def test_git_previous_key_still_uses_authoritative_runtime_rpc(monkeypatch):
     authorized = True
 
     def rpc(name, params):
-        assert name == "resolve_git_runtime_credential"
+        assert name == "resolve_access_git_credential"
+        assert params["p_channel"] == "git"
         calls.append(params["p_key_hash"])
         row = [{"id": "old", "effective_mode": "r"}] if authorized and params["p_key_hash"] == old_hash else []
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=row))

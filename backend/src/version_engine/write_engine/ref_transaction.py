@@ -123,7 +123,7 @@ def admitted_actor(grant: ProjectGrant | RuntimeGrant, project_id: str, *, write
         raise PermissionError("Scope credentials cannot publish full repository refs")
     if write and not grant.can_write:
         raise PermissionError("read-only repository credential")
-    return "runtime:" + grant.principal.principal_id
+    return "runtime:" + (grant.principal.credential_id or grant.principal.principal_id)
 
 
 class RefTransactionService:

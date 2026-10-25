@@ -157,6 +157,8 @@ async def run():
     async with asyncio.timeout(15):
         await run_blocking(service.connections.repository.pending)
         await run_blocking(service.grants.get, "00000000-0000-0000-0000-000000000000")
+        _, access_sessions = service.lifecycle()
+        await access_sessions.ready()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -165,6 +167,8 @@ async def run():
     async def reap():
         while not stop.is_set():
             try:
+                _, sessions = service.lifecycle()
+                await sessions.reap(service.connections)
                 await service.connections.reap()
             except Exception:
                 logger.exception("workspace_ssh_reaper_failed")

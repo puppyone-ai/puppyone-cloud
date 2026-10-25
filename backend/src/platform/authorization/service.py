@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime
 from typing import Any
 
 from src.exceptions import (
@@ -15,6 +16,9 @@ from src.infra.dependency_diagnostics import dependency_failure
 from src.platform.authorization.failures import authorization_unavailable
 from src.platform.authorization.models import (
     ROLE_CAPABILITIES,
+    AccessCapability,
+    AccessChannel,
+    DelegatedAccess,
     GrantSource,
     ProjectAction,
     ProjectGrant,
@@ -28,6 +32,29 @@ from src.utils.request_context import project_access_cache_var
 
 _CACHE_PREFIX = "project-grant:v2"
 _logger = logging.getLogger("puppyone.authorization")
+
+
+def validate_access_shape(target, capabilities, channels):
+    """Reject capability/channel combinations the resource cannot enforce."""
+    capabilities = frozenset(AccessCapability(value) for value in capabilities)
+    channels = frozenset(AccessChannel(value) for value in channels)
+    if not capabilities or not channels:
+        raise ValueError("Capabilities and channels are required")
+    if target == "project_root":
+        valid = (capabilities <= {AccessCapability.REPOSITORY_READ, AccessCapability.REPOSITORY_WRITE}
+                 and AccessCapability.REPOSITORY_READ in capabilities
+                 and AccessChannel.SSH not in channels)
+    elif target == "workspace":
+        valid = (capabilities <= {AccessCapability.WORKSPACE_READ, AccessCapability.WORKSPACE_WRITE, AccessCapability.WORKSPACE_SHELL}
+                 and AccessCapability.WORKSPACE_READ in capabilities
+                 and channels <= {AccessChannel.SSH, AccessChannel.MCP}
+                 and (AccessCapability.WORKSPACE_SHELL not in capabilities or AccessCapability.WORKSPACE_WRITE in capabilities)
+                 and (AccessChannel.SSH not in channels or AccessCapability.WORKSPACE_SHELL in capabilities))
+    else:
+        valid = False
+    if not valid:
+        raise ValueError("Unsupported target/capability/channel combination")
+    return capabilities, channels
 
 
 def redacted_project_ref(project_id: str) -> str:
@@ -65,6 +92,36 @@ def _record_decision(
 class AuthorizationService:
     def __init__(self, repository: AuthorizationRepository):
         self._repository = repository
+
+    @classmethod
+    def authorize_delegated(cls, facts, channel, *, project=None, workbench=None):
+        """Evaluate the same snapshot used by atomic access admission."""
+        try:
+            g, registration = facts["grant"], facts["registration"]
+            capabilities, channels = validate_access_shape(g["target_kind"], g["capabilities"], g["channels"])
+            channel = AccessChannel(channel)
+            checked = datetime.fromisoformat(facts["checked_at"].replace("Z", "+00:00"))
+            starts = datetime.fromisoformat(g["starts_at"].replace("Z", "+00:00"))
+            expiry = datetime.fromisoformat(g["expires_at"].replace("Z", "+00:00")) if g.get("expires_at") else None
+            if (checked.tzinfo is None or starts.tzinfo is None or g["state"] != "active"
+                or registration["state"] != "active" or registration["id"] != g["registration_id"]
+                or channel not in channels or starts > checked or (expiry is not None and expiry <= checked)
+                or (project is not None and g["project_id"] != project)
+                or (workbench is not None and g["workbench_id"] != workbench)
+                or (g["target_kind"] == "workspace") != bool(g.get("workbench_id"))):
+                raise ValueError("Access authority mismatch")
+            authority = cls.authorize_facts(facts["authority"], g["project_id"], g["approved_by"], ProjectAction.CREDENTIAL_MANAGE)
+            if authority.org_id != g["org_id"]:
+                raise ValueError("Access tenant mismatch")
+            return DelegatedAccess(
+                grant_id=g["id"], registration_id=registration["id"],
+                subject_user_id=registration["owner_user_id"], approved_by=g["approved_by"],
+                project_id=g["project_id"], org_id=g["org_id"], target_kind=g["target_kind"],
+                workbench_id=g.get("workbench_id"), capabilities=capabilities, channel=channel,
+                revision=int(g["revision"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PermissionException("Access denied") from exc
 
     @classmethod
     def authorize_facts(cls, facts, project_id, user_id, action):

@@ -545,6 +545,8 @@ class Settings(BaseSettings):
     ACCESS_CREDENTIAL_HASH_SECRET: str = "ContextBase-access-credential-development-secret"
     # Verification only during key rotation; new credentials always use the primary key.
     ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET: str = ""
+    # Enable issuance only after every API/gateway replica understands parent grants.
+    ACCESS_LIFECYCLE_ENABLED: bool = False
 
     # Product entitlements / billing enforcement.
     # disabled: open-source/self-hosted default, no product limits enforced.

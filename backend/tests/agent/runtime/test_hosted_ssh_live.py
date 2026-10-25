@@ -404,3 +404,120 @@ async def test_new_owner_reaps_lost_gateway_connection(live):
             encoding=None,
         )
         assert result.exit_status == 0
+
+
+async def test_registered_external_agent_real_shell_and_parent_revocation(live):
+    """External identity reaches the owner's exact VM, then loses its live shell."""
+    from src.platform.access.grant_repository import AccessRepository, GrantRepository
+    from src.platform.access.grants import GrantService
+    from src.platform.access.sessions import AccessSessions
+    from tests.agent.runtime.test_access_lifecycle import command, setup_access
+    from tests.agent.runtime.test_access_lifecycle import issue as issue_registered
+
+    db_client = live.service.grants.client
+    live.service.authority = GrantService(GrantRepository(db_client))
+    live.service.sessions = AccessSessions(AccessRepository(db_client))
+    context = await asyncio.to_thread(setup_access, live.db, live.args, workspace=live.row)
+    ticket, _, _ = await asyncio.to_thread(
+        issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+    )
+    grant = {**ticket, "username": ticket["id"]}
+    async with await connect(live, grant) as conn:
+        proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding=None)
+        async with asyncio.timeout(20):
+            assert await proc.stdout.readline() == b"ready\n"
+        assert await read_file(live, "registered.txt") == b"registered"
+        await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
+                                id=context["grant"], project_id=context["project"], state="revoked")
+        async with asyncio.timeout(25):
+            await proc.wait_closed()
+    await until_released(live, ticket["id"])
+    row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
+    assert row["state"] == "closed" and row["registration_id"] == context["registration"]
+    with pytest.raises(asyncssh.PermissionDenied):
+        await connect(live, grant)
+
+
+@pytest.mark.skipif(not os.environ.get("PUPPYONE_TEST_CLI_ROOT"), reason="standalone CLI candidate required")
+async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch):
+    """Real external CLI, HTTP, SQL, gateway and VM; only login/billing are fixture inputs."""
+    import json
+    import secrets
+    import socket
+    from pathlib import Path
+    from uuid import uuid4
+
+    import uvicorn
+    from fastapi import Header, HTTPException
+
+    from src.config import settings
+    from src.platform.access import lifecycle_router as routes
+    from src.platform.access.adapters.ssh import hosted
+    from src.platform.access.credentials import CredentialService
+    from src.platform.access.grant_repository import AccessRepository, GrantRepository
+    from src.platform.access.grants import GrantService
+    from src.platform.access.registration_repository import RegistrationRepository
+    from src.platform.access.registrations import RegistrationService
+    from src.platform.access.sessions import AccessSessions
+    from src.platform.auth.models import CurrentUser
+
+    cli = os.environ.get("PUPPYONE_TEST_CLI_ROOT")
+    if not cli:
+        pytest.skip("Set PUPPYONE_TEST_CLI_ROOT to the candidate standalone CLI checkout")
+    script = Path(cli) / "tests/access_live_client.mjs"
+    assert script.is_file()
+    guest, owner_key, guest_key = str(uuid4()), secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    await asyncio.to_thread(live.db.sql, f"INSERT INTO auth.users(id) VALUES('{guest}');")
+    client = live.service.grants.client
+    authority = GrantService(GrantRepository(client))
+    live.service.authority = authority
+    live.service.sessions = AccessSessions(AccessRepository(client))
+    monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
+    monkeypatch.setattr(hosted, "ssh_settings", lambda: live.service.config)
+    app = FastAPI()
+    app.include_router(routes.router)
+
+    def identity(authorization: str = Header(default="")):
+        users = {"Bearer " + owner_key: live.args["user"], "Bearer " + guest_key: guest}
+        if authorization not in users:
+            raise HTTPException(401)
+        return CurrentUser(user_id=users[authorization], role="authenticated", is_anonymous=False)
+
+    app.dependency_overrides[get_current_user] = identity
+    app.dependency_overrides[routes.registration_service] = lambda: RegistrationService(RegistrationRepository(client))
+    app.dependency_overrides[routes.grant_service] = lambda: authority
+    app.dependency_overrides[routes.credential_service] = lambda: CredentialService(AccessRepository(client))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+    serving = asyncio.create_task(server.serve(sockets=[listener]))
+    process = None
+    try:
+        async with asyncio.timeout(10):
+            while not server.started:
+                if serving.done():
+                    await serving
+                await asyncio.sleep(0.01)
+        result_file = tmp_path / "result.json"
+        process = await asyncio.create_subprocess_exec(
+            "node", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "PUPPY_ACCESS_TEST_API": f"http://127.0.0.1:{port}",
+                 "PUPPY_ACCESS_TEST_PROJECT": live.args["project"], "PUPPY_ACCESS_TEST_WORKSPACE": live.row["id"],
+                 "PUPPY_ACCESS_TEST_OWNER": owner_key, "PUPPY_ACCESS_TEST_GUEST": guest_key,
+                 "PUPPY_ACCESS_TEST_STORE": str(tmp_path / "client"), "PUPPY_ACCESS_TEST_RESULT": str(result_file)},
+        )
+        async with asyncio.timeout(90):
+            stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr.decode().replace(owner_key, "[redacted]").replace(guest_key, "[redacted]")
+        assert b"cli-connected" in stdout
+        assert await read_file(live, "cli-access.txt") == b"cli-through-http"
+        result = json.loads(result_file.read_text())
+        await until_released(live, result["ticket"])
+    finally:
+        if process and process.returncode is None:
+            process.kill()
+            await process.wait()
+        server.should_exit = True
+        await serving
+        listener.close()
