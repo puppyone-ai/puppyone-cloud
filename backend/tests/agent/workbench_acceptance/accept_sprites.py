@@ -41,13 +41,14 @@ class SpritesProbe:
     egress_probe = """
 import os, socket
 assert os.getuid() == 1000
-try:
-    with socket.socket(socket.AF_UNIX) as management:
-        management.connect('/.sprite/api.sock')
-except PermissionError:
-    pass
-else:
-    raise AssertionError('Task can access Sprites management socket')
+for path in ['/.sprite/api.sock', '/run/puppyone-sprites/api.sock']:
+    try:
+        with socket.socket(socket.AF_UNIX) as management:
+            management.connect(path)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError('Task can access Sprites management socket')
 for family, host in [(socket.AF_INET, '1.1.1.1'), (socket.AF_INET6, '2606:4700:4700::1111')]:
     with socket.socket(family, socket.SOCK_STREAM) as connection:
         connection.settimeout(3)

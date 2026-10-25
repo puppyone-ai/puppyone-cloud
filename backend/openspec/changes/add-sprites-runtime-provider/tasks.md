@@ -30,9 +30,16 @@
 - Container acceptance exposed an older-Python tarfile incompatibility. The
   installer now extracts regular files before confined links, rejects traversal
   and special entries, and receives code over stdin rather than a long exec URL.
-- Hosted Sprites acceptance is authorized and implemented (including an opt-in
-  real cold wait), but cannot run until the Sprites token is configured. No cloud
-  resources were created and no deployment's runtime configuration was changed.
+- The supplied full Sprites token authenticated successfully. Initial hosted
+  acceptance exposed the platform's read-only management socket; chmod/chown
+  cannot seal it. An owned real-Sprite probe verified a root-only bind alias plus
+  masking the public path, including denied task access and working external
+  exec. All failed-run/probe resources were deleted and absence verified. The
+  full product and cold-wake scenario must pass with the rebuilt bundle below.
+- Rebuilt bundle `6035238f9bc6fcf69d3c5eb27f4e07becf3a78e585ade4f7b1e16417cbbc6a93`
+  passed actual read-only-socket container acceptance, including private-alias
+  isolation and restoring mounts before reading saved files. The 42 focused
+  provider/archive/default/configuration regressions passed.
 
 ## Enablement gates
 - [x] Build and export the actual worker bundle successfully.
@@ -43,6 +50,7 @@
   bindings. Focused cutover/provider regressions: 70 passed.
 - [ ] Run the completed integration checks and merge the verified commit into qubits.
 
-Review correction: management-socket mode alone did not enforce root ownership.
-Startup now verifies the parent directory and socket type, then sets root
-ownership and mode 0600. This change still requires hosted compatibility testing.
+Review correction: management-socket mode alone did not enforce isolation, and
+the real platform mounts it read-only. Startup now uses root-only mount traversal
+and masks the public socket without modifying the platform inode. Container
+acceptance emulates the read-only mount and remounts it across service restart.

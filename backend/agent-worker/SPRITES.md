@@ -53,9 +53,11 @@ UID firewall and a Sprites network policy. Runtime code and Node are pinned by t
 bundle; the provider base OS and apt system packages are not part of that digest.
 The bundle is limited to 256 MiB. The first boot must support root `sudo`, nftables,
 bind mounts and the Sprites management socket; failures leave admission closed.
-The management directory must be root-owned and not user-writable. Startup fixes
-the socket owner to root and restricts its mode before admitting any task; this
-platform compatibility requirement must be checked in hosted acceptance.
+The management directory must be root-owned and not user-writable. The platform
+socket is mounted read-only: startup preserves it at a root-only bind alias under
+`/run/puppyone-sprites`, then masks the original path with an inaccessible file.
+Lifecycle calls use the private alias; ordinary tasks can access neither path.
+Startup restores these mounts after cold boot before admitting any task.
 Subsequent wakes reuse the installed artifact and files, without package downloads.
 
 ## Lifecycle and preservation

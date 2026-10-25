@@ -1,9 +1,9 @@
 {
   "status": "passed",
-  "artifact": "sha256:74d411bada465debba9aecf9136df5d3a460dd70f57b029eb8f4da1a2ba5b2f7",
+  "artifact": "sha256:6035238f9bc6fcf69d3c5eb27f4e07becf3a78e585ade4f7b1e16417cbbc6a93",
   "checks": [
     "bundle install and retry",
-    "socket ownership and UID isolation",
+    "read-only management socket masked; root-only alias and UID isolation",
     "UID firewall installed",
     "native editor save/read",
     "hold create/release",
@@ -12,12 +12,12 @@
   ],
   "kind": "local_container_acceptance_not_hosted",
   "date": "2026-10-26",
-  "hosted_acceptance": "not_run_missing_sprites_token",
+  "hosted_acceptance": "separate hosted receipt required",
   "source_files": {
     "backend/src/platform/sandbox/providers/sprites/bootstrap.py": "c6852f247f2c9c6d41b178de67706b692868575dea72bd9c84f4deaef998aa25",
-    "backend/agent-worker/sprites-init.mjs": "75301c078e4ab14112a05114e87b8ab5ef9953ab253d1ec9299b742ee717ca66",
-    "backend/agent-worker/sprites-control.py": "faf9c8b562b2b090795efbf0b0635218297d200233f3ba721a7e20a0f98c3af4",
-    "backend/tests/agent/workbench_acceptance/sprites_local.py": "e459cc68a96d98da59e859d134715289e377f52a1a531e1dbd1be98bca998bdf",
+    "backend/agent-worker/sprites-init.mjs": "7e700ee5968cac342bbc39bea4f418a1971f036f651fcd1c6b96a31f11fa121a",
+    "backend/agent-worker/sprites-control.py": "640547469df79e601c0cc3c33e93680389f632a4128f0318dbb87a09e0b8c08a",
+    "backend/tests/agent/workbench_acceptance/sprites_local.py": "bae333405fdacf01fd46364d1a3e56ba8d4330c59777cd876894312f30cf50aa",
     "backend/src/platform/workspace/lifecycle.py": "bdba21f67bb4f094b490348d125acab0f33bed091f492ffe2b7ee49ea1e4341d"
   }
 }

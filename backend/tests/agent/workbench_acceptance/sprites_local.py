@@ -72,6 +72,10 @@ def main(bundle_path, bootstrap_path):
         "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/.sprite/api.sock'); s.close()"
     )
     run("python3", "-c", socket_probe, user=1000, group=1000)
+    # The real platform exposes its socket as a read-only bind mount. Even root
+    # cannot chmod it; isolation must not depend on changing that inode.
+    run("mount", "--bind", str(directory / "api.sock"), str(directory / "api.sock"))
+    run("mount", "-o", "remount,bind,ro", str(directory / "api.sock"))
 
     service = bridge = None
     boot = ["node", "/opt/puppyone-agent/sprites-init.mjs"]
@@ -142,9 +146,21 @@ def main(bundle_path, bootstrap_path):
         directory.chmod(0o755)
         service = start()
         socket_stat = (directory / "api.sock").stat()
-        assert socket_stat.st_uid == 0 and socket_stat.st_mode & 0o777 == 0o600
+        assert socket_stat.st_uid == 0 and socket_stat.st_mode & 0o777 == 0o000
+        assert not (directory / "api.sock").is_socket()
+        private = Path("/run/puppyone-sprites")
+        assert private.stat().st_uid == 0 and private.stat().st_mode & 0o777 == 0o700
+        assert (private / "api.sock").is_socket()
         denied = subprocess.run(
             ["python3", "-c", socket_probe], user=1000, group=1000, capture_output=True, timeout=5
+        )
+        assert denied.returncode != 0 and b"PermissionError" in denied.stderr
+        denied = subprocess.run(
+            ["python3", "-c", socket_probe.replace("/.sprite", str(private))],
+            user=1000,
+            group=1000,
+            capture_output=True,
+            timeout=5,
         )
         assert denied.returncode != 0 and b"PermissionError" in denied.stderr
         rules = run("nft", "list", "table", "inet", "puppyone_task_egress").stdout
@@ -184,6 +200,8 @@ await initializeWorkbench(JSON.parse(process.argv[1]), {
         # Recreate mounts/service rather than merely reading an old process cache.
         run("umount", "/workspace")
         run("umount", "/run/puppyone-workbench")
+        run("umount", "/.sprite/api.sock")
+        run("umount", "/run/puppyone-sprites/api.sock")
         Path("/run/puppyone-sprites-ready").unlink()
         run(*bootstrap, input=preamble + data)
         service = start()
@@ -213,7 +231,7 @@ await initializeWorkbench(JSON.parse(process.argv[1]), {
                     "artifact": artifact,
                     "checks": [
                         "bundle install and retry",
-                        "socket ownership and UID isolation",
+                        "read-only management socket masked; root-only alias and UID isolation",
                         "UID firewall installed",
                         "native editor save/read",
                         "hold create/release",
