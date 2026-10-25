@@ -145,6 +145,11 @@ class WorkbenchLifecycle:
                 # Recheck the same identity/epoch and current authorization
                 # after potentially slow network I/O, before reporting ready.
                 await self.check(row)
+            except WorkerLost as exc:
+                # Compute is gone and the disk is the workspace: maintenance
+                # pauses it within one pass, and the retried open recreates
+                # compute on the same disk.
+                raise WorkspaceUnavailable("workbench_preparing", retryable=True) from exc
             except (WorkerDisconnected, TimeoutError) as exc:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
@@ -514,7 +519,10 @@ class WorkbenchLifecycle:
                         finally:
                             await host.runtime.aclose()
                     except Exception as exc:
-                        if not access_failure(exc):
+                        # Revoked access and lost compute both end the session.
+                        # Pausing lost compute verifies the disk survives; the
+                        # next open recreates compute on it.
+                        if not (access_failure(exc) or isinstance(exc, WorkerLost)):
                             raise
                         claimed = await run_blocking(
                             self.repository.lifecycle_claim, row, suspend=True
