@@ -66,7 +66,11 @@ def test_resolver_builds_writable_context_when_scope_and_access_are_rw(monkeypat
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": False}]}},
+            {"id": "cred-1"},
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -102,7 +106,11 @@ def test_resolver_downgrades_to_readonly_without_writable_access(monkeypatch):
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": True}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": True}]}},
+            {"id": "cred-1"},
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -144,6 +152,7 @@ def test_resolver_applies_mcp_tools_config(monkeypatch):
                 "fs_policy": {"accesses": [{"readonly": False}]},
                 "tools_policy": {"filesystem": {"allowed": ["fs_ls", "fs_rm"]}},
             },
+            {"id": "cred-1"},
         ),
     )
 
@@ -222,7 +231,11 @@ def test_resolver_carves_child_scopes_for_parent_mcp_key(monkeypatch):
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": False}]}},
+            {"id": "cred-1"},
+        ),
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -256,7 +269,9 @@ def _grant(role: str):
 
 
 def _wire(monkeypatch, endpoint, policy, grant, calls=None):
-    monkeypatch.setattr(resolver, "_resolve_surface", lambda _key: (endpoint, policy))
+    monkeypatch.setattr(
+        resolver, "_resolve_surface", lambda _key: (endpoint, policy, {"id": "cred-1"})
+    )
 
     def owner_grant(project_id, owner):
         if calls is not None:
@@ -320,3 +335,22 @@ def test_scope_bound_endpoints_still_wait_for_native_scope_views(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         resolver.resolve_mcp_runtime("mcp_key")
     assert exc.value.status_code == 501 and calls == []
+
+
+@pytest.mark.parametrize(
+    ("role", "policy", "mode"), [("editor", WRITABLE, "rw"), ("viewer", WRITABLE, "r")]
+)
+def test_the_runtime_grant_binds_reads_and_publication_to_the_endpoint(
+    monkeypatch, role, policy, mode
+):
+    from src.platform.repository_target.models import ProjectRootTarget
+
+    _wire(monkeypatch, _root_endpoint(), policy, _grant(role))
+    grant = resolver.resolve_mcp_runtime("mcp_key").grant
+    assert grant.target == ProjectRootTarget(project_id="proj-1")
+    assert grant.mode.value == mode and grant.repository_view.max_mode == "rw"
+    assert (grant.principal.principal_id, grant.principal.credential_id) == (
+        "endpoint-root",
+        "cred-1",
+    )
+    assert grant.project_id == "proj-1"

@@ -70,12 +70,17 @@ async def call_runtime_tool(
 ):
     runtime = resolve_mcp_runtime(payload.api_key)
     ctx = runtime.context
-    scoped_fs = ScopedFsService(ops, commands)
     try:
         # Only the filesystem tools are served: Search Tools were retired with
         # the vector search backend and no other custom tool type executes.
         if payload.name not in MCP_FS_TOOL_NAMES:
             raise ScopedFsError("UNKNOWN_TOOL", f"Unknown MCP tool: {payload.name}")
+        # Reads and publications run under the endpoint's narrowed RuntimeGrant,
+        # exactly like CLI AP-FS; an unbound adapter refuses every operation.
+        scoped_fs = ScopedFsService(
+            ops.for_grant(runtime.grant),
+            VersionWriteCommandService(commands.ops.for_grant(runtime.grant)),
+        )
         result = await scoped_fs.call(ctx, payload.name, payload.arguments)
     except ScopedFsError as exc:
         raise HTTPException(
