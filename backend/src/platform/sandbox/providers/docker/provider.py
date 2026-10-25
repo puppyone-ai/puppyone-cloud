@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost
+from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost, WorkspaceDiskLost
 from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
@@ -238,6 +238,13 @@ class DockerRuntimeProvider:
         _, stderr = await proc.communicate()
         if proc.returncode and b"no such container" not in stderr.lower():
             raise RuntimeError("Pi sandbox cleanup failed")
+
+    async def recreate(self, host):
+        # No durable disk outlives this provider's compute.
+        raise WorkspaceDiskLost("Provider compute is gone and holds the only copy")
+
+    async def destroy_workspace(self, resource):
+        await self.cleanup(resource)
 
     async def destroy_resource(self, resource_id, *, pool="runtime"):
         # Removing the container (not only stopping it) releases its resources.

@@ -16,7 +16,12 @@ from uuid import UUID
 import httpx
 
 from src.config import settings
-from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost, WorkspaceUnavailable
+from src.platform.sandbox.errors import (
+    WorkerDisconnected,
+    WorkerLost,
+    WorkspaceDiskLost,
+    WorkspaceUnavailable,
+)
 from src.platform.sandbox.port import (
     RuntimeCapabilities,
     RuntimeConnection,
@@ -112,11 +117,56 @@ class FlyRuntimeProvider:
                 await asyncio.sleep(0.2 * 2**attempt)
         if response.status_code in {401, 403}:
             raise WorkspaceUnavailable("workbench_provider_authentication")
+        if response.status_code == 422 and "machine limit" in response.text.lower():
+            # An organization quota is an operator action, not a transient fault.
+            raise WorkspaceUnavailable("workbench_provider_capacity", retryable=True)
         response.raise_for_status()
         return response.json() if response.content else None
 
     def _machine(self, resource):
         return "/machines/" + quote(resource["resource_id"], safe="")
+
+    @staticmethod
+    def _volume_name(generation):
+        # Deterministic per generation, so a lost create reply is recovered by name.
+        return "pw_" + base64.b32encode(UUID(generation).bytes).decode().rstrip("=").lower()
+
+    async def _delete(self, resource, suffix, **kwargs):
+        try:
+            await self._request(resource, "DELETE", suffix, **kwargs)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:  # already gone
+                raise
+
+    async def _create_machine(self, host, volume):
+        resource = host.resource
+        machine = await self._request(
+            resource,
+            "POST",
+            "/machines",
+            json={
+                "name": "pw-" + resource["workbench_generation"],
+                "region": volume["region"],
+                "config": {
+                    "image": host.artifact,
+                    "metadata": self._metadata(resource),
+                    "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 1024},
+                    "mounts": [{"volume": volume["id"], "path": "/data"}],
+                    "services": [],
+                    "auto_destroy": False,
+                    "restart": {"policy": "no"},
+                    "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
+                },
+            },
+        )
+        resource.update(resource_id=machine["id"], allocation_pending=False, image_id=host.artifact)
+        await self._request(
+            resource,
+            "GET",
+            self._machine(resource) + "/wait",
+            params={"state": "started", "timeout": 60},
+        )
+        host.attached = True
 
     @staticmethod
     def _pool_account(pool):
@@ -206,13 +256,7 @@ class FlyRuntimeProvider:
             return
         # The operation owner persists this deterministic intent BEFORE calling
         # the provider. Lost create replies are recovered by exact generation.
-        volume_name = (
-            "pw_"
-            + base64.b32encode(UUID(resource["workbench_generation"]).bytes)
-            .decode()
-            .rstrip("=")
-            .lower()
-        )
+        volume_name = self._volume_name(resource["workbench_generation"])
         volumes = await self._request(resource, "GET", "/volumes")
         matches = [v for v in volumes if v.get("name") == volume_name]
         if len(matches) > 1:
@@ -235,33 +279,62 @@ class FlyRuntimeProvider:
         if volume.get("attached_machine_id"):
             raise WorkerDisconnected("Fly workspace disk is already attached")
         resource["volume_id"] = volume["id"]
-        machine = await self._request(
-            resource,
-            "POST",
-            "/machines",
-            json={
-                "name": "pw-" + resource["workbench_generation"],
-                "region": volume["region"],
-                "config": {
-                    "image": host.artifact,
-                    "metadata": self._metadata(resource),
-                    "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 1024},
-                    "mounts": [{"volume": volume["id"], "path": "/data"}],
-                    "services": [],
-                    "auto_destroy": False,
-                    "restart": {"policy": "no"},
-                    "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
-                },
-            },
-        )
-        resource.update(resource_id=machine["id"], allocation_pending=False, image_id=host.artifact)
-        await self._request(
+        await self._create_machine(host, volume)
+
+    async def recreate(self, host):
+        """Start new compute on the surviving disk of ``host.resource``.
+
+        The caller persisted the intent (``allocation_pending``) first, so a lost
+        create reply is adopted by exact generation metadata, never duplicated.
+        """
+        resource = host.resource
+        if not resource.get("allocation_pending"):
+            raise ValueError("Recreating compute requires a persisted allocation intent")
+        existing = await self.resolve(resource)
+        if len(existing) > 1:
+            raise WorkerDisconnected("Ambiguous Fly recreation; retain resources for reconciliation")
+        if existing:
+            if existing[0]["volume_id"] != resource.get("volume_id"):
+                raise PermissionError("Recreated Fly compute is bound to another disk")
+            host.resource = existing[0]
+            await self.resume(host)
+            return
+        volume = await self._require_disk(resource)
+        if volume.get("attached_machine_id"):
+            raise WorkerDisconnected("Fly workspace disk is still attached; retry")
+        await self._create_machine(host, volume)
+
+    async def destroy_workspace(self, resource):
+        """Destroy all compute and the disk of one generation whose owner was deleted."""
+        metadata = self._metadata(resource)
+        rows = await self._request(
             resource,
             "GET",
-            self._machine(resource) + "/wait",
-            params={"state": "started", "timeout": 60},
+            "/machines",
+            params={"metadata." + key: value for key, value in metadata.items()},
         )
-        host.attached = True
+        machines = {
+            row["id"]
+            for row in rows
+            if all(row.get("config", {}).get("metadata", {}).get(k) == v for k, v in metadata.items())
+        }
+        if resource.get("resource_id"):
+            machines.add(resource["resource_id"])
+        for machine in sorted(machines):
+            await self._delete(
+                resource, "/machines/" + quote(machine, safe=""), params={"force": "true"}
+            )
+        name = self._volume_name(resource["workbench_generation"])
+        for volume in await self._request(resource, "GET", "/volumes"):
+            if volume.get("id") != resource.get("volume_id") and volume.get("name") != name:
+                continue
+            if volume.get("state") in {"destroyed", "destroying", "pending_destroy"}:
+                continue
+            try:
+                await self._delete(resource, "/volumes/" + quote(volume["id"], safe=""))
+            except httpx.HTTPStatusError as exc:
+                # A force-destroyed Machine releases its disk asynchronously.
+                raise WorkerDisconnected("Fly workspace disk is not released yet; retry") from exc
 
     async def inspect(self, resource):
         try:
@@ -270,6 +343,9 @@ class FlyRuntimeProvider:
             if exc.response.status_code == 404:
                 raise WorkerLost("Fly workbench Machine is unavailable; preserve its disk") from exc
             raise
+        if row.get("state") in {"destroyed", "destroying"}:
+            # Fly keeps returning recently destroyed Machines; they never start again.
+            raise WorkerLost("Fly workbench Machine was destroyed; preserve its disk")
         if any(
             row.get("config", {}).get("metadata", {}).get(k) != v
             for k, v in self._metadata(resource).items()
@@ -450,10 +526,31 @@ class FlyRuntimeProvider:
             transport.release()
 
     async def pause_resource(self, host):
-        row = await self.inspect(host.resource)
         try:
+            try:
+                row = await self.inspect(host.resource)
+            except WorkerLost:
+                # Compute is already gone, which is what pausing asks for. The
+                # disk must survive; resume recreates compute on it.
+                await self._require_disk(host.resource)
+                return RuntimeTransition(resource_identity(host.resource), True, False)
             if row["state"] not in {"stopped", "suspended"}:
                 await self.pause(host)
             return RuntimeTransition(resource_identity(host.resource), True, False)
         finally:
             await self.aclose()
+
+    async def _require_disk(self, resource):
+        if not resource.get("volume_id"):
+            raise WorkspaceDiskLost("Fly workspace has no recorded disk")
+        try:
+            volume = await self._request(
+                resource, "GET", "/volumes/" + quote(resource["volume_id"], safe="")
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise WorkspaceDiskLost("Fly workspace disk is gone") from exc
+            raise
+        if volume.get("state") in {"destroyed", "destroying", "pending_destroy"}:
+            raise WorkspaceDiskLost("Fly workspace disk is gone")
+        return volume

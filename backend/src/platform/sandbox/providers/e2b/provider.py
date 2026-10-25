@@ -6,7 +6,7 @@ import time
 from contextlib import suppress
 
 from src.config import settings
-from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost
+from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost, WorkspaceDiskLost
 from src.platform.sandbox.port import (
     SEND_TIMEOUT,
     RuntimeCapabilities,
@@ -237,6 +237,13 @@ class E2BRuntimeProvider:
         for allocated in await self.resolve(resource):
             with suppress(NotFoundException):
                 await AsyncSandbox.kill(allocated["resource_id"], api_key=settings.E2B_API_KEY)
+
+    async def recreate(self, host):
+        # No durable disk outlives this provider's compute.
+        raise WorkspaceDiskLost("Provider compute is gone and holds the only copy")
+
+    async def destroy_workspace(self, resource):
+        await self.cleanup(resource)
 
     async def destroy_resource(self, resource_id, *, pool="runtime"):
         # One E2B API key owns every pool; a missing sandbox is already gone.
