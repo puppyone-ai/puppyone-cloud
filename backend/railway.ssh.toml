@@ -4,6 +4,6 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python -m src.platform.access.adapters.ssh.gateway"
+startCommand = "sh scripts/start-service.sh"  # with SERVICE_ROLE=ssh_gateway
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

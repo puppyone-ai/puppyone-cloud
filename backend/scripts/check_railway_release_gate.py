@@ -14,6 +14,8 @@ REQUIRED_ROLES = {
     "synchronize_worker",
     "mcp_server",
 }
+# Deployed when the environment exposes Hosted Workspace SSH.
+OPTIONAL_ROLES = {"ssh_gateway"}
 
 
 def validate_contract(repo_root: Path) -> list[str]:
@@ -31,6 +33,8 @@ def validate_contract(repo_root: Path) -> list[str]:
         errors.append("Invalid release inventory identity")
     if set(manifest.get("services", {})) != REQUIRED_ROLES | {"frontend"}:
         errors.append("Release inventory must include every worker, API, MCP and frontend")
+    if set(manifest.get("optional_services", {})) != OPTIONAL_ROLES:
+        errors.append("Release inventory must declare the optional SSH gateway")
     if (
         manifest.get("deployment_owner") != "environment-release"
         or manifest.get("independent_autodeploy") is not False
@@ -58,7 +62,7 @@ def validate_contract(repo_root: Path) -> list[str]:
     # One dispatcher starts every role, whether Railway builds the repository
     # (railway.toml) or runs the published image (Dockerfile CMD).
     dispatcher = (repo_root / "backend/scripts/start-service.sh").read_text()
-    for role in REQUIRED_ROLES:
+    for role in REQUIRED_ROLES | OPTIONAL_ROLES:
         if f"  {role})\n    exec " not in dispatcher:
             errors.append(f"Missing exec'd start dispatch: {role}")
     if 'startCommand = "sh scripts/start-service.sh"' not in (

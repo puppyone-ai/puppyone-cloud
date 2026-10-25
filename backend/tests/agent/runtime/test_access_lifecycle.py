@@ -26,7 +26,7 @@ def command(db, boundary, action, user, **payload):
     return call(db, "access_" + boundary + "_command", action=action, user=user, payload=payload)
 
 
-def setup_access(db, args, *, workspace=None, channels=None, single_session=False):
+def setup_access(db, args, *, workspace=None, channels=None, single_session=False, wake=False):
     owner, project = args["user"], args["project"]
     guest, registration, invitation, request, surface = [str(uuid4()) for _ in range(5)]
     org = db.row(f"SELECT org_id FROM projects WHERE id='{project}'")["org_id"]
@@ -42,7 +42,7 @@ def setup_access(db, args, *, workspace=None, channels=None, single_session=Fals
         key_hash=initial,
     )
     caps = (
-        ["workspace.read", "workspace.write", "workspace.shell"]
+        ["workspace.read", "workspace.write", "workspace.shell"] + (["workspace.wake"] if wake else [])
         if workspace
         else ["repository.read", "repository.write"]
     )
@@ -693,3 +693,39 @@ def test_shared_policy_evaluates_real_workspace_authority(postgres, submitted):
         AuthorizationService.authorize_delegated(facts, "ssh", workbench=str(uuid4()))
     with pytest.raises(PermissionException):
         AuthorizationService.authorize_delegated(facts, "git")
+
+
+@pytest.mark.parametrize("wake", [False, True])
+def test_paused_workspace_credential_requires_the_wake_capability(postgres, submitted, wake):
+    args, _ = submitted
+    workspace = running(postgres, args)
+    context = setup_access(postgres, args, workspace=workspace, wake=wake)
+    postgres.sql(f"UPDATE cloud_workbenches SET state='paused' WHERE id='{workspace['id']}'")
+    if not wake:
+        with pytest.raises(RuntimeError, match="access_workspace_unavailable"):
+            issue(postgres, context, channel="ssh")
+        return
+    ticket, next_key, _ = issue(postgres, context, channel="ssh")
+    # Resuming keeps the generation, so the ticket stays bound to this workspace.
+    assert ticket["generation"] == workspace["generation"]
+    # A retired workspace is replaced on reopen; wake cannot carry a ticket across.
+    postgres.sql(f"UPDATE cloud_workbenches SET state='retired' WHERE id='{workspace['id']}'")
+    with pytest.raises(RuntimeError, match="access_workspace_unavailable"):
+        issue(postgres, context, channel="ssh", secret=next_key)
+
+
+def test_wake_is_only_a_workspace_capability(postgres, submitted):
+    assert (
+        postgres.sql(
+            "SELECT public.access_authority_shape('project_root',"
+            "ARRAY['repository.read','workspace.wake'],ARRAY['git'])"
+        )
+        == "f"
+    )
+    assert (
+        postgres.sql(
+            "SELECT public.access_authority_shape('workspace',"
+            "ARRAY['workspace.read','workspace.write','workspace.shell','workspace.wake'],ARRAY['ssh'])"
+        )
+        == "t"
+    )

@@ -11,8 +11,8 @@ from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
-from src.platform.authorization.models import ProjectAction
-from src.platform.workspace.connections import WorkspaceConnections
+from src.platform.authorization.models import AccessCapability, ProjectAction
+from src.platform.workspace.connections import RESUMABLE_STATES, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 
 from .config import ssh_settings
@@ -61,6 +61,7 @@ class HostedSshAccess:
         self.config = config or ssh_settings()
         self.authority = authority
         self.sessions = sessions
+        self.resume_seconds = 180
 
     def endpoint(self):
         return ssh_endpoint(self.config)
@@ -107,7 +108,17 @@ class HostedSshAccess:
             "command": f"ssh -p {endpoint['port']} {identity}@{endpoint['host']}",
         }
 
-    async def validate(self, identity, *, unused=False):
+    async def validate(self, identity, *, unused=False, running=True):
+        """Check the credential and its delegation; ``running`` also requires live compute."""
+        grant, _ = await self._admit(identity, unused=unused, running=running)
+        return grant
+
+    async def _admit(self, identity, *, unused=False, running=True):
+        """Return the grant and whether it may resume a paused workspace.
+
+        Authentication and session admission run before the workspace may be
+        resumed, so they validate authority without requiring a running VM.
+        """
         grant = await run_blocking(self.grants.get, str(UUID(identity)))
         if (
             not grant
@@ -120,33 +131,64 @@ class HostedSshAccess:
             )
         ):
             raise PermissionError("SSH grant unavailable")
+        # The owner's own credential carries the owner's authority to open it.
+        may_wake = True
         if grant.get("access_grant_id"):
             authority, _ = self.lifecycle()
-            await authority.authorize(
+            delegated = await authority.authorize(
                 grant["access_grant_id"],
                 "ssh",
                 session=None if unused else identity,
                 project=grant["project_id"],
                 workbench=grant["workbench_id"],
             )
+            may_wake = AccessCapability.WORKSPACE_WAKE in getattr(delegated, "capabilities", ())
         await self.connections.authorize(
-            grant["user_id"], grant["project_id"], grant["workbench_id"], grant["generation"]
+            grant["user_id"],
+            grant["project_id"],
+            grant["workbench_id"],
+            grant["generation"],
+            running=running,
         )
-        return grant
+        return grant, may_wake
+
+    async def resume(self, grant, may_wake, notify=None):
+        """Resume a paused workspace through the sandbox module, then return.
+
+        Only an intent is recorded here; the worker's sandbox module performs
+        the provider operation. A replaced workspace (new generation) never
+        admits a credential bound to the previous one.
+        """
+        row = await run_blocking(self.workspace.repository.get, grant["workbench_id"])
+        if not row or row.get("owner_deleted_at") or row["generation"] != grant["generation"]:
+            raise WorkspaceError(409, {"code": "workbench_generation_changed"})
+        if row["state"] == "running":
+            return
+        if row["state"] not in RESUMABLE_STATES or not may_wake:
+            raise WorkspaceError(409, {"code": "workbench_not_running", "state": row["state"]})
+        if notify:
+            await notify("Resuming the workspace; this can take up to a minute.\r\n")
+        async with asyncio.timeout(self.resume_seconds):
+            row = await self.workspace.ensure_running(
+                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+            )
+        if row["generation"] != grant["generation"]:
+            raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
     async def authenticate(self, identity, key):
         try:
             async with asyncio.timeout(10):
-                grant = await self.validate(identity, unused=True)
+                grant = await self.validate(identity, unused=True, running=False)
                 return public_key(key.export_public_key()) == grant["public_key"]
         except Exception:
             return False
 
     @asynccontextmanager
-    async def open(self, identity):
-        grant = await self.validate(identity, unused=True)
+    async def open(self, identity, notify=None):
+        grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)
         try:
+            await self.resume(grant, may_wake, notify)
             async with self.connections.open(
                 identity,
                 grant["user_id"],

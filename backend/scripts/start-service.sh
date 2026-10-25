@@ -30,6 +30,9 @@ case "${SERVICE_ROLE:-api}" in
   synchronize_worker)
     exec arq src.platform.synchronize.worker.WorkerSettings
     ;;
+  ssh_gateway)
+    exec python -m src.platform.access.adapters.ssh.gateway
+    ;;
   *)
     echo "Unsupported SERVICE_ROLE; upgrade worker configuration" >&2
     exit 64

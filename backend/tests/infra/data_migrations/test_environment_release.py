@@ -777,3 +777,27 @@ def test_image_release_requires_image_sourced_services(source, valid):
     else:
         with pytest.raises(ValueError, match="image"):
             client.preflight(images={"api": BACKEND})
+
+
+# --- The SSH gateway is an optional ingress role released with the same image.
+
+from src.infra.data_migrations.release.hosted import OPTIONAL_ROLES  # noqa: E402
+
+
+def test_optional_gateway_receives_the_backend_digest():
+    images = release_images({"backend": BACKEND, "frontend": FRONTEND}, ROLES | OPTIONAL_ROLES)
+    assert images["ssh_gateway"] == BACKEND and images["frontend"] == FRONTEND
+
+
+def test_breaking_release_stops_the_gateway_with_the_other_entry_points(monkeypatch):
+    target = object.__new__(Hosted)
+    stopped = []
+    target.roles = ROLES | OPTIONAL_ROLES
+    target.config = {"queue_names": ["sync"], "environment": "staging"}
+    target.railway = SimpleNamespace(stop=lambda roles: stopped.append(set(roles)) or {})
+    target.redis = SimpleNamespace(zcard=lambda name: 0)
+    target.db = SimpleNamespace(scalar=lambda sql: "t" if "project_write_leases" in sql else "f")
+    monkeypatch.setattr("src.infra.data_migrations.release.hosted.time.sleep", lambda _: None)
+    target.quiesce()
+    assert stopped[0] == {"api", "mcp_server", "frontend", "ssh_gateway"}
+    assert "ssh_gateway" not in stopped[1]

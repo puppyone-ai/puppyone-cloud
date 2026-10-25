@@ -121,12 +121,7 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER, stop=None, roles=None):
         sandbox = SandboxModule(
             workbench_owner,
             pool=identity.pool,
-            passes=[
-                (
-                    "session_workspace_retirement",
-                    lambda: reap_workspaces(repository, PiWorker, pool=identity.pool),
-                )
-            ],
+            passes=sandbox_passes(repository, workbench_owner, identity.pool),
         )
         modules.append(asyncio.create_task(sandbox.serve(stop=stop, grace=grace)))
     if "agent" in roles:
@@ -145,6 +140,30 @@ async def serve(*, workbench_owner=_DEFAULT_OWNER, stop=None, roles=None):
                 await workbench_owner.close()
         finally:
             await concurrency.stop()
+
+
+def sandbox_passes(repository, workbench_owner, pool):
+    """Reclamation owned by the sandbox module (provider operations included)."""
+    from src.config import settings
+    from src.platform.access.sessions import reclaim_external_connections
+
+    passes = [
+        (
+            "session_workspace_retirement",
+            lambda: reap_workspaces(repository, PiWorker, pool=pool),
+        ),
+        (
+            "external_connection_reclamation",
+            lambda: reclaim_external_connections(workbench_owner, pool),
+        ),
+    ]
+    if settings.PROJECT_DELETION_CLEANUP_ENABLED:
+        # Destroys deleted Projects' machines, so it runs where lifecycle
+        # credentials live; an API with connect-only credentials disables it.
+        from src.platform.project.deletion_cleanup import process_project_deletion_cleanup
+
+        passes.append(("project_deletion_cleanup", process_project_deletion_cleanup))
+    return passes
 
 
 async def serve_agent(repository, engine, workbench_owner, *, identity, stop, grace):

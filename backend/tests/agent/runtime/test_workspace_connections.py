@@ -181,3 +181,40 @@ def test_reaper_stale_scan_does_not_stop_a_renewed_connection(postgres, submitte
     assert update(postgres, connection, "expire")["state"] == "active"
     update(postgres, connection, "stop")
     update(postgres, connection, "release")
+
+
+def test_one_workspace_admits_at_most_ten_unreleased_connections(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    admitted = [reserve(postgres, args, row) for _ in range(10)]
+    with pytest.raises(RuntimeError, match="workspace_connection_limit"):
+        reserve(postgres, args, row)
+    # Occupancy counts until cleanup is confirmed, not merely until disconnect.
+    update(postgres, admitted[0], "stop")
+    with pytest.raises(RuntimeError, match="workspace_connection_limit"):
+        reserve(postgres, args, row)
+    update(postgres, admitted[0], "release")
+    admitted.append(reserve(postgres, args, row))
+    for connection in admitted[1:]:
+        update(postgres, connection, "stop")
+        update(postgres, connection, "release")
+
+
+def test_concurrent_admissions_cannot_pass_the_workspace_bound_together(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+
+    def attempt(_):
+        try:
+            return reserve(postgres, args, row)
+        except RuntimeError as error:
+            assert "workspace_connection_limit" in str(error)
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(attempt, range(16)))
+    admitted = [result for result in results if result]
+    assert len(admitted) == 10
+    for connection in admitted:
+        update(postgres, connection, "stop")
+        update(postgres, connection, "release")

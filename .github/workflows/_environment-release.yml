@@ -220,7 +220,7 @@ jobs:
             /opt/venv/bin/fly version
             git --version
             test "$PUPPYONE_BUILD_ID" = "'"$GITHUB_SHA"'"
-            python -c "import src.main, mcp_service.server, src.platform.access.adapters.agent.runtime.worker, src.platform.upload.worker, src.platform.imports.worker, src.platform.synchronize.worker"
+            python -c "import src.main, mcp_service.server, src.platform.access.adapters.agent.runtime.worker, src.platform.upload.worker, src.platform.imports.worker, src.platform.synchronize.worker, src.platform.access.adapters.ssh.gateway"
           '
           # Unknown roles fail closed instead of starting the API.
           status=0; docker run --rm -e SERVICE_ROLE=unsupported "$image" || status=$?

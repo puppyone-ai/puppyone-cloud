@@ -10,19 +10,32 @@ from pathlib import Path
 import asyncssh
 
 from src.infra.execution.runner import run_blocking
+from src.platform.workspace.errors import WorkspaceError
 
 from .config import ssh_settings
 from .hosted import build_hosted_ssh, public_key
 
 logger = logging.getLogger(__name__)
 
+SESSION_MESSAGES = {
+    "workbench_not_running": "the workspace is not running and this credential cannot resume it.",
+    "workbench_generation_changed": "the workspace was replaced; request a new SSH credential.",
+    "workspace_connection_limit": "too many open SSH sessions for this workspace; close one and retry.",
+}
+
 
 class SshServer(asyncssh.SSHServer):
-    def __init__(self, service, connections):
+    def __init__(self, service, connections, max_connections=None):
         self.service, self.connections = service, connections
+        self.max_connections = max_connections
 
     def connection_made(self, connection):
         self.connection = connection
+        if self.max_connections is not None and len(self.connections) >= self.max_connections:
+            # Bound this process before authentication work; clients retry.
+            logger.warning("workspace_ssh_gateway_at_capacity")
+            connection.close()
+            return
         self.connections.add(connection)
 
     def connection_lost(self, exc):
@@ -43,8 +56,13 @@ async def serve_shell(process, service):
         process.exit(1)
         return
     identity = process.get_extra_info("username")
+
+    async def notify(message):
+        process.stderr.write(message.encode())
+        await process.stderr.drain()
+
     try:
-        async with service.open(identity) as (connection, shell):
+        async with service.open(identity, notify=notify) as (connection, shell):
             command = process.command or ""
             if len(command) > 32768:
                 raise ValueError("Command too large")
@@ -106,12 +124,23 @@ async def serve_shell(process, service):
     except asyncio.CancelledError:
         process.close()
         raise
+    except WorkspaceError as exc:
+        # Product codes (paused, replaced, limit) are safe and actionable.
+        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "workspace_unavailable"
+        logger.warning(
+            "workspace_ssh_session_refused", extra={"connection": identity, "code": code}
+        )
+        with suppress(Exception):
+            await notify(f"PuppyOne: {SESSION_MESSAGES.get(code, code)}\r\n")
+        process.exit(1)
     except Exception:
         logger.exception("workspace_ssh_session_failed", extra={"connection": identity})
         process.exit(255)
 
 
-async def start_gateway(service, host_key, *, host, port, connections=None, sessions=None):
+async def start_gateway(
+    service, host_key, *, host, port, connections=None, sessions=None, max_connections=None
+):
     connections = connections if connections is not None else set()
     sessions = sessions if sessions is not None else set()
 
@@ -124,7 +153,7 @@ async def start_gateway(service, host_key, *, host, port, connections=None, sess
             sessions.discard(task)
 
     return await asyncssh.create_server(
-        lambda: SshServer(service, connections),
+        lambda: SshServer(service, connections, max_connections),
         host,
         port,
         server_host_keys=[host_key],
@@ -143,14 +172,23 @@ async def start_gateway(service, host_key, *, host, port, connections=None, sess
     )
 
 
+def load_host_key(config):
+    """Host identity from a secret variable, or a private persistent key file."""
+    if config.host_key.get_secret_value():
+        return asyncssh.import_private_key(config.host_key.get_secret_value())
+    path = Path(config.host_key_file)
+    if not path.is_file() or path.stat().st_mode & 0o077:
+        raise RuntimeError(
+            "Configure WORKSPACE_SSH_HOST_KEY or a private persistent WORKSPACE_SSH_HOST_KEY_FILE"
+        )
+    return asyncssh.read_private_key(path)
+
+
 async def run():
     config = ssh_settings()
     service = build_hosted_ssh()
     service.endpoint()  # no implicit public hostname or permissive host key
-    path = Path(config.host_key_file)
-    if not path.is_file() or path.stat().st_mode & 0o077:
-        raise RuntimeError("WORKSPACE_SSH_HOST_KEY_FILE must be a private persistent key file")
-    host_key = asyncssh.read_private_key(path)
+    host_key = load_host_key(config)
     if public_key(host_key.export_public_key()) != public_key(config.public_host_key):
         raise RuntimeError("SSH host key does not match the advertised public key")
     # Validate the additive schema before accepting public connections.
@@ -164,17 +202,8 @@ async def run():
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stop.set)
 
-    async def reap():
-        while not stop.is_set():
-            try:
-                _, sessions = service.lifecycle()
-                await sessions.reap(service.connections)
-                await service.connections.reap()
-            except Exception:
-                logger.exception("workspace_ssh_reaper_failed")
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), 10)
-
+    # Lapsed or revoked connections are reclaimed by the worker's sandbox
+    # module, scoped to its pool; this process only ends its own sessions.
     connections, sessions = set(), set()
     gateway = await start_gateway(
         service,
@@ -183,8 +212,8 @@ async def run():
         port=config.listen_port,
         connections=connections,
         sessions=sessions,
+        max_connections=config.max_connections,
     )
-    reaper = asyncio.create_task(reap())
     try:
         await stop.wait()
     finally:
@@ -199,8 +228,6 @@ async def run():
         # SSH transport closure does not imply the remote process stop has been
         # acknowledged. Keep Workspace transports alive until session cleanup ends.
         await asyncio.gather(*list(sessions), return_exceptions=True)
-        reaper.cancel()
-        await asyncio.gather(reaper, return_exceptions=True)
         await service.workspace.close()
 
 

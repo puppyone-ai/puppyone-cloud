@@ -76,3 +76,10 @@ it('recipient applies explicitly for an owned registration without a renewal sec
 it('rejects an invitation for another service before making access requests', () => {
   expect(() => readInvitation(`#api=https%3A%2F%2Fevil.test&invitation=${token}`)).toThrow(/another service/);
 });
+
+it('resuming a paused workspace is a separate, explicit capability in the invitation', async () => {
+  const { newInvitation } = await import('@/features/access/lifecycle/api');
+  expect(newInvitation('workspace-1').capabilities).toEqual(['workspace.read', 'workspace.write', 'workspace.shell']);
+  expect(newInvitation('workspace-1', true, true).capabilities).toContain('workspace.wake');
+  expect(newInvitation(undefined, true, true).capabilities).toEqual(['repository.read']);
+});
