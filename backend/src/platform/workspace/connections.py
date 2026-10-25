@@ -40,12 +40,22 @@ class ConnectionRepository(WorkbenchRepository):
             raise
 
     def update(self, connection, action):
-        return self.command(
-            "connection_update",
-            id=connection["id"],
-            generation=connection["generation"],
-            action=action,
-        )
+        try:
+            return self.command(
+                "connection_update",
+                id=connection["id"],
+                generation=connection["generation"],
+                action=action,
+            )
+        except APIError as exc:
+            # A lease that cannot be renewed is an expected ending: the owner
+            # disconnected or revoked it, the workspace stopped or was replaced.
+            message = str(exc.message or exc)
+            if action == "renew" and "workspace_connection_fenced" in message:
+                raise WorkspaceError(409, {"code": "workbench_generation_changed"}) from exc
+            if action == "renew" and "workspace_connection_expired" in message:
+                raise WorkspaceError(409, {"code": "workspace_connection_ended"}) from exc
+            raise
 
     def pending(self, pool=None):
         """Unreleased connections whose lease lapsed or whose stop is unconfirmed.

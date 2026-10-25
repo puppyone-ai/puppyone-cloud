@@ -17,11 +17,49 @@ from .hosted import build_hosted_ssh, public_key
 
 logger = logging.getLogger(__name__)
 
+HEARTBEAT_SECONDS = 8
+
 SESSION_MESSAGES = {
     "workbench_not_running": "the workspace is not running and this credential cannot resume it.",
     "workbench_generation_changed": "the workspace was replaced; request a new SSH credential.",
     "workspace_connection_limit": "too many open SSH sessions for this workspace; close one and retry.",
+    "workspace_connection_ended": (
+        "this session was ended: the workspace owner disconnected it or the workspace stopped."
+    ),
+    "access_denied": (
+        "access to this workspace is not available: it was revoked, expired or ended by "
+        "the owner, or is already in use by another session."
+    ),
 }
+UNEXPECTED_ENDING = "the session ended unexpectedly; reconnect to continue."
+
+
+class ClientDisconnected(ConnectionError):
+    """The SSH client went away: a normal end of a session, not a fault."""
+
+
+def _leaves(error):
+    if isinstance(error, BaseExceptionGroup):
+        for inner in error.exceptions:
+            yield from _leaves(inner)
+    else:
+        yield error
+
+
+def session_ending(error):
+    """Classify a session error as ``(product code, client hung up)``.
+
+    Concurrent session tasks surface failures as an exception group; an
+    expected refusal anywhere in it decides the message the user sees.
+    """
+    leaves = list(_leaves(error))
+    for leaf in leaves:
+        if isinstance(leaf, WorkspaceError):
+            detail = leaf.detail
+            return (detail.get("code") if isinstance(detail, dict) else None) or (
+                "workspace_unavailable"
+            ), False
+    return None, bool(leaves) and all(isinstance(leaf, ClientDisconnected) for leaf in leaves)
 
 
 class SshServer(asyncssh.SSHServer):
@@ -94,7 +132,7 @@ async def serve_shell(process, service):
 
             async def heartbeat():
                 while True:
-                    await asyncio.sleep(8)
+                    await asyncio.sleep(HEARTBEAT_SECONDS)
                     await service.renew(connection, shell)
 
             async def output_frames():
@@ -110,7 +148,7 @@ async def serve_shell(process, service):
 
             async def disconnected():
                 await process.wait_closed()
-                raise ConnectionError("SSH client disconnected")
+                raise ClientDisconnected("SSH client disconnected")
 
             async with asyncio.TaskGroup() as tasks:
                 input_task = tasks.create_task(input_frames())
@@ -124,18 +162,25 @@ async def serve_shell(process, service):
     except asyncio.CancelledError:
         process.close()
         raise
-    except WorkspaceError as exc:
-        # Product codes (paused, replaced, limit) are safe and actionable.
-        code = exc.detail.get("code") if isinstance(exc.detail, dict) else "workspace_unavailable"
-        logger.warning(
-            "workspace_ssh_session_refused", extra={"connection": identity, "code": code}
-        )
+    except Exception as exc:
+        code, hung_up = session_ending(exc)
+        if hung_up:
+            logger.info("workspace_ssh_client_disconnected", extra={"connection": identity})
+            process.close()
+            return
+        if code:
+            # Product codes (paused, replaced, limit, ended, denied) are safe
+            # and actionable; they are expected outcomes, not faults.
+            logger.warning(
+                "workspace_ssh_session_refused", extra={"connection": identity, "code": code}
+            )
+            message = SESSION_MESSAGES.get(code, code)
+        else:
+            logger.exception("workspace_ssh_session_failed", extra={"connection": identity})
+            message = UNEXPECTED_ENDING
         with suppress(Exception):
-            await notify(f"PuppyOne: {SESSION_MESSAGES.get(code, code)}\r\n")
-        process.exit(1)
-    except Exception:
-        logger.exception("workspace_ssh_session_failed", extra={"connection": identity})
-        process.exit(255)
+            await notify(f"PuppyOne: {message}\r\n")
+        process.exit(1 if code else 255)
 
 
 async def start_gateway(

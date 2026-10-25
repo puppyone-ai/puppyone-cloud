@@ -10,7 +10,13 @@ from pathlib import Path
 import asyncssh
 import pytest
 
-from src.platform.access.adapters.ssh.gateway import start_gateway
+from src.platform.access.adapters.ssh import gateway as ssh_gateway
+from src.platform.access.adapters.ssh.gateway import (
+    ClientDisconnected,
+    session_ending,
+    start_gateway,
+)
+from src.platform.workspace.errors import WorkspaceError
 
 HELPER = Path(__file__).parents[2] / "agent-worker/workbench-shell.py"
 
@@ -76,8 +82,11 @@ class NativeAccess:
             await shell.close()
             self.closed = True
 
+    renewal_error = None
+
     async def renew(self, *args):
-        return None
+        if self.renewal_error:
+            raise self.renewal_error
 
 
 @pytest.fixture
@@ -156,3 +165,62 @@ async def test_remote_pty_receives_raw_keystroke_without_newline(transport):
         assert b"65" in data
         await proc.wait_closed()
     assert proc.exit_status == 0
+
+
+async def _ended_by(transport, monkeypatch, error):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "HEARTBEAT_SECONDS", 0.05)
+    service.renewal_error = error
+    async with asyncio.timeout(15):
+        result = await connection.run("sleep 30", encoding=None)
+    assert service.closed  # Workspace cleanup ran before the user was told.
+    return result
+
+
+async def test_an_owner_disconnect_tells_the_user_why_the_session_ended(
+    transport, monkeypatch, caplog
+):
+    result = await _ended_by(
+        transport, monkeypatch, WorkspaceError(409, {"code": "workspace_connection_ended"})
+    )
+    assert b"PuppyOne: this session was ended" in result.stderr
+    assert result.exit_status == 1
+    assert "workspace_ssh_session_failed" not in caplog.text
+
+
+async def test_revoked_access_mid_session_is_an_expected_ending(transport, monkeypatch):
+    result = await _ended_by(transport, monkeypatch, WorkspaceError(403, {"code": "access_denied"}))
+    assert b"PuppyOne: access to this workspace is not available" in result.stderr
+    assert result.exit_status == 1
+
+
+async def test_an_unexpected_fault_still_tells_the_user(transport, monkeypatch, caplog):
+    result = await _ended_by(transport, monkeypatch, RuntimeError("database unavailable"))
+    assert b"PuppyOne: the session ended unexpectedly" in result.stderr
+    assert b"database" not in result.stderr  # Internal details never reach the client.
+    assert result.exit_status == 255
+    assert "workspace_ssh_session_failed" in caplog.text
+
+
+async def test_a_client_hangup_is_not_logged_as_a_failure(transport, caplog):
+    connection, service = transport
+    process = await connection.create_process("sleep 30", encoding=None)
+    await asyncio.sleep(0.5)
+    process.close()
+    connection.close()
+    async with asyncio.timeout(15):
+        while not service.closed:
+            await asyncio.sleep(0.05)
+    assert "workspace_ssh_session_failed" not in caplog.text
+
+
+def test_session_endings_are_classified_through_task_groups():
+    ended = WorkspaceError(409, {"code": "workspace_connection_ended"})
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [ClientDisconnected(), ended])])
+    assert session_ending(nested) == ("workspace_connection_ended", False)
+    assert session_ending(ExceptionGroup("g", [ClientDisconnected()])) == (None, True)
+    assert session_ending(ExceptionGroup("g", [ClientDisconnected(), RuntimeError()])) == (
+        None,
+        False,
+    )
+    assert session_ending(RuntimeError()) == (None, False)

@@ -10,9 +10,12 @@ from uuid import uuid4
 
 import asyncssh
 import pytest
+from fastapi import HTTPException
+from postgrest.exceptions import APIError
 
+from src.exceptions import PermissionException
 from src.platform.access.adapters.ssh.hosted import HostedSshAccess, public_key
-from src.platform.workspace.connections import WorkspaceConnections
+from src.platform.workspace.connections import ConnectionRepository, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.shell import WorkspaceShell
 from src.platform.workspace.service import WorkbenchService
@@ -192,3 +195,44 @@ async def test_unsupported_artifact_cannot_reserve_connection_occupancy():
     assert failure.value.code == "workspace_capability_missing"
     repository.reserve.assert_not_called()
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "denial",
+    [
+        PermissionError(),
+        PermissionException(),
+        HTTPException(403, detail={"code": "access_denied"}),
+        HTTPException(401, detail={"code": "access_denied"}),
+    ],
+)
+async def test_an_authority_denial_mid_session_is_a_product_ending(denial):
+    service, _, grant = setup()
+    service.connections.authorize.side_effect = denial
+    with pytest.raises(WorkspaceError) as error:
+        await service.renew({"id": grant["id"]}, SimpleNamespace(control=AsyncMock()))
+    assert error.value.code == "access_denied"
+
+
+async def test_an_authority_outage_is_not_reported_as_a_denial():
+    service, _, grant = setup()
+    service.connections.authorize.side_effect = HTTPException(503, detail={"code": "x"})
+    with pytest.raises(HTTPException):
+        await service.renew({"id": grant["id"]}, SimpleNamespace(control=AsyncMock()))
+
+
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("workspace_connection_expired", "workspace_connection_ended"),
+        ("workspace_connection_fenced", "workbench_generation_changed"),
+    ],
+)
+def test_a_lease_that_cannot_be_renewed_is_an_expected_ending(message, code):
+    repository = ConnectionRepository.__new__(ConnectionRepository)
+    repository.command = Mock(side_effect=APIError({"message": message, "code": "P0001"}))
+    with pytest.raises(WorkspaceError) as error:
+        repository.update({"id": "c", "generation": "g"}, "renew")
+    assert error.value.code == code
+    with pytest.raises(APIError):  # Cleanup keeps the raw fault for the reaper's log.
+        repository.update({"id": "c", "generation": "g"}, "stop")
