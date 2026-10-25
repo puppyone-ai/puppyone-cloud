@@ -1,0 +1,68 @@
+{
+  "provider": "sprites",
+  "result": "passed",
+  "project_id": "0fcb1f84-3d8c-446f-b582-9ffb46632db9",
+  "artifact": "sha256:6035238f9bc6fcf69d3c5eb27f4e07becf3a78e585ade4f7b1e16417cbbc6a93",
+  "stages": [
+    "authenticated Chat -> default dispatcher -> real sprites/Pi",
+    "native file reads and SSE watch share one admitted service connection",
+    "task IPv4/IPv6 egress denied -> Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit",
+    "real stock Git publication -> native refs and S3 objects",
+    "independent Chat sessions reuse one resource and directory",
+    "lifecycle pause -> reads do not wake -> explicit reopen preserves resource/files"
+  ],
+  "metering": "disabled (not billing acceptance)",
+  "source_commit": "3f1dd2b8e738c94313fea62d2ca345e76f1bffaa",
+  "dirty_source": false,
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run_ids": [
+    "d8c6a032-65d7-443b-b1db-5a9c7f3a5736",
+    "2f92448b-9997-480e-b9e1-8ffb41c2514c"
+  ],
+  "workbench_id": "a4f0fce5-6a99-4fda-9be4-6d9adab3f646",
+  "generation": "707c8c7c-04c0-46c6-9410-c58130dbaf77",
+  "resource_id": "pw-707c8c7c04c046c69410c58130dbaf77",
+  "ready_seconds": 52.98,
+  "stage_seconds": [
+    52.98,
+    62.09,
+    63.19,
+    67.87,
+    79.63,
+    105.87
+  ],
+  "egress": "UID firewall and management socket isolation exercised by Agent task",
+  "publication": {
+    "refs": [
+      {
+        "new": {
+          "oid": "3def3f58956523e67c23ed34850ce7c3ee389b0c",
+          "kind": "oid"
+        },
+        "changed": true,
+        "name_b64": "cmVmcy9oZWFkcy93b3Jrc3BhY2VzLzI1ZTg2NzYyLWQxYzgtNGRiYy1hNjUyLTE2OWE1MzAwMTJhYw==",
+        "observed": {
+          "kind": "absent"
+        }
+      }
+    ],
+    "reason": null,
+    "status": "committed",
+    "commit_id": "3def3f58956523e67c23ed34850ce7c3ee389b0c",
+    "generation": 1,
+    "project_id": "0fcb1f84-3d8c-446f-b582-9ffb46632db9",
+    "receipt_id": "c62c1176-22db-5f5a-8959-6605a108f2cd",
+    "target_ref": "refs/heads/workspaces/25e86762-d1c8-4dbc-a652-169a530012ac",
+    "ref_sequence": 2,
+    "transaction_id": "96236c27-7141-4686-8ccd-f073275df69c"
+  },
+  "deleted_sprites": [
+    "pw-707c8c7c04c046c69410c58130dbaf77"
+  ],
+  "cold_boot_changed": false,
+  "cold_observed": false,
+  "recovery_method": "warm",
+  "restore_checkpoint": null,
+  "cleanup": "test Project's owned Sprites absent; verified with metadata GET",
+  "elapsed_seconds": 110.9
+}

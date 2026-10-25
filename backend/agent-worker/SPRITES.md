@@ -128,7 +128,12 @@ reuse, pause, and reopen with the same files. Model responses are scripted;
 provider, worker, file APIs and persistence are real. It is not billing or load
 acceptance. Initial hosted checks exposed read-only socket and stale metadata
 compatibility issues, both covered by the implementation and regression checks.
-The final hosted receipts are required for activation. `restore` runs two owned
+The committed `sprites-hosted-warm-receipt.json` and
+`sprites-hosted-restore-receipt.json` passed against clean source `3f1dd2b8` and
+the bundle digest in `sprites-local-receipt.json`. Both verified cleanup. This
+establishes functional acceptance, not billing or load acceptance.
+
+`restore` runs two owned
 fixtures: ordinary warm pause/reopen, and an official checkpoint restore of the
 already-paused fixture before product reopen. The latter verifies that an
 unrelated process was lost and the saved live files remain usable after runtime
