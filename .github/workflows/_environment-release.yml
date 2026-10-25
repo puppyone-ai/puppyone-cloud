@@ -309,7 +309,7 @@ jobs:
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
-            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/media/keys/ACCC4CF8.asc
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get -o Acquire::Retries=3 update -qq
