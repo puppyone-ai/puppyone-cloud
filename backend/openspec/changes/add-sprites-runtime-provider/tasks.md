@@ -60,6 +60,11 @@
   to the runtime's normal lifecycle.
 - Read-only preflight with Qubits' actual local configuration passed for Sprites
   authentication/artifact and the authorization/workspace database RPC contracts.
+- Hosted pause exposed a cached-admission race: SQL correctly rejects a file
+  read after pause, but its `workbench_not_running` rejection escaped as HTTP 500.
+  The repository now maps only that exact rejection to the existing 409 conflict;
+  other database/auth errors remain unchanged. The 44 admission/readiness/security
+  tests passed, including no channel access or wake from a stale running cache.
 
 ## Enablement gates
 - [x] Build and export the actual worker bundle successfully.

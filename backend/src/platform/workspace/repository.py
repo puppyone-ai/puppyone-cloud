@@ -2,6 +2,8 @@
 
 from src.infra.supabase.dependencies import get_supabase_client
 
+from .errors import WorkspaceError
+
 
 class WorkbenchRepository:
     def __init__(self, client=None):
@@ -65,15 +67,26 @@ class WorkbenchRepository:
         )
 
     def activity(self, row, revision, *, write=False):
-        return self.command(
-            "activity",
-            workbench=row["id"],
-            generation=row["generation"],
-            user=row["user_id"],
-            project=row["project_id"],
-            revision=revision,
-            write=write,
-        )
+        try:
+            return self.command(
+                "activity",
+                workbench=row["id"],
+                generation=row["generation"],
+                user=row["user_id"],
+                project=row["project_id"],
+                revision=revision,
+                write=write,
+            )
+        except Exception as exc:
+            # A pause can win after the API cached a running admission snapshot.
+            # Preserve the same public conflict as a fresh paused-state read;
+            # never turn a normal lifecycle race into 500 or attempt a wake.
+            if (
+                getattr(exc, "code", None) == "55000"
+                and getattr(exc, "message", None) == "workbench_not_running"
+            ):
+                raise WorkspaceError(409, {"code": "workbench_not_running"}) from None
+            raise
 
     def request_open(self, row, binding, revision, pool):
         """Record open intent, executed by workers of ``pool``."""
