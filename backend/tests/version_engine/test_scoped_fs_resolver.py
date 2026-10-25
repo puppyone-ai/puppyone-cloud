@@ -229,3 +229,94 @@ def test_resolver_carves_child_scopes_for_parent_mcp_key(monkeypatch):
         resolver.resolve_mcp_scoped_fs_context("mcp_key")
     assert exc.value.status_code == 501
     assert exc.value.detail["code"] == "native_scope_not_available"
+
+
+# --- Project-root MCP endpoints: native engine, owner's current grant ---------
+
+
+def _root_endpoint(**overrides):
+    endpoint = {
+        "id": "endpoint-root",
+        "name": "Project files",
+        "project_id": "proj-1",
+        "scope_id": None,
+        "status": "active",
+        "created_by": "owner-1",
+        "kind": "mcp",
+    }
+    endpoint.update(overrides)
+    return endpoint
+
+
+def _grant(role: str):
+    from src.platform.authorization.models import ROLE_CAPABILITIES, ProjectRole
+
+    capabilities = ROLE_CAPABILITIES[ProjectRole(role)]
+    return SimpleNamespace(allows=lambda action: action in capabilities)
+
+
+def _wire(monkeypatch, endpoint, policy, grant, calls=None):
+    monkeypatch.setattr(resolver, "_resolve_surface", lambda _key: (endpoint, policy))
+
+    def owner_grant(project_id, owner):
+        if calls is not None:
+            calls.append((project_id, owner))
+        if isinstance(grant, Exception):
+            raise grant
+        return grant
+
+    monkeypatch.setattr(resolver, "_owner_grant", owner_grant)
+
+
+WRITABLE = {"fs_policy": {"accesses": [{"path": "", "readonly": False}]}}
+
+
+def test_project_root_endpoint_serves_the_owners_editor_authority(monkeypatch):
+    calls = []
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, _grant("editor"), calls)
+    runtime = resolver.resolve_mcp_runtime("mcp_key")
+    ctx = runtime.context
+    assert calls == [("proj-1", "owner-1")]  # Evaluated now, for this request.
+    assert (ctx.project_id, ctx.scope_path, ctx.exclude, ctx.mode) == ("proj-1", "", [], "rw")
+    assert ctx.actor == "owner-1"  # Writes are attributed to the delegating member.
+    assert {"fs_write", "fs_ls"} <= ctx.allowed_tools
+
+
+def test_a_viewer_owner_caps_a_writable_endpoint_to_read_only(monkeypatch):
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, _grant("viewer"))
+    ctx = resolver.resolve_mcp_runtime("mcp_key").context
+    assert ctx.mode == "ro"
+    assert "fs_write" not in ctx.allowed_tools and "fs_ls" in ctx.allowed_tools
+
+
+def test_a_read_only_policy_narrows_an_admin_owner(monkeypatch):
+    policy = {"fs_policy": {"accesses": [{"path": "", "readonly": True}]}}
+    _wire(monkeypatch, _root_endpoint(), policy, _grant("admin"))
+    assert resolver.resolve_mcp_runtime("mcp_key").context.mode == "ro"
+
+
+@pytest.mark.parametrize("owner", ["owner-1", None])
+def test_an_owner_without_project_access_denies_the_key(monkeypatch, owner):
+    _wire(monkeypatch, _root_endpoint(created_by=owner), WRITABLE, None)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "mcp_owner_access_revoked"
+
+
+def test_authorization_storage_failure_is_not_a_denial_or_an_allow(monkeypatch):
+    unavailable = HTTPException(
+        status_code=503, detail={"code": "project_authorization_unavailable"}
+    )
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, unavailable)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 503
+
+
+def test_scope_bound_endpoints_still_wait_for_native_scope_views(monkeypatch):
+    calls = []
+    _wire(monkeypatch, _root_endpoint(scope_id="scope-1"), WRITABLE, _grant("admin"), calls)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 501 and calls == []
