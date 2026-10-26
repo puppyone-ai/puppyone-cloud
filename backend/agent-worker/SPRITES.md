@@ -60,6 +60,13 @@ Lifecycle calls use the private alias; ordinary tasks can access neither path.
 Startup restores these mounts after cold boot before admitting any task.
 Subsequent wakes reuse the installed artifact and files, without package downloads.
 
+Worker source fixes require a newly built, digest-pinned bundle. Merging backend
+code does not update the worker already installed in a Sprite. Existing
+workspaces retain their recorded artifact; changing the default bundle selects
+new allocations and is not an in-place upgrade. Do not replace their runtime or
+delete/recreate them to pick up a fix: an upgrade must first preserve live files
+and native Git history, quiesce tasks, and coordinate the persisted binding.
+
 ## Lifecycle and preservation
 
 - One deterministic Sprite name per workspace generation; labels and the immutable

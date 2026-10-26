@@ -16,6 +16,13 @@ export async function gitHttpFixture(format) {
     const base = await command(seed, 'rev-parse', 'HEAD');
     await command(directory, 'clone', '--bare', seed, remote);
     return { base, command: (...args) => command(remote, ...args), close: () => rm(directory, {recursive:true, force:true}),
+      advance: async contents => {
+        await writeFile(`${seed}/note`, contents);
+        await command(seed, 'add', '.');
+        await command(seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Remote writer');
+        await command(seed, 'push', remote, 'HEAD:refs/heads/main');
+        return command(seed, 'rev-parse', 'HEAD');
+      },
       exchange: frame => new Promise((resolve, reject) => {
         const url = new URL(frame.path, 'http://127.0.0.1'), body = Buffer.from(frame.body, 'base64');
         const child = spawn('git', ['http-backend'], { cwd: directory, env: {

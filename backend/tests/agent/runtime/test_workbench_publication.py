@@ -99,3 +99,74 @@ async def test_candidate_target_must_still_match_admitted_workbench():
         )
     transport.result.assert_not_called()
     worker.control.assert_not_awaited()
+
+
+def checkpoint():
+    return {
+        "base": base(),
+        "workspace": {"tip": "c" * 40, "changed": True, "target_ref": "refs/heads/workbench"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_unchanged_task_does_not_push_or_query_remote():
+    value = checkpoint()
+    value["workspace"]["changed"] = False
+    transport = SimpleNamespace(describe=Mock(), result=Mock())
+    worker = SimpleNamespace(control=AsyncMock())
+    assert await Publication(transport, SandboxFilesystem()).publish(
+        run(), value, "grant", worker
+    ) == {"status": "no_changes"}
+    transport.describe.assert_not_called()
+    transport.result.assert_not_called()
+    worker.control.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_remote_tip_retains_candidate_without_automatic_pull_or_push():
+    current = {**base(), "expected_oid": "d" * 40}
+    transport = SimpleNamespace(describe=Mock(return_value=current), result=Mock(return_value=None))
+    worker = SimpleNamespace(control=AsyncMock())
+    value = checkpoint()
+    result = await Publication(transport, SandboxFilesystem()).publish(run(), value, "grant", worker)
+    assert result == {
+        "status": "conflict", "code": "cloud_branch_changed",
+        "commit_id": "c" * 40, "target_ref": "refs/heads/workbench",
+    }
+    assert value == checkpoint()
+    worker.control.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_fast_forward_after_preflight_preserves_original_candidate():
+    transport = SimpleNamespace(describe=Mock(return_value=base()), result=Mock(return_value=None))
+    worker = SimpleNamespace(control=AsyncMock(return_value={"rejected": True}))
+    result = await Publication(transport, SandboxFilesystem()).publish(run(), checkpoint(), "grant", worker)
+    assert result == {
+        "status": "conflict", "code": "git_push_rejected",
+        "commit_id": "c" * 40, "target_ref": "refs/heads/workbench",
+    }
+    worker.control.assert_awaited_once_with("push", {"candidate": "c" * 40})
+
+
+@pytest.mark.asyncio
+async def test_lost_push_ack_uses_original_receipt_without_repeating_push():
+    transport = SimpleNamespace(
+        describe=Mock(return_value=base()),
+        result=Mock(side_effect=[None, {"status": "committed"}]),
+    )
+    worker = SimpleNamespace(control=AsyncMock(side_effect=ConnectionError("lost acknowledgement")))
+    result = await Publication(transport, SandboxFilesystem()).publish(run(), checkpoint(), "grant", worker)
+    assert result["status"] == "committed" and result["commit_id"] == "c" * 40
+    assert transport.result.call_count == 2
+    assert all(call.args == ("project", "grant", "run") for call in transport.result.call_args_list)
+    worker.control.assert_awaited_once_with("push", {"candidate": "c" * 40})
+
+
+@pytest.mark.asyncio
+async def test_lost_push_ack_without_receipt_does_not_replay_task_or_publish_new_candidate():
+    transport = SimpleNamespace(describe=Mock(return_value=base()), result=Mock(return_value=None))
+    worker = SimpleNamespace(control=AsyncMock(side_effect=ConnectionError("lost acknowledgement")))
+    with pytest.raises(ConnectionError, match="lost acknowledgement"):
+        await Publication(transport, SandboxFilesystem()).publish(run(), checkpoint(), "grant", worker)
+    worker.control.assert_awaited_once_with("push", {"candidate": "c" * 40})

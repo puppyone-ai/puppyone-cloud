@@ -28,6 +28,53 @@ async function daemon(directory) {
 }
 
 for (const format of ['sha1', 'sha256']) {
+  test(`${format}: remote conflict retains both commits until explicit merge and push`, { timeout: 20000 }, async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'workbench-conflict-'));
+    const root = path.join(directory, 'worktree'), remote = path.join(directory, 'remote.git');
+    const other = path.join(directory, 'other');
+    const config = { object_format: format, target_ref: 'refs/heads/workbench', base_oid: null };
+    let server;
+    try {
+      await mkdir(root); await mkdir(remote);
+      await git(root, ['init', `--object-format=${format}`, '--initial-branch=workbench', '.']);
+      await git(remote, ['init', '--bare', `--object-format=${format}`, '.']);
+      await writeFile(path.join(root, 'note'), 'shared starting point\n');
+      const base = await finalize(root, config, 'Base');
+      server = await daemon(directory);
+      await push(root, config, server.url, base.tip);
+      await git(directory, ['clone', '--branch=workbench', server.url, other]);
+      await writeFile(path.join(other, 'note'), 'remote writer\n');
+      const winner = await finalize(other, { ...config, base_oid: base.tip }, 'Remote writer');
+      await push(other, config, server.url, winner.tip);
+      // A later Run observes a new remote OID but never automatically pulls it.
+      config.base_oid = winner.tip;
+      await writeFile(path.join(root, 'note'), 'local writer\n');
+      const local = await finalize(root, config, 'Local writer');
+      assert.equal(local.automatic_commit, true);
+      assert.equal((await push(root, config, server.url, local.tip)).rejected, true);
+      assert.equal(await git(remote, ['rev-parse', config.target_ref]), winner.tip);
+      assert.equal(await git(root, ['rev-parse', 'HEAD']), local.tip);
+      assert.equal(await readFile(path.join(root, 'note'), 'utf8'), 'local writer\n');
+      // Explicit user integration: fetch, resolve the content conflict, commit,
+      // then publish the NEW candidate. The rejected candidate is not rewritten.
+      await git(root, ['fetch', server.url, config.target_ref]);
+      await assert.rejects(git(root, ['merge', '--no-edit', 'FETCH_HEAD']), error => error.code === 1);
+      assert.ok(await git(root, ['ls-files', '--unmerged']));
+      await writeFile(path.join(root, 'note'), 'local writer\nremote writer\n');
+      await git(root, ['add', 'note']);
+      await git(root, ['commit', '-m', 'Resolve both writers']);
+      const merged = await git(root, ['rev-parse', 'HEAD']);
+      await push(root, config, server.url, merged);
+      assert.equal(await git(remote, ['rev-parse', config.target_ref]), merged);
+      assert.equal(await git(remote, ['show', `${config.target_ref}:note`]), 'local writer\nremote writer');
+      assert.equal(await git(root, ['show', `${local.tip}:note`]), 'local writer');
+      assert.equal((await finalize(root, { ...config, base_oid: merged }, 'No changes')).automatic_commit, false);
+    } finally {
+      if (server && server.child.exitCode === null) { server.child.kill(); await once(server.child, 'exit'); }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test(`${format}: original candidate can publish after another local commit without rewinding files`, { timeout: 20000 }, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'workbench-publish-'));
     const root = path.join(directory, 'worktree'), remote = path.join(directory, 'remote.git');

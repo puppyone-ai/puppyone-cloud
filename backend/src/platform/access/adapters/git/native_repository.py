@@ -112,9 +112,9 @@ class NativeGitRepository:
         with request_path.open("rb") as handle:
             request = receive_request(handle, self.format)
             if isinstance(request, ReceiveProbe):
-                if publication is not None:
-                    raise ValueError("Publication requires ref updates")
                 # An authenticated transport probe is not a publication attempt.
+                # Stock Git sends this before a chunked push, including through
+                # the Agent relay. ACK the transport, not the run's candidate.
                 # Do not allocate a snapshot, ingest objects or consume its ID.
                 return Response(
                     b"",

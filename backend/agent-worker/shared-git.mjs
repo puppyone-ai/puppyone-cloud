@@ -63,10 +63,11 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
       // user config runs with the relay capability. The shared index stays shared.
       await run(['update-ref', '--create-reflog', '-m', value.message, target, candidate, before.tip || '0'.repeat(width)]);
     }
-    if (candidate !== config.base_oid && config.base_oid)
-      await run(['merge-base', '--is-ancestor', config.base_oid, candidate]);
+    // A retained workspace need not contain the current remote base: incoming
+    // changes are merged explicitly. Preserve the local candidate first; push
+    // and the host's ancestry/CAS checks decide whether it can be published.
     await inspect(); // Detect a branch switch, but never replace our captured OID with a newer HEAD.
-    return { ...before, tip: candidate, changed: candidate !== config.base_oid,
+    return { ...before, tip: candidate, changed: Boolean(candidate && candidate !== config.base_oid),
       automatic_commit: candidate !== before.tip };
   }
   if (action === 'push') {
