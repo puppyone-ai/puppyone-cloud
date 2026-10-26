@@ -2,8 +2,7 @@ name: Cloud Agent data and runtime contracts
 
 on:
   pull_request:
-    # qubits PRs get the same real runtime signal before they reach staging.
-    branches: [main, qubits]
+    branches: [main]
     paths:
       - 'backend/src/**'
       - 'backend/tests/agent/**'
