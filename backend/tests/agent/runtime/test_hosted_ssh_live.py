@@ -352,7 +352,10 @@ async def test_revoked_or_expired_grant_closes_session_and_denies_wrong_key(live
             )
         async with asyncio.timeout(25):
             await proc.wait_closed()
-        assert proc.exit_status == 255
+        # An expected ending explains itself and exits 1 (#1421); 255 is
+        # reserved for unexpected failures.
+        assert proc.exit_status == 1
+        assert b"PuppyOne: " in await proc.stderr.read()
     await until_released(live, grant["id"])
 
 
