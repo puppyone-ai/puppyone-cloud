@@ -291,7 +291,10 @@ jobs:
       needs.database.outputs.application_configured == 'true'
     runs-on: ubuntu-24.04
     environment: ${{ inputs.environment }}
-    timeout-minutes: 180
+    # Breaking releases run immutable data migrations object-by-object against
+    # remote object storage (production native inventory is estimated at 2-5 h).
+    # 360 is the GitHub-hosted maximum; artifacts are resumable if it is reached.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
