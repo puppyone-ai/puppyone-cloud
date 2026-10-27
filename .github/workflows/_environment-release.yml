@@ -234,6 +234,7 @@ jobs:
           # Public by design (shipped to browsers), but kept out of public run logs.
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           NEXT_PUBLIC_AUTH_EMAIL_ONLY: ${{ vars.NEXT_PUBLIC_AUTH_EMAIL_ONLY }}
+          NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS: ${{ vars.NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS }}
           NEXT_PUBLIC_DEV_MODE: ${{ vars.NEXT_PUBLIC_DEV_MODE }}
         run: |
           set -euo pipefail
@@ -248,6 +249,7 @@ jobs:
             --build-arg NEXT_PUBLIC_API_URL --build-arg NEXT_PUBLIC_APP_URL \
             --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY \
             --build-arg NEXT_PUBLIC_AUTH_EMAIL_ONLY --build-arg NEXT_PUBLIC_DEV_MODE \
+            --build-arg NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS \
             -t "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA" frontend
       - name: Smoke-test the frontend image
         if: steps.config.outputs.enabled == 'true'

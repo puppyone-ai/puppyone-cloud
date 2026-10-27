@@ -1,10 +1,16 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { DESKTOP_ATTEMPT_TTL_MS } from '../login-intent';
+import { expiredSignInMessage, type DelegatedClient } from '../delegated-client';
 
-const PREFIX = 'puppyone:desktop-auth:';
 type Attempt = { createdAt: number; proof: string };
 
-export function createDesktopContext({
+/**
+ * Per-attempt, sessionStorage-backed Supabase context for a delegated client.
+ * It never reads, refreshes or replaces the Cloud Web cookie session; the
+ * resulting session is handed to the delegated client and then discarded.
+ */
+export function createDelegatedContext({
+  client: delegated,
   url,
   key,
   state,
@@ -12,6 +18,7 @@ export function createDesktopContext({
   now = Date.now(),
   returning = false,
 }: {
+  client: DelegatedClient;
   url: string;
   key: string;
   state: string;
@@ -19,7 +26,7 @@ export function createDesktopContext({
   now?: number;
   returning?: boolean;
 }) {
-  const namespace = `${PREFIX}${state}`;
+  const namespace = `puppyone:${delegated}-auth:${state}`;
   const attemptKey = `${namespace}:attempt`;
   const authKey = `${namespace}:session`;
   let attempt: Attempt | null = null;
@@ -37,7 +44,7 @@ export function createDesktopContext({
   if (!valid) {
     if (returning || attempt) {
       clearTemporaryStorage(storage, namespace);
-      throw new Error('Sign-in request expired. Start sign-in again from Desktop.');
+      throw new Error(expiredSignInMessage(delegated));
     }
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     attempt = {
@@ -59,14 +66,14 @@ export function createDesktopContext({
   return {
     client,
     proof: attempt!.proof,
-    clear: () => clearDesktopContext(client, storage, namespace),
+    clear: () => clearDelegatedContext(client, storage, namespace),
   };
 }
 
-export function clearDesktopContext(client: SupabaseClient, storage: Storage, namespace: string) {
+export function clearDelegatedContext(client: SupabaseClient, storage: Storage, namespace: string) {
   client.auth.stopAutoRefresh();
   // Clear only this temporary context. signOut() would revoke the session
-  // already transferred to Main, while Web cookies must remain untouched.
+  // already transferred to the delegated client, while Web cookies must remain untouched.
   clearTemporaryStorage(storage, namespace);
 }
 

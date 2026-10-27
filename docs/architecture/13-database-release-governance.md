@@ -280,7 +280,8 @@ following infrastructure contract:
   Repository-built environments also declare public frontend build arguments;
   image environments instead set `RELEASE_IMAGES=enabled` and the
   `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`
-  (plus optional `NEXT_PUBLIC_AUTH_EMAIL_ONLY`, `NEXT_PUBLIC_DEV_MODE`) GitHub
+  (plus optional `NEXT_PUBLIC_AUTH_EMAIL_ONLY`, `NEXT_PUBLIC_DEV_MODE`,
+  `NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS`) GitHub
   environment variables and the `NEXT_PUBLIC_SUPABASE_ANON_KEY` environment
   secret (public by design, but kept out of public run logs), and give Railway pull
   access to the GHCR packages (`railway.registry_credentials` with a

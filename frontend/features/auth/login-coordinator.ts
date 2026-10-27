@@ -1,6 +1,6 @@
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import type { LoginIntent } from './login-intent';
-import { completeDesktopSession } from './desktop-session';
+import { isDelegatedIntent, type LoginIntent } from './login-intent';
+import { completeDelegatedSession } from './delegated-session';
 import { authEvent } from './auth-errors';
 
 export async function completeWebLogin(
@@ -47,9 +47,9 @@ export function createLoginCoordinator({
         if (error || !data.session)
           throw new Error('Sign-in succeeded but no session was returned.');
         authEvent('identity_verified', intent.kind);
-        if (intent.kind === 'desktop') {
-          if (!clear) throw new Error('Desktop sign-in context is unavailable.');
-          return completeDesktopSession(intent, data.session, clear);
+        if (isDelegatedIntent(intent)) {
+          if (!clear) throw new Error('Delegated sign-in context is unavailable.');
+          return completeDelegatedSession(intent, data.session, clear);
         }
         return completeWebLogin(data.session, intent.next, '/api/backend/api/v1', fetcher);
       })();

@@ -218,3 +218,74 @@ it('email signup and OTP converge on the same Web completion', async () => {
     fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/initialize'))
   ).toHaveLength(1);
 });
+
+describe('PuppyOne website sign-in', () => {
+  const challenge = 'c'.repeat(43);
+  function mountWebsite() {
+    vi.stubEnv('NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS', 'https://www.example.test');
+    window.history.replaceState({}, '', '/login?' + new URLSearchParams({
+      client: 'website', website_state: state,
+      website_callback: 'https://www.example.test/auth/callback', code_challenge: challenge,
+    }));
+    return render(
+      <StrictMode>
+        <SupabaseAuthProvider>
+          <LoginPage />
+        </SupabaseAuthProvider>
+      </StrictMode>
+    );
+  }
+
+  it('uses the same email-first UI and hands an isolated session to the website', async () => {
+    mountWebsite();
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mocks.desktop).toHaveBeenCalledOnce(); // temporary sessionStorage context
+    expect(mocks.web).not.toHaveBeenCalled(); // Cloud Web cookies are never read
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    fireEvent.change(screen.getByPlaceholderText('Your email address'), { target: { value: 'user@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(await screen.findByPlaceholderText('Enter your password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const form = submit.mock.instances[0] as HTMLFormElement;
+    expect(form.method).toBe('post');
+    expect(form.action).toBe('https://www.example.test/auth/session');
+    expect(new FormData(form).get('refresh_token')).toBe('refresh');
+    expect(new FormData(form).get('state')).toBe(state);
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/auth/initialize'))).toBe(false);
+    expect(Object.keys(sessionStorage).some(key => key.startsWith('puppyone:website-auth:'))).toBe(false);
+  });
+
+  it('starts OAuth with the website challenge so only the website can redeem the code', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, href: window.location.href });
+    mountWebsite();
+    const button = await screen.findByRole('button', { name: 'Continue with Google' });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(assign).toHaveBeenCalledOnce());
+    const authorize = new URL(assign.mock.calls[0][0]);
+    expect(authorize.origin + authorize.pathname).toBe('https://auth.example.test/auth/v1/authorize');
+    expect(authorize.searchParams.get('code_challenge')).toBe(challenge);
+    expect(authorize.searchParams.get('code_challenge_method')).toBe('s256');
+    const redirect = new URL(authorize.searchParams.get('redirect_to')!);
+    expect(redirect.pathname).toBe('/auth/callback');
+    expect(redirect.searchParams.get('website_state')).toBe(state);
+    expect(redirect.searchParams.get('website_callback')).toBe('https://www.example.test/auth/callback');
+    expect(mocks.oauth).not.toHaveBeenCalled(); // the browser SDK would create its own verifier
+  });
+
+  it('an unlisted website origin cannot start a handoff', async () => {
+    vi.stubEnv('NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS', 'https://www.example.test');
+    window.history.replaceState({}, '', '/login?' + new URLSearchParams({
+      client: 'website', website_state: state,
+      website_callback: 'https://evil.test/auth/callback', code_challenge: challenge,
+    }));
+    render(<SupabaseAuthProvider><LoginPage /></SupabaseAuthProvider>);
+    expect(await screen.findAllByText(/Start sign-in again from the PuppyOne website/)).not.toHaveLength(0);
+    expect(mocks.desktop).not.toHaveBeenCalled();
+    expect(mocks.web).not.toHaveBeenCalled();
+  });
+});

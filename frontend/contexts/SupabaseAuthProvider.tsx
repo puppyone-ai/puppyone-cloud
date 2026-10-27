@@ -78,8 +78,8 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
         .then(async providers => {
           const { data, error } = await login.client.auth.getSession();
           // A stale Web session may fail to refresh while the user is signing
-          // in again; only a Desktop return requires a valid session.
-          if (error && login.intent.kind === 'desktop') throw error;
+          // in again; only a delegated (Desktop/website) return requires a valid session.
+          if (error && login.intent.kind !== 'web') throw error;
           if (!active) return;
           setAvailableProviders(providers);
           setSession(error ? null : data.session);
