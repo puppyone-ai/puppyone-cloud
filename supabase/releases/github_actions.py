@@ -56,6 +56,21 @@ def prepare(source: dict[str, str]) -> Path:
     # proves the versioned backup bucket before it stops anything.
     if "backup_bucket" in config and not isinstance(config["backup_bucket"], str):
         raise TypeError("Release configuration backup_bucket must be a bucket name")
+    # Bucket versioning is the default object recovery. "snapshot" is the
+    # reviewed fallback for providers that cannot version buckets.
+    recovery = config.get("object_recovery")
+    if recovery is not None and (
+        not isinstance(recovery, dict)
+        or recovery.get("mode") not in {"versioning", "snapshot"}
+        or (
+            recovery["mode"] == "snapshot"
+            and not all(
+                isinstance(recovery.get(key), str) and recovery[key].strip()
+                for key in ("approved_by", "reason")
+            )
+        )
+    ):
+        raise ValueError("Release configuration object_recovery is invalid")
     railway = config.get("railway", {})
     roles = set(railway.get("services", {}))
     if not all(railway.get(key) for key in ("project_id", "environment_id")) or not (

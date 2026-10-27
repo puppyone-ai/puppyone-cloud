@@ -224,6 +224,25 @@ back to verify their digest. The application object bucket retains object
 versions, including versions deleted by a data transformation. A logical
 database restore alone is not a complete object-store rollback.
 
+Object recovery defaults to bucket versioning. Some S3-compatible providers,
+including Supabase Storage, cannot version buckets and answer the bucket
+policy status without `IsPublic`. Such an environment may set
+`object_recovery` in `PUPPYONE_RELEASE_CONFIG` to
+`{"mode": "snapshot", "approved_by": "...", "reason": "..."}`; the approver and
+reason are mandatory and recorded in release evidence. In snapshot mode the
+recovery preflight still requires a separate, reachable, private backup bucket
+(privacy is read from the Supabase Storage `public` flag when the S3 policy
+status is inconclusive) but not versioning. After writers stop, the backup
+uploads the verified database dump without an object version, then copies every
+current object of the application bucket into
+`puppyone-releases/<environment>/<dump sha256>/objects/`, reads each copy back to
+compare SHA-256, re-lists the source to prove no writer changed it, and stores
+a digest-bound `objects.manifest.json`. `object_snapshot.restore` copies a
+snapshot back only after its manifest digest matches the release evidence and
+each backup copy matches its manifest entry; objects created after the snapshot
+are reported, never deleted automatically. Snapshot mode is bounded
+(1,000,000 objects, 200 GiB); larger stores need versioned storage.
+
 The Cloud release owns `public`, its migration history and its private release
 journal. PuppyPay owns its private financial schema and release history.
 Neither Cloud installation nor public CI needs PuppyPay tables or credentials.
@@ -276,7 +295,9 @@ following infrastructure contract:
   existing format-version-1 release configuration: environment identity,
   Railway project token and full API/frontend/Agent/Upload/Import/Synchronize/MCP
   service inventory, Redis queue names, S3 storage, a dedicated acceptance
-  account and, only for breaking releases, a private versioned backup bucket.
+  account and, only for breaking releases, a private versioned backup bucket
+  (or, for storage that cannot be versioned, a private backup bucket plus an
+  approved `object_recovery` snapshot policy; see Data scope and recovery).
   Repository-built environments also declare public frontend build arguments;
   image environments instead set `RELEASE_IMAGES=enabled` and the
   `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`
@@ -295,7 +316,7 @@ following infrastructure contract:
   `$RUNNER_TEMP/puppyone-release-private`, removed at job completion.
 - The workflow installs Python 3.12, locked backend dependencies, Node build
   support, PostgreSQL 17 tools and the pinned Supabase CLI, using Docker on the
-  GitHub VM. Recovery points remain in the private versioned S3 backup bucket
+  GitHub VM. Recovery points remain in the private S3 backup bucket
   and the release journal remains in PostgreSQL. Raw diagnostics stay private
   in the temporary directory and are deleted with it; only the sanitized
   release result is retained as a GitHub artifact.
