@@ -10,6 +10,7 @@ import {
   safeNext,
 } from '@/features/auth/login-intent';
 import { desktopCallbackTarget } from '@/features/auth/supabase/desktop-callback';
+import { websiteCallbackTarget } from '@/features/auth/supabase/website-callback';
 import { completeWebLogin } from '@/features/auth/login-coordinator';
 
 export async function GET(request: Request) {
@@ -21,9 +22,17 @@ export async function GET(request: Request) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     return response;
   };
-  if (url.searchParams.has('desktop_state') || url.searchParams.has('desktop_callback')) {
+  const desktop = url.searchParams.has('desktop_state') || url.searchParams.has('desktop_callback');
+  const website = url.searchParams.has('website_state') || url.searchParams.has('website_callback');
+  if (desktop && website) return redirect('/login?error=auth_callback_failed');
+  if (desktop) {
     try { return redirect(desktopCallbackTarget(url)); }
     catch { return redirect('/login?error=auth_request_expired'); }
+  }
+  // The website, like Desktop, owns its verifier: relay the code, never exchange it here.
+  if (website) {
+    try { return redirect(websiteCallbackTarget(url)); }
+    catch { return redirect('/login?error=website_auth_request_expired'); }
   }
   const intent = { kind: 'web' as const, next: safeNext(url.searchParams.get('next')) };
   const login = new URL(loginReturnPath(intent), origin);

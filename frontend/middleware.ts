@@ -25,6 +25,8 @@ function detectLocale(request: NextRequest): string {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const client = request.nextUrl.searchParams.get('client');
+  const delegated = pathname === '/login' && (client === 'desktop' || client === 'website');
   let response = NextResponse.next({ request: { headers: request.headers } });
   const finish = (destination?: URL) => {
     if (destination) {
@@ -35,14 +37,15 @@ export async function middleware(request: NextRequest) {
     }
     response.headers.set('x-next-intl-locale', detectLocale(request));
     response.headers.set('Cache-Control', 'private, no-store');
+    // Delegated handoff pages keep `origin` so the receiver can verify the
+    // cross-origin form POST; ordinary Web login sends no referrer.
     if (pathname === '/login') response.headers.set('Referrer-Policy',
-      request.nextUrl.searchParams.get('client') === 'desktop' ? 'origin' : 'no-referrer');
+      delegated ? 'origin' : 'no-referrer');
     return response;
   };
 
-  // The existing login UI owns a temporary Desktop session, independent of Web cookies.
-  if (pathname === '/login' && request.nextUrl.searchParams.get('client') === 'desktop')
-    return finish();
+  // The existing login UI owns a temporary Desktop/website session, independent of Web cookies.
+  if (delegated) return finish();
 
   const supabase = createAuthServerClient({
     cookies: {

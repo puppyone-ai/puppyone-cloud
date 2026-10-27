@@ -4,7 +4,7 @@ import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AUTH_ERROR_MESSAGES } from '@/features/auth/auth-errors';
-import { loginReturnPath } from '@/features/auth/login-intent';
+import { isDelegatedIntent, loginReturnPath } from '@/features/auth/login-intent';
 import { PulseGrid, Dots } from '@/components/loading';
 
 const URL_ERROR_MESSAGES: Record<string, string> = {
@@ -104,7 +104,8 @@ function LoginPageInner() {
     finishSignIn,
   } = useAuth();
 
-  const desktopAuthState = loginIntent?.kind === 'desktop' ? loginIntent.state : null;
+  // Desktop and the PuppyOne website own their sessions; this page only hands off.
+  const delegatedAuthState = isDelegatedIntent(loginIntent) ? loginIntent.state : null;
 
   const [view, setView] = useState<AuthView>('main');
   const [email, setEmail] = useState('');
@@ -124,7 +125,7 @@ function LoginPageInner() {
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSubmittedRef = useRef(false);
   const autoOAuthProviderRef = useRef<'google' | 'github' | null>(null);
-  const autoDesktopCompleteRef = useRef(false);
+  const autoDelegatedCompleteRef = useRef(false);
   const navigationCommittedRef = useRef(false);
 
   const clearFeedback = useCallback(() => {
@@ -208,7 +209,7 @@ function LoginPageInner() {
     const destination = await finishSignIn();
     if (navigationCommittedRef.current) return;
     navigationCommittedRef.current = true;
-    if (loginIntent?.kind === 'desktop') window.location.assign(destination);
+    if (isDelegatedIntent(loginIntent)) window.location.assign(destination);
     else router.push(destination);
   }, [finishSignIn, loginIntent, router]);
 
@@ -243,14 +244,14 @@ function LoginPageInner() {
   }, [searchParams, isAuthReady, availableProviders, session]);
 
   useEffect(() => {
-    if (!isAuthReady || !desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
-    autoDesktopCompleteRef.current = true;
+    if (!isAuthReady || !delegatedAuthState || !session || redirecting || autoDelegatedCompleteRef.current) return;
+    autoDelegatedCompleteRef.current = true;
     setRedirecting(true);
     completeLogin().catch((e: unknown) => {
       setRedirecting(false);
-      setError(e instanceof Error ? e.message : 'Desktop sign-in failed.');
+      setError(e instanceof Error ? e.message : 'Sign-in handoff failed.');
     });
-  }, [isAuthReady, desktopAuthState, session, redirecting, completeLogin]);
+  }, [isAuthReady, delegatedAuthState, session, redirecting, completeLogin]);
 
   const handleContinue = (e: React.FormEvent) => {
     e.preventDefault();

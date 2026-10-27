@@ -1,17 +1,19 @@
-import { createDesktopContext } from './desktop-context';
+import { createDelegatedContext } from './delegated-context';
 import { createBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getOAuthCallbackUrl } from '@/lib/auth-urls';
 import { authEvent } from '../auth-errors';
 import { createLoginCoordinator } from '../login-coordinator';
-import { oauthCallbackUrl, readLoginIntent, type SignInProvider } from '../login-intent';
+import { isDelegatedIntent, oauthCallbackUrl, readLoginIntent, type SignInProvider } from '../login-intent';
 
 export function createBrowserLogin(location: URL, storage: Storage, fetcher: typeof fetch = fetch) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase is not configured');
   const intent = readLoginIntent(location);
-  const temporary = intent.kind === 'desktop' ? createDesktopContext({ url, key, state: intent.state, storage }) : null;
+  const temporary = isDelegatedIntent(intent)
+    ? createDelegatedContext({ client: intent.kind, url, key, state: intent.state, storage })
+    : null;
   const client = temporary?.client ?? (createBrowserClient(url, key) as unknown as SupabaseClient);
   const coordinator = createLoginCoordinator({
     client,
@@ -38,7 +40,8 @@ export function createBrowserLogin(location: URL, storage: Storage, fetcher: typ
       if (!enabled.includes(provider))
         throw new Error('This sign-in method is unavailable in this environment.');
       authEvent('login_started', intent.kind, provider);
-      if (intent.kind === 'desktop') {
+      if (isDelegatedIntent(intent)) {
+        // The delegated client owns the verifier; authorize with its challenge.
         const authorize = new URL('/auth/v1/authorize', url);
         authorize.search = new URLSearchParams({ provider,
           redirect_to: oauthCallbackUrl(getOAuthCallbackUrl(), intent),
