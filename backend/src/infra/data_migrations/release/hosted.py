@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +21,7 @@ from botocore.exceptions import ClientError
 
 from .acceptance import accept
 from .backup import create_backup
+from .object_snapshot import snapshot as snapshot_objects
 from .railway import Railway
 
 ROLES = {
@@ -32,10 +37,30 @@ ROLES = {
 OPTIONAL_ROLES = {"ssh_gateway"}
 INGRESS_ROLES = ("api", "mcp_server", "frontend", "ssh_gateway")
 # Images published by the release workflow's `images` job, pinned by digest.
+# "versioning" (default) recovers object bytes from bucket versions. "snapshot"
+# is an explicitly approved fallback for providers that cannot version buckets
+# (for example Supabase Storage): the release copies and verifies every object
+# into the separate private backup bucket after writers stop.
+OBJECT_RECOVERY_MODES = {"versioning", "snapshot"}
 IMAGE_REPOSITORIES = {
     "backend": "ghcr.io/puppyone-ai/puppyone-cloud-backend",
     "frontend": "ghcr.io/puppyone-ai/puppyone-cloud-frontend",
 }
+
+
+def object_recovery_mode(config: dict) -> str:
+    """Validated object recovery mode; absent means bucket versioning."""
+    policy = config.get("object_recovery")
+    if policy is None:
+        return "versioning"
+    if not isinstance(policy, dict) or policy.get("mode") not in OBJECT_RECOVERY_MODES:
+        raise ValueError("object_recovery.mode must be versioning or snapshot")
+    if policy["mode"] == "snapshot" and not all(
+        isinstance(policy.get(key), str) and policy[key].strip()
+        for key in ("approved_by", "reason")
+    ):
+        raise ValueError("Snapshot object recovery needs an explicit approver and reason")
+    return policy["mode"]
 
 
 def release_images(images: dict | None, roles=ROLES) -> dict[str, str] | None:
@@ -68,6 +93,8 @@ class Hosted:
             or any(not isinstance(q, str) or not q.strip() for q in queues)
         ):
             raise ValueError("Declare each of the Upload, Import and Synchronize queues")
+        # Reject a malformed recovery policy before any release phase starts.
+        object_recovery_mode(config)
         self.images = release_images(config.get("images"), roles)
         self.railway = Railway(config["railway"], config["railway_token"])
         self.redis = redis.Redis.from_url(
@@ -117,17 +144,24 @@ class Hosted:
 
         Ordinary additive releases take no recovery point and never reach this.
         """
+        mode = object_recovery_mode(self.config)
         backup_bucket = self.config.get("backup_bucket")
         if not isinstance(backup_bucket, str) or not backup_bucket.strip():
             raise ValueError("A breaking release needs a private versioned backup bucket")
-        # A DB restore alone cannot recover bytes overwritten/deleted in S3.
-        for bucket in (backup_bucket, self.config["migration_environment"]["S3_BUCKET_NAME"]):
-            if self.s3.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
-                raise ValueError(
-                    "Release recovery requires versioned private object and backup buckets"
-                )
         if backup_bucket == self.config["migration_environment"]["S3_BUCKET_NAME"]:
             raise ValueError("Database backups must use a separate private bucket")
+        if mode == "versioning":
+            # A DB restore alone cannot recover bytes overwritten/deleted in S3.
+            for bucket in (backup_bucket, self.config["migration_environment"]["S3_BUCKET_NAME"]):
+                if self.s3.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
+                    raise ValueError(
+                        "Release recovery requires versioned private object and backup buckets"
+                    )
+        else:
+            # Snapshot recovery copies the object bucket after writers stop;
+            # both buckets must at least be reachable before anything stops.
+            for bucket in (backup_bucket, self.config["migration_environment"]["S3_BUCKET_NAME"]):
+                self.s3.head_bucket(Bucket=bucket)
         self.verify_private_backup_bucket()
 
     def verify_private_backup_bucket(self):
@@ -138,7 +172,8 @@ class Hosted:
         }
         if any(
             grant.get("Grantee", {}).get("URI") in public_groups
-            for grant in self.s3.get_bucket_acl(Bucket=bucket)["Grants"]
+            # Supabase Storage answers without a Grants list (no ACL grants).
+            for grant in self.s3.get_bucket_acl(Bucket=bucket).get("Grants", [])
         ):
             raise ValueError("Backup bucket ACL is public")
         try:
@@ -147,8 +182,30 @@ class Hosted:
             if error.response.get("Error", {}).get("Code") != "NoSuchBucketPolicy":
                 raise
         else:
-            if policy.get("PolicyStatus", {}).get("IsPublic") is not False:
+            public = policy.get("PolicyStatus", {}).get("IsPublic")
+            if public is True:
                 raise ValueError("Backup bucket policy is not private")
+            # S3-compatible providers such as Supabase Storage answer this call
+            # without IsPublic. Privacy must then be proven by the provider.
+            if public is not False and not self.supabase_bucket_is_private(bucket):
+                raise ValueError("Backup bucket policy is not private")
+
+    def supabase_bucket_is_private(self, bucket) -> bool:
+        """Ask Supabase Storage for the bucket's public flag (service key only)."""
+        env = self.config.get("migration_environment", {})
+        url, key = env.get("SUPABASE_URL"), env.get("SUPABASE_KEY")
+        if not url or not key:
+            return False
+        request = urllib.request.Request(
+            url.rstrip("/") + "/storage/v1/bucket/" + urllib.parse.quote(bucket, safe=""),
+            headers={"apikey": key, "Authorization": "Bearer " + key},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                document = json.load(response)
+        except (urllib.error.URLError, ValueError):
+            return False
+        return isinstance(document, dict) and document.get("public") is False
 
     def prepare_build(self, source):
         if self.images:
@@ -232,6 +289,7 @@ class Hosted:
         }
 
     def backup(self, db):
+        mode = object_recovery_mode(self.config)
         evidence = create_backup(db, Path(self.config["private_artifacts"]))
         for field, suffix in (("restore_point_ref", ".dump"), ("restore_roles_ref", ".roles.json")):
             path = Path(evidence[field])
@@ -242,7 +300,9 @@ class Hosted:
                 str(path),
                 self.config["backup_bucket"],
                 key,
-                ExtraArgs={"ServerSideEncryption": "AES256"},
+                # Unversioned S3-compatible providers encrypt at rest themselves
+                # and may reject the SSE request header.
+                ExtraArgs={"ServerSideEncryption": "AES256"} if mode == "versioning" else None,
             )
             result = self.s3.get_object(Bucket=self.config["backup_bucket"], Key=key)
             digest = hashlib.sha256()
@@ -252,11 +312,27 @@ class Hosted:
                     digest.update(chunk)
             finally:
                 body.close()
-            if digest.hexdigest() != expected or not result.get("VersionId"):
+            if digest.hexdigest() != expected or (
+                mode == "versioning" and not result.get("VersionId")
+            ):
                 raise RuntimeError("Remote backup checksum or version differs")
             evidence[field] = f"s3://{self.config['backup_bucket']}/{key}"
-            evidence[field + "_version"] = result["VersionId"]
+            if mode == "versioning":
+                evidence[field + "_version"] = result["VersionId"]
         evidence["objects_before"] = datetime.now(UTC).isoformat()
+        evidence["object_recovery_mode"] = mode
+        if mode == "snapshot":
+            # Writers are stopped (quiesce precedes backup), so the copy is a
+            # consistent recovery point for every object a migration may touch.
+            evidence["object_recovery_approved_by"] = self.config["object_recovery"]["approved_by"]
+            evidence.update(
+                snapshot_objects(
+                    self.s3,
+                    source_bucket=self.config["migration_environment"]["S3_BUCKET_NAME"],
+                    target_bucket=self.config["backup_bucket"],
+                    prefix=f"puppyone-releases/{self.config['environment']}/{evidence['sha256']}",
+                )
+            )
         return evidence
 
     def entrypoint_decisions(self, inventory):
