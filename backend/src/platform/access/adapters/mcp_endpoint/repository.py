@@ -2,13 +2,13 @@
 
 from typing import Any, Dict, List, Optional
 
-from src.repo.access_credentials import (
+from src.platform.access.credential_repository import (
     AccessCredentialRepository,
     mask_access_token,
 )
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.repo.scope_service import ScopeService
-from src.version_engine.scoped_fs.policy import (
+from src.platform.repository_target.scope_service import ScopeService
+from src.platform.access.filesystem.policy import (
     custom_tool_bindings_from_tools_config,
 )
 
@@ -174,6 +174,8 @@ class McpEndpointRepository:
 
     def _scope_for_path(self, project_id: str, path: Optional[str]) -> dict:
         normalized = (path or "").strip("/")
+        if not normalized:
+            return {"id": None, "path": ""}
         scope_svc = ScopeService()
         for scope in scope_svc.list_for_project(project_id):
             if (scope.path or "") == normalized:
@@ -183,7 +185,7 @@ class McpEndpointRepository:
             name=normalized.rsplit("/", 1)[-1] if normalized else "Root",
             path=normalized,
             exclude=[],
-            mode="rw",
+            max_mode="rw",
         )
         return {"id": scope.id, "path": scope.path}
 

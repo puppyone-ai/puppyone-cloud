@@ -11,6 +11,7 @@ REQUIRED_ENTITLEMENT_FEATURES = frozenset(
         "access_surface.mcp",
         "access_surface.sandbox",
         "automation.hosted",
+        # Retired features; the keys stay until the PuppyPay plan contract drops them.
         "remote_workspace.create",
         "scope_sandbox.connect",
     }

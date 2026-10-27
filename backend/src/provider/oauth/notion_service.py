@@ -8,6 +8,7 @@ import httpx
 from src.config import settings
 from src.provider.oauth.models import OAuthConnection, OAuthConnectionCreate
 from src.provider.oauth.repository import OAuthRepository
+from src.infra.execution.runner import run_blocking
 
 
 class NotionOAuthService:
@@ -127,7 +128,7 @@ class NotionOAuthService:
                 metadata=metadata,
             )
 
-            connection = await self.repository.create(connection_create)
+            connection = await run_blocking(self.repository.create, connection_create)
 
             return (
                 True,
@@ -152,11 +153,11 @@ class NotionOAuthService:
 
     async def get_connection(self, user_id: str) -> Optional[OAuthConnection]:
         """Get Notion connection for user."""
-        return await self.repository.get_by_user_and_provider(user_id, "notion")
+        return await run_blocking(self.repository.get_by_user_and_provider, user_id, "notion")
 
     async def disconnect(self, user_id: str) -> bool:
         """Disconnect Notion integration for user."""
-        return await self.repository.delete_by_user_and_provider(user_id, "notion")
+        return await run_blocking(self.repository.delete_by_user_and_provider, user_id, "notion")
 
     async def is_token_expired(self, user_id: str) -> bool:
         """Check if the stored token is expired."""
@@ -211,7 +212,7 @@ class NotionOAuthService:
                 else None,
             }
 
-            return await self.repository.update(connection.id, update_data)
+            return await run_blocking(self.repository.update, connection.id, update_data)
 
         except httpx.HTTPStatusError:
             # Failed to refresh token, connection might be invalid

@@ -208,8 +208,8 @@ the promote endpoint becomes a thin orchestrator on top of
 ## 7. Open questions tracked here
 
 - **Q1: how deep is the index?** V1 only stores path + size + mime +
-  preview text. Full content indexing (Turbopuffer vectors / pg_trgm
-  over content) is deferred to H3.
+  preview text. Full content indexing (the self-hosted text index /
+  pg_trgm over content) is deferred to H3.
 - **Q2: TTL.** V1 has no TTL — snapshots live until the user deletes
   them or the project is removed. A reaper job is on the H5 roadmap.
 - **Q3: cross-machine merge.** Each `(user, machine, ref)` is a

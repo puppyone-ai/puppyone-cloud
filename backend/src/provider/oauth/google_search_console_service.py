@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import httpx
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.provider.oauth.models import (
     OAuthConnection,
     OAuthConnectionCreate,
@@ -97,7 +98,7 @@ class GoogleSearchConsoleOAuthService:
                     "verified_email": user_info.get("verified_email"),
                 },
             }
-            connection = await self.repository.create(OAuthConnectionCreate(
+            connection = await run_blocking(self.repository.create, OAuthConnectionCreate(
                 user_id=user_id,
                 provider="google-search-console",
                 access_token=access_token,
@@ -127,13 +128,11 @@ class GoogleSearchConsoleOAuthService:
             return False, f"Failed to handle Google Search Console callback: {exc!s}", None
 
     async def get_connection(self, user_id: str) -> Optional[OAuthConnection]:
-        return await self.repository.get_by_user_and_provider(
-            user_id, "google-search-console",
+        return await run_blocking(self.repository.get_by_user_and_provider, user_id, "google-search-console",
         )
 
     async def disconnect(self, user_id: str) -> bool:
-        return await self.repository.delete_by_user_and_provider(
-            user_id, "google-search-console",
+        return await run_blocking(self.repository.delete_by_user_and_provider, user_id, "google-search-console",
         )
 
     async def is_token_expired(self, user_id: str) -> bool:
@@ -171,8 +170,7 @@ class GoogleSearchConsoleOAuthService:
                 expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=int(token_data["expires_in"]),
                 )
-            return await self.repository.update(
-                connection.id,
+            return await run_blocking(self.repository.update, connection.id,
                 OAuthConnectionUpdate(
                     access_token=token_data.get("access_token"),
                     refresh_token=token_data.get("refresh_token") or connection.refresh_token,

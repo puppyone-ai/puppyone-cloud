@@ -1,7 +1,8 @@
-import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { safeNext, readLoginIntent } from '@/features/auth/login-intent';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { safeNext, readLoginIntent, loginReturnPath, oauthCallbackUrl } from '@/features/auth/login-intent';
 import { createLoginCoordinator } from '@/features/auth/login-coordinator';
-import { completeDesktopHandoff } from '@/features/auth/desktop-handoff';
+import { desktopCallbackTarget } from '@/features/auth/supabase/desktop-callback';
+import { allowedWebsiteOrigins, websiteCallbackTarget } from '@/features/auth/supabase/website-callback';
 
 const mocks = vi.hoisted(() => ({ server: vi.fn(), exchange: vi.fn(), setCookie: vi.fn() }));
 vi.mock('@supabase/ssr', () => ({ createServerClient: mocks.server }));
@@ -40,12 +41,13 @@ it('preserves valid app return path and rejects incomplete Desktop intent', () =
 
 it('Desktop OAuth callback preserves intent without using Web cookie session', async () => {
   const response = await GET(
-    new Request(`https://web.example.test/auth/callback?desktop_state=${state}&code=provider-code`)
+    new Request(`https://web.example.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&code=provider-code`)
   );
   const target = new URL(response.headers.get('location')!);
-  expect(target.pathname).toBe('/login');
-  expect(target.searchParams.get('auth_code')).toBe('provider-code');
-  expect(target.searchParams.get('desktop_state')).toBe(state);
+  expect(target.origin).toBe('http://127.0.0.1:4000');
+  expect(target.pathname).toBe('/auth/callback');
+  expect(target.searchParams.get('code')).toBe('provider-code');
+  expect(target.searchParams.get('state')).toBe(state);
   expect(mocks.server).not.toHaveBeenCalled();
   expect(response.headers.get('cache-control')).toContain('no-store');
   expect(response.headers.get('referrer-policy')).toBe('no-referrer');
@@ -54,12 +56,12 @@ it('Desktop OAuth callback preserves intent without using Web cookie session', a
 it('provider cancellation preserves the Desktop attempt', async () => {
   const response = await GET(
     new Request(
-      `https://web.example.test/auth/callback?desktop_state=${state}&error=access_denied&error_description=private`
+      `https://web.example.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&error=access_denied&error_description=private`
     )
   );
   const target = new URL(response.headers.get('location')!);
-  expect(target.searchParams.get('desktop_state')).toBe(state);
-  expect(target.searchParams.get('error')).toBe('auth_cancelled');
+  expect(target.searchParams.get('state')).toBe(state);
+  expect(target.searchParams.get('error')).toBe('access_denied');
   expect(target.search).not.toContain('private');
 });
 
@@ -86,37 +88,129 @@ it('Web OAuth callback exchanges once, initializes and returns to invite', async
   expect(fetcher.mock.calls).toHaveLength(1);
 });
 
-it('parallel completion shares one exchange and clears only after success', async () => {
-  const clear = vi.fn();
-  const fetcher = vi.fn(async () =>
-    Response.json({
-      data: { redirect_url: `http://127.0.0.1:4000/auth/callback?state=${state}&code=code` },
-    })
-  );
+it('parallel Web completion initializes once without any Desktop handoff', async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL) => Response.json({ data: {} }));
   const coordinator = createLoginCoordinator({
     client: { auth: { getSession: async () => ({ data: { session } }) } } as any,
-    intent: { kind: 'desktop', state },
-    proof: 'proof',
-    clear,
-    fetcher,
+    intent: { kind: 'web', next: '/invite/one' }, fetcher,
   });
-  const results = await Promise.all([
-    coordinator.finish(),
-    coordinator.finish(),
-    coordinator.finish(),
-  ]);
-  expect(new Set(results).size).toBe(1);
+  expect(await Promise.all([coordinator.finish(), coordinator.finish(), coordinator.finish()])).toEqual(['/invite/one', '/invite/one', '/invite/one']);
   expect(fetcher).toHaveBeenCalledOnce();
-  expect(clear).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][0]).toBe('/api/backend/api/v1/auth/initialize');
 });
 
 it.each([
-  'https://evil.test/?code=x',
-  'http://127.0.0.1:4000/wrong?code=x',
-  `http://127.0.0.1:4000/auth/callback?code=x&state=other`,
-])('rejects unexpected handoff destination %s', async redirect => {
-  const fetcher = vi.fn(async () => Response.json({ data: { redirect_url: redirect } }));
-  await expect(completeDesktopHandoff(state, 'proof', session, fetcher)).rejects.toThrow(
-    'invalid callback'
-  );
+  'https://evil.test/auth/callback', 'http://localhost:4000/auth/callback',
+  'http://127.0.0.1:4000/wrong', 'http://127.0.0.1:4000/auth/callback?code=injected',
+  'http://user@127.0.0.1:4000/auth/callback', 'http://127.0.0.1:80/auth/callback',
+  'puppyone://auth/callback', 'http://127.0.0.1.evil.test:4000/auth/callback',
+])('rejects unsafe callback destination %s', target => {
+  const url = new URL('https://web.test/auth/callback');
+  url.search = new URLSearchParams({ desktop_state: state, desktop_callback: target, code: 'code' }).toString();
+  expect(() => desktopCallbackTarget(url)).toThrow();
+});
+
+it('rejects ambiguous state and omits injected credentials from the relay', () => {
+  const url = new URL(`https://web.test/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&code=code&access_token=secret`);
+  expect(desktopCallbackTarget(url)).not.toContain('secret');
+  url.searchParams.append('desktop_state', state);
+  expect(() => desktopCallbackTarget(url)).toThrow();
+});
+
+describe('PuppyOne website as a delegated login client', () => {
+  const website = 'https://www.example.test';
+  const callback = `${website}/auth/callback`;
+  const challenge = 'c'.repeat(43);
+  beforeEach(() => vi.stubEnv('NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS', `${website}, http://localhost:3001`));
+  afterEach(() => vi.unstubAllEnvs());
+  const loginUrl = (overrides: Record<string, string> = {}) => {
+    const url = new URL('https://web.test/login');
+    url.search = new URLSearchParams({
+      client: 'website', website_state: state, website_callback: callback, code_challenge: challenge, ...overrides,
+    }).toString();
+    return url;
+  };
+
+  it('reads an allowlisted website intent and round-trips it through login and OAuth URLs', () => {
+    const intent = readLoginIntent(loginUrl());
+    expect(intent).toEqual({ kind: 'website', state, challenge, callbackUrl: callback });
+    expect(readLoginIntent(new URL(`https://web.test${loginReturnPath(intent)}`))).toEqual(intent);
+    const oauth = new URL(oauthCallbackUrl('https://web.test/auth/callback', intent));
+    expect(oauth.searchParams.get('website_state')).toBe(state);
+    expect(oauth.searchParams.get('website_callback')).toBe(callback);
+    expect(oauth.searchParams.has('next')).toBe(false);
+  });
+
+  it.each([
+    ['unlisted origin', { website_callback: 'https://evil.test/auth/callback' }],
+    ['wrong path', { website_callback: `${website}/somewhere` }],
+    ['injected query', { website_callback: `${callback}?code=injected` }],
+    ['credentials', { website_callback: 'https://user@www.example.test/auth/callback' }],
+    ['short state', { website_state: 'short' }],
+    ['missing challenge', { code_challenge: '' }],
+  ])('rejects a website intent with %s', (_name, overrides) => {
+    expect(() => readLoginIntent(loginUrl(overrides))).toThrow(/PuppyOne website/);
+  });
+
+  it('is disabled when no website origin is configured', () => {
+    vi.stubEnv('NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS', '');
+    expect(() => readLoginIntent(loginUrl())).toThrow();
+  });
+
+  it('accepts only exact HTTPS (or loopback HTTP) origins from configuration', () => {
+    expect(allowedWebsiteOrigins('https://www.example.test, http://evil.test, https://x.test/path, http://localhost:3001/, nonsense'))
+      .toEqual(['https://www.example.test', 'http://localhost:3001']);
+  });
+
+  it('OAuth callback relays the code to the website without exchanging it', async () => {
+    const response = await GET(new Request(
+      `https://web.example.test/auth/callback?website_state=${state}&website_callback=${encodeURIComponent(callback)}&code=provider-code`
+    ));
+    const target = new URL(response.headers.get('location')!);
+    expect(target.origin + target.pathname).toBe(callback);
+    expect(target.searchParams.get('code')).toBe('provider-code');
+    expect(target.searchParams.get('state')).toBe(state);
+    expect(mocks.server).not.toHaveBeenCalled();
+    expect(mocks.setCookie).not.toHaveBeenCalled();
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  it('OAuth cancellation is relayed without provider detail', async () => {
+    const response = await GET(new Request(
+      `https://web.example.test/auth/callback?website_state=${state}&website_callback=${encodeURIComponent(callback)}&error=access_denied&error_description=private`
+    ));
+    const target = new URL(response.headers.get('location')!);
+    expect(target.searchParams.get('error')).toBe('access_denied');
+    expect(target.search).not.toContain('private');
+  });
+
+  it('never relays to an unlisted website and rejects mixed Desktop/website callbacks', async () => {
+    const evil = await GET(new Request(
+      `https://web.example.test/auth/callback?website_state=${state}&website_callback=${encodeURIComponent('https://evil.test/auth/callback')}&code=c`
+    ));
+    expect(evil.headers.get('location')).toBe('https://web.example.test/login?error=website_auth_request_expired');
+    const mixed = await GET(new Request(
+      `https://web.example.test/auth/callback?website_state=${state}&website_callback=${encodeURIComponent(callback)}&desktop_state=${state}&code=c`
+    ));
+    expect(mixed.headers.get('location')).toBe('https://web.example.test/login?error=auth_callback_failed');
+    expect(mocks.server).not.toHaveBeenCalled();
+  });
+
+  it('omits injected credentials and rejects ambiguous website state', () => {
+    const url = new URL(`https://web.test/auth/callback?website_state=${state}&website_callback=${encodeURIComponent(callback)}&code=code&access_token=secret`);
+    expect(websiteCallbackTarget(url)).not.toContain('secret');
+    url.searchParams.append('website_state', state);
+    expect(() => websiteCallbackTarget(url)).toThrow();
+  });
+
+  it('website login middleware never touches the Web session and keeps origin referrer', async () => {
+    const response = await middleware(new NextRequest(loginUrl().toString().replace('https://web.test', 'https://web.example.test'), {
+      headers: { cookie: 'web-session=existing' },
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.server).not.toHaveBeenCalled();
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(response.headers.get('referrer-policy')).toBe('origin');
+  });
 });

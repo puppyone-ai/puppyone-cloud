@@ -14,6 +14,28 @@ from src.platform.project.repository import ProjectRepositoryBase
 
 logger = logging.getLogger(__name__)
 
+# SQLSTATE raised by ``join_project_via_share_token`` when the recipient is not
+# an ``org_members`` row for the project's organization.
+_ORG_MEMBERSHIP_SQLSTATE = "42501"
+_ORG_MEMBERSHIP_MARKER = "share recipient must belong to the organization"
+
+
+def _is_org_membership_denial(exc: Exception) -> bool:
+    """Recognize the share-join org boundary across PostgREST error shapes.
+
+    ``supabase-py`` surfaces RPC failures as ``APIError`` with ``.code`` /
+    ``.message`` attributes, but the concrete class differs between the sync
+    and async stacks and between library versions. Match on the stable
+    contract instead — the SQLSTATE plus the message the function raises —
+    so a library bump cannot silently turn this back into a 500.
+    """
+    code = getattr(exc, "code", None)
+    if str(code) == _ORG_MEMBERSHIP_SQLSTATE:
+        return True
+    text = f"{getattr(exc, 'message', '')} {exc}".lower()
+    return _ORG_MEMBERSHIP_MARKER in text
+
+
 @dataclass
 class TableInfo:
     """Table information"""
@@ -334,8 +356,27 @@ class ProjectService:
         design. Idempotent: if the user is already a project member
         we silently return their existing role rather than 409 (the
         observable goal — "I'm in this project now" — is met).
+
+        The database function fails closed with SQLSTATE ``42501`` when
+        the recipient is not already a member of the project's
+        organization. That is a *product* boundary, not a server fault:
+        share links widen a project ACL inside one org, they do not
+        create org members. Translate it into a 403 the share landing
+        page can explain, instead of letting the raw PostgREST error
+        bubble into the generic 500 handler (which rendered as an
+        unexplained "something went wrong" on the share link).
         """
-        row = self.memberships.join_with_share_token(token, user_id)
+        try:
+            row = self.memberships.join_with_share_token(token, user_id)
+        except Exception as exc:  # noqa: BLE001 - re-raised below when unrelated
+            if not _is_org_membership_denial(exc):
+                raise
+            raise PermissionException(
+                "This share link only works for members of the project's "
+                "organization. Ask an owner to invite you to the "
+                "organization first.",
+                code=ErrorCode.FORBIDDEN,
+            ) from exc
         if not row:
             raise NotFoundException(
                 "Share link is invalid or has been rotated",

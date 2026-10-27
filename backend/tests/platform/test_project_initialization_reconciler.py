@@ -57,7 +57,7 @@ class VersionEngineStub:
         self.error = error
         self.initialized: list[str] = []
 
-    async def initialize_project_tree(self, project_id: str):
+    def initialize_project_tree(self, project_id: str):
         self.initialized.append(project_id)
         if self.error:
             raise self.error

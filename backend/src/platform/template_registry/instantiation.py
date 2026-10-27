@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
+from src.file_operations.commands import VersionWriteCommandService
+from src.infra.execution.runner import run_blocking
 from src.platform.entitlements.service import EntitlementService
 from src.platform.project.control_plane import (
     ProjectControlPlaneService,
@@ -12,7 +13,6 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.version_engine.adapters.product.commands import VersionWriteCommandService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 from .service import TemplateRegistryService
@@ -108,7 +108,7 @@ class TemplateInstantiationService:
             project_description=project_description,
             org_id=org_id,
         )
-        replay = await asyncio.to_thread(
+        replay = await run_blocking(
             self.control_plane.preflight_project_creation,
             operation_key=operation_key,
             actor_user_id=actor_user_id,
@@ -135,7 +135,7 @@ class TemplateInstantiationService:
             template_id=template_id,
             release_id=release_id,
         )
-        project_limit = await asyncio.to_thread(
+        project_limit = await run_blocking(
             self.entitlements.enforced_limit_value,
             org_id,
             "projects.max",
@@ -182,7 +182,7 @@ class TemplateInstantiationService:
             # A concurrent request may have won after this request's not-found
             # preflight. Never shape the response from the later Registry view;
             # re-read the winner's durable release metadata instead.
-            replay = await asyncio.to_thread(
+            replay = await run_blocking(
                 self.control_plane.preflight_project_creation,
                 operation_key=operation_key,
                 actor_user_id=actor_user_id,

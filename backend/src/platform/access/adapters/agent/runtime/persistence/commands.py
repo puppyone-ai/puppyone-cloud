@@ -1,0 +1,226 @@
+"""Transactional Agent operations; SQL owns order, idempotency and fencing."""
+
+from uuid import UUID, uuid5
+
+from .queries import RunQueries
+
+
+class RunRepository(RunQueries):
+    def workspace_acquire(self, run, binding):
+        return self.rpc(
+            "workspace_acquire",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            binding=binding,
+        )
+
+    def workspace_transition(self, run, workspace, state, resource=None):
+        return self.rpc(
+            "workspace_transition",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            generation=workspace["generation"],
+            version=workspace["version"],
+            state=state,
+            resource=resource,
+        )
+
+    def workspace_due(self, *, pool, limit=20):
+        """Claim Session workspaces of ``pool`` whose retirement is due."""
+        return self.rpc("workspace_due_in_pool", pool=pool, limit=limit)
+
+    def workspace_retired(self, workspace):
+        return self.rpc(
+            "workspace_retired",
+            session=workspace["session_id"],
+            generation=workspace["generation"],
+            operation=workspace["operation_id"],
+        )
+
+    def workspace_recovered(self, run):
+        return self.rpc(
+            "workspace_recovered", run=run["id"], execution=run["execution_id"], fence=run["fence"]
+        )
+
+    def settle_model(self, run, *, checkpoint):
+        return self.rpc(
+            "settle_model",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            checkpoint=checkpoint,
+        )
+
+    def start_execution(self, run, *, checkpoint, billing, resource):
+        return self.rpc(
+            "start_execution",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            checkpoint=checkpoint,
+            billing=billing,
+            resource=resource,
+        )
+
+    def begin_model(self, run, *, request, checkpoint, limit):
+        return self.rpc(
+            "begin_model",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            request=request,
+            checkpoint=checkpoint,
+            limit=limit,
+        )
+
+    def begin_tool(self, run, frame, *, checkpoint, approval_required):
+        # The existing SQL wire argument is named p_mutation, but its only
+        # meaning is "wait for approval". Mutation recovery is owned separately
+        # by Recovery.after_tool; automatic writes must still be checkpointed.
+        return self.rpc(
+            "begin_tool",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            call=frame["call_id"],
+            name=frame["name"],
+            input=frame["input"],
+            checkpoint=checkpoint,
+            mutation=approval_required,
+        )
+
+    def complete_tool(self, run, frame, *, result, checkpoint):
+        return self.rpc(
+            "complete_tool",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            call=frame["call_id"],
+            name=frame["name"],
+            input=frame["input"],
+            result=result,
+            checkpoint=checkpoint,
+        )
+
+    def continue_after_rejection(self, run, frame):
+        """Leave approval wait without changing its rejected receipt; ACK replay is inert."""
+        batch = str(uuid5(UUID(run["execution_id"]), "declined-tool:" + frame["call_id"]))
+        result = self.append_events_batch(
+            run,
+            [{"kind": "state", "payload": {"state": "running"}, "patch": {"state": "running"}}],
+            batch_id=batch,
+        )
+        return {"run": result}
+
+    def cleaned(self, execution_id):
+        self.client.table("agent_run_executions").update({"cleaned": True}).eq(
+            "id", execution_id
+        ).execute()
+
+    def submit_run(self, **values):
+        return self.rpc("submit_context", **values)
+
+    def claim_workbench_run(self, *, worker):
+        """Claim the next shared-workbench Run of this worker's pool and contracts."""
+        value = self.rpc("dispatch", worker=worker, workbench=True)
+        return {**value["run"], "_execution": value} if value else None
+
+    def claim_run(self, *, worker):
+        """Claim the next Session-workspace Run of this worker's pool and contracts."""
+        value = self.rpc("dispatch", worker=worker, workbench=False)
+        return {**value["run"], "_execution": value} if value else None
+
+    def release_execution(self, run, *, reason):
+        """Return a claimed Run to its queue (worker_shutdown | worker_incapable)."""
+        return self.rpc(
+            "release",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            reason=reason,
+        )
+
+    def verify_dispatch_contract(self):
+        """Prove the routed dispatch RPCs exist without claiming or releasing work."""
+        absent = "00000000-0000-0000-0000-000000000000"
+        probes = (
+            ("dispatch", {"worker": {}, "workbench": False}, "agent_worker_invalid"),
+            (
+                "release",
+                {"run": absent, "execution": absent, "fence": 0, "reason": "worker_shutdown"},
+                "agent_execution_fenced",
+            ),
+        )
+        for function, values, expected in probes:
+            try:
+                self.rpc(function, **values)
+            except Exception as exc:
+                if getattr(exc, "message", None) != expected:
+                    raise
+            else:
+                raise RuntimeError(f"agent_run_{function} accepted an invalid probe")
+
+    def renew_execution(self, run):
+        return self.rpc("renew", run=run["id"], execution=run["execution_id"], fence=run["fence"])
+
+    def create_builtin(self, *, project, scope, user, config, revision):
+        return self.rpc(
+            "builtin_context",
+            project=project,
+            scope=scope,
+            user=user,
+            config=config,
+            revision=revision,
+        )
+
+    def command_run(self, *, run, user, command, **values):
+        return self.rpc("command_context", run=run, user=user, command=command, **values)
+
+    def append_events_batch(self, run, events, *, batch_id):
+        return self.rpc(
+            "append_batch",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            batch=batch_id,
+            events=events,
+        )
+
+    def complete_run(self, run, *, state, code, snapshot, cleaned=False):
+        return self.rpc(
+            "finish",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            state=state,
+            code=code,
+            snapshot=snapshot,
+            publication=run["publication"],
+            cleaned=cleaned,
+        )
+
+    def write(self, run, kind, payload=None, **patch):
+        return self.rpc(
+            "write",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            kind=kind,
+            payload=payload or {},
+            patch=patch,
+        )
+
+    def tool(self, run, frame, state, result=None):
+        return self.rpc(
+            "tool",
+            run=run["id"],
+            execution=run["execution_id"],
+            fence=run["fence"],
+            call=frame["call_id"],
+            name=frame["name"],
+            input=frame["input"],
+            state=state,
+            result=result,
+        )

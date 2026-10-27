@@ -5,12 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from src.platform.workspace.fallback_provider import FallbackWorkspaceProvider
 from src.platform.workspace.project_cleanup import (
     ProjectHostCleanupPort,
     ProjectHostResourceBusy,
 )
-from src.version_engine.adapters.git._filelock import file_exclusive_lock
+from src.version_engine.infrastructure.file_lock import file_exclusive_lock
 
 
 def _write_git_view(cache_root: Path, project_id: str, view_id: str) -> Path:
@@ -101,55 +100,26 @@ async def test_cleanup_removes_only_exact_project_including_colliding_git_dir(
 
 
 @pytest.mark.asyncio
-async def test_project_scoped_workspace_survives_registry_restart_for_cleanup(
-    tmp_path: Path,
-):
+async def test_leftover_legacy_workspace_directories_are_scrubbed(tmp_path: Path):
+    # Retired host-local Agent workspaces left lower/ and workspaces/ trees on
+    # older hosts. A fresh port removes them by path, without any registry.
     workspace_base = tmp_path / "workspace"
     lower = workspace_base / "lower" / "project-1"
-    lower.mkdir(parents=True)
-    (lower / "file.txt").write_text("content", encoding="utf-8")
-    provider = FallbackWorkspaceProvider(base_dir=str(workspace_base))
-    info = await provider.create_workspace("agent-1", "project-1")
-    assert Path(info.path) == workspace_base / "workspaces" / "project-1" / "agent-1"
-
-    # A fresh cleanup port has no dependency on the old process registry.
-    restarted_port = ProjectHostCleanupPort(
-        workspace_base_dir=workspace_base,
-        git_view_cache_dir=tmp_path / "git-cache",
-    )
-    snapshot = restarted_port.snapshot("project-1")
-    await restarted_port.delete(snapshot)
-
-    assert not Path(info.path).exists()
-    assert not lower.exists()
-    assert restarted_port.verify(snapshot).complete is True
-
-
-@pytest.mark.asyncio
-async def test_cleanup_forgets_only_target_project_in_process_state(tmp_path: Path):
-    workspace_base = tmp_path / "workspace"
-    provider = FallbackWorkspaceProvider(base_dir=str(workspace_base))
-    for project_id, agent_id in (
-        ("project-1", "agent-1"),
-        ("project-2", "agent-2"),
-    ):
-        lower = workspace_base / "lower" / project_id
-        lower.mkdir(parents=True)
-        (lower / "file.txt").write_text(project_id, encoding="utf-8")
-        await provider.create_workspace(agent_id, project_id)
+    workspace = workspace_base / "workspaces" / "project-1" / "agent-1"
+    for path in (lower, workspace):
+        path.mkdir(parents=True)
+        (path / "file.txt").write_text("content", encoding="utf-8")
 
     port = ProjectHostCleanupPort(
         workspace_base_dir=workspace_base,
         git_view_cache_dir=tmp_path / "git-cache",
-        workspace_provider=provider,
     )
     snapshot = port.snapshot("project-1")
     result = await port.delete(snapshot)
 
-    assert result.forgotten_workspaces == 1
-    assert provider.get_workspace_info("agent-1") is None
-    assert provider.get_workspace_info("agent-2") is not None
-    assert (workspace_base / "workspaces" / "project-2" / "agent-2").exists()
+    assert result.deleted_paths == 2
+    assert not workspace.parent.exists()
+    assert not lower.exists()
     assert port.verify(snapshot).complete is True
 
 

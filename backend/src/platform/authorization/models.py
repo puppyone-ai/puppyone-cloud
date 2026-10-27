@@ -54,7 +54,7 @@ class ProjectCapability(StrEnum):
     SCOPE_MANAGE = "scope.manage"
     ACCESS_SURFACE_MANAGE = "access_surface.manage"
     ACCESS_SURFACE_ROTATE_SECRET = "access_surface.rotate_secret"
-    SYNCHRONIZE_MANAGE = "integration.manage"
+    SYNCHRONIZE_MANAGE = "synchronize.manage"
 
 
 class ProjectAction(StrEnum):
@@ -80,7 +80,7 @@ class ProjectAction(StrEnum):
     CREDENTIAL_MANAGE = "access_surface.rotate_secret"
     MCP_MANAGE = "mcp.manage"
     SANDBOX_MANAGE = "sandbox.manage"
-    SYNCHRONIZE_MANAGE = "integration.manage"
+    SYNCHRONIZE_MANAGE = "synchronize.manage"
     IMPORT_SOURCE_MANAGE = "import.source.manage"
     INGEST_WRITE = "ingest.write"
     TOOL_USE = "tool.use"
@@ -185,6 +185,8 @@ class RuntimePrincipal:
     principal_id: str
     credential_kind: str
     kind: PrincipalKind = PrincipalKind.MACHINE
+    credential_id: str | None = None
+    access_grant_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,3 +221,40 @@ class RuntimeGrant:
     @property
     def can_write(self) -> bool:
         return self.mode is RuntimeMode.READ_WRITE
+
+
+class AccessChannel(StrEnum):
+    SSH = "ssh"
+    MCP = "mcp"
+    CLI = "cli"
+    GIT = "git"
+
+
+class AccessCapability(StrEnum):
+    REPOSITORY_READ = "repository.read"
+    REPOSITORY_WRITE = "repository.write"
+    WORKSPACE_READ = "workspace.read"
+    WORKSPACE_WRITE = "workspace.write"
+    WORKSPACE_SHELL = "workspace.shell"
+    # Resume the owner's paused workspace; compute is billed to the owner.
+    WORKSPACE_WAKE = "workspace.wake"
+
+
+@dataclass(frozen=True, slots=True)
+class DelegatedAccess:
+    """Evaluated client authority; never a human Project role or provider handle."""
+
+    grant_id: str
+    registration_id: str
+    subject_user_id: str
+    approved_by: str
+    project_id: str
+    org_id: str
+    target_kind: str
+    workbench_id: str | None
+    capabilities: frozenset[AccessCapability]
+    channel: AccessChannel
+    revision: int
+
+    def allows(self, capability: AccessCapability) -> bool:
+        return capability in self.capabilities

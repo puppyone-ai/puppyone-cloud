@@ -335,12 +335,15 @@ export async function readFile(
  */
 export async function fetchRawBlob(
   projectId: string,
-  path: string
+  path: string,
+  options: { pathBytes?: string; signal?: AbortSignal } = {},
 ): Promise<Blob> {
   const token = await getApiAccessToken();
-  const params = new URLSearchParams({ path });
+  const params = new URLSearchParams(options.pathBytes ? { path_bytes_b64: options.pathBytes } : { path });
   const res = await fetch(backendResourceUrl(`/api/v1/content/${projectId}/raw?${params}`), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal: options.signal,
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error(`Failed to fetch raw file: ${res.status}`);
   return res.blob();
@@ -357,12 +360,14 @@ export async function fetchRawBlob(
 export async function getInlinePreviewUrl(
   projectId: string,
   path: string,
+  options: { pathBytes?: string; signal?: AbortSignal } = {},
 ): Promise<string> {
   const signed = await treeRequest<{ url: string; expires_at: number }>(
     `/api/v1/content/${projectId}/inline/sign`,
     {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: JSON.stringify(options.pathBytes ? { path_bytes_b64: options.pathBytes } : { path }),
+      signal: options.signal,
     },
   );
 

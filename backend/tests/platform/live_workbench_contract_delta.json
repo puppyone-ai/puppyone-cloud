@@ -1,0 +1,12 @@
+{
+  "paths": {
+    "/api/v1/projects/{project_id}/workbench": "6c1850122225a4eb85a3d68a570678ba4106db202dc23afb4ee4d4eb2cede735",
+    "/api/v1/projects/{project_id}/workbench/files": "6f2d8cb287bc28cb800125215d99243c1fae5509064f816b467e1a3951b5bce1",
+    "/api/v1/projects/{project_id}/workbench/file": "93df6d9960811cb3b460f9ecfc7b3ac1aad28b7e4ce06c9670d9cb75d183807a",
+    "/api/v1/projects/{project_id}/workbench/events": "7b10fade7d6068815b5ea914b9b9f39607376e31be1bbf3b2765debc7e58cef6"
+  },
+  "schemas": {
+    "FileOperation": "9d987982e6d941073d7913dc30d8f520bf09419a0ff5b379b7e81bac953ecd18",
+    "DirectoryOperation": "3dfee63141323dbfed78fbec9904c47b7020bafb635b3bfd1169d6d9f90d9fe5"
+  }
+}

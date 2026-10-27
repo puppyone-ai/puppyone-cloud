@@ -2,7 +2,7 @@
 
 Access surfaces are target-bound ways to enter or operate on a workspace:
 Git remote, CLI, agents, MCP endpoints, and sandboxes.
-They are not durable external data sources; those live in ``connections``.
+They are not Synchronize bindings or Database Import sources; those have independent stores.
 """
 
 from __future__ import annotations
@@ -12,9 +12,10 @@ from typing import Any, Optional
 
 from src.infra.supabase.client import SupabaseClient
 from src.platform.repository_target.models import repository_target_from_storage
-from src.repo.access_credentials import AccessCredentialRepository
+from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.models import AccessSurface
-from src.repo.models import RepositoryScope, ResolvedAccessSurfaceCredential
+from src.platform.repository_target.models import RepositoryScope
+from src.platform.access.models import ResolvedAccessSurfaceCredential
 
 ACCESS_SURFACE_KINDS = frozenset({
     "git_remote",
@@ -67,7 +68,7 @@ def _row_to_surface(row: dict[str, Any]) -> AccessSurface:
 
 class AccessSurfaceRepository:
     TABLE = "access_surfaces"
-    CONNECTIONS = "connections"
+    CONNECTIONS = "synchronize_bindings"
 
     def __init__(self, supabase_client: Optional[SupabaseClient] = None):
         owner = supabase_client or SupabaseClient()
@@ -300,7 +301,7 @@ class AccessSurfaceRepository:
         """Resolve a bearer token to one active, non-root CLI Surface.
 
         Credential identity and capability stay distinct from Scope geometry;
-        the Scope repository joins the exact target in the next boundary.
+        the Access resolver joins the exact Scope target in the next boundary.
         """
 
         credential = self._credentials.get_active_by_token(raw_token)

@@ -61,12 +61,6 @@ export const ChevronDownIcon = ({ open }: { open?: boolean }) => (
 export const ToolIcon = ({ type }: { type: string }) => {
   const iconStyle = { width: 14, height: 14, flexShrink: 0 };
   switch (type) {
-    case 'search':
-      return (
-        <svg style={iconStyle} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-        </svg>
-      );
     case 'get_all_data':
     case 'query_data':
       return (
@@ -120,7 +114,6 @@ export const ToolIcon = ({ type }: { type: string }) => {
 export const toolTypeLabels: Record<string, { label: string; desc: string }> = {
   get_all_data: { label: 'Read Content', desc: 'Read full content' },
   query_data: { label: 'Query Data', desc: 'Read from tables' },
-  search: { label: 'Search', desc: 'Semantic search' },
   create: { label: 'Create', desc: 'Add new data' },
   update: { label: 'Update', desc: 'Modify data' },
   delete: { label: 'Delete', desc: 'Remove data' },

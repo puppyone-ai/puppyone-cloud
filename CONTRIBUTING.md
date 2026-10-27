@@ -91,16 +91,24 @@ rules (PR + required reviews + required status checks).
 
 ## CI Checks
 
-| Check                | Trigger                                  | Required for merge                  |
+| Check                | Trigger                                  | Release policy / role               |
 |----------------------|------------------------------------------|-------------------------------------|
-| **Frontend Build**   | PRs that touch `frontend/**`             | `main`, `qubits`                    |
-| **Run Gitleaks**     | All PRs, push to `main`, weekly schedule | `main`, `qubits`                    |
-| **Main Release Gate** | PRs targeting `main`                    | `main` (release/hotfix source + owner gate) |
-| **Database validation result** | All PRs; heavy jobs only for database paths | `main`, `qubits` |
-| **Deploy Schema to Qubits** | schema push to `qubits` | exact-SHA prerequisite for database releases |
-| **E2E Visual Tests** | Manual (`workflow_dispatch`)            | (manual release/debug check)        |
-| **Supabase Preview** | All PRs                                  | (advisory, not blocking)            |
-| **Branch housekeeping** | Weekly schedule                       | n/a (cleanup job)                   |
+| **Frontend Build / Backend tests / application contracts** | PRs to `main`, `main` pushes, manual dispatch | Local/manual for Qubits; production CI retained |
+| **Run Gitleaks** | All PRs, protected pushes, weekly schedule | Required on `main`, `qubits` |
+| **Main Release Gate** | PRs targeting `main` | Production source + owner gate |
+| **Database validation result** | All PRs and protected pushes | Required on `main`, `qubits`; Qubits uses database policy/regression checks, full rehearsals run on main/manual |
+| **Release upgrade rehearsal / Installation validation result** | PRs to `main`, `main` pushes, manual dispatch | Local/manual for Qubits; production CI retained |
+| **Deploy Database to Qubits** | Every push to `qubits` | Exact-SHA Supabase migration and verification after database checks and Gitleaks |
+| **E2E Visual Tests** | Manual (`workflow_dispatch`) | Release/debug acceptance |
+| **Supabase Preview** | All PRs | Advisory, not blocking |
+
+Qubits requires `Database validation result` and `Run Gitleaks`; full application
+and installation tests run locally before submission, with commands and results
+recorded in the PR. Production retains full automatic CI. See
+[the release contract](docs/architecture/13-database-release-governance.md#qubits-testing-and-database-delivery)
+for local commands and the distinction between database-ready and application
+acceptance. Workflow YAML and GitHub branch protection must be updated together;
+a green database-only check does not assert that application tests ran.
 
 Branch housekeeping may delete merged remote branches idle >14 days. Protected
 branches (`main`, `qubits`, `newmu`) are never deleted.
@@ -141,11 +149,24 @@ before changing a shared database.
   transactional SQL only.
 - Complex/long/Python/secret-dependent backfills use immutable
   `supabase/data_migrations/<id>` artifacts.
-- One PR owns one phase: Expand, Data, Cutover, or Contract.
+- A PR may contain a complete ordered Expand/Data/Contract release. Each phase
+  has explicit prerequisites in the shared upgrade plan.
+- Refresh the target before merge and review all inherited changes, not just
+  the last feature commit. Fill in the PR template's history/dependency and
+  populated-upgrade evidence; do not add unrelated historical data audits.
+- Prefer new draft migrations after the current target history. Already-shared
+  older migrations require an explicit catch-up plan and matching upgrade
+  fixture; `--include-all` alone is not proof of safe ordering.
+- Keep unready cleanup in `contract.pending.sql`. Before merge, prove the full
+  populated upgrade locally for Qubits, or in CI for production. After merge, the coordinator establishes the
+  real cutover prerequisites before Contract execution and app deployment;
+  production does not need to have applied the candidate before merge.
 - Never edit a shared/applied migration. Add a forward artifact.
 - Never place “run this Python script next” instructions in schema SQL.
 - Never write to a shared remote database from SQL Editor or a laptop except
   through the documented incident break-glass process.
+- Report implemented/tested, merged, database-ready, deployed and accepted
+  separately, with the environment and exact commit for each claim.
 
 Database commit examples:
 

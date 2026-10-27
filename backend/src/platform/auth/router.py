@@ -5,12 +5,11 @@ POST   /auth/login           Sign in with email + password, returns access_token
 POST   /auth/refresh         Refresh access_token
 POST   /auth/logout          Revoke the refresh-token session (idempotent)
 POST   /auth/initialize      Idempotent user initialization (profile + org)
-POST   /auth/check-email     Check if email is already registered (rate-limited)
+POST   /auth/check-email     Resolve the existing email-first login flow
 GET    /auth/config           Public Supabase config (URL + anon key) for Realtime
 """
 
 import asyncio
-import hashlib
 import os
 import time
 
@@ -22,52 +21,12 @@ from supabase import create_client
 from src.common_schemas import ApiResponse
 from src.config import settings
 from src.platform.auth.dependencies import CurrentUser, get_current_user, get_initialization_service
-from src.platform.auth.desktop_router import router as desktop_router
 from src.platform.auth.initialization import UserInitializationService
 from src.platform.auth.methods import router as methods_router
-from src.platform.auth.shared_security_store import (
-    RateLimiter,
-    SecurityStoreUnavailable,
-    get_auth_security_store,
-)
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-router.include_router(desktop_router)
 router.include_router(methods_router)
-
-
-_CHECK_EMAIL_WINDOW = 60  # seconds
-_CHECK_EMAIL_MAX_HITS = 5  # max requests per window per IP
-_CHECK_EMAIL_MIN_LATENCY = 0.4  # seconds — flatten timing side-channel
-_LOGIN_WINDOW = 600
-_LOGIN_MAX_HITS = 10
-
-
-def _hash_key(value: str) -> str:
-    # Hash the account so Redis never stores plaintext emails, and keys are bounded.
-    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()[:24]
-
-
-def _enforce_rate_limit(
-    limiter: RateLimiter,
-    *,
-    bucket: str,
-    subject: str,
-    limit: int,
-    window_seconds: int,
-) -> None:
-    try:
-        exceeded = limiter.hit(bucket, _hash_key(subject), limit, window_seconds)
-    except SecurityStoreUnavailable as exc:
-        raise HTTPException(
-            status_code=503, detail="Authentication security store unavailable"
-        ) from exc
-    if exceeded:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please try again later.",
-            headers={"Retry-After": str(window_seconds)},
-        )
 
 
 class LoginRequest(BaseModel):
@@ -146,23 +105,11 @@ def get_public_config():
 @router.post("/check-email", response_model=ApiResponse[CheckEmailResponse])
 async def check_email(
     body: CheckEmailRequest,
-    request: Request,
-    limiter: RateLimiter = Depends(get_auth_security_store),
 ):
-    """Check whether an email is already registered (for email-first login flow).
+    """Preserve the existing email-first UI using Supabase's account lookup.
 
-    Protected by per-IP rate limiting and constant-time response delay
-    to mitigate email enumeration attacks.
+    No application-owned authentication state or Redis dependency is involved.
     """
-    client_ip = request.client.host if request.client else "unknown"
-    _enforce_rate_limit(
-        limiter,
-        bucket="check-email",
-        subject=client_ip,
-        limit=_CHECK_EMAIL_MAX_HITS,
-        window_seconds=_CHECK_EMAIL_WINDOW,
-    )
-
     start = time.monotonic()
 
     url = os.environ.get("SUPABASE_URL", "")
@@ -171,7 +118,7 @@ async def check_email(
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 f"{url}/auth/v1/admin/users",
                 headers={"apikey": key, "Authorization": f"Bearer {key}"},
@@ -187,8 +134,8 @@ async def check_email(
         # Pad response time to a constant floor so attackers can't infer
         # existence from faster/slower responses (timing side-channel).
         elapsed = time.monotonic() - start
-        if elapsed < _CHECK_EMAIL_MIN_LATENCY:
-            await asyncio.sleep(_CHECK_EMAIL_MIN_LATENCY - elapsed)
+        if elapsed < 0.4:
+            await asyncio.sleep(0.4 - elapsed)
 
         return ApiResponse.success(data=CheckEmailResponse(exists=exists))
     except HTTPException:
@@ -198,17 +145,8 @@ async def check_email(
 
 
 @router.post("/login", response_model=ApiResponse[LoginResponse])
-def login(
-    body: LoginRequest,
-    limiter: RateLimiter = Depends(get_auth_security_store),
-):
-    _enforce_rate_limit(
-        limiter,
-        bucket="login",
-        subject=(body.email or "").strip().lower() or "unknown",
-        limit=_LOGIN_MAX_HITS,
-        window_seconds=_LOGIN_WINDOW,
-    )
+def login(body: LoginRequest):
+    # Supabase owns authentication and its native rate limits.
     try:
         auth_client = _make_auth_client()
         result = auth_client.auth.sign_in_with_password(
@@ -234,6 +172,8 @@ def login(
     except HTTPException:
         raise
     except Exception as e:
+        if getattr(e, "status", None) == 429:
+            raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please try again later") from e
         error_msg = str(e)
         if "Invalid login" in error_msg or "invalid" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -242,9 +182,7 @@ def login(
 
 @router.post("/refresh", response_model=ApiResponse[LoginResponse])
 def refresh_token(body: RefreshRequest):
-    # No rate limit here: a refresh requires possession of a high-entropy refresh
-    # token (not brute-forceable), and limiting it risks throttling legitimate
-    # clients. Login (password guessing) is the real brute-force surface.
+    # Supabase owns token validation, rotation and its native rate limits.
     try:
         auth_client = _make_auth_client()
         result = auth_client.auth.refresh_session(body.refresh_token)
@@ -265,6 +203,8 @@ def refresh_token(body: RefreshRequest):
     except HTTPException:
         raise
     except Exception as e:
+        if getattr(e, "status", None) == 429:
+            raise HTTPException(status_code=429, detail="Too many refresh attempts. Please try again later") from e
         raise HTTPException(status_code=401, detail=f"Refresh failed: {e!s}")
 
 

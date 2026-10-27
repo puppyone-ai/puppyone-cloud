@@ -11,8 +11,8 @@ import pytest
 from src.config import settings
 from src.platform.access.adapters.agent.config.repository import AgentRepository
 from src.platform.access.adapters.sandbox_endpoint.repository import SandboxEndpointRepository
-from src.repo.access_credentials import AccessCredentialRepository, access_token_hash
-from src.repo.scope_repository import RepositoryScopeRepository
+from src.platform.access.credential_repository import AccessCredentialRepository, access_token_hash
+from src.platform.access.credentials import resolve_scope_access_credential
 
 
 class _MemoryQuery:
@@ -113,6 +113,19 @@ class _MemoryClient:
 
 @pytest.fixture(autouse=True)
 def _credential_secret(monkeypatch):
+    from src.platform.authorization.repository import (
+        AuthorizationRepository,
+        ProjectAuthorizationFacts,
+    )
+    from tests.authorization_fakes import authorization_facts_response
+
+    def load_facts(repository, project, user):
+        data = authorization_facts_response(repository._client.tables,
+                                            "authorization_project_facts",
+                                            {"p_project": project, "p_user": user}).execute().data
+        return ProjectAuthorizationFacts(**data) if data else None
+
+    monkeypatch.setattr(AuthorizationRepository, "load_project_facts", load_facts)
     monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET", "")
     monkeypatch.setattr(
         settings,
@@ -203,7 +216,8 @@ def test_git_previous_key_still_uses_authoritative_runtime_rpc(monkeypatch):
     authorized = True
 
     def rpc(name, params):
-        assert name == "resolve_git_runtime_credential"
+        assert name == "resolve_access_git_credential"
+        assert params["p_channel"] == "git"
         calls.append(params["p_key_hash"])
         row = [{"id": "old", "effective_mode": "r"}] if authorized and params["p_key_hash"] == old_hash else []
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=row))
@@ -241,7 +255,7 @@ def test_expired_scope_session_credential_is_rejected():
     )
 
     assert credentials.get_active_by_token(token) is None
-    assert RepositoryScopeRepository(client).get_by_access_key(token) is None
+    assert resolve_scope_access_credential(SimpleNamespace(client=client), token) is None
 
 
 def test_scope_credential_resolves_via_cli_access_surface_only():
@@ -262,9 +276,38 @@ def test_scope_credential_resolves_via_cli_access_surface_only():
         prefix="cli",
     )
 
-    scope = RepositoryScopeRepository(client).get_by_access_key(token)
-    assert scope and scope.id == "scope-1"
+    resolved = resolve_scope_access_credential(SimpleNamespace(client=client), token)
+    assert resolved and resolved.scope.id == "scope-1"
     assert token not in repr(client.tables)
+
+
+@pytest.mark.parametrize("surface_mode,scope_project,expected", [
+    ("r", "project-1", "r"),
+    ("rw", "project-1", "rw"),
+    ("rw", "other-project", None),
+])
+def test_access_scope_resolution_preserves_target_and_mode(surface_mode, scope_project, expected):
+    now = datetime.now(timezone.utc).isoformat()
+    client = _MemoryClient(
+        access_surfaces=[_surface(kind="cli", config={"mode": surface_mode})],
+        access_surface_credentials=[],
+        repository_scopes=[{
+            "id": "scope-1", "project_id": scope_project, "name": "Docs",
+            "path": "docs", "exclude": [], "max_mode": "rw",
+            "created_at": now, "updated_at": now,
+        }],
+    )
+    token = AccessCredentialRepository(client).issue_bearer_token(
+        access_surface_id="surface-1", org_id="org-1", project_id="project-1", prefix="cli",
+    )
+
+    resolved = resolve_scope_access_credential(SimpleNamespace(client=client), token)
+    if expected is None:
+        assert resolved is None
+    else:
+        assert resolved.scope.max_mode == expected
+        assert resolved.project_id == "project-1"
+    assert client.tables["repository_scopes"][0]["max_mode"] == "rw"
 
 
 def test_git_http_token_is_separate_from_cli_bearer_and_resolves_runtime_facts():
@@ -307,6 +350,70 @@ def test_git_http_token_is_separate_from_cli_bearer_and_resolves_runtime_facts()
     assert resolved["path_prefix"] == ""
     assert resolved["excludes"] == []
     assert resolved["effective_mode"] == "r"
+
+
+@pytest.mark.parametrize("invalid_state", ["revoked", "expired"])
+def test_shared_access_owner_preserves_cli_mcp_isolation(monkeypatch, invalid_state):
+    from fastapi import HTTPException
+    from src.platform.access.credentials import resolve_access_point
+    from src.platform.access.adapters.mcp_endpoint import resolver as mcp
+
+    client = _MemoryClient(
+        access_surfaces=[
+            _surface(surface_id="git", kind="git_remote", scope_id=None),
+            _surface(surface_id="mcp", kind="mcp"),
+        ],
+        access_surface_credentials=[],
+    )
+    credentials = AccessCredentialRepository(client)
+    git_token = credentials.issue_git_http_token(
+        access_surface_id="git", org_id="org-1", project_id="project-1", grant_mode="r"
+    )
+    mcp_token = credentials.issue_bearer_token(
+        access_surface_id="mcp", org_id="org-1", project_id="project-1", prefix="mcp"
+    )
+    monkeypatch.setattr("src.infra.supabase.client.SupabaseClient", lambda: SimpleNamespace(client=client))
+    monkeypatch.setattr(mcp, "get_supabase_client", lambda: client)
+    project, auth = resolve_access_point(git_token)
+    assert project == "project-1"
+    assert auth["_runtime_grant"].principal.credential_kind == "git_http_token"
+    assert auth["_runtime_grant"].mode.value == "r"
+
+    def mcp_is_authenticated_but_scope_unavailable():
+        with pytest.raises(HTTPException) as error:
+            mcp.resolve_mcp_runtime(mcp_token)
+        assert error.value.status_code == 501
+        assert error.value.detail["code"] == "native_scope_not_available"
+
+    mcp_is_authenticated_but_scope_unavailable()
+    with pytest.raises(HTTPException) as error:
+        resolve_access_point(mcp_token)
+    assert error.value.status_code == 401
+
+    # A token's spelling cannot bypass its stored credential type.
+    git_row, mcp_row = client.tables["access_surface_credentials"]
+    git_token = "mcp_git_type_lookalike"
+    git_row["key_hash"] = access_token_hash(git_token)
+    with pytest.raises(HTTPException) as error:
+        mcp.resolve_mcp_runtime(git_token)
+    assert error.value.status_code == 404
+    assert resolve_access_point(git_token)[0] == project
+
+    def invalidate(row):
+        if invalid_state == "revoked":
+            row["status"] = "revoked"
+        else:
+            row["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+
+    invalidate(git_row)
+    with pytest.raises(HTTPException) as error:
+        resolve_access_point(git_token)
+    assert error.value.status_code == 401
+    mcp_is_authenticated_but_scope_unavailable()
+    invalidate(mcp_row)
+    with pytest.raises(HTTPException) as error:
+        mcp.resolve_mcp_runtime(mcp_token)
+    assert error.value.status_code == 404
 
 
 def test_shared_git_read_and_readwrite_credentials_rotate_independently():

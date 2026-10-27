@@ -1,8 +1,9 @@
 'use client';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
 import { useExplorerActions } from '@/features/files/explorerSession';
 
-import { bulkRemoveFiles, downloadNode, moveFile, removeFile, type NodeInfo } from '@/lib/contentTreeApi';
+import { type NodeInfo } from '@/lib/contentTreeApi';
 import { dataDirectoryCacheKeys } from '@/lib/dataTreeCache';
 import { refreshFolderNodes, refreshProjectHistory } from '@/lib/hooks/useData';
 import { useCallback, useRef, useState } from 'react';
@@ -63,11 +64,11 @@ function removeDeletedFromTreeCache(current: unknown, deletedRoots: readonly str
   });
 }
 
-function hideDeletedPathsInTreeCaches(projectId: string, paths: readonly string[]): void {
+function hideDeletedPathsInTreeCaches(projectId: string, paths: readonly string[], identity = 'published'): void {
   const deletedRoots = collapseDescendantPaths([...paths]);
   if (!deletedRoots.length) return;
   void mutate(
-    (key) => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId,
+    (key) => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId && (key[3] ?? 'published') === identity,
     (current: unknown) => removeDeletedFromTreeCache(current, deletedRoots),
     { revalidate: false },
   );
@@ -85,10 +86,11 @@ function refreshDeletedParentFolders(
   projectId: string,
   deletedPaths: readonly string[],
   parents: readonly string[],
+  identity = 'published',
 ): void {
   void refreshFolderNodes(projectId, ...parents)
     .catch(() => undefined)
-    .finally(() => hideDeletedPathsInTreeCaches(projectId, deletedPaths));
+    .finally(() => hideDeletedPathsInTreeCaches(projectId, deletedPaths, identity));
 }
 
 function collapseDescendantPaths(paths: string[]): string[] {
@@ -114,6 +116,8 @@ function collapseDescendantPaths(paths: string[]): string[] {
 }
 
 export function useNodeActions(projectId: string, currentFolderPath: string | null) {
+  const {files, identity} = useWorkspaceFiles();
+  const {moveFile, removeFile, bulkRemoveFiles, downloadNode} = files;
   const { ensureExpanded } = useExplorerActions();
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
@@ -171,7 +175,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
       showToast(errorObj?.message || 'Failed to rename item', 'error');
       throw err;
     }
-  }, [renameTarget, projectId, showToast]);
+  }, [renameTarget, showToast, moveFile, projectId]);
 
   const deleteSinglePath = useCallback(async (path: string, name: string) => {
     const cleanPath = normalizeTreePath(path);
@@ -183,11 +187,11 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
     const parent = parentOf(cleanPath);
     try {
       deletingPathsRef.current.add(cleanPath);
-      hideDeletedPathsInTreeCaches(projectId, [cleanPath]);
+      hideDeletedPathsInTreeCaches(projectId, [cleanPath], identity);
       showToast(`Deleting "${name}"...`, 'loading', null);
       await removeFile(projectId, cleanPath);
-      hideDeletedPathsInTreeCaches(projectId, [cleanPath]);
-      refreshDeletedParentFolders(projectId, [cleanPath], [parent]);
+      hideDeletedPathsInTreeCaches(projectId, [cleanPath], identity);
+      refreshDeletedParentFolders(projectId, [cleanPath], [parent], identity);
       refreshProjectHistory(projectId);
       showToast(`Deleted "${name}"`);
     } catch (err) {
@@ -199,7 +203,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
     } finally {
       deletingPathsRef.current.delete(cleanPath);
     }
-  }, [projectId, showToast]);
+  }, [showToast, projectId, identity, removeFile]);
 
   const handleDelete = useCallback((path: string, name: string) => {
     setDeleteDialogTarget({ id: path, name });
@@ -233,12 +237,12 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
     const parents = Array.from(new Set(clean.map(parentOf)));
     try {
       clean.forEach((p) => deletingPathsRef.current.add(p));
-      hideDeletedPathsInTreeCaches(projectId, clean);
+      hideDeletedPathsInTreeCaches(projectId, clean, identity);
       showToast(`Deleting ${clean.length} item(s)...`, 'loading', null);
       await bulkRemoveFiles(projectId, clean);
-      hideDeletedPathsInTreeCaches(projectId, clean);
+      hideDeletedPathsInTreeCaches(projectId, clean, identity);
       // Each unique parent listing changed; rest of the tree is untouched.
-      refreshDeletedParentFolders(projectId, clean, parents);
+      refreshDeletedParentFolders(projectId, clean, parents, identity);
       refreshProjectHistory(projectId);
       showToast(`Deleted ${clean.length} item(s)`);
     } catch (err) {
@@ -250,7 +254,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
     } finally {
       clean.forEach((p) => deletingPathsRef.current.delete(p));
     }
-  }, [projectId, showToast]);
+  }, [showToast, projectId, identity, bulkRemoveFiles]);
 
   const handleDownload = useCallback(async (path: string, name: string) => {
     // App-layer toast covers only the "preparing" window — the brief gap
@@ -267,7 +271,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
       const msg = (err as { message?: string })?.message || 'Failed to download';
       showToast(msg, 'error');
     }
-  }, [projectId, showToast]);
+  }, [showToast, downloadNode, projectId]);
 
   const executeMoveNode = useCallback(async (
     nodePath: string,
@@ -282,7 +286,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
     // Update both read models optimistically — `tree` backs the main content
     // pane and `explorer-tree` backs the sidebar. Mutating only `tree` left the
     // sidebar showing the node in its old folder until revalidation landed.
-    for (const sourceKey of dataDirectoryCacheKeys(projectId, cleanSourceParent)) {
+    for (const sourceKey of dataDirectoryCacheKeys(projectId, cleanSourceParent, identity)) {
       mutate(
         sourceKey,
         (nodes: NodeInfo[] | undefined) => {
@@ -299,7 +303,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
       const newPath = cleanTargetPath ? `${cleanTargetPath}/${name}` : name;
       const nodeForTarget = { ...movedNode, path: newPath, id: newPath, parent_id: cleanTargetPath };
       if (cleanTargetPath) ensureExpanded(projectId, cleanTargetPath);
-      for (const targetKey of dataDirectoryCacheKeys(projectId, cleanTargetPath)) {
+      for (const targetKey of dataDirectoryCacheKeys(projectId, cleanTargetPath, identity)) {
         mutate(
           targetKey,
           (nodes: NodeInfo[] | undefined) => nodes ? [...nodes, nodeForTarget] : undefined,
@@ -323,7 +327,7 @@ export function useNodeActions(projectId: string, currentFolderPath: string | nu
       showToast(msg, 'error');
       throw err;
     }
-  }, [projectId, currentFolderPath, showToast]);
+  }, [currentFolderPath, projectId, identity, ensureExpanded, showToast, moveFile]);
 
   const handleMoveNode = useCallback(async (
     nodePath: string,

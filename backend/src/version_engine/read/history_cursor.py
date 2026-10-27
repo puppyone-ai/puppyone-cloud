@@ -10,14 +10,22 @@ import zlib
 
 from src.config import settings
 from src.version_engine.read.history_models import HistoryCursorError, HistoryCursorState
-from src.version_engine.write_engine.git_commit import is_git_object_id
-
+from src.version_engine.write_engine.git_object_format import is_git_object_id
 
 _CURSOR_PREFIX = "h1"
 _CURSOR_VERSION = 1
 _MAX_CURSOR_CHARS = 64 * 1024
 _MAX_ROOTS = 512
 _KEY_CONTEXT = b"puppyone/project-history-cursor/v1"
+
+
+def history_snapshot_id(wire: dict) -> str:
+    """Bind derived pages to repository identity, excluding the per-read pin."""
+    identity = {
+        key: wire[key]
+        for key in ("project_id", "object_format", "generation", "ref_sequence", "refs")
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
 class HistoryCursorCodec:
@@ -64,7 +72,7 @@ class HistoryCursorCodec:
             signature = _decode_base64(encoded_signature)
         except HistoryCursorError:
             raise
-        except Exception as exc:  # noqa: BLE001 - normalize all parser failures
+        except Exception as exc:
             raise HistoryCursorError("history cursor is invalid") from exc
 
         expected = hmac.new(self._key, body, hashlib.sha256).digest()
@@ -85,7 +93,7 @@ class HistoryCursorCodec:
             _validate_state(state)
         except HistoryCursorError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HistoryCursorError("history cursor payload is invalid") from exc
         if state.project_id != project_id:
             raise HistoryCursorError("history cursor belongs to another project")

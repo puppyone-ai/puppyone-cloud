@@ -8,7 +8,7 @@ from src.infra.supabase.client import SupabaseClient
 from src.utils.logger import log_error
 
 
-async def process_sync_run_reaper() -> dict:
+def process_sync_run_reaper() -> dict:
     try:
         repo = SyncRunRepository(SupabaseClient())
         recovered = repo.recover_stale_active_runs(

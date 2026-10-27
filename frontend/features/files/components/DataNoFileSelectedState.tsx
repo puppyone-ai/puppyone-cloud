@@ -12,8 +12,8 @@ export type DataNoFileSelectedMode =
 interface DataNoFileSelectedStateProps {
   readonly mode: DataNoFileSelectedMode;
   readonly folderName?: string;
-  readonly onCreateMarkdown: () => void | Promise<void>;
-  readonly onUploadClick: () => void;
+  readonly onCreateMarkdown?: () => void | Promise<void>;
+  readonly onUploadClick?: () => void;
 }
 
 export function DataNoFileSelectedState({
@@ -29,12 +29,8 @@ export function DataNoFileSelectedState({
       : mode === 'empty-folder'
         ? 'This folder is empty'
         : 'No file selected';
-  const description =
-    mode === 'empty-workspace'
-      ? 'Create a Markdown note or upload files to add context.'
-      : mode === 'empty-folder'
-        ? `${folderName ? `${folderName} is empty. ` : ''}Create a Markdown note or upload files here.`
-        : 'Choose a file from the sidebar to open it here.';
+  const canCreate = Boolean(onCreateMarkdown && onUploadClick);
+  const description = emptyDescription(mode, folderName, canCreate);
 
   return (
     <div
@@ -103,7 +99,7 @@ export function DataNoFileSelectedState({
           {description}
         </p>
 
-        {isEmpty && (
+        {isEmpty && canCreate && (
           <div
             style={{
               display: 'grid',
@@ -117,13 +113,13 @@ export function DataNoFileSelectedState({
               icon={<FileText size={14} strokeWidth={1.9} />}
               label="New Markdown"
               onClick={() => {
-                void onCreateMarkdown();
+                void onCreateMarkdown?.();
               }}
             />
             <EmptyActionButton
               icon={<Upload size={14} strokeWidth={1.9} />}
               label="Upload files"
-              onClick={onUploadClick}
+              onClick={() => onUploadClick?.()}
             />
           </div>
         )}
@@ -168,4 +164,11 @@ function EmptyActionButton({
       </span>
     </button>
   );
+}
+
+function emptyDescription(mode: DataNoFileSelectedMode, folderName: string | undefined, canCreate: boolean) {
+  if (mode === 'has-content') return 'Choose a file from the sidebar to open it here.';
+  if (!canCreate) return 'Choose another folder from the sidebar.';
+  if (mode === 'empty-workspace') return 'Create a Markdown note or upload files to add context.';
+  return `${folderName ? `${folderName} is empty. ` : ''}Create a Markdown note or upload files here.`;
 }

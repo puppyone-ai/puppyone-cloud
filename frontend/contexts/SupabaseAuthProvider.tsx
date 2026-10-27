@@ -4,7 +4,6 @@ import React, { createContext, useContext, useMemo, useState, useEffect, useRef 
 import { usePathname } from 'next/navigation';
 import { createBrowserLogin } from '@/features/auth/supabase/browser-login';
 import type { LoginIntent, SignInProvider } from '@/features/auth/login-intent';
-import { loginReturnPath } from '@/features/auth/login-intent';
 import { Session, SupabaseClient } from '@supabase/supabase-js';
 import { getEmailConfirmUrl, getPasswordResetRedirectUrl } from '@/lib/auth-urls';
 
@@ -68,11 +67,6 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
         };
       }
       const login = runtimeRef.current.login;
-      // The browser adapter already captured the code; remove transient
-      // credentials from history at this UI boundary before further requests.
-      if (new URL(window.location.href).searchParams.has('auth_code')) {
-        window.history.replaceState(window.history.state, '', loginReturnPath(login.intent));
-      }
       setSupabase(login.client);
       setLoginIntent(login.intent);
       const subscription = login.client.auth.onAuthStateChange((_event, nextSession) => {
@@ -83,11 +77,16 @@ export function SupabaseAuthProvider({ children }: { children: React.ReactNode }
         .initialize()
         .then(async providers => {
           const { data, error } = await login.client.auth.getSession();
-          if (error) throw error;
+          // A stale Web session may fail to refresh while the user is signing
+          // in again; only a delegated (Desktop/website) return requires a valid session.
+          if (error && login.intent.kind !== 'web') throw error;
           if (!active) return;
           setAvailableProviders(providers);
-          setSession(data.session);
+          setSession(error ? null : data.session);
           setIsAuthReady(true);
+          void login.discoverProviders().then(discovered => {
+            if (active) setAvailableProviders(discovered);
+          });
         })
         .catch(error => {
           if (!active) return;

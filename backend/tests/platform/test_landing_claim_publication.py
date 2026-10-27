@@ -87,7 +87,7 @@ class _S3:
         self.events = events
         self.fail_if_called = fail_if_called
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         if self.fail_if_called:
             raise AssertionError("preview object must not be read during replay")
         self.events.append("download")

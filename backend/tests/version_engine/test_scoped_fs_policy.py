@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.version_engine.scoped_fs.policy import resolve_mcp_fs_allowed_tools
+from src.platform.access.filesystem.policy import resolve_mcp_fs_allowed_tools
 
 
 def test_default_policy_keeps_delete_tools_off():

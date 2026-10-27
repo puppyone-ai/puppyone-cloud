@@ -1,0 +1,66 @@
+
+ RUN  v4.1.10 /Users/supersayajin/project/puppyone-desktop-push-receipts
+
+ ✓ tests/integration/cloud/auth/electron.cloud-publish-git-credentials.test.mjs (8 tests) 7380ms
+     ✓ resets an unknown helper only for the canonical URL and restores it exactly on Abandon  314ms
+     ✓ recovers every successful config-write crash point during install and restore  5806ms
+ ✓ tests/integration/cloud/publish/electron.cloud-git-connect-coordinator.test.mjs (8 tests) 4292ms
+     ✓ issues and stores the credential entirely in main and returns only public Project identity  527ms
+     ✓ replays the same credential operation after response loss without exposing or rotating its secret  544ms
+     ✓ rejects a tampered connect journal before reading a secret or running network Git  333ms
+     ✓ resumes after remote add and fails closed if that exact remote is later repointed  486ms
+     ✓ revokes server state before exact local compensation and sends repository contract v2  600ms
+     ✓ treats a lost completed IPC response as idempotent after ProjectGrant verification  611ms
+     ✓ rejects a completed canonical remote when a retry requests a different Project  556ms
+     ✓ remembers remote-add ownership across a crash, resume, and later Abandon  634ms
+ ✓ tests/integration/cloud/publish/electron.cloud-git-operation-lease.test.mjs (4 tests) 568ms
+ ✓ tests/integration/cloud/publish/electron.cloud-git-journal.test.mjs (1 test) 90ms
+ ✓ tests/integration/cloud/publish/electron.cloud-initialization-journal.test.mjs (3 tests) 18ms
+ ✓ tests/unit/cloud/publish/cloudPublishReceipt.test.mjs (10 tests) 6ms
+ ✓ tests/unit/cloud/publish/electron.cloud-publish-git.test.mjs (3 tests) 6ms
+ ✓ tests/unit/cloud/publish/publishPreparation.test.ts (5 tests) 4ms
+ ✓ tests/unit/cloud/publish/electron.cloud-publish-ipc.test.mjs (2 tests) 3ms
+ ✓ tests/integration/telemetry/transport/electron.cloud-initialization-telemetry.test.mjs (1 test) 3ms
+ ✓ tests/unit/cloud/publish/electron.cloud-publish-error-contract.test.mjs (4 tests) 2ms
+ ✓ tests/unit/cloud/publish/cloudPublishReadiness.test.ts (3 tests) 2ms
+ ✓ tests/integration/cloud/publish/electron.cloud-publish-coordinator.test.mjs (34 tests) 33219ms
+     ✓ reconciliation of a missing receipt never starts another push  873ms
+     ✓ reconciliation of a pending receipt never starts another push  823ms
+     ✓ reconciliation of a rejected receipt never starts another push  864ms
+     ✓ creates once, keeps the credential out of the journal, and maps a feature branch to Cloud main  883ms
+     ✓ recovers after a crash immediately after remote add without creating another Project  1133ms
+     ✓ fails closed when a pending operation finds the canonical remote at a different URL  651ms
+     ✓ singleflights concurrent retries under the repository mutation lock  850ms
+     ✓ serializes two independent coordinator instances with the common repository lease  948ms
+     ✓ never persists the main-owned raw credential in a crash journal  401ms
+     ✓ rejects a tampered journal remote before reading a secret or running network Git  567ms
+     ✓ replays Project creation with the same UUID after its response is lost  965ms
+     ✓ accepts a server-allocated display name without losing the durable Project identity  846ms
+     ✓ rejects a Project response that omits the explicitly requested Organization  367ms
+     ✓ reconciles a crash after the push side effect without creating another Project  971ms
+     ✓ reconciles accepted remote truth before cleanup can delete anything  973ms
+     ✓ uses the journaled canonical URL when another Git process mutates the remote name  820ms
+     ✓ pins the allowlisted helper in command scope across a local config mutation race  1015ms
+     ✓ durably owns a remote added just before a crash and removes it on later Abandon  1495ms
+     ✓ pushes only the committed tree and preserves staged, unstaged, and untracked bytes  1088ms
+     ✓ continues an immutable attempt after HEAD advances on another checked-out branch  1125ms
+     ✓ creates a new immutable attempt from the selected branch tip on Push latest  1227ms
+     ✓ does not overwrite a Cloud main ref that wins the expected-absent race  868ms
+     ✓ finishes a failed explicit cleanup after branch, HEAD, and dirty state change  1226ms
+     ✓ lets the user explicitly replace a deleted source branch with the current branch  989ms
+     ✓ lets server CAS reject a competitor that appears after the pre-push read  991ms
+     ✓ replays credential issuance with the same secret after its response is lost  851ms
+     ✓ replays explicit deletion after the server response is lost  1369ms
+     ✓ finishes local cleanup after a crash immediately after owned remote removal  1125ms
+     ✓ lets the server prove emptiness when the owned local remote was already removed  1043ms
+     ✓ reconciles canonical remote truth when server refuses cleanup after local remote removal  919ms
+     ✓ migrates v1 pre-push state by authoritative absent, accepted, and divergent remote refs  2692ms
+     ✓ finishes migrated v1 compensation after the local branch and HEAD change  1335ms
+     ✓ offers only Finish cleanup when the Cloud Project is already unavailable  668ms
+
+ Test Files  13 passed (13)
+      Tests  86 passed (86)
+   Start at  05:04:02
+   Duration  33.52s (transform 257ms, setup 0ms, import 554ms, tests 45.59s, environment 1ms)
+
+JSON report written to /Users/supersayajin/project/puppyone-desktop-push-receipts/artifacts/tests/vitest/2026-10-21T21-04-02-566Z-vitest-mypah2/results.json

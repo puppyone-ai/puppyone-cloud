@@ -1,0 +1,180 @@
+/** Pi loop. The host owns transport, filesystem tools and code execution. */
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { approvalDenied, wrapTool, toolErrorObserver } from './tool-execution.mjs';
+import { workspaceTools } from './tools.mjs';
+import {
+  createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager,
+  SettingsManager, VERSION,
+} from '@earendil-works/pi-coding-agent';
+
+export function createPiLoop({ root, agentDir, send, filesystem, execution }) {
+  const pending = new Map();
+  const models = new Map();
+  const executedTools = new Set();
+  let session;
+  let manager;
+  let stopped = false;
+  let config;
+  const request = (type, payload) => new Promise((resolve, reject) => {
+    const id = randomUUID();
+    pending.set(id, { resolve, reject });
+    send({ type, id, ...payload });
+  });
+
+  function conversation() {
+    // All session entries, not just rendered messages: retains compactions and branches.
+    const value = { version: 1, pi_version: VERSION, entries: [manager.getHeader(), ...manager.getEntries()],
+      leaf_id: manager.getLeafId() };
+    return value;
+  }
+
+  async function checkpoint(reason) {
+    await request('checkpoint', { reason, checkpoint: conversation() });
+  }
+
+  function wrap(definition) {
+    return wrapTool(definition, { request, conversation, isStopped: () => stopped,
+      onExecute: id => executedTools.add(id) });
+  }
+
+  async function start(value) {
+    config = value;
+    if (VERSION !== '0.85.1' || process.version !== 'v22.22.3') throw new Error('Worker version mismatch');
+    manager = SessionManager.inMemory(root, undefined, config.entries);
+    if (config.leaf_id) manager.branch(config.leaf_id);
+    if (config.finalize_only) {
+      send({ type: 'ready', pi_version: VERSION, node_version: process.version, workspace_version: 2, operation_version: 1 });
+      send({ type: 'finished', stopped: false, error: null });
+      return;
+    }
+    const modelCapability = randomUUID();
+    const server = createServer(async (req, res) => {
+      if (req.headers.authorization !== `Bearer ${modelCapability}`) { res.writeHead(403).end(); return; }
+      if (req.url !== '/v1/chat/completions' || req.method !== 'POST') { res.writeHead(404).end(); return; }
+      try {
+        let body = '';
+        for await (const chunk of req) {
+          body += chunk;
+          if (Buffer.byteLength(body) > 4 * 1024 * 1024) throw new Error('Model request limit exceeded');
+        }
+        const completion = JSON.parse(body);
+        if (completion.model !== config.model) throw new Error('Model outside run policy');
+        const id = randomUUID();
+        models.set(id, res);
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.on('close', () => { if (models.delete(id)) send({ type: 'model_cancel', id }); });
+        send({ type: 'model_request', id, request: completion, checkpoint: conversation() });
+      } catch (error) { res.writeHead(400).end(JSON.stringify({ error: { message: error.message } })); }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const modelRuntime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false,
+      refreshOnCreate: false, credentials: { read: async () => undefined, list: async () => [],
+        write: async () => { throw new Error('Persistent credentials disabled'); }, delete: async () => {} } });
+    modelRuntime.registerProvider('puppyone-cloud', {
+      api: 'openai-completions', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, authHeader: true,
+      models: [{ id: config.model, name: config.model, reasoning: false, input: ['text'],
+        contextWindow: config.context_window, maxTokens: config.max_tokens,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        compat: { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: false,
+          maxTokensField: 'max_tokens' } }],
+    });
+    await modelRuntime.setRuntimeApiKey('puppyone-cloud', modelCapability);
+    const resourceLoader = {
+      getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+      getSkills: () => ({ skills: [], diagnostics: [] }), getPrompts: () => ({ prompts: [], diagnostics: [] }),
+      getThemes: () => ({ themes: [], diagnostics: [] }), getAgentsFiles: () => ({ agentsFiles: [] }),
+      getSystemPrompt: () => config.system_prompt || 'Help with the assigned project files. Project changes belong in the workspace; sandbox temporary directories are available for scratch work. Tool errors are recoverable: use the result to choose another approach. Never repeat an operation the user declined.',
+      getSystemPromptSource: () => undefined, getAppendSystemPrompt: () => [], getAppendSystemPromptSources: () => [],
+      extendResources: () => {}, reload: async () => {},
+    };
+    const builtins = workspaceTools({ filesystem, execution, readonly: config.readonly });
+    const custom = (config.tools || []).map(tool => ({ ...tool, label: tool.name,
+      execute: async (id, input) => {
+        executedTools.add(id);
+        const result = await request('bound_tool', { call_id: id, name: tool.name, input, checkpoint: conversation() });
+        if (result.error) throw new Error(result.error);
+        return result.result;
+      } }));
+    ({ session } = await createAgentSession({ cwd: root, agentDir, modelRuntime,
+      model: modelRuntime.getModel('puppyone-cloud', config.model), thinkingLevel: 'off', sessionManager: manager,
+      resourceLoader, tools: [...builtins.map(t => t.name), ...custom.map(t => t.name)],
+      customTools: [...builtins.map(wrap), ...custom],
+      settingsManager: SettingsManager.inMemory({ defaultProjectTrust: 'never', quietStartup: true,
+        retry: { enabled: false }, compaction: { enabled: true, reserveTokens: 4096, keepRecentTokens: 8192 } }),
+    }));
+    session.subscribe(event => {
+      if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta')
+        send({ type: 'text', delta: event.assistantMessageEvent.delta });
+    });
+    session.agent.toolExecution = 'sequential';
+    session.agent.subscribe(toolErrorObserver({ request, conversation, executed: executedTools }));
+    send({ type: 'ready', pi_version: VERSION, node_version: process.version, workspace_version: 2, operation_version: 1 });
+    try {
+      if (config.resume) {
+        // Reconcile completed/approved calls explicitly. Agent.continue() needs
+        // a user or tool-result tail; it cannot replay an assistant tool turn.
+        const context = manager.buildSessionContext().messages;
+        const answered = new Set(context.filter(m => m.role === 'toolResult').map(m => m.toolCallId));
+        const definitions = [...builtins.map(wrap), ...custom];
+        for (const message of context) {
+          if (message.role !== 'assistant') continue;
+          for (const call of message.content.filter(part => part.type === 'toolCall')) {
+            if (answered.has(call.id)) continue;
+            const receipt = (config.receipts || []).find(r => r.call_id === call.id);
+            if (!receipt || receipt.state === 'executing') throw new Error('Tool outcome requires reconciliation');
+            let result;
+            if (receipt.state === 'completed') result = receipt.result.pi_result;
+            else if (receipt.state === 'rejected') result = approvalDenied();
+            else {
+              const tool = definitions.find(t => t.name === call.name);
+              if (!tool) throw new Error('Tool is no longer available');
+              result = await tool.execute(call.id, call.arguments, new AbortController().signal);
+            }
+            manager.appendMessage({role: 'toolResult', toolCallId: call.id, toolName: call.name,
+              content: result.content, details: result.details, isError: Boolean(result.isError), timestamp: Date.now()});
+          }
+        }
+        session.agent.state.messages = manager.buildSessionContext().messages;
+        await session.agent.continue();
+      }
+      else await session.prompt(config.prompt, { expandPromptTemplates: false });
+      const last = [...session.agent.state.messages].reverse().find(m => m.role === 'assistant');
+      await checkpoint(last?.stopReason === 'error' ? 'model_failed' : 'settled');
+      send({ type: 'finished', stopped, error: last?.stopReason === 'error' ? last.errorMessage || 'Model failed' : null });
+    } finally {
+      session.dispose();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  function receive(message) {
+    try {
+      if (message.type === 'start' && !config) {
+        start(message.config)
+          .catch(error => send({ type: 'failed', error: error.message }));
+      } else if (message.type === 'reply') {
+        const waiter = pending.get(message.id);
+        pending.delete(message.id);
+        if (message.error) waiter?.reject(new Error(message.error));
+        else waiter?.resolve(message);
+      } else if (message.type === 'model_chunk') {
+        models.get(message.id)?.write(`data: ${JSON.stringify(message.frame)}\n\n`);
+      } else if (message.type === 'model_end') {
+        const res = models.get(message.id);
+        models.delete(message.id);
+        if (message.error) res?.write(`data: ${JSON.stringify({ error: { message: message.error } })}\n\n`);
+        res?.end('data: [DONE]\n\n');
+      } else if (message.type === 'stop') {
+        stopped = true;
+        for (const waiter of pending.values()) waiter.reject(new Error('Run stopped'));
+        pending.clear();
+        session?.clearQueue();
+        session?.abort();
+      }
+    } catch (error) { send({ type: 'failed', error: error.message }); }
+  }
+
+  return { receive, close: () => { stopped = true; session?.abort(); } };
+}

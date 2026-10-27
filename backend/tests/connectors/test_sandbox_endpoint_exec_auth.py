@@ -3,11 +3,6 @@ from fastapi.testclient import TestClient
 
 from src.platform.access.adapters.sandbox_endpoint.dependencies import get_sandbox_endpoint_service
 from src.platform.access.adapters.sandbox_endpoint.router import router
-from src.platform.scope_sandbox.execution.dependencies import get_sandbox_service
-
-
-class _SandboxService:
-    pass
 
 
 class _InvalidCredentialService:
@@ -24,7 +19,6 @@ def _client(service) -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_sandbox_endpoint_service] = lambda: service
-    app.dependency_overrides[get_sandbox_service] = lambda: _SandboxService()
     return TestClient(app)
 
 

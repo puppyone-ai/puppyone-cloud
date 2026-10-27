@@ -1,0 +1,67 @@
+{
+  "result": "passed",
+  "workload": "authenticated local HTTP; owned local PG/S3; real Fly; separate worker/API file pools",
+  "samples": {
+    "warm": {
+      "count": 10,
+      "p50_ms": 433.91,
+      "p95_ms": 489.65,
+      "max_ms": 489.65,
+      "milliseconds": [
+        424.06,
+        434.84,
+        489.65,
+        430.16,
+        431.17,
+        434.87,
+        436.63,
+        435.67,
+        432.78,
+        433.91
+      ]
+    },
+    "reconnect": {
+      "count": 5,
+      "p50_ms": 3018.46,
+      "p95_ms": 3299.31,
+      "max_ms": 3299.31,
+      "milliseconds": [
+        2828.02,
+        3006.64,
+        3018.46,
+        3028.56,
+        3299.31
+      ]
+    },
+    "resume": {
+      "count": 3,
+      "p50_ms": 10028.25,
+      "p95_ms": 10938.64,
+      "max_ms": 10938.64,
+      "milliseconds": [
+        10028.25,
+        10938.64,
+        8980.41
+      ]
+    },
+    "cold_transport_resume": {
+      "count": 3,
+      "p50_ms": 10005.04,
+      "p95_ms": 10070.26,
+      "max_ms": 10070.26,
+      "milliseconds": [
+        10070.26,
+        10005.04,
+        9875.38
+      ]
+    }
+  },
+  "initial_clone_ms": 38997.71,
+  "cleanup": "owned Machines absent; Volumes deleted (absent or pending_destroy)",
+  "limitations": [
+    "Owned local PostgreSQL/S3; excludes hosted database latency",
+    "Billing disabled; excludes Desktop resolution/rendering",
+    "Samples are not production percentile guarantees",
+    "Cold transport clears process proxy/credential/SSH caches; supervisor Fly agent stays running"
+  ]
+}

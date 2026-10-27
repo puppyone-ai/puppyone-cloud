@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import abc
-import asyncio
+import fcntl
+import json
 import os
+import shutil
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from src.version_engine.domain.errors import ObjectNotFoundError
+from src.version_engine.storage.io_strategy import IOStorageStrategy
+from src.version_engine.storage.object_stream import object_batches
 from src.version_engine.write_engine.git_object_format import (
     EMPTY_TREE_CONTENT,
-    EMPTY_TREE_LOOSE_BYTES,
-    EMPTY_TREE_SHA1,
     decode_object,
     encode_object,
     hash_object,
@@ -21,6 +23,54 @@ from src.version_engine.write_engine.git_object_format import (
 
 
 class StorageBackend(abc.ABC):
+    @property
+    def publication_project_id(self) -> str | None:
+        """Namespace binding when the backend addresses multiple Projects."""
+        return None
+
+    def snapshot_reader(self, snapshot):
+        """Reusable physical reads under an admitted pin; never publication proof."""
+        return self
+
+    def pinned_reader(self, snapshot):
+        """Optional bounded bulk metadata read; filesystem backends need none."""
+        return self
+
+    def get_durable(self, h: str) -> bytes:
+        """Explicit physical read capability; unknown/caching backends fail closed."""
+        raise NotImplementedError("backend does not provide durable object readback")
+
+    def durable_readback(self):
+        """Fresh proof attempt; optional bounded metadata batching, never a warm byte cache."""
+        return self
+
+    def put_durable(self, h: str, loose_bytes: bytes) -> None:
+        """Write-through; caching backends must override to bypass staging."""
+        self.put(h, loose_bytes)
+
+    def put_many_durable(self, objects: dict[str, bytes]) -> None:
+        """Bounded write-through batch; network backends override with bulk I/O."""
+        for oid, data in objects.items():
+            self.put_durable(oid, data)
+
+    def put_stream_durable(self, objects) -> None:
+        """Consume a lazy encoded-object stream before returning to publication.
+
+        Backends may pipeline bounded batches but must drain all started writes
+        on failure. The fallback supports local backends without changing their
+        durability semantics or collecting the whole stream in memory.
+        """
+        for batch in object_batches(objects, IOStorageStrategy()):
+            self.put_many_durable(batch.objects)
+
+    def put_prepared_stream_durable(self, objects, facts) -> None:
+        """Known incoming object facts permit operation-wide admission on S3."""
+        self.put_stream_durable(objects)
+
+    def put_git_pack_durable(self, pack) -> None:
+        """A native pack must never silently fall back to loose re-encoding."""
+        raise NotImplementedError("backend does not support standard Git pack persistence")
+
     @abc.abstractmethod
     def get(self, h: str) -> bytes:
         """Return Git loose-object bytes for object id ``h``."""
@@ -46,7 +96,7 @@ class StorageBackend(abc.ABC):
 
 
 class FileSystemBackend(StorageBackend):
-    """Git loose-object filesystem layout: ``objects/aa/bb...``."""
+    """Local loose objects and immutable standard Git packs."""
 
     def __init__(self, objects_dir: Path):
         self.dir = objects_dir
@@ -54,11 +104,100 @@ class FileSystemBackend(StorageBackend):
     def _path_for(self, h: str) -> Path:
         return self.dir / h[:2] / h[2:]
 
+    def snapshot_reader(self, snapshot):
+        """Reusable physical reads under an admitted pin; never publication proof."""
+        return self
+
+    def pinned_reader(self, snapshot):
+        return self.durable_readback()
+
     def get(self, h: str) -> bytes:
         path = self._path_for(h)
         if not path.exists():
-            raise ObjectNotFoundError(f"object not found: {h}")
+            return self._get_packed(h)
         return path.read_bytes()
+
+    def _pack_locations(self):
+        path = self.dir / "pack" / "locations.json"
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    @contextmanager
+    def _pack_lock(self):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / "locations.lock").open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _save_pack_locations(self, locations):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=directory)
+        try:
+            with os.fdopen(fd, "w") as output:
+                json.dump(locations, output)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, directory / "locations.json")
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(name)
+
+    def put_git_pack_durable(self, pack) -> None:
+        if pack.path is None:
+            return
+        with self._pack_lock():
+            self._put_git_pack(pack)
+
+    def _put_git_pack(self, pack):
+        directory = self.dir / "pack"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / (pack.digest + ".pack")
+        fd, name = tempfile.mkstemp(dir=directory)
+        try:
+            with os.fdopen(fd, "wb") as output, pack.path.open("rb") as source:
+                shutil.copyfileobj(source, output, 1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, path)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(name)
+        locations = self._pack_locations()
+        locations.update({oid: pack.digest for oid in pack.objects})
+        self._save_pack_locations(locations)
+
+    def _get_packed(self, oid, *, cache_token=None):
+        from src.version_engine.storage.git_pack import GitPack
+        from src.version_engine.storage.git_pack_cache import pack_cache
+
+        digest = self._pack_locations().get(oid)
+        if digest is None:
+            raise ObjectNotFoundError(f"object not found: {oid}")
+        path = self.dir / "pack" / (digest + ".pack")
+        # The filesystem adapter is a local test/development backend; include
+        # file identity to avoid turning a stale cache into durability evidence.
+        stat = path.stat()
+        key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, cache_token)
+        fmt = "sha256" if len(oid) == 64 else "sha1"
+
+        def load():
+            pack = GitPack(fmt)
+            try:
+                with path.open("rb") as source:
+                    pack.read_stored(source)
+                if pack.digest != digest:
+                    raise ValueError("stored Git pack checksum mismatch")
+                return pack
+            except BaseException:
+                pack.close()
+                raise
+
+        with pack_cache.acquire(key, load) as pack:
+            return encode_object(*pack.get(oid), object_format=fmt)[1]
 
     def put(self, h: str, loose_bytes: bytes) -> None:
         path = self._path_for(h)
@@ -71,13 +210,24 @@ class FileSystemBackend(StorageBackend):
                 tmp.write(loose_bytes)
             os.replace(tmp_name, path)
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(tmp_name)
-            except FileNotFoundError:
-                pass
+
+    def get_durable(self, h: str) -> bytes:
+        path = self._path_for(h)
+        if path.exists():
+            return path.read_bytes()
+        return self._get_packed(h, cache_token=getattr(self, "_readback_token", object()))
+
+    def durable_readback(self):
+        if not self._pack_locations():
+            return self
+        reader = FileSystemBackend(self.dir)
+        reader._readback_token = object()
+        return reader
 
     def exists(self, h: str) -> bool:
-        return self._path_for(h).exists()
+        return self._path_for(h).exists() or h in self._pack_locations()
 
     def all_hashes(self) -> list[str]:
         result: list[str] = []
@@ -87,40 +237,66 @@ class FileSystemBackend(StorageBackend):
             if shard.is_dir() and len(shard.name) == 2:
                 for obj in sorted(shard.iterdir()):
                     result.append(shard.name + obj.name)
-        return result
+        return sorted(set(result) | self._pack_locations().keys())
 
     def count(self) -> tuple[int, int]:
-        n, size = 0, 0
+        size = 0
         if not self.dir.exists():
             return 0, 0
         for shard in self.dir.iterdir():
-            if shard.is_dir():
+            if shard.is_dir() and len(shard.name) == 2:
                 for obj in shard.iterdir():
-                    n += 1
                     size += obj.stat().st_size
-        return n, size
+        size += sum(path.stat().st_size for path in (self.dir / "pack").glob("*.pack"))
+        return len(self.all_hashes()), size
 
     def delete(self, h: str) -> bool:
+        with self._pack_lock():
+            return self._delete(h)
+
+    def _delete(self, h: str) -> bool:
         path = self._path_for(h)
-        if not path.exists():
-            return False
-        path.unlink()
+        locations = self._pack_locations()
+        digest = locations.pop(h, None)
+        found = digest is not None or path.exists()
+        if digest is not None:
+            self._save_pack_locations(locations)
+            if digest not in locations.values():
+                (self.dir / "pack" / (digest + ".pack")).unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
         parent = path.parent
         if parent.exists() and not any(parent.iterdir()):
             parent.rmdir()
-        return True
+        return found
 
 
 class ObjectStore:
     """High-level store for Git loose objects."""
 
-    def __init__(self, objects_dir: Path, backend: StorageBackend | None = None):
+    def __init__(
+        self,
+        objects_dir: Path,
+        backend: StorageBackend | None = None,
+        *,
+        object_format: str = "sha1",
+    ):
+        self._empty_tree_id, self._empty_tree_loose = encode_object(
+            "tree",
+            EMPTY_TREE_CONTENT,
+            object_format=object_format,
+        )
+        self._object_format = object_format
         self.dir = objects_dir
         self._backend = backend or FileSystemBackend(objects_dir)
 
+    @property
+    def object_format(self) -> str:
+        """Repository identity, not a format guessed from an incoming object."""
+        return self._object_format
+
     def _put_typed(self, obj_type: str, content: bytes) -> str:
-        sha1, loose = encode_object(obj_type, content)
-        if sha1 == EMPTY_TREE_SHA1:
+        sha1, loose = encode_object(obj_type, content, object_format=self.object_format)
+        if sha1 == self._empty_tree_id:
             return sha1
         self._backend.put(sha1, loose)
         return sha1
@@ -135,17 +311,26 @@ class ObjectStore:
         return self._put_typed("commit", content)
 
     def get_object(self, sha1: str) -> tuple[str, bytes]:
-        if sha1 == EMPTY_TREE_SHA1:
+        if sha1 == self._empty_tree_id:
             return "tree", EMPTY_TREE_CONTENT
-        return self._decode_verified(sha1, self._backend.get(sha1))
+        return self._decode_verified(
+            sha1,
+            self._backend.get(sha1),
+            object_format=self.object_format,
+        )
 
     @staticmethod
-    def _decode_verified(sha1: str, loose: bytes) -> tuple[str, bytes]:
+    def _decode_verified(
+        sha1: str,
+        loose: bytes,
+        *,
+        object_format: str = "sha1",
+    ) -> tuple[str, bytes]:
         try:
             obj_type, content = decode_object(loose)
         except Exception as exc:
             raise ObjectNotFoundError(f"object corrupt: {sha1} ({exc})") from exc
-        actual = hash_object(obj_type, content)
+        actual = hash_object(obj_type, content, object_format=object_format)
         if actual != sha1:
             raise ObjectNotFoundError(f"object corrupt: expected {sha1}, got {actual}")
         return obj_type, content
@@ -153,18 +338,18 @@ class ObjectStore:
     def get_objects_many(self, sha1s: list[str]) -> dict[str, tuple[str, bytes]]:
         """Batch transport only; identical hash verification to single reads."""
         return {
-            sha1: self._decode_verified(sha1, loose)
+            sha1: self._decode_verified(sha1, loose, object_format=self.object_format)
             for sha1, loose in self.get_loose_many(sha1s).items()
         }
 
     def put_loose(self, sha1: str, loose_bytes: bytes) -> None:
-        if sha1 == EMPTY_TREE_SHA1:
+        if sha1 == self._empty_tree_id:
             return
         self._backend.put(sha1, loose_bytes)
 
     def get_loose(self, sha1: str) -> bytes:
-        if sha1 == EMPTY_TREE_SHA1:
-            return EMPTY_TREE_LOOSE_BYTES
+        if sha1 == self._empty_tree_id:
+            return self._empty_tree_loose
         return self._backend.get(sha1)
 
     def get_loose_many(self, sha1s: list[str]) -> dict[str, bytes]:
@@ -172,8 +357,8 @@ class ObjectStore:
         out: dict[str, bytes] = {}
         rest: list[str] = []
         for sha1 in unique:
-            if sha1 == EMPTY_TREE_SHA1:
-                out[sha1] = EMPTY_TREE_LOOSE_BYTES
+            if sha1 == self._empty_tree_id:
+                out[sha1] = self._empty_tree_loose
             else:
                 rest.append(sha1)
         getter = getattr(self._backend, "get_many", None)
@@ -192,13 +377,13 @@ class ObjectStore:
         return content
 
     def exists(self, h: str) -> bool:
-        if h == EMPTY_TREE_SHA1:
+        if h == self._empty_tree_id:
             return True
         return self._backend.exists(h)
 
     def exists_many(self, hashes: list[str]) -> set[str]:
-        existing = {h for h in hashes if h == EMPTY_TREE_SHA1}
-        rest = [h for h in hashes if h != EMPTY_TREE_SHA1]
+        existing = {h for h in hashes if h == self._empty_tree_id}
+        rest = [h for h in hashes if h != self._empty_tree_id]
         if rest:
             existing.update(self._backend.exists_many(rest))
         return existing
@@ -215,41 +400,6 @@ class ObjectStore:
             if h not in reachable and self._backend.delete(h):
                 deleted += 1
         return deleted
-
-    async def async_put(self, data: bytes) -> str:
-        sha1, loose = encode_object("blob", data)
-        if sha1 == EMPTY_TREE_SHA1:
-            return sha1
-        async_put = getattr(self._backend, "async_put", None)
-        if callable(async_put):
-            await async_put(sha1, loose)
-        else:
-            await asyncio.to_thread(self._backend.put, sha1, loose)
-        return sha1
-
-    async def async_get(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get, h)
-
-    async def async_exists(self, h: str) -> bool:
-        return await asyncio.to_thread(self.exists, h)
-
-    async def async_all_hashes(self) -> list[str]:
-        return await asyncio.to_thread(self.all_hashes)
-
-    async def async_count(self) -> tuple[int, int]:
-        return await asyncio.to_thread(self.count)
-
-    async def async_put_loose(self, h: str, loose: bytes) -> None:
-        if h == EMPTY_TREE_SHA1:
-            return
-        async_put = getattr(self._backend, "async_put", None)
-        if callable(async_put):
-            await async_put(h, loose)
-        else:
-            await asyncio.to_thread(self._backend.put, h, loose)
-
-    async def async_get_loose(self, h: str) -> bytes:
-        return await asyncio.to_thread(self.get_loose, h)
 
 
 @contextmanager

@@ -1,50 +1,67 @@
+import { safeNext } from '@/lib/safeNext';
+export { safeNext } from '@/lib/safeNext';
+import {
+  delegatedCallbackUrl,
+  isDelegatedClient,
+  restartSignInMessage,
+  type DelegatedClient,
+} from './delegated-client';
 export type SignInProvider = 'email' | 'google' | 'github';
-export type LoginIntent = { kind: 'web'; next: string | null } | { kind: 'desktop'; state: string };
-export const DESKTOP_STATE = /^[A-Za-z0-9_-]{32,128}$/;
 export const DESKTOP_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+/** A client that reuses this login page while owning its own verifier and session. */
+export type DelegatedLoginIntent = {
+  kind: DelegatedClient;
+  state: string;
+  callbackUrl: string;
+  challenge: string;
+};
+export type DesktopLoginIntent = DelegatedLoginIntent & { kind: 'desktop' };
+export type WebsiteLoginIntent = DelegatedLoginIntent & { kind: 'website' };
+export type LoginIntent = { kind: 'web'; next: string | null } | DelegatedLoginIntent;
 
-export function safeNext(value: string | null | undefined): string | null {
-  if (
-    !value ||
-    !value.startsWith('/') ||
-    value.startsWith('//') ||
-    /[\\\u0000-\u0020]/.test(value) ||
-    /%(?:5c|0[0-9a-f]|1[0-9a-f]|20)/i.test(value)
-  )
-    return null;
-  const parsed = new URL(value, 'https://return.invalid');
-  if (
-    parsed.origin !== 'https://return.invalid' ||
-    /^\/(?:login|auth)(?:\/|$)/.test(parsed.pathname)
-  )
-    return null;
-  return value;
+export function isDelegatedIntent(
+  intent: LoginIntent | null | undefined
+): intent is DelegatedLoginIntent {
+  return Boolean(intent) && intent!.kind !== 'web';
 }
 
 export function readLoginIntent(url: URL): LoginIntent {
-  if (url.searchParams.get('client') !== 'desktop')
-    return {
-      kind: 'web',
-      next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')),
-    };
-  const state = url.searchParams.get('desktop_state') ?? url.searchParams.get('state') ?? '';
-  if (!DESKTOP_STATE.test(state))
-    throw new Error('Sign-in request is invalid or expired. Start sign-in again.');
-  return { kind: 'desktop', state };
+  const client = url.searchParams.get('client');
+  if (isDelegatedClient(client)) {
+    const stateKey = `${client}_state`;
+    const callbackKey = `${client}_callback`;
+    const state = url.searchParams.get(stateKey) ?? '';
+    const challenge = url.searchParams.get('code_challenge') ?? '';
+    if (!/^[A-Za-z0-9_-]{43,128}$/.test(state) || !/^[A-Za-z0-9_-]{43}$/.test(challenge)
+      || [stateKey, callbackKey, 'code_challenge'].some(key => url.searchParams.getAll(key).length !== 1))
+      throw new Error(restartSignInMessage(client));
+    let callbackUrl: string;
+    try {
+      callbackUrl = delegatedCallbackUrl(client, url.searchParams.get(callbackKey) ?? '').toString();
+    } catch {
+      throw new Error(restartSignInMessage(client));
+    }
+    return { kind: client, state, challenge, callbackUrl };
+  }
+  return { kind: 'web', next: safeNext(url.searchParams.get('redirect') ?? url.searchParams.get('next')) };
 }
 
 export function loginReturnPath(intent: LoginIntent): string {
-  const query = new URLSearchParams();
-  if (intent.kind === 'desktop') {
-    query.set('client', 'desktop');
-    query.set('desktop_state', intent.state);
-  } else if (intent.next) query.set('redirect', intent.next);
-  return '/login' + (query.size ? `?${query}` : '');
+  if (isDelegatedIntent(intent))
+    return '/login?' + new URLSearchParams({
+      client: intent.kind,
+      [`${intent.kind}_state`]: intent.state,
+      [`${intent.kind}_callback`]: intent.callbackUrl,
+      code_challenge: intent.challenge,
+    });
+  return '/login' + (intent.next ? `?${new URLSearchParams({ redirect: intent.next })}` : '');
 }
 
 export function oauthCallbackUrl(base: string, intent: LoginIntent): string {
   const url = new URL(base);
-  if (intent.kind === 'desktop') url.searchParams.set('desktop_state', intent.state);
-  else if (intent.next) url.searchParams.set('next', intent.next);
+  if (isDelegatedIntent(intent)) {
+    url.searchParams.set(`${intent.kind}_state`, intent.state);
+    url.searchParams.set(`${intent.kind}_callback`, intent.callbackUrl);
+  } else if (intent.next) url.searchParams.set('next', intent.next);
   return url.toString();
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -39,6 +40,9 @@ def test_reusable_database_jobs_cannot_bypass_database_change_detection():
         "backend/src/infra/data_migrations/runner.py",
         ".github/workflows/_operator-data-verify.yml",
         "scripts/database_history.py",
+        "scripts/qubits_entrypoint_cutover.py",
+        "scripts/entrypoint_source_decisions.py",
+        ".github/workflows/entrypoint-cutover.yml",
     ],
 )
 def test_main_promotion_requires_staging_evidence_for_data_only_changes(filename):
@@ -47,7 +51,7 @@ def test_main_promotion_requires_staging_evidence_for_data_only_changes(filename
     assert result["workflows"] == ["migrate-staging.yml"]
 
 
-def _run_database_gate(files):
+def _run_database_gate(files, success=False):
     workflow = yaml.safe_load((WORKFLOWS / "main-release-gate.yml").read_text())
     step = next(
         step
@@ -57,6 +61,7 @@ def _run_database_gate(files):
     # Execute the real workflow script against an API fake: no hosted mutation.
     harness = r"""
       const files = JSON.parse(process.argv[1]);
+      const success = process.argv[2] === "true";
       const result = {failed: [], workflows: []};
       const context = {repo: {owner: 'test', repo: 'test'}, payload: {
         pull_request: {number: 1, head: {ref: 'qubits', sha: 'head'}, base: {sha: 'base'}, labels: []}
@@ -65,7 +70,7 @@ def _run_database_gate(files):
       const github = {rest: {pulls: {listFiles: 'files'}, actions: {listWorkflowRuns: 'runs'}},
         async paginate(method, args) {
           if (method === 'files') return files;
-          result.workflows.push(args.workflow_id); return [];
+          result.workflows.push(args.workflow_id); return success ? [{head_sha: "head", conclusion: "success", event: "push", head_branch: "qubits", status: "completed", html_url: "test"}] : [];
         }};
     """
     harness += (
@@ -74,7 +79,7 @@ def _run_database_gate(files):
         + "\n})().then(() => console.log(JSON.stringify(result)));"
     )
     completed = subprocess.run(
-        ["node", "-e", harness, json.dumps(files)], capture_output=True, text=True, check=True
+        ["node", "-e", harness, json.dumps(files), json.dumps(success)], capture_output=True, text=True, check=True
     )
     return json.loads(completed.stdout)
 
@@ -227,132 +232,41 @@ def test_production_data_work_cannot_run_from_untrusted_ref() -> None:
     dispatcher = (WORKFLOWS / "data-migration.yml").read_text()
     assert '"refs/heads/qubits"' in dispatcher
     assert '"refs/heads/main"' in dispatcher
-    assert "production_staging_evidence" in dispatcher
-    assert "environment: staging" in dispatcher
-    assert "operation: verify" in dispatcher
-    assert "needs.production_staging_evidence.result == 'success'" in dispatcher
+    parsed = yaml.safe_load(dispatcher)
+    trigger = parsed.get("on", parsed.get(True))
+    assert trigger["workflow_dispatch"]["inputs"]["operation"]["options"] == ["plan", "verify"]
+    assert "Use the environment release coordinator for writes" in dispatcher
 
 
-def test_reusable_database_workflows_receive_protected_secrets() -> None:
-    staging = (WORKFLOWS / "migrate-staging.yml").read_text()
-    production = (WORKFLOWS / "migrate-production.yml").read_text()
-    dispatcher = (WORKFLOWS / "data-migration.yml").read_text()
-
-    # GitHub does not pass secrets to reusable workflows automatically. Every
-    # direct caller must cross that boundary explicitly; the called job then
-    # selects the protected staging/production Environment.
-    assert staging.count("secrets: inherit") == 7
-    assert production.count("secrets: inherit") == 10
-    assert dispatcher.count("secrets: inherit") == 3
-
-
-def test_staging_release_is_automatic_auditable_and_serial() -> None:
-    staging = (WORKFLOWS / "migrate-staging.yml").read_text()
-    parsed = yaml.safe_load(staging)
-    jobs = parsed["jobs"]
-    release = json.loads(
-        (REPOSITORY / "supabase" / "releases" / "staging-data-migration.json").read_text()
-    )
-
-    assert '"refs/heads/qubits"' in staging
-    assert "github.event_name == 'workflow_dispatch'" not in staging
-    assert "scripts/database_history.py release --environment staging" in staging
-    assert jobs["prepare_schema"]["needs"] == "resolve_data_release"
-    assert jobs["prepare_schema"]["with"]["allow_data_migration_pause"] is True
-    assert jobs["validate_schema_pause"]["needs"] == [
-        "prepare_schema",
-        "resolve_data_release",
-    ]
-    assert jobs["repair_run"]["needs"] == [
-        "validate_schema_pause",
-        "resolve_data_release",
-    ]
-    assert "outputs.repair_migration_id != ''" in jobs["repair_run"]["if"]
-    assert "outputs.execution_mode == 'ci'" in jobs["repair_run"]["if"]
-    assert jobs["data_plan"]["needs"] == [
-        "validate_schema_pause",
-        "repair_run",
-        "resolve_data_release",
-    ]
-    # A staged repair may legitimately be absent (skipped), but its failure
-    # must stop the staged data migration from mutating the environment.
-    assert "needs.repair_run.result == 'success'" in jobs["data_plan"]["if"]
-    assert "needs.repair_run.result == 'skipped'" in jobs["data_plan"]["if"]
-    assert "outputs.execution_mode == 'ci'" in jobs["data_plan"]["if"]
-    assert jobs["data_run"]["needs"] == ["data_plan", "resolve_data_release"]
-    assert "always()" in jobs["data_run"]["if"]
-    assert "needs.data_plan.result == 'success'" in jobs["data_run"]["if"]
-    assert jobs["data_verify"]["needs"] == ["data_run", "resolve_data_release"]
-    assert "always()" in jobs["data_verify"]["if"]
-    assert "needs.data_run.result == 'success'" in jobs["data_verify"]["if"]
-    assert jobs["operator_data_verify"]["with"] == {
-        "environment": "staging",
-        "migration_id": "${{ needs.resolve_data_release.outputs.migration_id }}",
-    }
-    assert "needs.operator_data_verify.result == 'success'" in jobs["deploy_after_data"]["if"]
-    assert jobs["deploy_after_data"]["needs"] == [
-        "data_verify",
-        "operator_data_verify",
-        "resolve_data_release",
-    ]
-    assert staging.count("uses: ./.github/workflows/_schema-deploy.yml") == 2
-    assert staging.count("uses: ./.github/workflows/_data-migration.yml") == 4
-    assert staging.count("uses: ./.github/workflows/_operator-data-verify.yml") == 1
-    for operation in ("plan", "run", "verify"):
-        assert f"operation: {operation}" in staging
-    assert re.fullmatch(r"[0-9A-Za-z_]+", release["migration_id"])
-    assert release["execution_mode"] in {"ci", "operator_local"}
-    assert data_migration_directory(REPOSITORY, release["migration_id"]).is_dir()
-    repair_id = release.get("repair_migration_id")
-    if repair_id:
-        assert re.fullmatch(r"[0-9A-Za-z_]+", repair_id)
-        assert data_migration_directory(REPOSITORY, repair_id).is_dir()
+def test_release_credentials_use_protected_environment_and_private_temporary_files():
+    shared = yaml.safe_load((WORKFLOWS / "_environment-release.yml").read_text())
+    release = shared["jobs"]["release"]
+    assert release["environment"] == "${{ inputs.environment }}"
+    assert release["runs-on"] == "ubuntu-24.04"
+    assert release["needs"] == ["database", "sandbox_image", "images"]
+    command = next(s["run"] for s in release["steps"] if s.get("name") == "Run the shared upgrade and acceptance program")
+    assert "src.infra.data_migrations.release" in command
+    assert "$RUNNER_TEMP/puppyone-release-private/configuration.json" in command
+    configuration = next(s for s in release["steps"] if s.get("id") == "configuration")
+    assert configuration["env"]["RELEASE_CONFIG_JSON"] == "${{ secrets.PUPPYONE_RELEASE_CONFIG }}"
+    assert release["steps"][-1]["if"] == "always()"
+    assert "secrets.S3" not in str(shared)
 
 
-def test_production_release_is_automatic_and_requires_qubits_evidence() -> None:
-    production = (WORKFLOWS / "migrate-production.yml").read_text()
-    parsed = yaml.safe_load(production)
-    jobs = parsed["jobs"]
-    release = json.loads(
-        (REPOSITORY / "supabase" / "releases" / "production-data-migration.json").read_text()
-    )
-
-    assert '"refs/heads/main"' in production
-    assert "    paths:" not in production
-    assert "scripts/database_history.py release --environment production" in production
-    assert jobs["prepare_schema"]["with"]["allow_data_migration_pause"] is True
-    assert jobs["staging_data_evidence"]["with"] == {
-        "environment": "staging",
-        "migration_id": "${{ needs.resolve_data_release.outputs.migration_id }}",
-        "operation": "verify",
-    }
-    assert "needs.staging_data_evidence.result == 'success'" in jobs["data_plan"]["if"]
-    assert "outputs.execution_mode == 'ci'" in jobs["data_plan"]["if"]
-    assert jobs["data_plan"]["needs"] == [
-        "validate_schema_pause",
-        "repair_run",
-        "staging_data_evidence",
-        "resolve_data_release",
-    ]
-    assert "always()" in jobs["data_run"]["if"]
-    assert "needs.data_plan.result == 'success'" in jobs["data_run"]["if"]
-    assert "always()" in jobs["data_verify"]["if"]
-    assert "needs.data_run.result == 'success'" in jobs["data_verify"]["if"]
-    assert jobs["staging_operator_evidence"]["with"] == {
-        "environment": "staging",
-        "migration_id": "${{ needs.resolve_data_release.outputs.migration_id }}",
-    }
-    assert jobs["operator_data_verify"]["with"] == {
-        "environment": "production",
-        "migration_id": "${{ needs.resolve_data_release.outputs.migration_id }}",
-    }
-    assert "needs.operator_data_verify.result == 'success'" in jobs["deploy_after_data"]["if"]
-    assert production.count("uses: ./.github/workflows/_schema-deploy.yml") == 2
-    assert production.count("uses: ./.github/workflows/_data-migration.yml") == 6
-    assert production.count("uses: ./.github/workflows/_operator-data-verify.yml") == 2
-    assert re.fullmatch(r"[0-9A-Za-z_]+", release["migration_id"])
-    assert release["execution_mode"] in {"ci", "operator_local"}
-    assert data_migration_directory(REPOSITORY, release["migration_id"]).is_dir()
+@pytest.mark.parametrize("file,branch,environment", [
+    ("migrate-staging.yml", "qubits", "staging"),
+    ("migrate-production.yml", "main", "production"),
+])
+def test_both_environments_use_one_automatic_release_program(file, branch, environment):
+    workflow = yaml.safe_load((WORKFLOWS / file).read_text())
+    trigger = workflow.get("on", workflow.get(True))
+    assert trigger["push"] == {"branches": [branch]}
+    job = workflow["jobs"]["release"]
+    assert job["uses"] == "./.github/workflows/_environment-release.yml"
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {"environment": environment}
+    assert "refs/heads/" + branch in job["if"]
+    assert "puppyone-ai/puppyone-cloud" in job["if"]
 
 
 def test_schema_runner_only_pauses_for_an_explicit_data_migration_guard() -> None:
@@ -389,18 +303,62 @@ def test_legacy_credential_readiness_is_checked_before_schema_writes() -> None:
     assert "ON_ERROR_STOP=1" in steps[guard_index]["run"]
 
 
-def test_only_historical_upgrade_harness_can_insert_missing_older_migrations() -> None:
-    schema = (WORKFLOWS / "_schema-deploy.yml").read_text()
+def test_historical_upgrade_harness_exercises_missing_older_migrations() -> None:
     upgrade_harness = (REPOSITORY / "scripts" / "test-repository-target-migration.sh").read_text()
 
     # This harness intentionally creates holes in local schema history so it can
-    # prove an existing installation upgrades correctly. Hosted deploys must keep
-    # Supabase's strict ordering guard and never normalize such history drift.
+    # prove an existing installation upgrades correctly.
     assert upgrade_harness.count("supabase migration up --local --include-all") == 3
     assert "20260717000000_project_deletion_admission_fence.sql" in upgrade_harness
     assert upgrade_harness.count("save_fence") == 4
     assert upgrade_harness.count("restore_fence") == 5
-    assert "--include-all" not in schema
+
+
+@pytest.mark.parametrize(
+    ("message", "pause", "expected_status", "expected_state"),
+    [
+        ("", "true", 0, "deployed"),
+        ("DATA_MIGRATION_REQUIRED:20261003_final_entrypoint_storage", "true", 0, "data_migration_required"),
+        ("DATA_MIGRATION_REQUIRED:20261003_final_entrypoint_storage", "false", 1, "data_migration_required"),
+        ("ENTRYPOINT_FREEZE_REQUIRED", "true", 1, None),
+        ("permission denied", "true", 1, None),
+    ],
+)
+def test_schema_catchup_preserves_data_guards_and_database_failures(
+    tmp_path, message, pause, expected_status, expected_state
+) -> None:
+    workflow = yaml.safe_load((WORKFLOWS / "_schema-deploy.yml").read_text())
+    steps = workflow["jobs"]["deploy_schema"]["steps"]
+    plan = next(step["run"] for step in steps if step.get("name") == "Show pending schema plan")
+    push = next(step["run"] for step in steps if step.get("id") == "push")
+    # Model a remote database containing a newer applied version: both plan and
+    # execution must include missing older versions, while real SQL failures
+    # still prevent a successful deployment attestation.
+    cli = tmp_path / "supabase"
+    cli.write_text('''#!/bin/bash
+case " $* " in *" --include-all "*) ;; *) exit 42 ;; esac
+case " $* " in *" --dry-run "*) exit 0 ;; esac
+if [ -n "$TEST_DATABASE_ERROR" ]; then
+  echo "$TEST_DATABASE_ERROR"
+  exit 1
+fi
+''')
+    cli.chmod(0o700)
+    output = tmp_path / "outputs"
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}",
+               SUPABASE_DATABASE_URL="postgresql://fixture.invalid/test",
+               GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(tmp_path / "summary"),
+               TEST_DATABASE_ERROR=message, ALLOW_DATA_MIGRATION_PAUSE=pause)
+    assert subprocess.run(["bash", "-c", plan], env=env, capture_output=True).returncode == 0
+    # Isolate the workflow's diagnostic file from other local tests.
+    push = push.replace("/tmp/schema-push.log", str(tmp_path / "schema-push.log"))
+    result = subprocess.run(["bash", "-c", push], env=env, capture_output=True, text=True)
+    assert result.returncode == expected_status, result.stdout + result.stderr
+    recorded = output.read_text() if output.exists() else ""
+    if expected_state:
+        assert f"schema_state={expected_state}\n" in recorded
+    else:
+        assert "schema_state=deployed" not in recorded
 
 
 def test_needs_expressions_use_identifier_safe_job_ids() -> None:
@@ -441,24 +399,130 @@ def test_workflow_dispatch_values_are_not_interpolated_into_shell() -> None:
     assert '"${{ inputs.environment }}" = ' not in dispatcher
 
 
-def test_main_gate_requires_exact_schema_and_contract_verification() -> None:
+def test_main_gate_does_not_require_production_to_be_migrated_before_merge():
     gate = (WORKFLOWS / "main-release-gate.yml").read_text()
     assert "pr.head.sha" in gate
     assert "latestOwnerReview?.commit_id === pr.head.sha" in gate
-    assert "labeled, unlabeled" in gate
     assert "migrate-staging.yml" in gate
-    assert "migrate-production.yml" in gate
-    assert "requires-data-migration" in gate
-    assert "stagingVerified" in gate
-    assert "productionVerified" in gate
-    assert "pr.base.sha" in gate
-    assert "['added', 'renamed'].includes(file.status)" in gate
+    assert "migrate-production.yml" not in gate
+    assert "productionVerified" not in gate
+    result = _run_database_gate([{"filename": "supabase/migrations/new_contract.sql", "status": "added"}], success=True)
+    assert result["failed"] == []
+    assert result["workflows"] == ["migrate-staging.yml"]
 
 
 def test_every_qubits_head_receives_an_exact_schema_attestation() -> None:
     staging = (WORKFLOWS / "migrate-staging.yml").read_text()
     assert "branches:\n      - qubits" in staging
     assert "    paths:" not in staging
+
+
+@pytest.mark.parametrize("environment,branch", [("staging", "qubits"), ("production", "main")])
+def test_release_waits_only_for_workflows_that_run_on_its_branch(environment, branch):
+    waited = _run_release_admission(environment)["waited"]
+    assert "secret-scanning-gitleaks.yml" in waited
+    assert "validate-migrations.yml" in waited
+    if environment == "staging":
+        assert len(waited) == 2
+    else:
+        assert set(waited) == {
+            "backend-release.yml", "frontend-build.yml", "agent-runtime-contracts.yml",
+            "validate-migrations.yml", "release-upgrade-rehearsal.yml",
+            "self-hosted-install.yml", "secret-scanning-gitleaks.yml",
+        }
+    for name in waited:
+        workflow = yaml.safe_load((WORKFLOWS / name).read_text())
+        trigger = workflow.get("on", workflow.get(True))
+        assert branch in trigger["push"]["branches"], name
+        assert "paths" not in trigger["push"] and "paths-ignore" not in trigger["push"], name
+        assert workflow.get("concurrency", {}).get("cancel-in-progress") is not True, name
+
+
+def _run_release_admission(environment, conclusion="success"):
+    workflow = yaml.safe_load((WORKFLOWS / "_environment-release.yml").read_text())
+    step = workflow["jobs"]["admission"]["steps"][1]
+    harness = """
+      const output = {waited: [], error: null};
+      const context = {repo: {owner: 'fixture', repo: 'fixture'}, sha: 'exact-sha'};
+      const github = {rest: {actions: {async listWorkflowRuns(args) {
+        if (args.head_sha !== context.sha || args.event !== 'push') throw new Error('Wrong candidate');
+        output.waited.push(args.workflow_id);
+        return {data: {workflow_runs: [{head_sha: context.sha, status: 'completed',
+                                      conclusion: process.env.TEST_CONCLUSION}]}};
+      }}}};
+    """ + "(async () => {" + step["with"]["script"] + """
+      })().catch(e => {output.error = e.message}).then(() => console.log(JSON.stringify(output)));
+    """
+    result = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, check=True,
+        env={**os.environ, "RELEASE_ENVIRONMENT": environment, "TEST_CONCLUSION": conclusion},
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped"])
+def test_database_release_does_not_ignore_failed_admission(environment, conclusion):
+    assert "Required workflow failed" in _run_release_admission(environment, conclusion)["error"]
+
+
+def test_unknown_release_environment_fails_closed():
+    assert _run_release_admission("unknown")["error"] == "Unknown release environment"
+
+
+@pytest.mark.parametrize("event,base,ref,expected", [
+    ("pull_request", "qubits", "1404/merge", "qubits"),
+    ("push", "", "qubits", "qubits"),
+    ("pull_request", "main", "1405/merge", "full"),
+    ("push", "", "main", "full"),
+    ("workflow_dispatch", "", "qubits", "full"),
+    ("pull_request", "other", "1406/merge", "full"),
+])
+def test_database_validation_profile(event, base, ref, expected, tmp_path):
+    workflow = yaml.safe_load((WORKFLOWS / "validate-migrations.yml").read_text())
+    step = next(s for s in workflow["jobs"]["database_change_scope"]["steps"] if s.get("id") == "profile")
+    output = tmp_path / "output"
+    subprocess.run(["bash", "-c", step["run"]], check=True, env={
+        **os.environ, "EVENT_NAME": event, "BASE_REF": base, "REF_NAME": ref,
+        "GITHUB_OUTPUT": str(output),
+    })
+    assert output.read_text().strip() == f"profile={expected}"
+
+
+@pytest.mark.parametrize("profile,policy,rpc,local,containment,success", [
+    ("qubits", "success", "success", "skipped", "skipped", True),
+    ("qubits", "failure", "success", "skipped", "skipped", False),
+    ("qubits", "success", "cancelled", "skipped", "skipped", False),
+    ("qubits", "success", "success", "failure", "skipped", False),
+    ("full", "success", "success", "success", "success", True),
+    ("full", "success", "success", "skipped", "success", False),
+    ("full", "success", "success", "success", "failure", False),
+    ("unknown", "success", "success", "skipped", "skipped", False),
+])
+def test_database_summary_enforces_selected_profile(profile, policy, rpc, local, containment, success, tmp_path):
+    workflow = yaml.safe_load((WORKFLOWS / "validate-migrations.yml").read_text())
+    step = workflow["jobs"]["database_validation_result"]["steps"][0]
+    result = subprocess.run(["bash", "-c", step["run"]], capture_output=True, env={
+        **os.environ, "CHANGE_SCOPE_RESULT": "success", "DATABASE_CHANGED": "true",
+        "RAILWAY_RELEASE_RESULT": "success", "VALIDATION_PROFILE": profile,
+        "POLICY_RESULT": policy, "RPC_LINT_RESULT": rpc, "LOCAL_DATABASE_RESULT": local,
+        "CONTAINMENT_RESULT": containment, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    })
+    assert (result.returncode == 0) is success
+
+
+def test_application_and_full_rehearsal_workflows_remain_manual_for_qubits():
+    for name in (
+        "backend-release.yml", "frontend-build.yml", "agent-runtime-contracts.yml",
+        "native-inventory-migration-tests.yml", "release-upgrade-rehearsal.yml",
+        "organization-workspace-acceptance.yml", "frontend-resource-regression.yml",
+        "self-hosted-install.yml", "prepare-baseline.yml", "repository-hosting-tests.yml",
+        "frontend-readability.yml",
+    ):
+        trigger = yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)["on"]
+        assert trigger["pull_request"]["branches"] == ["main"], name
+        assert "qubits" not in trigger.get("push", {}).get("branches", []), name
+        assert "workflow_dispatch" in trigger, name
 
 
 def test_database_workflow_third_party_actions_are_sha_pinned() -> None:

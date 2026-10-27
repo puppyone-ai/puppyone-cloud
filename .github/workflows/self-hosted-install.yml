@@ -2,6 +2,7 @@ name: Self-hosted Installation
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
     tags: ['v*']
@@ -18,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [default, custom, upgrade]
+        variant: [default, custom, upgrade, legacy]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:

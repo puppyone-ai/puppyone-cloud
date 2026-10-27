@@ -4,8 +4,8 @@ from typing import List, Optional
 from datetime import datetime, timezone
 
 from src.platform.access.adapters.agent.config.models import Agent, AgentBash, AgentTool
-from src.repo.scope_service import ScopeService
-from src.repo.access_credentials import AccessCredentialRepository
+from src.platform.repository_target.scope_service import ScopeService
+from src.platform.access.credential_repository import AccessCredentialRepository
 from src.utils.id_generator import generate_uuid_v7
 
 
@@ -881,13 +881,15 @@ class AgentRepository:
     # Execution History
     # ============================================
 
-    def get_execution_history(self, agent_id: str, limit: int = 10) -> list[dict]:
+    def get_execution_history(self, agent_id: str, user_id: str, limit: int = 10) -> list[dict]:
         response = (
-            self._client.table("agent_execution_logs")
+            self._client.table("agent_runs")
             .select("*")
             .eq("agent_id", agent_id)
-            .order("started_at", desc=True)
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
             .limit(limit)
             .execute()
         )
-        return response.data or []
+        from src.platform.access.adapters.agent.runtime.control.models import public_run
+        return [public_run(row) for row in response.data or []]

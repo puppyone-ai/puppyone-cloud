@@ -14,7 +14,7 @@ from src.platform.access.adapters.agent.config.models import Agent
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.models import ProjectAction, ProjectGrant
 from src.platform.authorization.service import AuthorizationService
 
 
@@ -33,16 +33,21 @@ def get_agent_config_service(
     return AgentConfigService(repository=repo)
 
 
-def require_agent_read_query(
+def require_agent_read_grant(
     project_id: str = Query(..., description="Project ID (required)"),
     current_user: CurrentUser = Depends(get_current_user),
     authorization: AuthorizationService = Depends(get_authorization_service),
-) -> str:
+) -> ProjectGrant:
     """Authorize the named Agent read action from a query Project id."""
-    authorization.authorize(
+    return authorization.authorize(
         project_id, current_user.user_id, ProjectAction.AGENT_READ
     )
-    return project_id
+
+
+def require_agent_read_query(
+    grant: ProjectGrant = Depends(require_agent_read_grant),
+) -> str:
+    return grant.project_id
 
 
 def require_agent_manage_body(

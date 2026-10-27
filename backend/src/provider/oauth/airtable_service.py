@@ -17,6 +17,7 @@ from src.provider.oauth.models import (
     OAuthConnectionUpdate,
 )
 from src.provider.oauth.repository import OAuthRepository
+from src.infra.execution.runner import run_blocking
 
 # Global storage for code_verifiers (in production, use Redis or database)
 _CODE_VERIFIERS = {}
@@ -164,7 +165,7 @@ class AirtableOAuthService:
                 metadata=metadata,
             )
 
-            connection = await self.repository.create(connection_create)
+            connection = await run_blocking(self.repository.create, connection_create)
 
             return (
                 True,
@@ -191,11 +192,11 @@ class AirtableOAuthService:
 
     async def get_connection(self, user_id: str) -> Optional[OAuthConnection]:
         """Get Airtable connection for a user."""
-        return await self.repository.get_by_user_and_provider(user_id, "airtable")
+        return await run_blocking(self.repository.get_by_user_and_provider, user_id, "airtable")
 
     async def disconnect(self, user_id: str) -> bool:
         """Disconnect Airtable for user."""
-        return await self.repository.delete_by_user_and_provider(user_id, "airtable")
+        return await run_blocking(self.repository.delete_by_user_and_provider, user_id, "airtable")
 
     async def is_token_expired(self, user_id: str) -> bool:
         """Check if stored token is expired."""
@@ -247,7 +248,7 @@ class AirtableOAuthService:
                 expires_at=expires_at,
             )
 
-            return await self.repository.update(connection.id, update_data)
+            return await run_blocking(self.repository.update, connection.id, update_data)
         except httpx.HTTPStatusError:
             return None
 

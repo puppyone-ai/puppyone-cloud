@@ -1,0 +1,441 @@
+name: Reusable Environment Release
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+
+jobs:
+  admission:
+    name: Check protected release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Require the protected environment branch
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          test "$GITHUB_REPOSITORY" = puppyone-ai/puppyone-cloud || exit 1
+          case "$RELEASE_ENVIRONMENT:$GITHUB_REF:$GITHUB_EVENT_NAME" in
+            staging:refs/heads/qubits:push|staging:refs/heads/qubits:workflow_dispatch|production:refs/heads/main:push|production:refs/heads/main:workflow_dispatch) ;;
+            *) echo '::error::Release source is not the protected target branch'; exit 1;;
+          esac
+      - name: Wait for candidate CI before changing the environment
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        with:
+          script: |
+            const profiles = {
+              staging: ['validate-migrations.yml', 'secret-scanning-gitleaks.yml'],
+              production: ['backend-release.yml', 'frontend-build.yml', 'agent-runtime-contracts.yml',
+                              'validate-migrations.yml', 'release-upgrade-rehearsal.yml',
+                              'self-hosted-install.yml', 'secret-scanning-gitleaks.yml']
+            };
+            const required = profiles[process.env.RELEASE_ENVIRONMENT];
+            if (!required) throw new Error('Unknown release environment');
+            const deadline = Date.now() + 90 * 60 * 1000;
+            while (Date.now() < deadline) {
+              let ready = true;
+              for (const workflow_id of required) {
+                const {data} = await github.rest.actions.listWorkflowRuns({
+                  ...context.repo, workflow_id, head_sha: context.sha, event: 'push', per_page: 100
+                });
+                const run = data.workflow_runs.find(r => r.head_sha === context.sha);
+                if (!run || run.status !== 'completed') { ready = false; continue; }
+                if (run.conclusion !== 'success') throw new Error(`Required workflow failed: ${workflow_id}`);
+              }
+              if (ready) return;
+              await new Promise(resolve => setTimeout(resolve, 30000));
+            }
+            throw new Error('Candidate CI did not complete');
+  database:
+    name: Migrate and verify Supabase
+    needs: admission
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 45
+    outputs:
+      schema_state: ${{ steps.schema.outputs.schema_state }}
+      application_configured: ${{ steps.application.outputs.configured }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
+        with:
+          version: '2.107.0'
+      - name: Install schema tools
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python -m pip install 'uv==0.5.11'
+          echo SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io >> "$GITHUB_ENV"
+          docker info > /dev/null
+      - name: Install locked migration runtime
+        working-directory: backend
+        run: uv sync --locked
+      - name: Bind protected database credentials
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 supabase/releases/connection.py
+      - name: Apply compatible SQL or identify a coordinated cutover
+        id: schema
+        working-directory: backend
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          uv run python -m src.infra.data_migrations.release.schema_only \
+            --environment "$RELEASE_ENVIRONMENT" --source "$GITHUB_SHA" \
+            --report "$RUNNER_TEMP/database-release.json"
+      - name: Detect separately configured application release
+        id: application
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: |
+          if [ -n "$RELEASE_CONFIG_JSON" ]; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retain database migration result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: database-release-${{ inputs.environment }}-${{ github.sha }}
+          path: ${{ runner.temp }}/database-release.json
+          if-no-files-found: ignore
+          retention-days: 14
+  sandbox_image:
+    name: Publish and pin the sandbox image
+    # Runs beside the database stage and before any application deployment, so
+    # a deployment applies the image pinned here. Environments without a Fly
+    # sandbox configuration skip every step.
+    needs: admission
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+    outputs:
+      enabled: ${{ steps.config.outputs.enabled }}
+    steps:
+      - name: Detect sandbox image configuration
+        id: config
+        env:
+          FLY_APP: ${{ vars.CLOUD_AGENT_FLY_APP }}
+        run: |
+          if [ -n "$FLY_APP" ]; then echo 'enabled=true' >> "$GITHUB_OUTPUT"; else echo 'enabled=false' >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          node-version: '22'
+      - name: Test sandbox modules
+        if: steps.config.outputs.enabled == 'true'
+        working-directory: backend
+        run: |
+          node --test agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs agent-worker/tools.test.mjs \
+            agent-worker/controller.test.mjs agent-worker/providers/*.test.mjs \
+            agent-worker/workbench-publication.test.mjs agent-worker/workbench-relay.test.mjs
+      - name: Build the sandbox image
+        if: steps.config.outputs.enabled == 'true'
+        run: docker build --platform linux/amd64 -t "puppyone-sandbox:$GITHUB_SHA" backend/agent-worker
+      - name: Publish, verify the runtime contract and pin
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.CLOUD_AGENT_FLY_TOKEN }}
+          FLY_APP: ${{ vars.CLOUD_AGENT_FLY_APP }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SANDBOX_IMAGE_SERVICES: ${{ vars.RAILWAY_SANDBOX_IMAGE_SERVICES }}
+        run: |
+          test -n "$FLY_API_TOKEN" || { echo '::error::Configure CLOUD_AGENT_FLY_TOKEN in this GitHub environment'; exit 1; }
+          printf '%s' "$FLY_API_TOKEN" | docker login registry.fly.io --username x --password-stdin >/dev/null
+          trap 'docker logout registry.fly.io >/dev/null 2>&1' EXIT
+          python3 backend/scripts/sandbox_image_release.py --image "puppyone-sandbox:$GITHUB_SHA" --app "$FLY_APP"
+  images:
+    name: Build and publish application images
+    # One build per commit, before any deployment. The release job points every
+    # Railway service at these digests; Railway does not rebuild anything, and
+    # promotion reuses the backend digest. Environments without the
+    # RELEASE_IMAGES=enabled variable keep building from the repository.
+    needs: admission
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      enabled: ${{ steps.config.outputs.enabled }}
+      backend: ${{ steps.publish.outputs.backend }}
+      frontend: ${{ steps.publish.outputs.frontend }}
+    env:
+      BACKEND_REPOSITORY: ghcr.io/puppyone-ai/puppyone-cloud-backend
+      FRONTEND_REPOSITORY: ghcr.io/puppyone-ai/puppyone-cloud-frontend
+      RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - name: Detect image release configuration
+        id: config
+        env:
+          RELEASE_IMAGES: ${{ vars.RELEASE_IMAGES }}
+        run: |
+          if [ "$RELEASE_IMAGES" = enabled ]; then echo 'enabled=true' >> "$GITHUB_OUTPUT"; else echo 'enabled=false' >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - name: Build the backend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          docker build --platform linux/amd64 --build-arg SOURCE_SHA="$GITHUB_SHA" \
+            -t "$BACKEND_REPOSITORY:$GITHUB_SHA" backend
+      - name: Smoke-test the backend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          image="$BACKEND_REPOSITORY:$GITHUB_SHA"
+          # Every role's entry module imports and the external clients exist.
+          docker run --rm -e INTERNAL_API_SECRET=image-smoke-test-only --entrypoint sh "$image" -c '
+            set -e
+            /opt/venv/bin/fly version
+            git --version
+            test "$PUPPYONE_BUILD_ID" = "'"$GITHUB_SHA"'"
+            python -c "import src.main, mcp_service.server, src.platform.access.adapters.agent.runtime.worker, src.platform.upload.worker, src.platform.imports.worker, src.platform.synchronize.worker, src.platform.access.adapters.ssh.gateway"
+          '
+          # Unknown roles fail closed instead of starting the API.
+          status=0; docker run --rm -e SERVICE_ROLE=unsupported "$image" || status=$?
+          test "$status" = 64
+      - name: Build the frontend image
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          # Public by design (shipped to browsers), but kept out of public run logs.
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_AUTH_EMAIL_ONLY: ${{ vars.NEXT_PUBLIC_AUTH_EMAIL_ONLY }}
+          NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS: ${{ vars.NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS }}
+          NEXT_PUBLIC_DEV_MODE: ${{ vars.NEXT_PUBLIC_DEV_MODE }}
+        run: |
+          set -euo pipefail
+          # Public endpoints are inlined at build time; a missing one would ship
+          # a frontend whose server-side auth redirects fail.
+          for name in NEXT_PUBLIC_API_URL NEXT_PUBLIC_APP_URL NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY; do
+            test -n "${!name}" || { echo "::error::Configure $name for this GitHub environment"; exit 1; }
+          done
+          version=$(python3 -c 'import json; print(json.load(open("version.json"))["version"])')
+          docker build --platform linux/amd64 \
+            --build-arg SOURCE_SHA="$GITHUB_SHA" --build-arg APP_VERSION="$version" \
+            --build-arg NEXT_PUBLIC_API_URL --build-arg NEXT_PUBLIC_APP_URL \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY \
+            --build-arg NEXT_PUBLIC_AUTH_EMAIL_ONLY --build-arg NEXT_PUBLIC_DEV_MODE \
+            --build-arg NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS \
+            -t "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA" frontend
+      - name: Smoke-test the frontend image
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          docker run -d --name frontend-smoke -p 127.0.0.1:3000:3000 "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA"
+          trap 'docker rm -f frontend-smoke >/dev/null 2>&1' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs frontend-smoke | tail -n 50
+          exit 1
+      - name: Publish the images
+        id: publish
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          docker push --quiet "$BACKEND_REPOSITORY:$GITHUB_SHA"
+          docker push --quiet "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA"
+          backend=$(docker inspect --format '{{index .RepoDigests 0}}' "$BACKEND_REPOSITORY:$GITHUB_SHA")
+          frontend=$(docker inspect --format '{{index .RepoDigests 0}}' "$FRONTEND_REPOSITORY:$RELEASE_ENVIRONMENT-$GITHUB_SHA")
+          [[ "$backend" =~ ^${BACKEND_REPOSITORY}@sha256:[0-9a-f]{64}$ ]]
+          [[ "$frontend" =~ ^${FRONTEND_REPOSITORY}@sha256:[0-9a-f]{64}$ ]]
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          { echo '### Application images'; echo "- backend: \`$backend\`"; echo "- frontend: \`$frontend\`"; } >> "$GITHUB_STEP_SUMMARY"
+  release:
+    name: Upgrade and accept ${{ inputs.environment }}
+    # Release credentials belong to the protected environment. PR workflows
+    # never invoke this job; GitHub supplies a fresh VM for each release.
+    needs: [database, sandbox_image, images]
+    if: >-
+      needs.database.outputs.schema_state == 'coordinated_release_required' ||
+      needs.database.outputs.application_configured == 'true'
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    # Breaking releases run immutable data migrations object-by-object against
+    # remote object storage (production native inventory is estimated at 2-5 h).
+    # 360 is the GitHub-hosted maximum; artifacts are resumable if it is reached.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
+        with:
+          version: '2.107.0'
+      - name: Install release tools
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq postgresql-17 postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          echo SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io >> "$GITHUB_ENV"
+          python -m pip install 'uv==0.5.11'
+          docker info > /dev/null
+      - name: Require environment deployment configuration
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: |
+          test -n "$RELEASE_CONFIG_JSON" || { echo '::error::Configure PUPPYONE_RELEASE_CONFIG in this GitHub environment'; exit 1; }
+      - name: Bind protected database credentials
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python3 supabase/releases/connection.py
+      - name: Prepare private release configuration
+        id: configuration
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+          RELEASE_BACKEND_IMAGE: ${{ needs.images.outputs.backend }}
+          RELEASE_FRONTEND_IMAGE: ${{ needs.images.outputs.frontend }}
+          RELEASE_IMAGES_SOURCE: ${{ needs.images.outputs.enabled == 'true' && github.sha || '' }}
+        run: python3 supabase/releases/github_actions.py
+      - name: Record an environment release attempt
+        id: attempt
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const {data} = await github.rest.repos.createDeployment({
+              ...context.repo, ref: context.sha, task: 'puppyone-release',
+              environment: '${{ inputs.environment }}', auto_merge: false, required_contexts: []
+            });
+            core.setOutput('deployment_id', data.id);
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo, deployment_id: data.id, state: 'in_progress'
+            });
+      - name: Install locked release runtime
+        working-directory: backend
+        run: uv sync --locked
+      - name: Run the shared upgrade and acceptance program
+        working-directory: backend
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          uv run python -m src.infra.data_migrations.release \
+            --environment "$RELEASE_ENVIRONMENT" --source "$GITHUB_SHA" \
+            --configuration "$RUNNER_TEMP/puppyone-release-private/configuration.json" \
+            --report "$RUNNER_TEMP/environment-release.json"
+      - name: Publish accepted deployment status
+        if: always() && steps.attempt.outputs.deployment_id != ''
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          RELEASE_JOB_STATUS: ${{ job.status }}
+          DEPLOYMENT_ID: ${{ steps.attempt.outputs.deployment_id }}
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              ...context.repo, deployment_id: Number(process.env.DEPLOYMENT_ID),
+              state: process.env.RELEASE_JOB_STATUS === 'success' ? 'success' : 'failure'
+            });
+      - name: Retain sanitized release result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: environment-release-${{ inputs.environment }}-${{ github.sha }}
+          path: ${{ runner.temp }}/environment-release.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove private temporary files
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'puppyone-release-private'
+          if directory.exists():
+              shutil.rmtree(directory)
+          PY
+  result:
+    name: Database migration result
+    if: always()
+    needs: [admission, database, sandbox_image, images, release]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report database and application outcomes separately
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          DATABASE_RESULT: ${{ needs.database.result }}
+          SCHEMA_STATE: ${{ needs.database.outputs.schema_state }}
+          APPLICATION_CONFIGURED: ${{ needs.database.outputs.application_configured }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+          SANDBOX_RESULT: ${{ needs.sandbox_image.result }}
+          SANDBOX_ENABLED: ${{ needs.sandbox_image.outputs.enabled }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          IMAGES_ENABLED: ${{ needs.images.outputs.enabled }}
+        with:
+          script: |
+            const e = process.env;
+            const coordinated = e.SCHEMA_STATE === 'coordinated_release_required';
+            const required = coordinated || e.APPLICATION_CONFIGURED === 'true';
+            const databaseReady = e.ADMISSION_RESULT === 'success' && e.DATABASE_RESULT === 'success' &&
+              (e.SCHEMA_STATE === 'deployed' || (coordinated && e.RELEASE_RESULT === 'success'));
+            await core.summary.addHeading('Database migration result')
+              .addTable([
+                ['Database', databaseReady ? 'Migrated and verified' : 'Not completed'],
+                ['Application', required ? e.RELEASE_RESULT : 'Not configured; no application deployment performed'],
+                ['Sandbox image', e.SANDBOX_ENABLED === 'true' ? e.SANDBOX_RESULT : 'Not configured for this environment'],
+                ['Application images', e.IMAGES_ENABLED === 'true' ? e.IMAGES_RESULT : 'Not configured; services build from the repository'],
+                ['Source', context.sha]
+              ]).write();
+            if (!databaseReady) core.setFailed('Database migration did not complete; inspect the failed prerequisite or migration job.');
+            else if (required && e.RELEASE_RESULT !== 'success') core.setFailed('Database is ready, but application release failed.');
+            else if (e.SANDBOX_ENABLED === 'true' && e.SANDBOX_RESULT !== 'success') core.setFailed('Database is ready, but the sandbox image was not published.');
+            else if (['failure', 'cancelled'].includes(e.IMAGES_RESULT)) core.setFailed('Database is ready, but the application images were not published.');

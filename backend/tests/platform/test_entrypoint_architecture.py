@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -11,13 +12,34 @@ OLD_MODULES = (
     "src.connectors", "src.platform.integrations", "src.repo.github_integration",
     "src.repo.connector_service", "src.repo.connector_repository",
     "src.repo.connector_router", "src.repo.access_surface_repository",
+    "src.ingest.file", "src.ingest.upload_jobs", "src.ingest.policy.upload_policy",
+    "src.version_engine.adapters.product", "src.platform.upload.policy",
+    "src.repo.access_credentials",
+    "src.repo", "src.version_engine.entrypoints.git",
+    "src.version_engine.adapters.git", "src.version_engine.scoped_fs",
+    "src.internal.mcp_runtime",
+    "src.platform.scope_sandbox",
+    "src.platform.workspace.router",
+) + tuple(
+    f"src.version_engine.entrypoints.http.{name}"
+    for name in (
+        "content", "content_read", "content_write", "content_resource",
+        "content_history", "content_operations", "repository_management",
+        "content_helpers", "content_read_context", "download_token", "audit",
+        "websocket", "schemas", "access_point", "access_point_fs",
+    )
 )
 
 
 def imports(path):
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.ImportFrom):
-            yield node.module or ""
+            module = node.module or ""
+            if node.level:
+                package = ".".join(path.relative_to(SRC.parent).with_suffix("").parts[:-1])
+                module = resolve_name("." * node.level + module, package)
+            yield module
+            yield from (f"{module}.{alias.name}" for alias in node.names)
         elif isinstance(node, ast.Import):
             yield from (alias.name for alias in node.names)
 
@@ -27,6 +49,144 @@ def test_no_runtime_import_uses_retired_business_modules():
                   for path in SRC.rglob("*.py") for module in imports(path)
                   if any(module == old or module.startswith(old + ".") for old in OLD_MODULES)]
     assert not violations
+
+
+def test_entrypoints_never_import_sibling_lifecycle_implementations():
+    domains = {"upload", "imports", "synchronize", "access"}
+    violations = []
+    for domain in domains:
+        forbidden = tuple(f"src.platform.{other}" for other in domains - {domain})
+        for path in (SRC / "platform" / domain).rglob("*.py"):
+            violations.extend((str(path.relative_to(SRC)), module) for module in imports(path)
+                if any(module == name or module.startswith(name + ".") for name in forbidden))
+    assert not violations
+
+
+def test_repository_api_dependencies_remain_one_way():
+    boundaries = (
+        ("platform/workspace", ("src.platform.access", "fastapi", "starlette")),
+        ("platform/sandbox", (
+            "src.platform.access", "src.platform.workspace", "fastapi", "starlette",
+        )),
+        ("platform/sandbox/providers/fly", (
+            "src.platform.sandbox.providers.e2b", "src.platform.sandbox.providers.docker",
+        )),
+        ("platform/sandbox/providers/e2b", (
+            "src.platform.sandbox.providers.fly", "src.platform.sandbox.providers.docker",
+        )),
+        ("platform/sandbox/providers/docker", (
+            "src.platform.sandbox.providers.fly", "src.platform.sandbox.providers.e2b",
+        )),
+        ("platform/access/adapters/ssh", (
+            "src.platform.sandbox",
+            "e2b", "docker",
+        )),
+        ("version_engine", ("src.platform.access.adapters", "src.platform.access.filesystem")),
+        ("platform/repository_target", (
+            "src.platform.access.adapters", "src.platform.access.credentials",
+            "src.platform.access.credential_repository", "src.platform.access.filesystem",
+        )),
+        ("platform/repository_target/models.py", ("src.platform.access",)),
+        ("platform/repository_target/schemas.py", ("src.platform.access",)),
+        ("platform/repository_target/scope_repository.py", ("src.platform.access",)),
+        ("platform/repository_target/scope_service.py", ("src.platform.access",)),
+        ("platform/access/filesystem", ("src.platform.access.adapters",)),
+        ("platform/access/adapters/cli", ("src.platform.access.adapters.mcp_endpoint",)),
+        ("platform/access/adapters/mcp_endpoint", ("src.platform.access.adapters.cli",)),
+        ("platform/access/adapters/git", ("src.platform.access.adapters.agent",)),
+        ("file_operations", ("src.platform.access.adapters",)),
+        ("version_engine/read", ("src.file_operations",)),
+        ("version_engine/write_engine", ("src.file_operations",)),
+        ("version_engine/storage", ("src.file_operations",)),
+        ("platform/access/adapters/api", ("src.version_engine.entrypoints",)),
+        ("platform/access/adapters/cli", ("src.version_engine.entrypoints",)),
+        ("platform/access/credential_repository.py", (
+            "src.platform.access.adapters", "src.version_engine",
+        )),
+        ("platform/access/repository_schemas.py", (
+            "fastapi", "src.platform.access.adapters", "src.version_engine",
+            "src.file_operations",
+        )),
+    )
+    violations = []
+    for relative, forbidden in boundaries:
+        root = SRC / relative
+        paths = [root] if root.is_file() else root.rglob("*.py")
+        for path in paths:
+            violations.extend(
+                (str(path.relative_to(SRC)), module)
+                for module in imports(path)
+                if any(module == name or module.startswith(name + ".") for name in forbidden)
+            )
+    assert not violations
+
+
+def test_sandbox_providers_are_reached_only_through_the_sandbox_package():
+    sandbox = SRC / "platform" / "sandbox"
+    internal = "src.platform.sandbox.providers"
+    violations = [
+        (str(path.relative_to(SRC)), module)
+        for path in SRC.rglob("*.py")
+        if sandbox not in path.parents
+        for module in imports(path)
+        if module == internal or module.startswith(internal + ".")
+    ]
+    assert not violations
+
+
+def test_only_sandbox_providers_talk_to_compute_providers():
+    import re
+
+    providers = SRC / "platform" / "sandbox" / "providers"
+    # Release tooling drives a local PostgreSQL container; it is not a sandbox.
+    release_tooling = SRC / "infra" / "data_migrations"
+    docker_cli = re.compile(
+        r"create_subprocess_exec\(\s*[\"']docker[\"']|\[\s*[\"']docker[\"']\s*,"
+    )
+    violations = []
+    for path in SRC.rglob("*.py"):
+        if providers in path.parents or release_tooling in path.parents:
+            continue
+        relative, text = str(path.relative_to(SRC)), path.read_text()
+        violations.extend(
+            (relative, module)
+            for module in imports(path)
+            if module.split(".")[0] in {"e2b", "e2b_code_interpreter"}
+        )
+        if "api.machines.dev" in text:
+            violations.append((relative, "Fly Machines API"))
+        if docker_cli.search(text):
+            violations.append((relative, "docker CLI"))
+    assert not violations
+
+
+def test_every_sandbox_provider_folder_is_registered():
+    from importlib import import_module
+
+    from src.platform.sandbox import PROVIDERS
+
+    folders = {
+        path.name
+        for path in (SRC / "platform" / "sandbox" / "providers").iterdir()
+        if path.is_dir() and (path / "__init__.py").exists()
+    }
+    assert folders == set(PROVIDERS)
+    for name, (module, factory) in PROVIDERS.items():
+        assert module == f".providers.{name}"
+        assert hasattr(import_module(module, package="src.platform.sandbox"), factory)
+
+
+def test_version_notification_route_is_mounted_from_access():
+    # OpenAPI fingerprints cover HTTP, but do not include WebSocket routes.
+    from fastapi.routing import APIWebSocketRoute
+    from src.main import app
+    from src.platform.access.adapters.api.websocket import version_ws
+
+    routes = [route for route in app.routes
+              if isinstance(route, APIWebSocketRoute)
+              and route.path == "/api/v1/version/{project_id}/ws"]
+    assert len(routes) == 1
+    assert routes[0].endpoint is version_ws
 
 
 def test_provider_does_not_import_entrypoint_lifecycle_or_version_engine():
@@ -39,6 +199,67 @@ def test_provider_does_not_import_entrypoint_lifecycle_or_version_engine():
     assert not violations
 
 
+def test_shared_dtos_contain_no_entrypoint_lifecycle_or_workspace_state():
+    from dataclasses import fields
+    from src.provider._base import ProviderSpec
+    from src.provider import schemas
+    from src.platform.synchronize.models import SynchronizeBinding
+
+    for retired in ("Sync", "SyncResult", "NodeSyncMeta", "SyncProjectRequest", "SyncProjectResponse"):
+        assert not hasattr(schemas, retired)
+    assert {item.name for item in fields(schemas.SourceInput)} == {"config", "credentials"}
+    assert {item.name for item in fields(schemas.MaterializationInput)} == {"source", "provenance"}
+    assert not {"supported_sync_modes", "default_sync_mode", "default_trigger"} & {
+        item.name for item in fields(ProviderSpec)
+    }
+    assert SynchronizeBinding.__module__ == "src.platform.synchronize.models"
+
+
+def test_moved_upload_contracts_repository_and_policy_are_domain_owned():
+    from src.platform.upload import schemas, repository, jobs
+    from src.file_operations import upload_policy as policy
+    from src.ingest import schemas as legacy
+
+    assert schemas.UploadInitRequest.__module__ == "src.platform.upload.schemas"
+    assert repository.UploadJobRepository.__module__ == "src.platform.upload.repository"
+    assert policy.evaluate_batch_limits.__module__ == "src.file_operations.upload_policy"
+    assert jobs.finalize_upload_to_version.__module__ == "src.platform.upload.jobs"
+    assert not hasattr(legacy, "UploadInitRequest")
+    from src.platform.upload.service import ETLService
+    from src.platform.upload.tasks.models import ETLTask
+    from src.platform.upload.arq_client import UploadArqClient
+    assert ETLService.__module__ == "src.platform.upload.service"
+    assert ETLTask.__module__ == "src.platform.upload.tasks.models"
+    assert UploadArqClient.__module__ == "src.platform.upload.arq_client"
+
+
+def test_file_processing_is_neutral_and_upload_does_not_depend_on_legacy_ingest():
+    forbidden = ("src.ingest",) + tuple(f"src.platform.{name}" for name in (
+        "upload", "imports", "synchronize", "access",
+    ))
+    for path in (SRC / "infra" / "file_processing").rglob("*.py"):
+        assert not [module for module in imports(path)
+            if any(module == name or module.startswith(name + ".") for name in forbidden)], path
+    for path in (SRC / "platform" / "upload").rglob("*.py"):
+        assert not [module for module in imports(path) if module.startswith("src.ingest")], path
+
+
+def test_queue_and_runtime_policy_is_owned_by_upload_not_shared_processing(monkeypatch):
+    from src.infra.file_processing.config import ETLConfig
+    from src.platform.upload.config import UploadWorkerConfig
+    from src.infra.queue_config import QueueConnectionConfig
+
+    assert not any(token in field for field in ETLConfig.model_fields
+                   for token in ("queue", "redis", "timeout", "attempts", "worker", "ttl", "backoff"))
+    monkeypatch.setenv("ETL_REDIS_URL", "redis://localhost:6380/2")
+    monkeypatch.setenv("ETL_TASK_TIMEOUT", "777")
+    monkeypatch.setenv("ETL_ARQ_QUEUE_NAME", "upload-test")
+    config = UploadWorkerConfig(_env_file=None)
+    assert config.redis_url == QueueConnectionConfig(_env_file=None).redis_url
+    assert config.etl_task_timeout == 777
+    assert config.etl_arq_queue_name == "upload-test"
+
+
 def test_business_models_use_canonical_names():
     from dataclasses import fields
     from src.platform.access.models import AccessSurface
@@ -46,7 +267,8 @@ def test_business_models_use_canonical_names():
 
     assert "kind" in {field.name for field in fields(AccessSurface)}
     assert "provider" not in {field.name for field in fields(AccessSurface)}
-    assert "connection_id" in {field.name for field in fields(SyncRun)}
+    assert "synchronize_binding_id" in {field.name for field in fields(SyncRun)}
+    assert "connection_id" not in {field.name for field in fields(SyncRun)}
     assert "access_point_id" not in {field.name for field in fields(SyncRun)}
     forbidden = {"Connector", "IntegrationEngine", "IntegrationService", "IntegrationRepository",
                  "IntegrationConnection", "ConnectorRegistry", "BaseConnector"}
@@ -75,7 +297,13 @@ def test_import_and_synchronize_share_registered_provider_instances(monkeypatch)
     for item in discovered:
         catalog.register(item.adapter)
     monkeypatch.setattr(dependencies, "_registry_instance", catalog)
-    assert get_import_provider_registry().get("github") is get_synchronize_provider_registry().get("github")
+    imports_registry = get_import_provider_registry()
+    synchronize_registry = get_synchronize_provider_registry()
+    assert imports_registry.get("github") is catalog.get("github")
+    assert synchronize_registry.get("github") is None
+    for name in synchronize_registry.providers():
+        assert synchronize_registry.get(name) is imports_registry.get(name)
+        assert imports_registry.get(name) is catalog.get(name)
 
 
 @pytest.mark.parametrize("role,allowed", [("viewer", False), ("editor", False), ("admin", True)])
@@ -84,5 +312,5 @@ def test_renamed_management_actions_keep_the_original_role_boundary(role, allowe
 
     for action in (ProjectAction.SYNCHRONIZE_MANAGE, ProjectAction.ACCESS_MANAGE, ProjectAction.IMPORT_SOURCE_MANAGE):
         assert (ACTION_CAPABILITY[action] in ROLE_CAPABILITIES[ProjectRole(role)]) is allowed
-    # Serialized capabilities are consumed by unchanged Web/Desktop clients.
-    assert ProjectAction.SYNCHRONIZE_MANAGE.value == "integration.manage"
+    # ISSUE-058 changes the public capability spelling, never its role grant.
+    assert ProjectAction.SYNCHRONIZE_MANAGE.value == "synchronize.manage"

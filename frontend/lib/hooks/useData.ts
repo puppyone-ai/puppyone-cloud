@@ -5,6 +5,7 @@
  */
 
 import useSWR, { mutate } from 'swr';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 import { useMemo } from 'react';
 import { workspaceKeys } from '@/lib/queryKeys';
 import { readState } from '@/lib/queryState';
@@ -29,7 +30,7 @@ import {
   sortNodes,
   type NodeInfo,
 } from '../contentTreeApi';
-import { getConnectorSpecs, type ConnectorSpec } from '../syncApi';
+import { listSynchronizeProviders as getConnectorSpecs, type SynchronizeProviderSpec as ConnectorSpec } from '../synchronizeApi';
 
 // Shared immutable-by-convention fallback: effect dependencies must not
 // change identity merely because a disabled/pending query has no payload.
@@ -112,6 +113,7 @@ export function useProject(projectId?: string | null) {
  * - 自动缓存：相同 tableId 共享数据
  */
 export function useTable(projectId: string, tableId: string | undefined) {
+  const {files, identity, ready} = useWorkspaceFiles();
   const {
     data,
     error,
@@ -119,8 +121,8 @@ export function useTable(projectId: string, tableId: string | undefined) {
     mutate: revalidate,
   } = useSWR<TableData>(
     // key: 只有 tableId 存在时才请求
-    tableId ? ['table', projectId, tableId] : null,
-    () => getTable(projectId, tableId!),
+    tableId && ready ? ['table', projectId, tableId, ...(identity === 'published' ? [] : [identity])] : null,
+    () => getTable(projectId, tableId!, files),
     {
       ...defaultConfig,
       dedupingInterval: 10000, // 表数据 10 秒去重
@@ -193,7 +195,7 @@ export function upsertProjectCache(orgId: string | null | undefined, project: Pr
  * 手动刷新指定表数据（用于保存后）
  */
 export function refreshTable(projectId: string, tableId: string) {
-  return mutate(['table', projectId, tableId]);
+  return mutate(key => Array.isArray(key) && key[0] === 'table' && key[1] === projectId && key[2] === tableId);
 }
 
 /**
@@ -214,8 +216,9 @@ export function updateTableCache(
  * - Keep only the same identity's cached snapshot while revalidating.
  */
 export function useTreeDir(projectId: string, dirPath: string | null | undefined) {
+  const {files, identity, ready} = useWorkspaceFiles();
   const normalizedPath = normalizeTreePath(dirPath);
-  const key = projectId ? ['tree', projectId, normalizedPath] : null;
+  const key = projectId && ready ? ['tree', projectId, normalizedPath, ...(identity === 'published' ? [] : [identity])] : null;
   const {
     data,
     error,
@@ -227,7 +230,7 @@ export function useTreeDir(projectId: string, dirPath: string | null | undefined
     // backend returns ends up in canonical UI order in the SWR cache. This
     // keeps folder order stable at the fetcher boundary; see `sortNodes` for
     // the full rationale.
-    () => listDir(projectId, normalizedPath)
+    () => files.listDir(projectId, normalizedPath)
       .then(r => sortNodes(directChildrenOf(r.nodes, normalizedPath))),
     {
       ...defaultConfig,
@@ -278,7 +281,7 @@ export function useExplorerRootNodes(projectId: string) {
  */
 export function refreshContentNodes(projectId: string, dirPath: string | null) {
   const normalizedPath = normalizeTreePath(dirPath);
-  return mutate(['tree', projectId, normalizedPath]);
+  return mutate(key => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId && key[2] === normalizedPath);
 }
 
 /**
@@ -327,7 +330,7 @@ export function refreshFolderNodes(
   // `undefined` as mutate data: that clears the tree for one render and makes
   // both panes flash empty while revalidation is in flight.
   return Promise.all(
-    unique.map(folderPath => mutate(['tree', projectId, folderPath])),
+    unique.map(folderPath => mutate(key => Array.isArray(key) && key[0] === 'tree' && key[1] === projectId && key[2] === folderPath)),
   );
 }
 

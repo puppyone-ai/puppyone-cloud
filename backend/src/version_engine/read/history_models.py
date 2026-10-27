@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Mapping
+from typing import Literal
+
+
+class HistoryCommitUnavailableError(ValueError):
+    """The requested commit is not reachable from current admitted refs."""
 
 
 class HistoryCursorError(ValueError):
@@ -48,6 +53,10 @@ class HistoryGraphSnapshot:
     positions: Mapping[str, int]
     nodes: Mapping[str, GraphCommit]
     unreadable_commit_ids: tuple[str, ...]
+    refs: tuple[HistoryRef, ...] = ()
+    roots: tuple[str, ...] = ()
+    head: str = ""
+    root_hash: str = ""
 
     @property
     def cache_weight(self) -> int:
@@ -84,6 +93,7 @@ class ProjectHistoryGraphPage:
     has_more: bool
     graph_health: Literal["complete", "degraded"]
     unreadable_commit_ids: tuple[str, ...]
+    root_hash: str = ""
 
 
 @dataclass(frozen=True)

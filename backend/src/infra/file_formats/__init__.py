@@ -20,6 +20,7 @@ from .registry import (
     detect_ingest_type,
     detect_mime,
     detect_node_type,
+    is_text_format,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "detect_ingest_type",
     "detect_mime",
     "detect_node_type",
+    "is_text_format",
 ]

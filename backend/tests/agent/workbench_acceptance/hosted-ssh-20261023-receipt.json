@@ -1,0 +1,58 @@
+{
+  "status": "passed",
+  "date": "2026-10-23",
+  "source": "5f1a8b688ceb003ae9719b3f3fa5c102505fee75",
+  "provider": "fly",
+  "region": "sin",
+  "artifact": "registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c@sha256:fa28baa9fdb4a9cc1159c146f4d758d3f3482b70e57dfc4b7d02009c20e8fb86",
+  "scope": "Native SSH/PTY and Workspace files/leases against disposable real Fly Machines; two complementary test invocations on the same final source.",
+  "gateway": "Production SSH adapter, local TCP listener, strict host-key verification; no deployed public endpoint.",
+  "control_plane": "Owned PostgreSQL/PostgREST with repository migrations and real Project authorization. HTTP identity and billing check are fixture inputs.",
+  "creation": "Owned WorkbenchChannel allocation and lifecycle initialization; excludes UI, hosted JWT, billing, LLM and Git publication acceptance.",
+  "cases": [
+    {
+      "name": "test_stock_ssh_exec_binary_and_editor_same_uncommitted_files",
+      "seconds_including_fixture": 113.143,
+      "result": "passed"
+    },
+    {
+      "name": "test_new_owner_reaps_lost_gateway_connection",
+      "seconds_including_fixture": 112.166,
+      "result": "passed"
+    },
+    {
+      "name": "test_interactive_pty_preserves_shell_context_resize_and_editor_visibility",
+      "seconds_including_fixture": 88.9,
+      "result": "passed"
+    },
+    {
+      "name": "test_disconnect_kills_descendants_without_losing_files",
+      "seconds_including_fixture": 117.867,
+      "result": "passed"
+    },
+    {
+      "name": "test_revoked_or_expired_grant_closes_session_and_denies_wrong_key[revoked]",
+      "seconds_including_fixture": 96.524,
+      "result": "passed"
+    },
+    {
+      "name": "test_revoked_or_expired_grant_closes_session_and_denies_wrong_key[expired]",
+      "seconds_including_fixture": 97.967,
+      "result": "passed"
+    }
+  ],
+  "cleanup": {
+    "image": "registry.fly.io/puppyone-qubits-workspaces-3ff1fc5c@sha256:fa28baa9fdb4a9cc1159c146f4d758d3f3482b70e57dfc4b7d02009c20e8fb86",
+    "remaining_owned_machines": [],
+    "last_fixture_disks": [
+      {
+        "id": "vol_r685n6q6ln0wogn4",
+        "state": "pending_destroy",
+        "attached": null
+      }
+    ],
+    "cleanup": "no test-image Machines; final fixture disk absent or pending_destroy"
+  },
+  "prior_attempts": "Initial attempts recorded Fly TLS handshake/transport failures. They were not counted as passes. Final six scenarios passed after reruns, with per-fixture Machine/Volume cleanup.",
+  "performance": "Scenario durations include fixture allocation and cleanup; they are not steady-state I/O or provider latency benchmarks."
+}

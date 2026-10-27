@@ -6,7 +6,12 @@ __pycache__
 .git
 .env
 .env.*
+*.env
 !.env.example
 tests
 docs
-scripts
+scripts/*
+!scripts/install_flyctl.py
+!scripts/start-service.sh
+# The sandbox artifact is built and published separately (sandbox_image job).
+agent-worker

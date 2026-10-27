@@ -112,7 +112,7 @@ class VersionEngineStub:
         self.initialized: list[str] = []
         self.event_loop_threads: list[int] = []
 
-    async def initialize_project_tree(self, project_id: str):
+    def initialize_project_tree(self, project_id: str):
         self.event_loop_threads.append(get_ident())
         self.initialized.append(project_id)
 

@@ -4,7 +4,7 @@ import React, { Suspense, useState, useCallback, useEffect, useRef } from 'react
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AUTH_ERROR_MESSAGES } from '@/features/auth/auth-errors';
-import { loginReturnPath } from '@/features/auth/login-intent';
+import { isDelegatedIntent, loginReturnPath } from '@/features/auth/login-intent';
 import { PulseGrid, Dots } from '@/components/loading';
 
 const URL_ERROR_MESSAGES: Record<string, string> = {
@@ -23,21 +23,7 @@ const URL_SUCCESS_MESSAGES: Record<string, string> = {
 
 type AuthView = 'main' | 'signin' | 'signup' | 'verify-otp' | 'forgot';
 
-const BACKEND_API_BASE = '/api/backend/api/v1';
 const RESEND_COOLDOWN_SECONDS = 300; // 5 minutes
-
-function backendApiUrl(path: string): string {
-  return `${BACKEND_API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-function getBackendErrorMessage(payload: any, fallback: string): string {
-  const detail = payload?.detail;
-  if (typeof payload?.message === 'string' && payload.message) return payload.message;
-  if (typeof detail === 'string' && detail) return detail;
-  if (typeof detail?.message === 'string' && detail.message) return detail.message;
-  if (typeof payload?.error === 'string' && payload.error) return payload.error;
-  return fallback;
-}
 
 /**
  * Default export wraps the inner page in <Suspense> because
@@ -118,7 +104,8 @@ function LoginPageInner() {
     finishSignIn,
   } = useAuth();
 
-  const desktopAuthState = loginIntent?.kind === 'desktop' ? loginIntent.state : null;
+  // Desktop and the PuppyOne website own their sessions; this page only hands off.
+  const delegatedAuthState = isDelegatedIntent(loginIntent) ? loginIntent.state : null;
 
   const [view, setView] = useState<AuthView>('main');
   const [email, setEmail] = useState('');
@@ -138,7 +125,7 @@ function LoginPageInner() {
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSubmittedRef = useRef(false);
   const autoOAuthProviderRef = useRef<'google' | 'github' | null>(null);
-  const autoDesktopCompleteRef = useRef(false);
+  const autoDelegatedCompleteRef = useRef(false);
   const navigationCommittedRef = useRef(false);
 
   const clearFeedback = useCallback(() => {
@@ -222,7 +209,7 @@ function LoginPageInner() {
     const destination = await finishSignIn();
     if (navigationCommittedRef.current) return;
     navigationCommittedRef.current = true;
-    if (loginIntent?.kind === 'desktop') window.location.assign(destination);
+    if (isDelegatedIntent(loginIntent)) window.location.assign(destination);
     else router.push(destination);
   }, [finishSignIn, loginIntent, router]);
 
@@ -257,35 +244,19 @@ function LoginPageInner() {
   }, [searchParams, isAuthReady, availableProviders, session]);
 
   useEffect(() => {
-    if (!isAuthReady || !desktopAuthState || !session || redirecting || autoDesktopCompleteRef.current) return;
-    autoDesktopCompleteRef.current = true;
+    if (!isAuthReady || !delegatedAuthState || !session || redirecting || autoDelegatedCompleteRef.current) return;
+    autoDelegatedCompleteRef.current = true;
     setRedirecting(true);
     completeLogin().catch((e: unknown) => {
       setRedirecting(false);
-      setError(e instanceof Error ? e.message : 'Desktop sign-in failed.');
+      setError(e instanceof Error ? e.message : 'Sign-in handoff failed.');
     });
-  }, [isAuthReady, desktopAuthState, session, redirecting, completeLogin]);
+  }, [isAuthReady, delegatedAuthState, session, redirecting, completeLogin]);
 
-  const handleContinue = async (e: React.FormEvent) => {
+  const handleContinue = (e: React.FormEvent) => {
     e.preventDefault();
     clearFeedback();
-    setLoading('continue');
-    try {
-      const resp = await fetch(backendApiUrl('/auth/check-email'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const json = await resp.json();
-      if (resp.status === 429) throw new Error('Too many attempts. Please wait a moment and try again.');
-      if (!resp.ok) throw new Error(getBackendErrorMessage(json, 'Failed to check email'));
-      const exists = json.data?.exists;
-      setView(exists ? 'signin' : 'signup');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
-    } finally {
-      setLoading(null);
-    }
+    setView('signin');
   };
 
   // Switch to OTP verification view and reset relevant state.
@@ -487,9 +458,7 @@ function LoginPageInner() {
                     placeholder="Your email address"
                     disabled={disabled}
                   />
-                  <SubmitButton disabled={disabled} loading={loading === 'continue'}>
-                    {loading === 'continue' ? 'Checking…' : 'Continue'}
-                  </SubmitButton>
+                  <SubmitButton disabled={disabled}>Continue</SubmitButton>
                 </form>
               </div>
 
@@ -542,6 +511,14 @@ function LoginPageInner() {
                   className="inline-flex h-[30px] items-center justify-center bg-transparent border-none text-[var(--po-text-subtle)] hover:text-[var(--po-text)] cursor-pointer text-sm px-1 transition-colors"
                 >
                   Forgot password?
+                </button>
+              </div>
+              <div className="mt-2 text-center">
+                <button
+                  onClick={() => { clearFeedback(); setView('signup'); }}
+                  className="inline-flex h-[30px] items-center justify-center bg-transparent border-none text-[var(--po-text-subtle)] hover:text-[var(--po-text)] cursor-pointer text-sm px-1 transition-colors"
+                >
+                  New to PuppyOne? Create an account
                 </button>
               </div>
             </div>
@@ -618,6 +595,15 @@ function LoginPageInner() {
                   {loading === 'signup' ? 'Creating account…' : 'Create Account'}
                 </SubmitButton>
               </form>
+
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => { clearFeedback(); setView('signin'); }}
+                  className="inline-flex h-[30px] items-center justify-center bg-transparent border-none text-[var(--po-text-subtle)] hover:text-[var(--po-text)] cursor-pointer text-sm px-1 transition-colors"
+                >
+                  Already have an account? Sign in
+                </button>
+              </div>
 
               <Feedback error={error ?? authError} message={message} />
             </div>

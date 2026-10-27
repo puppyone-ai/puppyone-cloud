@@ -35,33 +35,23 @@ node -e "
 "
 echo "  ✓ frontend/package-lock.json"
 
-# 3) cli/package.json
-node -e "
-  const fs = require('fs');
-  const p = '$ROOT_DIR/cli/package.json';
-  const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
-  pkg.version = '$VERSION';
-  fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
-"
-echo "  ✓ cli/package.json"
+# The puppyone CLI is released from its own repository
+# (puppyone-ai/puppyone-cli) on an independent npm version line. It is
+# intentionally not synced here.
 
-# 4) cli/src/version.js
-echo "export const version = \"$VERSION\";" > "$ROOT_DIR/cli/src/version.js"
-echo "  ✓ cli/src/version.js"
-
-# 5) backend/pyproject.toml
+# 3) backend/pyproject.toml
 sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" "$ROOT_DIR/backend/pyproject.toml"
 echo "  ✓ backend/pyproject.toml"
 
-# 6) backend/src/config.py
+# 4) backend/src/config.py
 sed -i '' "s/VERSION: str = \".*\"/VERSION: str = \"$VERSION\"/" "$ROOT_DIR/backend/src/config.py"
 echo "  ✓ backend/src/config.py"
 
-# 7) backend/src/__init__.py
+# 5) backend/src/__init__.py
 sed -i '' "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" "$ROOT_DIR/backend/src/__init__.py"
 echo "  ✓ backend/src/__init__.py"
 
-# 8) backend/uv.lock
+# 6) backend/uv.lock
 sed -i '' "/^name = \"contextbase\"$/,/^\\[\\[package\\]\\]/ s/^version = \".*\"/version = \"$VERSION\"/" "$ROOT_DIR/backend/uv.lock"
 echo "  ✓ backend/uv.lock"
 

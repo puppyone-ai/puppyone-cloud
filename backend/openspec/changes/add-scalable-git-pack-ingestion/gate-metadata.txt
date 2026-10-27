@@ -1,0 +1,183 @@
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+................................................s.sssssssss............. [  6%]
+........................................................................ [  8%]
+..........................................................sssssssssss... [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 17%]
+.......................s................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 42%]
+.................................................................sssssss [ 44%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 45%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 47%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 49%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 51%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 52%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 54%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 56%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 57%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 59%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 61%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 62%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 64%]
+ss...................................................................... [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+..s..................................................................... [ 71%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+.....................................................                    [100%]
+=============================== warnings summary ===============================
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:20
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:20: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class BaseBucket(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:130
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:130: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class SignedUrlJsonResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:134
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:134: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class SignedUrlsJsonItem(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:143
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:143: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class CreateSignedUploadUrlOptions(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:161
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:161: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class MetadataConfiguration(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:167
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:167: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListIndexesOptions(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:173
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:173: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListIndexesResponseItem(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:177
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:177: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListVectorIndexesResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:182
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:182: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorIndex(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:194
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:194: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class GetVectorIndexResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:201
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:201: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorData(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:205
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:205: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorObject(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:211
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:211: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorMatch(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:218
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:218: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class GetVectorsResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:222
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:222: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListVectorsResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:227
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:227: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class QueryVectorsResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:231
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:231: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AnalyticsBucket(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:245
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:245: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AnalyticsBucketDeleteResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:249
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:249: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorBucketEncryptionConfiguration(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:254
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:254: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class VectorBucket(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:260
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:260: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class GetVectorBucketResponse(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:264
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:264: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListVectorBucketsItem(BaseModel, extra=Extra.ignore):
+
+../../puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:268
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/storage3/types.py:268: PydanticDeprecatedSince20: `pydantic.config.Extra` is deprecated, use literal values instead (e.g. `extra='allow'`). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ListVectorBucketsResponse(BaseModel, extra=Extra.ignore):
+
+src/platform/imports/database/models.py:8
+  /Users/supersayajin/project/puppyone-cloud-pack-ingestion/backend/src/platform/imports/database/models.py:8: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class DBConnection(BaseModel):
+
+tests/etl/test_external_ingest_cleanup.py: 14 warnings
+tests/platform/test_upload_lifecycle_ownership.py: 10 warnings
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/pydantic/main.py:250: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+
+tests/platform/test_entrypoint_job_compatibility.py::test_api_and_worker_wiring_imports_and_startup
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/fastapi/openapi/utils.py:242: UserWarning: Duplicate Operation ID proxy_mcp_server_api_v1_mcp_proxy__path__put for function proxy_mcp_server at /Users/supersayajin/project/puppyone-cloud-pack-ingestion/backend/src/platform/access/adapters/agent/mcp/router.py
+    warnings.warn(message, stacklevel=1)
+
+tests/platform/test_entrypoint_job_compatibility.py::test_api_and_worker_wiring_imports_and_startup
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/fastapi/openapi/utils.py:242: UserWarning: Duplicate Operation ID proxy_mcp_server_api_v1_mcp_proxy_put for function proxy_mcp_server at /Users/supersayajin/project/puppyone-cloud-pack-ingestion/backend/src/platform/access/adapters/agent/mcp/router.py
+    warnings.warn(message, stacklevel=1)
+
+tests/platform/test_entrypoint_queue_cutover.py::test_synchronize_worker_consumes_real_github_job_not_import_queue
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/arq/worker.py:872: DeprecationWarning: Call to deprecated close. (Use aclose() instead) -- Deprecated since version 5.0.1.
+    await self.pool.close(close_connection_pool=True)
+
+tests/repository_hosting/unit/test_direct_object_transport.py::test_stock_http_shallow_partial_and_incremental_roundtrips[0-sha1]
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+tests/repository_hosting/unit/test_direct_object_transport.py::test_stock_http_shallow_partial_and_incremental_roundtrips[0-sha1]
+  /Users/supersayajin/project/puppyone-cloud-qubits/backend/.venv/lib/python3.12/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3333 passed, 901 skipped, 399 deselected, 53 warnings in 76.74s (0:01:16)

@@ -1,12 +1,26 @@
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.version_engine.domain.git_pack_limits import (
+    DEFAULT_PACK_SCRATCH_BYTES,
+    DEFAULT_STORED_PACK_BYTES,
+    MAX_RECEIVE_PACK_BYTES,
+)
+
+# Roles that operate Agent workspaces (open, files, SSH, lifecycle).
+WORKSPACE_ROLES = frozenset({"api", "agent_worker", "ssh_gateway"})
+
 
 class Settings(BaseSettings):
+    FILE_READ_CONCURRENCY: int = Field(default=8, ge=1, le=128)
+    FILE_READ_QUEUE_LIMIT: int = Field(default=32, ge=0, le=1024)
+    FILE_READ_QUEUE_TIMEOUT_SECONDS: float = Field(default=10, gt=0, le=300)
+
     """Application configuration"""
 
     model_config = SettingsConfigDict(
@@ -38,6 +52,17 @@ class Settings(BaseSettings):
     )
     DEBUG: bool | None = None
     VERSION: str = "0.0.3"
+
+    # Concurrency boundary (docs/architecture/18-concurrency-boundary.md).
+    # Worker threads per Python process for every blocking call made from async
+    # code (run_blocking) plus FastAPI def routes/dependencies; shared limit.
+    # Replica capacity is roughly this times WEB_CONCURRENCY. Read at start-up.
+    BLOCKING_THREAD_LIMIT: int = Field(default=40, gt=0, le=512)
+    # Log a warning when the event loop is stalled longer than this; 0 disables.
+    EVENT_LOOP_LAG_WARN_MS: int = Field(default=250, ge=0)
+    # Bounded process-wide pool for Version Engine object fan-out (parallel S3
+    # reads/writes inside one storage call). Never borrows request threads.
+    VERSION_STORAGE_IO_THREADS: int = Field(default=16, gt=0, le=64)
 
     # Local storage configuration, mostly using Supabase now
     DATA_PATH: Path = Path("./data")
@@ -152,7 +177,10 @@ class Settings(BaseSettings):
             if self.APP_ENV in {"staging", "production"}:
                 if not self.PUPPYPAY_BASE_URL.startswith("https://"):
                     raise ValueError("Managed AI requires HTTPS for PuppyPay")
-                if len(self.INTERNAL_API_SECRET) < 32 or self.INTERNAL_API_SECRET == self.PUPPYPAY_INTERNAL_API_SECRET:
+                if (
+                    len(self.INTERNAL_API_SECRET) < 32
+                    or self.INTERNAL_API_SECRET == self.PUPPYPAY_INTERNAL_API_SECRET
+                ):
                     raise ValueError("Managed AI requires distinct service credentials")
         return self
 
@@ -276,20 +304,10 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def enforce_auth_security_store_safety(self):
-        """Hosted auth controls require one shared, cross-replica Redis."""
-        if self.APP_ENV not in {"development", "test"}:
-            if not self.auth_security_redis_url:
-                raise ValueError(
-                    "AUTH_SECURITY_REDIS_URL (or legacy RATELIMIT_REDIS_URL / "
-                    "ETL_REDIS_URL) is required outside development/test"
-                )
-            if not self.NOTIFICATIONS_REDIS_URL:
-                raise ValueError("NOTIFICATIONS_REDIS_URL is required outside development/test")
-            if not self.DESKTOP_AUTH_PUBLIC_BASE_URL.startswith("https://"):
-                raise ValueError(
-                    "DESKTOP_AUTH_PUBLIC_BASE_URL must use https outside development/test"
-                )
+    def enforce_notification_store_safety(self):
+        """Repository notifications, independent of authentication."""
+        if self.APP_ENV not in {"development", "test"} and not self.NOTIFICATIONS_REDIS_URL:
+            raise ValueError("NOTIFICATIONS_REDIS_URL is required outside development/test")
         return self
 
     @model_validator(mode="after")
@@ -333,20 +351,50 @@ class Settings(BaseSettings):
     def enforce_hosted_sandbox_safety(self):
         """Hosted deployments may never fall back to a shared-kernel Docker sandbox."""
         if self.APP_ENV in {"staging", "production"}:
+            existing = {
+                name.strip()
+                for name in self.CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS.split(",")
+                if name.strip()
+            }
+            if not existing <= {"fly", "e2b", "sprites"}:
+                raise ValueError("Hosted existing sandbox providers must be Fly, E2B or Sprites")
+            if self.CLOUD_AGENT_SANDBOX_PROVIDER == "docker":
+                raise ValueError(
+                    "Hosted Cloud Agent requires E2B, Fly or Sprites (no Docker fallback)"
+                )
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
-            if not self.E2B_API_KEY:
-                raise ValueError("E2B_API_KEY is required for hosted sandbox execution")
-            if self.SCOPE_SANDBOX_STORE != "supabase":
-                raise ValueError("Hosted sandbox sessions require SCOPE_SANDBOX_STORE=supabase")
-            if not self.SCOPE_SANDBOX_REAPER_ENABLED:
-                raise ValueError(
-                    "Hosted sandbox sessions require SCOPE_SANDBOX_REAPER_ENABLED=true"
-                )
+            if self.SERVICE_ROLE not in WORKSPACE_ROLES:
+                # Upload, import, synchronize and the MCP transport never operate a
+                # workspace: they neither hold nor validate its provider credentials.
+                pass
+            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
+                if not self.CLOUD_AGENT_FLY_APP or not self.CLOUD_AGENT_FLY_TOKEN:
+                    raise ValueError(
+                        "Fly Cloud Agent requires CLOUD_AGENT_FLY_APP and CLOUD_AGENT_FLY_TOKEN"
+                    )
+                if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", self.CLOUD_AGENT_FLY_IMAGE):
+                    raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
+            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "sprites":
+                if not self.CLOUD_AGENT_SPRITES_TOKEN or not self.CLOUD_AGENT_SPRITES_BUNDLE:
+                    raise ValueError("Sprites requires CLOUD_AGENT_SPRITES_TOKEN and worker bundle")
+                if not re.fullmatch(r"[a-f0-9]{64}", self.CLOUD_AGENT_SPRITES_SHA256):
+                    raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
+            elif not self.E2B_API_KEY:
+                raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
+            if not self.SANDBOX_REAPER_ENABLED:
+                raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
         return self
 
     @model_validator(mode="after")
     def enforce_git_transport_caps(self):
+        from src.version_engine.domain.git_pack_limits import PackLimits
+
+        PackLimits(
+            receive_bytes=self.GIT_MAX_RECEIVE_PACK_BYTES,
+            stored_bytes=self.GIT_MAX_STORED_PACK_BYTES,
+            scratch_bytes=self.GIT_PACK_SCRATCH_BYTES,
+        )
         if self.APP_ENV not in {"development", "test"} and (
             self.GIT_MAX_RECEIVE_PACK_BYTES <= 0 or self.GIT_MAX_UPLOAD_PACK_BYTES <= 0
         ):
@@ -359,48 +407,15 @@ class Settings(BaseSettings):
     MCP_TOKEN_SECRET: str = "ContextBase-mcp-development-secret"
     MCP_TOKEN_AUDIENCE: str = "puppyone-mcp"
     MCP_TOKEN_TTL_SECONDS: int = 30 * 24 * 60 * 60  # 30 days
-    # Shared fail-closed store for OAuth one-time state and auth rate limits.
-    AUTH_SECURITY_REDIS_URL: str = ""
-    # Compatibility inputs retained for deployments predating the shared auth
-    # security store. They are never fail-open fallbacks: when selected, the
-    # Redis store remains mandatory and every operation still fails closed.
-    RATELIMIT_REDIS_URL: str = ""
     ETL_REDIS_URL: str = ""
     # Browser/CLI-reachable Supabase origin. Empty means SUPABASE_URL is already public.
     SUPABASE_PUBLIC_URL: str = ""
-    # Browser-reachable Puppyone web origin used by the Desktop login handoff.
+    # Browser-reachable Puppyone web origin used by product links.
     FRONTEND_URL: str = ""
-    DESKTOP_AUTH_PUBLIC_BASE_URL: str = ""
-    DESKTOP_AUTH_ALLOWED_CALLBACKS: str = "puppyone://auth/callback"
-    DESKTOP_AUTH_STATE_TTL_SECONDS: int = 10 * 60
-    DESKTOP_AUTH_EXCHANGE_TTL_SECONDS: int = 60
     # Cluster-aware version notifications (ISSUE-015). When set, WebSocket
     # commit_update events are fanned out across replicas via Redis pub/sub.
     # Local development may leave this empty; hosted validation requires it.
     NOTIFICATIONS_REDIS_URL: str = ""
-
-    @property
-    def auth_security_redis_url(self) -> str:
-        """Resolve the shared Redis store without breaking older deployments.
-
-        ``AUTH_SECURITY_REDIS_URL`` is the explicit modern setting. Before it
-        existed, hosted installs commonly supplied either the old rate-limit
-        URL or the shared ARQ URL. All three are Redis connection strings; the
-        auth store uses its own key namespace and remains fail-closed.
-        """
-
-        return next(
-            (
-                value.strip()
-                for value in (
-                    self.AUTH_SECURITY_REDIS_URL,
-                    self.RATELIMIT_REDIS_URL,
-                    self.ETL_REDIS_URL,
-                )
-                if value.strip()
-            ),
-            "",
-        )
 
     # Anthropic configuration
     ANTHROPIC_API_KEY: str = ""
@@ -413,46 +428,70 @@ class Settings(BaseSettings):
     # - "auto": Auto-select (use E2B if E2B_API_KEY is available, otherwise use Docker)
     SANDBOX_TYPE: Literal["e2b", "docker", "auto"] = "auto"
     E2B_API_KEY: str = ""
+    # Process role chosen by scripts/start-service.sh. Only roles that operate
+    # Agent workspaces hold and validate the workspace provider's credentials.
+    SERVICE_ROLE: str = "api"
+    # Only new Agent workspaces use this default. Existing bindings remain pinned.
+    CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
+    # Existing bindings remain on their provider; new workspaces use the default above.
+    CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
+    CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
+    CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
+    CLOUD_AGENT_FLY_APP: str = ""
+    CLOUD_AGENT_FLY_TOKEN: str = ""
+    CLOUD_AGENT_FLY_REGION: str = "sin"
+    CLOUD_AGENT_FLY_IMAGE: str = ""
+    CLOUD_AGENT_FLY_CLI: str = "fly"
+    CLOUD_AGENT_SPRITES_TOKEN: str = ""
+    # Immutable Linux worker bundle, built by agent-worker/build_sprites_bundle.py.
+    CLOUD_AGENT_SPRITES_BUNDLE: str = ""
+    CLOUD_AGENT_SPRITES_SHA256: str = ""
+    CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
+    CLOUD_AGENT_E2B_TEMPLATE: str = ""
+    CLOUD_AGENT_DEFAULT_MODEL: str = ""
+    CLOUD_AGENT_MAX_TOKENS: int = Field(default=4096, ge=1, le=32768)
+    CLOUD_AGENT_CONTEXT_WINDOW: int = Field(default=131072, ge=16384, le=2000000)
+    CLOUD_AGENT_MAX_MODEL_CALLS: int = Field(default=32, ge=1, le=100)
+    CLOUD_AGENT_CONCURRENCY: int = Field(default=4, ge=1, le=32)
+    # Work admitted by this deployment runs only on workers of the same pool. A
+    # local stack sharing a hosted database must use its own pool (dev-<name>).
+    AGENT_WORKER_POOL: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    # A stopping worker lets active Runs continue this long, then hands them off.
+    # The platform's SIGTERM-to-SIGKILL window must be longer.
+    CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS: int = Field(default=20, ge=0, le=600)
+    # Modules this worker process runs: "agent" claims and supervises Runs;
+    # "sandbox" is the only owner of machine lifecycle. One service runs both;
+    # separate services of the same image each run one.
+    WORKER_ROLES: str = Field(
+        default="agent,sandbox", pattern=r"^(agent|sandbox)(,(agent|sandbox))?$"
+    )
     # Docker sandbox dedicated temp directory; only needed when containerized backend controls host Docker
     SANDBOX_TMPDIR: str | None = None
     # Sandbox file download concurrency
     SANDBOX_DOWNLOAD_CONCURRENCY: int = 10
     # Large file streaming threshold (bytes); files exceeding this size use streaming transfer
     SANDBOX_LARGE_FILE_THRESHOLD: int = 50 * 1024 * 1024  # 50MB
-    # ── Scope-sandbox (V2 "sandbox as access point") ──
-    # NOTE: the per-project/enterprise choice of "fly" vs "e2b" is a USER
-    # selection made in the frontend and persisted as a project setting; it is
-    # resolved at runtime via factory.provider_from_settings(settings, name=...).
-    # The env var below is only the DEFAULT/fallback for projects that haven't
-    # chosen. The vars here hold the per-provider CREDENTIALS (always needed for
-    # whichever provider a project selects). See docs/proposals/PUP-sandbox-access-point.md.
-    # Default only; the per-project UI choice overrides. Defaults to "e2b" — the
-    # live-validated path (full SSH + credential round-trip proven). Fly is
-    # code-complete but not yet live (needs payment + dedicated IPv4), so it
-    # shouldn't be the silent fallback for projects that haven't chosen.
-    SCOPE_SANDBOX_PROVIDER: Literal["fly", "e2b"] = "e2b"
+    # Sandbox reaper: stops idle unretained executions and retires machines left
+    # by the removed Scope Sandbox product. It is part of the lifecycle
+    # correctness contract: without it a worker crash can leave paid provider
+    # resources alive. SCOPE_SANDBOX_REAPER_* remain accepted as old names.
+    SANDBOX_REAPER_ENABLED: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SANDBOX_REAPER_ENABLED", "SCOPE_SANDBOX_REAPER_ENABLED"),
+    )
+    SANDBOX_REAPER_INTERVAL_S: int = Field(
+        default=120,
+        validation_alias=AliasChoices(
+            "SANDBOX_REAPER_INTERVAL_S", "SCOPE_SANDBOX_REAPER_INTERVAL_S"
+        ),
+    )
+    # Legacy only: the Fly account that owns retired Scope Sandbox machines, used
+    # to destroy them during retirement and Project deletion. No new use.
     SCOPE_SANDBOX_FLY_APP: str = ""
     SCOPE_SANDBOX_FLY_TOKEN: str = ""
-    SCOPE_SANDBOX_FLY_IMAGE: str = ""
-    # Custom E2B template (roadmap #6) baking sshd+websocat+sidecar. When set,
-    # the provider launches this template and the bootstrap uses the FAST provision
-    # path (seed key + start pre-installed daemons). Unset → default template +
-    # full runtime install. Build via sandbox/scope-e2b/build.sh.
-    SCOPE_SANDBOX_E2B_TEMPLATE: str = ""
-    # Session store backend: "memory" (dev/single-process) or "supabase"
-    # (durable, multi-worker-visible — required for the reaper + multi-instance).
-    SCOPE_SANDBOX_STORE: Literal["memory", "supabase"] = "supabase"
-    # Background reaper is part of the lifecycle correctness contract: without
-    # it a worker crash can leave paid provider resources alive indefinitely.
-    SCOPE_SANDBOX_REAPER_ENABLED: bool = True
-    SCOPE_SANDBOX_REAPER_INTERVAL_S: int = 120
 
-    # Workspace Provider configuration
-    # - "auto": Auto-detect platform (macOS -> APFS Clone, Linux -> OverlayFS, other -> full copy)
-    # - "apfs": Force APFS Clone (macOS only)
-    # - "overlayfs": Force OverlayFS (Linux only)
-    # - "fallback": Force full copy
-    WORKSPACE_PROVIDER: str = "auto"
+    # Root of legacy host-local Agent workspace directories (lower/, workspaces/).
+    # Nothing creates them any more; Project deletion still scrubs leftovers.
     WORKSPACE_BASE_DIR: str = "/tmp/contextbase"
     # These paths contain only reconstructable, authorization-fenced derived
     # state. "persistent" is allowed for local/self-hosted experimentation but
@@ -536,6 +575,8 @@ class Settings(BaseSettings):
     ACCESS_CREDENTIAL_HASH_SECRET: str = "ContextBase-access-credential-development-secret"
     # Verification only during key rotation; new credentials always use the primary key.
     ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET: str = ""
+    # Enable issuance only after every API/gateway replica understands parent grants.
+    ACCESS_LIFECYCLE_ENABLED: bool = False
 
     # Product entitlements / billing enforcement.
     # disabled: open-source/self-hosted default, no product limits enforced.
@@ -610,10 +651,6 @@ class Settings(BaseSettings):
     PUBLISH_KEY_LENGTH: int = 16
     PUBLISH_CACHE_TTL_SECONDS: int = 10
 
-    # Search Tool indexing (async)
-    # - Only used for async indexing wait_for timeout control, preventing background tasks from hanging indefinitely
-    SEARCH_INDEX_TIMEOUT_SECONDS: int = 120
-
     # Git-native version engine hardening.
     VERSION_OUTBOX_ENABLED: bool = True
     VERSION_OUTBOX_INTERVAL_SECONDS: int = 30
@@ -638,10 +675,27 @@ class Settings(BaseSettings):
     # Git transport hardening (ISSUE-014). Bound the compressed request body of a
     # push and the wall-clock time of any git subprocess so a hostile client
     # cannot exhaust disk/CPU/memory via an oversized or decompression-bomb pack.
-    # 0 disables the respective limit.
-    GIT_MAX_RECEIVE_PACK_BYTES: int = 1024 * 1024 * 1024  # 1 GiB compressed push cap
+    # Receive policy is independent of completed/cold-read pack resource limits.
+    # Zero never disables a receive/storage budget. Lowering receive policy must
+    # not make existing packs unreadable. Scratch excludes the HTTP request spool
+    # and other workers/cache entries; provision deployment disk separately.
+    # A push never accepts more than 2 GiB on the wire. Completed thin packs
+    # need independent headroom; these are disk budgets, not RAM allocations.
+    GIT_MAX_RECEIVE_PACK_BYTES: int = Field(
+        default=MAX_RECEIVE_PACK_BYTES, gt=0, le=MAX_RECEIVE_PACK_BYTES
+    )
+    GIT_MAX_STORED_PACK_BYTES: int = Field(default=DEFAULT_STORED_PACK_BYTES, gt=0)
+    GIT_PACK_SCRATCH_BYTES: int = Field(default=DEFAULT_PACK_SCRATCH_BYTES, gt=0)
     GIT_MAX_UPLOAD_PACK_BYTES: int = 16 * 1024 * 1024  # 16 MiB fetch-negotiation cap
+    # Total logical traversal/verification work, not a RAM or expanded-spool
+    # allocation. Shared by native reads, publication and derived projection.
+    # Preserve the environment name; zero never disables the finite work cap.
+    GIT_MAX_EXPANDED_BYTES: int = Field(default=8 * 1024**3, gt=0, le=8 * 1024**3)
     GIT_SUBPROCESS_TIMEOUT_SECONDS: int = 300  # per git invocation
+    # Admission is local to each Python process, including retained responses.
+    # Size against aggregate CPU/RAM/scratch across all processes and replicas.
+    # Read at startup; changing this setting requires restarting the workers.
+    GIT_MAX_CONCURRENT_OPERATIONS: int = Field(default=2, gt=0)
 
     VERSION_OBJECT_GC_ENABLED: bool = False
     VERSION_OBJECT_GC_DRY_RUN: bool = True

@@ -4,7 +4,6 @@ import { usePublishActiveFile } from '@/features/workspace/activeFile';
 
 import type { SavedAgent } from '@/components/AgentRail';
 import { DocumentEditor } from '@/components/RightAuxiliaryPanel/DocumentEditor';
-import type { AccessOption } from '@/components/chat/ChatInputArea';
 import { PageLoading } from '@/components/loading';
 import { WorkspaceInspectorRegion } from '@/components/sidebar/WorkspaceInspectorRegion';
 import type { SyncStatusSync } from '@/features/files/DataLayoutContext';
@@ -12,7 +11,6 @@ import { PanelShell } from '@/features/files/components/PanelShell';
 import type { EndpointEntry, ProviderIconLookup } from '@/features/files/components/access-points';
 import { useEditorSaveGuards } from '@/features/files/hooks/useEditorSaveGuards';
 import type { PanelState } from '@/features/files/usePanelStore';
-import { AI_AGENT_ENABLED } from '@/lib/featureFlags';
 import {
   useEditorSaveSession,
   type EditorSaveNodeType,
@@ -23,7 +21,7 @@ import type { TableData } from '@/lib/projectsApi';
 import {
   matchRepositoryViewForPath,
   repositoryViewKey,
-  type Connector,
+  type AccessSurface,
   type RepoIdentity,
   type RepositoryView,
 } from '@/lib/repoApi';
@@ -60,13 +58,6 @@ const SandboxConfigPanel = dynamic(
     })),
   { ssr: false, loading: PanelLoading }
 );
-const ChatRuntimeView = dynamic(
-  () =>
-    import('@/components/agent/views/ChatRuntimeView').then(m => ({
-      default: m.ChatRuntimeView,
-    })),
-  { ssr: false, loading: PanelLoading }
-);
 
 export interface EditorTarget {
   path: string;
@@ -85,7 +76,7 @@ interface DataPageRightPanelProps {
   readonly activeNodeId?: string;
   readonly activeSyncId: string | null;
   readonly currentTableData?: TableData;
-  readonly syncStatusData: { syncs: SyncStatusSync[] } | undefined;
+  readonly syncStatusData: { bindings: SyncStatusSync[] } | undefined;
   readonly projectTools: Tool[];
   readonly savedAgents: SavedAgent[];
   readonly accessPointEntries: EndpointEntry[];
@@ -93,7 +84,7 @@ interface DataPageRightPanelProps {
   /** Redesign 2026-05-02: scope list for matching the current URL path. */
   readonly scopes: RepositoryView[];
   /** Redesign 2026-05-02: connectors indexed by scope_id. */
-  readonly connectorsByTarget: Map<string, Connector[]>;
+  readonly connectorsByTarget: Map<string, AccessSurface[]>;
   /** Redesign 2026-05-02: current canonical URL path (empty string for root). */
   readonly currentScopePath: string;
   /** Redesign 2026-05-02: project identity payload (URL + prompt_template + scope keys). */
@@ -103,7 +94,7 @@ interface DataPageRightPanelProps {
   onEditorSave: (newValue: string) => Promise<void>;
   onToggleEditorFullScreen: () => void;
   onRollbackComplete: () => void;
-  onSyncCreated: (nodeId: string) => void | Promise<void>;
+  onSyncCreated: (nodeId: string, synchronizeBindingId?: string) => void | Promise<void>;
   onAccessPointHover: (nodeId: string | null) => void;
   /** Refresh scopes / connectors / repo identity after a scope CRUD
    *  mutation. Wired at page level to useDataLayout().mutateRepo, which
@@ -139,7 +130,6 @@ export function DataPageRightPanel({
   currentTableData,
   syncStatusData,
   projectTools,
-  savedAgents,
   accessPointEntries: _accessPointEntries,
   scopes,
   currentScopePath,
@@ -385,74 +375,6 @@ export function DataPageRightPanel({
           />
         )}
 
-      {/* agent_chat view — gated on the AI_AGENT_ENABLED feature flag.
-          With the flag off, every entry point that opens this view
-          (the AI Agent MethodCard's "Open chat" button, the access
-          page's AgentBody, etc.) is also hidden, so this branch
-          shouldn't be reachable through normal navigation. We still
-          gate here defensively in case stale `panelState` from a
-          previous session (or a hand-crafted URL) lands us with
-          `type: 'agent_chat'` — under the flag we render nothing
-          and the panel just collapses to its empty state. */}
-      {AI_AGENT_ENABLED &&
-        panelState.type === 'agent_chat' &&
-        (() => {
-          const agentId = panelState.agentId;
-          const chatAgent = agentId
-            ? savedAgents.find(agent => agent.id === agentId)
-            : null;
-          if (!chatAgent) {
-            return !editorTarget ? (
-              <PanelShell
-                title='Chat Agent'
-                onClose={onClose}
-                onBack={backToAccessList}
-              >
-                <div
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--po-text-disabled)',
-                    fontSize: 13,
-                  }}
-                >
-                  Agent not found
-                </div>
-              </PanelShell>
-            ) : null;
-          }
-
-          const tools: AccessOption[] = [];
-          if (chatAgent.resources) {
-            for (const res of chatAgent.resources) {
-              tools.push({
-                id: `bash:${res.path}`,
-                label: `${res.nodeName || res.path} · Bash${res.readonly ? ' (Read-only)' : ''}`,
-                type: 'bash' as const,
-                tableId: res.path,
-                tableName: res.nodeName || res.path,
-              });
-            }
-          }
-
-          return (
-            <div style={{ display: editorTarget ? 'none' : 'contents' }}>
-              <ChatRuntimeView
-                availableTools={tools}
-                tableData={currentTableData?.data}
-                tableId={activeNodeId}
-                projectId={projectId}
-                onDataUpdate={onDataUpdate}
-                projectTools={projectTools}
-                onClose={onClose}
-                seamlessHeader
-                onBack={backToAccessList}
-              />
-            </div>
-          );
-        })()}
     </WorkspaceInspectorRegion>
   );
 }

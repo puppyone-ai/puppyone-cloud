@@ -43,6 +43,46 @@ Examples:
 Project IDs, Scope IDs, Git locators, Runtime keys, ownership hints, and local
 paths never create a ProjectGrant.
 
+## Organization-internal collaboration
+
+Organization Owner and Project Admin are different authorities. Only the
+Organization Owner can invite/remove Organization members, change their
+Organization role, transfer ownership or delete the Organization. Project
+Admin manages only its authorized Project. The creator must retain explicit
+Project Admin membership while the Project exists.
+
+| Project operation | Viewer | Editor | Admin / Organization Owner |
+| --- | --- | --- | --- |
+| Read files, directories, history and Agent configuration | Yes | Yes | Yes |
+| Write/move/delete content, restore history, run Agents/automations | No | Yes | Yes |
+| Manage settings, members, sharing and Project deletion | No | No | Yes |
+| Manage Agents, scopes, credentials, MCP, sandbox and source configuration | No | No | Yes |
+
+An `org` visibility Project provides Viewer access to Organization members.
+A `private` Project requires an explicit Project role, except for the
+Organization Owner. Human resource URLs inherit that Project policy; copying
+a URL never grants membership. A Project Admin cannot add someone outside the
+Organization. Downgrades/removals affect subsequent requests even when the
+same JWT and browser session are reused; runtime renewal and final publication
+also check current authority.
+
+Invitation redemption is the backend-only `accept_organization_invitation`
+transaction. It binds the invited email to the verified caller and current
+Auth user, rechecks pending status, expiry and issuer ownership, preserves an
+existing member's role, and atomically inserts membership and consumes the
+invitation. Its locks coordinate same-Organization seat admission and owner
+transfer. Revocation wins when it commits before redemption; a consumed link
+cannot recreate a removed membership. Commercial admission stays in the
+existing seat billing service; local seat limits are also checked inside the
+transaction. PostgreSQL errors at membership administration ports become
+explicit 403/409/422 responses rather than accidental server errors.
+
+Executable acceptance lives in
+[`tests/platform/organization`](../../backend/tests/platform/organization/README.md).
+The `Organization workspace acceptance` workflow runs on relevant PRs and
+Qubits/main pushes using disposable services, with no hosted secrets. Workflow
+existence does not itself configure a required branch-protection check.
+
 ## Project publication lifecycle
 
 Every production creation entry point uses the Project publication control
@@ -97,8 +137,9 @@ Deletion similarly crosses one durable deletion control plane. Moving a
 Project to `deleting` atomically closes renewable write-lease admission. A
 worker drains every logical and physical writer before relational deletion,
 then purges and independently verifies all persisted manifests: S3 objects and
-multipart uploads, Turbopuffer namespaces, long-lived Scope sandboxes and
-request execution sandboxes, plus durable external OCR/provider jobs and their
+multipart uploads, machines left by the retired Scope
+Sandbox product and request execution sandboxes (destroyed and verified through
+`platform/sandbox`), plus durable external OCR/provider jobs and their
 Redis/cache handles. Organization deletion waits for these authoritative jobs
 to be `completed`, not merely for the Project row to disappear.
 

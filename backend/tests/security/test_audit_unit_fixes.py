@@ -1,4 +1,4 @@
-"""Hermetic unit tests for the audit fixes (ISSUE-007/009/011/013 + 002 helpers).
+"""Hermetic unit tests for the audit fixes (ISSUE-007/011/013 + 002 helpers).
 
 None of these touch Supabase, the network, or any external service — they
 exercise pure functions, temp dirs, and in-process token crypto only. Safe to
@@ -12,47 +12,6 @@ import asyncio
 import json
 import os
 import shutil
-
-import pytest
-
-# ── ISSUE-009: shared sandbox command policy ────────────────────────────────
-
-class TestCommandPolicy:
-    def _mod(self):
-        from src.platform.scope_sandbox import execution_policy as command_policy
-        return command_policy
-
-    @pytest.mark.parametrize("cmd", [
-        "sudo rm -rf /",
-        "cat /etc/passwd",
-        "head /proc/self/environ",
-        "ls /sys/",
-        "cat /dev/mem",
-        "curl http://169.254.169.254/latest/meta-data/",
-        "mount /dev/sda1 /mnt",
-        "reboot",
-        "mkfs.ext4 /dev/sdb",
-    ])
-    def test_forbidden_commands_are_rejected(self, cmd):
-        cp = self._mod()
-        with pytest.raises(cp.SandboxCommandRejected):
-            cp.assert_command_allowed(cmd)
-
-    @pytest.mark.parametrize("cmd", [
-        "jq '.' /workspace/data.json",
-        "ls -la /workspace",
-        "python3 process.py",
-        "echo hello",
-        "cat /workspace/notes.md",
-    ])
-    def test_benign_commands_are_allowed(self, cmd):
-        cp = self._mod()
-        cp.assert_command_allowed(cmd)  # must not raise
-
-    def test_non_string_is_ignored(self):
-        cp = self._mod()
-        cp.assert_command_allowed(None)  # type: ignore[arg-type]
-
 
 # ── ISSUE-013: CAS retry backoff ────────────────────────────────────────────
 
@@ -138,7 +97,7 @@ class TestViewCachePrune:
 
     def test_prunes_oldest_beyond_max_views(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "projA", "v_old", mtime=1_000)
@@ -157,7 +116,7 @@ class TestViewCachePrune:
 
     def test_keep_dir_never_evicted_even_if_oldest(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         keep_old = self._make_view(root, "projA", "v_keep", mtime=1_000)  # oldest
@@ -174,7 +133,7 @@ class TestViewCachePrune:
 
     def test_zero_caps_disable_pruning(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         v1 = self._make_view(root, "projA", "v1", mtime=1_000)
@@ -189,7 +148,7 @@ class TestViewCachePrune:
 
     def test_byte_cap_evicts_until_actual_size_is_bounded(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "proj", "old", mtime=1, size_bytes=900)
@@ -204,8 +163,8 @@ class TestViewCachePrune:
 
     def test_prune_skips_active_view_and_continues(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
-        from src.version_engine.adapters.git._filelock import file_exclusive_lock
+        from src.version_engine.infrastructure import git_view_cache as view_cache
+        from src.version_engine.infrastructure.file_lock import file_exclusive_lock
 
         root = tmp_path / "cache"
         active = self._make_view(root, "proj", "active", mtime=1)
@@ -221,7 +180,7 @@ class TestViewCachePrune:
 
     def test_failed_delete_is_not_counted_as_freed(self, tmp_path, monkeypatch):
         from src.config import settings
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         oldest = self._make_view(root, "proj", "old", mtime=1)
@@ -247,7 +206,7 @@ class TestViewCachePrune:
 
 class TestGitViewCacheInvalidation:
     def _key(self):
-        from src.version_engine.adapters.git.view_cache import GitViewCacheKey
+        from src.version_engine.infrastructure.git_view_cache import GitViewCacheKey
 
         return GitViewCacheKey(
             project_id="project-1",
@@ -261,7 +220,7 @@ class TestGitViewCacheInvalidation:
 
     def test_missing_cache_is_a_valid_first_rebuild_state(self, tmp_path, monkeypatch):
         """A first rebuild must not fail merely because there is no cache yet."""
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         monkeypatch.setattr(view_cache, "git_view_cache_root", lambda: root)
@@ -271,7 +230,7 @@ class TestGitViewCacheInvalidation:
         assert not self._key().cache_dir().exists()
 
     def test_existing_cache_is_removed(self, tmp_path, monkeypatch):
-        from src.version_engine.adapters.git import view_cache
+        from src.version_engine.infrastructure import git_view_cache as view_cache
 
         root = tmp_path / "cache"
         monkeypatch.setattr(view_cache, "git_view_cache_root", lambda: root)
@@ -282,39 +241,3 @@ class TestGitViewCacheInvalidation:
         view_cache.invalidate_git_view_cache(self._key())
 
         assert not cache_dir.exists()
-
-    def test_first_transport_rebuild_rewarms_without_a_prior_cache(
-        self, tmp_path, monkeypatch
-    ):
-        """The admin repair endpoint must work before a cache exists."""
-        from types import SimpleNamespace
-
-        from src.version_engine.adapters.git import view_cache
-        from src.version_engine.derived import git_transport_cache
-
-        root = tmp_path / "cache"
-        monkeypatch.setattr(view_cache, "git_view_cache_root", lambda: root)
-        calls = []
-
-        def fake_warm(repo, scope_path, scope_excludes, **kwargs):
-            calls.append((repo, scope_path, scope_excludes, kwargs))
-            return "new-canonical-head"
-
-        monkeypatch.setattr(
-            git_transport_cache, "warm_transport_bare_repo", fake_warm
-        )
-        repo = SimpleNamespace(
-            _project_id="project-1",
-            store=SimpleNamespace(dir=tmp_path / "object-store"),
-        )
-
-        result = git_transport_cache.rebuild_git_transport_view(
-            repo,
-            scope_path="",
-            scope_excludes=[],
-            follow_history=True,
-            include_blobs=True,
-        )
-
-        assert result["head"] == "new-canonical-head"
-        assert calls == [(repo, "", [], {"follow_history": True, "include_blobs": True})]

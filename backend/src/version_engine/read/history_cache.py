@@ -5,11 +5,11 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
+from src.infra.execution.context import Execution, checkpoint, current_execution
 from src.version_engine.read.history_models import HistoryGraphCacheStats, HistoryGraphSnapshot
-
 
 CacheKey = tuple[str, str]
 
@@ -25,6 +25,29 @@ class _Flight:
     event: threading.Event
     result: HistoryGraphSnapshot | None = None
     error: BaseException | None = None
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    consumers: list[Execution | None] = field(default_factory=list)
+
+    @property
+    def deadline(self):
+        return max(
+            (c.deadline for c in self.consumers if c is not None), default=time.monotonic() + 300
+        )
+
+    def check(self):
+        if self.cancelled.is_set():
+            raise RuntimeError("Repository operation cancelled")
+        # The builder owns its pin until every subscriber is done. Cancelling
+        # one HTTP request must not cancel another subscriber's shared work.
+        for consumer in tuple(self.consumers):
+            if consumer is None:
+                return
+            try:
+                consumer.check()
+                return
+            except (RuntimeError, TimeoutError):
+                pass
+        raise RuntimeError("Repository operation cancelled: no history subscribers")
 
 
 class HistoryGraphCache:
@@ -65,6 +88,7 @@ class HistoryGraphCache:
         key: CacheKey,
         builder: Callable[[], HistoryGraphSnapshot],
     ) -> HistoryGraphSnapshot:
+        checkpoint()
         with self._lock:
             self._purge_expired_locked()
             cached = self._entries.get(key)
@@ -81,15 +105,27 @@ class HistoryGraphCache:
             else:
                 self._waits += 1
                 is_builder = False
+            consumer = current_execution.get()
+            flight.consumers.append(consumer)
 
+        try:
+            return self._complete(key, builder, flight, is_builder)
+        finally:
+            with self._lock:
+                flight.consumers.remove(consumer)
+
+    def _complete(self, key, builder, flight, is_builder):
         if not is_builder:
-            flight.event.wait()
+            while not flight.event.wait(timeout=0.05):
+                checkpoint()
+            checkpoint()
             if flight.error is not None:
                 raise flight.error
             if flight.result is None:  # defensive: builder always sets one branch
                 raise RuntimeError("history graph single-flight completed without a result")
             return flight.result
 
+        token = current_execution.set(flight)
         try:
             result = builder()
         except BaseException as exc:
@@ -98,6 +134,8 @@ class HistoryGraphCache:
                 self._inflight.pop(key, None)
                 flight.event.set()
             raise
+        finally:
+            current_execution.reset(token)
 
         with self._lock:
             self._builds += 1
@@ -138,8 +176,7 @@ class HistoryGraphCache:
         )
         self._total_weight += weight
         while (
-            len(self._entries) > self._max_snapshots
-            or self._total_weight > self._max_total_weight
+            len(self._entries) > self._max_snapshots or self._total_weight > self._max_total_weight
         ):
             _evicted_key, evicted = self._entries.popitem(last=False)
             self._total_weight -= evicted.snapshot.cache_weight

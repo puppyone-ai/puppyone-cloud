@@ -23,7 +23,7 @@ truncation at two layers; everything else (hidden files, VCS internals,
 | Web drag-drop ([dropFiles.ts](../../frontend/lib/dropFiles.ts)) | ✗ | ✗ | ✗ | 5000 | ✗ | (dialog list, not exclusion) |
 | Web dialog ([FileImportDialog.tsx](../../frontend/components/FileImportDialog.tsx)) | ✗ | ✗ | ✗ | 5000 | ✗ | shows first 5 names, no warning |
 | External drop catcher ([useExternalFileDropCatcher.ts](../../frontend/lib/hooks/useExternalFileDropCatcher.ts)) | ✗ | ✗ | ✗ | 5000 | ✗ | ✗ |
-| CLI `fs upload -r` ([transfer-local.js](../../cli/src/commands/fs/lib/transfer-local.js)) | ✗ | ✗ | ✗ | 5000 default | unlimited default | ✗ |
+| CLI `fs upload -r` (`puppyone-cli: src/commands/fs/lib/transfer-local.js`) | ✗ | ✗ | ✗ | 5000 default | unlimited default | ✗ |
 | Backend `/upload/init` ([ingest/router.py](../../backend/src/ingest/router.py)) | ✗ | ✗ | ✗ | n/a | n/a | n/a |
 | Backend `/ap-fs/upload` ([access_point_fs.py](../../backend/src/version_engine/entrypoints/http/access_point_fs.py)) | ✗ | ✗ | ✗ | n/a | n/a | n/a |
 
@@ -137,9 +137,9 @@ Implementation will land in 4 PRs to keep blast radius small. Order matters
   modal shows "9 files skipped (.git/)" and post-upload tree has no `.git/`.
 
 ### PR4 — CLI parity (Q5)
-- `cli/src/commands/fs/lib/transfer-local.js` — port `applyPolicy` to JS
+- `puppyone-cli: src/commands/fs/lib/transfer-local.js` — port `applyPolicy` to JS
   (or share via the upload-policy package).
-- `cli/src/commands/fs/commands/upload.js` — new flags:
+- `puppyone-cli: src/commands/fs/commands/upload.js` — new flags:
   - `--include-hidden`
   - `--no-default-ignores`
   - `--ignore-file <path>` (extra rules file)
@@ -185,8 +185,8 @@ Frontend:
 - [`frontend/app/(main)/projects/components/EmptyWorkspaceState.tsx`](../../frontend/app/(main)/projects/components/EmptyWorkspaceState.tsx)
 
 CLI:
-- [`cli/src/commands/fs/lib/transfer-local.js`](../../cli/src/commands/fs/lib/transfer-local.js)
-- [`cli/src/commands/fs/commands/upload.js`](../../cli/src/commands/fs/commands/upload.js)
+- `puppyone-cli: src/commands/fs/lib/transfer-local.js`
+- `puppyone-cli: src/commands/fs/commands/upload.js`
 
 Backend:
 - [`backend/src/ingest/router.py`](../../backend/src/ingest/router.py)

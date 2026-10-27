@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import httpx
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.provider.oauth.models import (
     OAuthConnection,
     OAuthConnectionCreate,
@@ -121,7 +122,7 @@ class GoogleDocsOAuthService:
                 metadata=metadata,
             )
 
-            connection = await self.repository.create(connection_create)
+            connection = await run_blocking(self.repository.create, connection_create)
 
             return (
                 True,
@@ -144,11 +145,11 @@ class GoogleDocsOAuthService:
 
     async def get_connection(self, user_id: str) -> Optional[OAuthConnection]:
         """Get Google Docs connection for a user."""
-        return await self.repository.get_by_user_and_provider(user_id, "google-docs")
+        return await run_blocking(self.repository.get_by_user_and_provider, user_id, "google-docs")
 
     async def disconnect(self, user_id: str) -> bool:
         """Disconnect Google Docs for user."""
-        return await self.repository.delete_by_user_and_provider(user_id, "google-docs")
+        return await run_blocking(self.repository.delete_by_user_and_provider, user_id, "google-docs")
 
     async def is_token_expired(self, user_id: str) -> bool:
         """Check if stored token is expired."""
@@ -196,7 +197,7 @@ class GoogleDocsOAuthService:
                 expires_at=expires_at,
             )
 
-            return await self.repository.update(connection.id, update_data)
+            return await run_blocking(self.repository.update, connection.id, update_data)
         except httpx.HTTPStatusError:
             return None
 

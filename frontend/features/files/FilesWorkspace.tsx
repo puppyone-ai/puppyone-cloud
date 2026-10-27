@@ -1,4 +1,7 @@
 'use client';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
+
+import { CopyResourceLink } from '@/features/files/components/CopyResourceLink';
 
 import { useWorkspaceRouter } from '@/features/workspace/navigation';
 
@@ -14,6 +17,7 @@ import { useWorkspaceRouter } from '@/features/workspace/navigation';
 import type { BreadcrumbSegment } from '@/components/ProjectsHeader';
 import { useOrganization } from '@/contexts/OrganizationContext';
 import { useAuth } from '@/contexts/SupabaseAuthProvider';
+import { useTaskActions } from '@/contexts/TaskProvider';
 import { useDataLayout } from '@/features/files/DataLayoutContext';
 import {
   refreshAllContentNodes,
@@ -48,7 +52,6 @@ import {
 } from '@/lib/hooks/useEditorSaveSession';
 import { useExternalFileDropCatcher } from '@/lib/hooks/useExternalFileDropCatcher';
 import { useProjectImportJobs } from '@/lib/hooks/useImportJobs';
-import { isImportJobTerminal } from '@/lib/importApi';
 
 // Extracted components
 import { ProjectPageLoadingShell, SkeletonBlock } from '@/components/loading';
@@ -65,14 +68,16 @@ import { ProjectUnavailableShell } from '@/features/files/components/ProjectUnav
 import type { EditorTarget } from '@/features/files/components/right-panel';
 import { useAccessPointEntries } from '@/features/files/hooks/useAccessPointEntries';
 import { useDataCreateFlow } from '@/features/files/hooks/useDataCreateFlow';
-import { writeFile } from '@/lib/contentTreeApi';
 import { isTextLikeCategory, resolveFormat } from '@/lib/fileFormats';
 import { projectAllows } from '@/lib/projectsApi';
 
 export function FilesWorkspace({ projectId }: { projectId: string }) {
+  const {files} = useWorkspaceFiles();
+  const {writeFile} = files;
   const router = useWorkspaceRouter();
   const searchParams = useSearchParams();
-  const { session, isAuthReady } = useAuth();
+  const { session, isAuthReady, userId } = useAuth();
+  const { isActive: isTaskAccountActive } = useTaskActions();
   const { currentOrg } = useOrganization();
 
   // Data fetching
@@ -111,7 +116,6 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
     selectedSyncId,
     selectedSyncNodeId,
     hoveredSyncNodeId,
-    selectAgent,
     refreshAgents,
   } = useAgent();
 
@@ -180,8 +184,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
     latestJob: latestImportJob,
     refresh: refreshImportJobs,
     upsertJob: upsertImportJob,
-  } = useProjectImportJobs(projectId);
-  const seenTerminalImportJobsRef = useRef<Set<string>>(new Set());
+  } = useProjectImportJobs(projectId, userId, isTaskAccountActive);
 
   const activeFormat = useMemo(() => {
     if (!activeNodeId || activeNodeType === 'github') return null;
@@ -224,6 +227,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   const nodeActions = useNodeActions(projectId, currentFolderId);
   const fileImport = useFileImport(projectId, session?.access_token, {
     showToast: nodeActions.showToast,
+    orgId: currentOrg?.id,
   });
 
   // Page-wide safety net for external file drops. Without this, a
@@ -302,10 +306,10 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   });
 
   const handleSyncCreated = useCallback(
-    async (nodeId: string) => {
+    async (nodeId: string, synchronizeBindingId?: string) => {
       await mutateSyncStatus();
       refreshCurrentNodes();
-      openPanel({ type: 'sync_config', nodeId });
+      openPanel({ type: 'sync_config', nodeId, synchronizeBindingId });
     },
     [mutateSyncStatus, refreshCurrentNodes, openPanel]
   );
@@ -344,7 +348,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   // Supabase connector
   const [supabaseConnectOpen, setSupabaseConnectOpen] = useState(false);
   const [supabaseSQLEditorOpen, setSupabaseSQLEditorOpen] = useState(false);
-  const [supabaseConnectionId, setSupabaseConnectionId] = useState<
+  const [importDatabaseSourceId, setImportDatabaseSourceId] = useState<
     string | null
   >(null);
 
@@ -429,25 +433,15 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
 
   // ───── Effects ─────
 
-  useEffect(() => {
-    if (panelState.type === 'agent_chat' && panelState.agentId) {
-      if (currentAgentId !== panelState.agentId) {
-        selectAgent(panelState.agentId);
-      }
-    }
-  }, [panelState.type, panelState.agentId, currentAgentId, selectAgent]);
-
-  // Refresh on external events (SaaS sync, ETL, etc.)
+  // Retained SaaS notification; Upload/Import refresh through their SWR queries.
   useEffect(() => {
     const handler = () => {
       refreshAllContentNodes(projectId);
       refreshProjects(currentOrg?.id ?? null);
     };
     window.addEventListener('saas-task-completed', handler);
-    window.addEventListener('etl-task-completed', handler);
     return () => {
       window.removeEventListener('saas-task-completed', handler);
-      window.removeEventListener('etl-task-completed', handler);
     };
   }, [currentOrg?.id, projectId]);
 
@@ -533,18 +527,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
       }
     }
     return segments;
-  }, [
-    activeProject,
-    projectId,
-    folderBreadcrumbs,
-    currentFolderId,
-    activeNodeId,
-    activeNodeDisplayName,
-    currentTableData?.name,
-    isResolvingPath,
-    routePath,
-    navigateTo,
-  ]);
+  }, [activeProject, projectId, folderBreadcrumbs, currentFolderId, activeNodeId, activeNodeDisplayName, currentTableData?.name, isResolvingPath, routePath]);
 
   const activeNodeListing = useMemo(
     () => contentNodes.find(node => node.path === activeNodeId),
@@ -588,7 +571,7 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
     />
   ) : undefined;
 
-  const headerActionSlot = activeFormat ? (
+  const editorHeaderActionSlot = activeFormat ? (
     <FileViewerHeaderActions
       projectId={activeProject?.id ?? projectId}
       filePath={activeNodeId}
@@ -611,6 +594,11 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   );
 
   // View logic flags
+  const headerActionSlot = <>
+    <CopyResourceLink projectId={projectId} path={activeNodeId || currentFolderId || ''} directory={!activeNodeId} />
+    {editorHeaderActionSlot}
+  </>;
+
   const isEditorView = !!activeNodeId;
   const isFolderView = !activeNodeId;
   const isLoading = isResolvingPath || contentNodesLoading;
@@ -656,29 +644,6 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
   const suppressExplorerSidebar =
     showEmptyWorkspace;
 
-  useEffect(() => {
-    const job = latestImportJob;
-    if (!job || !isImportJobTerminal(job.status)) return;
-    if (seenTerminalImportJobsRef.current.has(job.id)) return;
-    seenTerminalImportJobsRef.current.add(job.id);
-    if (job.status === 'completed') {
-      void mutateSyncStatus();
-      void mutateRepo();
-      refreshCurrentNodes();
-      window.dispatchEvent(
-        new CustomEvent('import-job-completed', {
-          detail: { jobId: job.id, projectId },
-        })
-      );
-    }
-  }, [
-    latestImportJob,
-    mutateRepo,
-    mutateSyncStatus,
-    projectId,
-    refreshCurrentNodes,
-  ]);
-
   // ───── Render ─────
 
   if (shouldBlockForProjectIdentity) {
@@ -719,16 +684,16 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
     onFolderSuccess: () => refreshAllContentNodes(projectId),
     supabaseConnectOpen,
     onCloseSupabaseConnect: () => setSupabaseConnectOpen(false),
-    onSupabaseConnected: (connectionId: string) => {
+    onSupabaseConnected: (sourceId: string) => {
       setSupabaseConnectOpen(false);
-      setSupabaseConnectionId(connectionId);
+      setImportDatabaseSourceId(sourceId);
       setSupabaseSQLEditorOpen(true);
     },
     supabaseSQLEditorOpen,
-    supabaseConnectionId,
+    importDatabaseSourceId,
     onCloseSupabaseSQLEditor: () => {
       setSupabaseSQLEditorOpen(false);
-      setSupabaseConnectionId(null);
+      setImportDatabaseSourceId(null);
     },
     onSupabaseSaved: () => refreshAllContentNodes(projectId),
     fileImportDialogOpen: fileImport.fileImportDialogOpen,
@@ -873,7 +838,6 @@ export function FilesWorkspace({ projectId }: { projectId: string }) {
           onMoveNode: nodeActions.handleMoveNode,
           activeSyncNodeId:
             panelState.type === 'sync_config' ||
-            panelState.type === 'agent_chat' ||
             panelState.type === 'workspace_chat' ||
             panelState.type === 'mcp_config' ||
             panelState.type === 'sandbox_config'

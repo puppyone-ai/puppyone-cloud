@@ -1,6 +1,8 @@
 'use client';
+import { nativeTextRevision } from '@/lib/workspaceFiles';
+import { useWorkspaceFiles } from '@/lib/hooks/useWorkspaceFiles';
 
-import { writeFile, type NodeType } from '@/lib/contentTreeApi';
+import { type NodeType } from '@/lib/contentTreeApi';
 import {
   useManualSave,
   type SaveStatus,
@@ -84,6 +86,8 @@ export function useMarkdownSave({
   serverContent,
   nodeType = 'markdown',
 }: UseMarkdownSaveOptions): UseMarkdownSaveResult {
+  const {files, identity} = useWorkspaceFiles();
+  const {writeFile} = files;
   // The fileKey scopes every per-file artefact (the localStorage
   // draft slot, the dirty flag, the file-change effect). We
   // include `projectId` so two different projects with a same-named
@@ -91,8 +95,8 @@ export function useMarkdownSave({
   // distinct "no-file" key so the hook is harmless when no file is
   // open.
   const fileKey = useMemo(
-    () => `${nodeType}:${projectId}:${activeNodePath || '(none)'}`,
-    [nodeType, projectId, activeNodePath],
+    () => `${identity === 'published' ? '' : identity + ':'}${nodeType}:${projectId}:${activeNodePath || '(none)'}`,
+    [nodeType, projectId, activeNodePath, identity],
   );
 
   // Markdown content is a plain string — string-identity is the
@@ -111,9 +115,9 @@ export function useMarkdownSave({
       if (!activeNodePath) {
         throw new Error('Cannot save: no active text file');
       }
-      await writeFile(projectId, activeNodePath, snapshot, nodeType);
+      await writeFile(projectId, activeNodePath, snapshot, nodeType, undefined, identity === 'published' ? undefined : await nativeTextRevision(serverContent));
     },
-    [projectId, activeNodePath, nodeType],
+    [activeNodePath, writeFile, projectId, nodeType, identity, serverContent],
   );
 
   const inner = useManualSave<string>({

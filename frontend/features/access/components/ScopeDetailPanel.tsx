@@ -42,13 +42,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusIndicator } from '@/components/ui/StatusDot';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { getAccessProviderMethodMeta, isMcpProvider } from '@/lib/accessProviderRegistry';
-import type { Connector, RepositoryView } from '@/lib/repoApi';
+import type { AccessSurface, RepositoryView } from '@/lib/repoApi';
 import { PROJECT_CONTENT_RAIL_WIDTH } from '@/lib/layout';
 import { T } from '@/features/access/lib/tokens';
 import { STATUS_LABEL } from '@/features/access/lib/constants';
 import { McpConnectCard } from '@/features/access/components/McpConnectCard';
-import { SandboxConnectCard } from '@/features/access/components/SandboxConnectCard';
-import { SyncActivityPanel } from '@/features/access/components/SyncActivityPanel';
 import { ScopeSettingsBlock } from '@/features/files/components/access-points/ScopeSettingsBlock';
 import type { ConnectorEditPatch } from '@/features/access/hooks/useAccessData';
 import { ConnectorList } from '@/features/access/components/ConnectorMethodList';
@@ -75,7 +73,7 @@ export function ScopeDetailPanel({
   onNavigationGuardChange,
 }: {
   readonly scope: RepositoryView | undefined;
-  readonly connectors: readonly Connector[];
+  readonly connectors: readonly AccessSurface[];
   readonly projectId: string;
   readonly onPauseResume: (id: string) => void;
   readonly onUpdate: (id: string, patch: ConnectorEditPatch) => Promise<void>;
@@ -152,9 +150,9 @@ export function ScopeDetailPanel({
 
   const visibleConnectors = connectors;
   const hasStandardAccess = visibleConnectors.some(
-    (connector) => connector.provider === 'git_remote' || connector.provider === 'cli',
+    (connector) => connector.kind === 'git_remote' || connector.kind === 'cli',
   );
-  const hasMcpMethod = visibleConnectors.some((connector) => isMcpProvider(connector.provider));
+  const hasMcpMethod = visibleConnectors.some((connector) => isMcpProvider(connector.kind));
   const methodCount = visibleConnectors.length + (scope ? 1 : 0) + (scope && !hasMcpMethod ? 1 : 0);
 
   useEffect(() => {
@@ -298,9 +296,6 @@ export function ScopeDetailPanel({
                 onCreated={onScopeMutated}
               />
             ) : null}
-            {canManage && scope?.target.kind === 'scope'
-              ? <SandboxConnectCard scope={scope} projectId={projectId} />
-              : null}
           </div>
         ) : (
           <div
@@ -319,9 +314,6 @@ export function ScopeDetailPanel({
             No connectors bound to this scope yet.
           </div>
         )}
-        {/* Sync activity + stats (M6 observability) — the managed-sync event
-            log for this scope. Self-hides when there's no sync history. */}
-        {scope ? <SyncActivityPanel scope={scope} projectId={projectId} /> : null}
       </div>
 
       <style>{`
@@ -344,7 +336,7 @@ function ScopeAccessMethodsSettings({
   pendingConnectorIds,
   onPauseResume,
 }: {
-  readonly connectors: readonly Connector[];
+  readonly connectors: readonly AccessSurface[];
   readonly showMcpPlaceholder: boolean;
   readonly pendingConnectorIds: ReadonlySet<string>;
   readonly onPauseResume: (id: string) => void;
@@ -491,17 +483,17 @@ function ScopeAccessMethodRow({
   isFirst,
   onPauseResume,
 }: {
-  readonly connector: Connector;
+  readonly connector: AccessSurface;
   readonly pending: boolean;
   readonly isFirst: boolean;
   readonly onPauseResume: () => void;
 }) {
-  const meta = getAccessProviderMethodMeta(connector.provider, connector.name);
+  const meta = getAccessProviderMethodMeta(connector.kind, connector.name);
   const enabled = connector.status === 'active' || connector.status === 'syncing';
   const errored = connector.status === 'error';
-  const tile = getProviderTileStyle(connector.provider, false);
-  const tileSize = getProviderTileSize(connector.provider);
-  const iconSize = getProviderIconSize(connector.provider);
+  const tile = getProviderTileStyle(connector.kind, false);
+  const tileSize = getProviderTileSize(connector.kind);
+  const iconSize = getProviderIconSize(connector.kind);
   const statusLabel = STATUS_LABEL[connector.status] ?? connector.status;
 
   const handleToggle = () => {
@@ -545,7 +537,7 @@ function ScopeAccessMethodRow({
             overflow: 'hidden',
           }}
         >
-          <ProviderIcon provider={connector.provider} size={iconSize} />
+          <ProviderIcon provider={connector.kind} size={iconSize} />
         </div>
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
           <div

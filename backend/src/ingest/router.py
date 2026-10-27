@@ -24,8 +24,8 @@ from fastapi import (
 from src.ingest.dependencies import get_ingest_service
 
 # Import underlying services for file processing
-from src.ingest.file.dependencies import get_etl_service
-from src.ingest.file.service import ETLService
+from src.platform.upload.dependencies import get_etl_service
+from src.platform.upload.service import ETLService
 from src.ingest.schemas import (
     BatchQueryRequest,
     BatchTaskResponse,
@@ -94,18 +94,18 @@ async def cancel_ingest_task(
 
 
 @router.get("/health")
-async def get_ingest_health(
+def get_ingest_health(
     response: Response,
     etl_service: ETLService = Depends(get_etl_service),
 ):
-    from src.ingest.file.config import etl_config
+    from src.platform.upload.config import upload_config
 
     errors: list[str] = []
     file_worker = {
         "status": "ready",
         "queue_size": 0,
         "task_count": 0,
-        "worker_count": etl_config.etl_worker_count,
+        "worker_count": upload_config.etl_worker_count,
     }
 
     try:
@@ -128,10 +128,10 @@ async def get_ingest_health(
 
 # === Rules Management Endpoints ===
 
-from src.ingest.file.rules.dependencies import get_rule_repository
-from src.ingest.file.rules.repository_supabase import RuleRepositorySupabase
-from src.ingest.file.rules.schemas import RuleCreateRequest
-from src.ingest.file.schemas import (
+from src.infra.file_processing.rules.dependencies import get_rule_repository
+from src.infra.file_processing.rules.repository_supabase import RuleRepositorySupabase
+from src.infra.file_processing.rules.schemas import RuleCreateRequest
+from src.platform.upload.processing_schemas import (
     ETLRuleCreateRequest,
     ETLRuleListResponse,
     ETLRuleResponse,
@@ -139,13 +139,13 @@ from src.ingest.file.schemas import (
 
 
 @router.get("/rules", response_model=ETLRuleListResponse)
-async def list_rules(
+def list_rules(
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
     limit: int = Query(50, ge=1, le=100, description="Maximum number of rules"),
     offset: int = Query(0, ge=0, description="Number of rules to skip"),
 ):
     try:
-        from src.ingest.file.rules.default_rules import get_or_create_default_rule
+        from src.infra.file_processing.rules.default_rules import get_or_create_default_rule
 
         get_or_create_default_rule(rule_repository)
     except Exception as e:
@@ -178,7 +178,7 @@ async def list_rules(
 
 
 @router.post("/rules", response_model=ETLRuleResponse, status_code=201)
-async def create_rule(
+def create_rule(
     request: ETLRuleCreateRequest,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):
@@ -214,7 +214,7 @@ async def create_rule(
 
 
 @router.get("/rules/{rule_id}", response_model=ETLRuleResponse)
-async def get_rule(
+def get_rule(
     rule_id: int,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):
@@ -238,7 +238,7 @@ async def get_rule(
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
-async def delete_rule(
+def delete_rule(
     rule_id: int,
     rule_repository: Annotated[RuleRepositorySupabase, Depends(get_rule_repository)],
 ):

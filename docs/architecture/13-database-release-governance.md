@@ -1,480 +1,378 @@
 # Database Release Governance
 
-PuppyOne uses Supabase's official schema history and a portable extension for
-online production-data transformations. GitHub Actions is an adapter, not the
-migration engine.
+Puppyone releases an environment by merging one tested source revision to its
+protected branch. `qubits` selects staging; `main` selects production. The
+shared workflow automatically waits for candidate CI, then migrates and verifies
+Supabase on a GitHub-hosted runner. Compatible SQL requires only the existing
+Supabase environment credentials. Application deployment is a separate stage;
+its configuration cannot block an ordinary database migration.
 
-## Public core and private billing boundary
+When the environment has `PUPPYONE_RELEASE_CONFIG`, the full coordinator follows
+successful schema verification with exact-source application deployment and
+acceptance. Without that configuration, the workflow explicitly reports
+**database migrated; application deployment not configured**. It never writes
+an accepted application deployment receipt for a database-only run. Pending
+Contract SQL or SQL with declared data prerequisites always routes to the full coordinator and fails if its
+required infrastructure is unavailable; it cannot fall back to uncoordinated SQL.
 
-PuppyOne Cloud is independently installable open-source software. PuppyPay is
-an optional, separately released private service. Each owns its tables and its
-migrations, even when hosted installations share one Supabase database:
+An environment with the GitHub variable `RELEASE_IMAGES=enabled` builds its
+application images once per commit in the `images` job: one backend image for
+every backend role and one frontend image per environment (Next.js inlines
+`NEXT_PUBLIC_*` at build time). Both are smoke-tested, then published to GHCR
+pinned by digest. The coordinator points each Railway service at those digests
+and verifies the running digest; Railway never rebuilds them. Environments
+without the variable keep exact-commit repository builds.
 
-```text
-Public Cloud repo                         Private PuppyPay repo
-  Cloud SQL migrations                     Pay Alembic migrations
-  Product tables / entitlement projection  Financial ledger / balances / prices
-              |                                         |
-              +----------- versioned HTTP API ----------+
+## Migration merge admission
 
-Public CI: no Pay checkout, schema, service, or credentials
-Private CI: independent Pay DB tests + pinned public-consumer contract check
+Before production merge, CI starts the last accepted target version in disposable Docker,
+creates representative users and repository data, and runs the candidate
+upgrade program against the same volumes. The candidate must preserve login,
+file contents and permissions, then pass authenticated reads and writes.
+Empty-database installation remains a separate required test.
+
+Production does not need candidate schema or data receipts before merge.
+Those receipts are outputs of the release after merge. A normal promotion
+from Qubits still requires a successful staging database workflow for the exact
+promoted head. This database attestation is distinct from application acceptance.
+Production branch protection requires `Release upgrade rehearsal`, database
+validation, backend/frontend checks and security checks. Production promotion
+also requires `Main Release Gate`. Hosted configuration is verified separately
+from repository YAML; editing a workflow does not enable branch protection.
+
+The rehearsal resolves the last accepted `puppyone-release` deployment for the
+target environment. A reviewed bootstrap SHA is used only while adopting an
+environment with no coordinator receipt. Older accepted deployment statuses
+remain valid baseline evidence after GitHub marks them inactive. A failed
+deployment is never a successful upgrade baseline.
+
+## Qubits testing and database delivery
+
+Qubits uses a database-focused automatic profile. Pull requests and protected
+pushes run immutable migration/history policy, manifest validation, RPC signature
+checks, database release regression tests and Gitleaks. Its required branch
+checks are `Database validation result` and `Run Gitleaks`. Ordinary SQL migration
+waits only for those two workflows at the exact merged SHA. The protected
+Supabase target, release lock, migration ledger and post-migration database
+verification remain mandatory.
+
+Backend/frontend, Agent, Git/S3, populated installation and historical upgrade
+suites run locally before submission. Their GitHub workflows remain available
+through manual dispatch and run automatically for `main`. Manual dispatch of
+`Validate Database Changes` also selects the full database rehearsal profile.
+Qubits automatic checks explicitly omit these suites; their green result is not
+proof of application acceptance. Record local commands, revision, results and
+any untested coverage in the PR. Production gates and coordinated data/Contract
+cutover requirements are unchanged.
+
+Typical local checks from `backend/`:
+
+```sh
+uv run pytest -q -m 'not e2e and not integration and not network'
+uv run python ../scripts/testing/run_repository_hosting.py --native-pg -q \
+  -k 'ref_transaction_service or interrupted_push_retry or native_initialization_abandon or standard_git_pack or direct_object_transport or native_size_limits'
 ```
 
-Cloud schema/data migrations MUST NOT require a Pay table, foreign key, RPC,
-HTTP call, migration revision, or completion receipt. Pay migrations MUST NOT
-require Cloud tables. User/org IDs cross the API boundary as identifiers;
-financial facts stay owned by Pay. Product-side entitlement projections remain
-Cloud-owned tables installed by the public migration history. Disabling hosted
-billing never means pretending that a missing required financial service worked.
+Use the relevant workflow's commands for frontend, Docker/S3 or full installation
+coverage when those boundaries change. Local acceptance never mutates the hosted
+Supabase target; only the post-merge release workflow applies hosted migrations.
 
-The public database validation workflow checks a fresh installation without any
-`puppypay` schema, then upgrades synthetic user/organization data from
-`20260720000000` to the current migration head and checks preservation. Existing
-older migration fixtures continue covering their specific historical cutovers.
-Source-boundary checks reject private Python imports and direct private-schema
-references; they supplement, rather than replace, executable database tests.
-
-The official staging/production deployment workflows and owner-specific main
-release policy run only in `puppyone-ai/puppyone-cloud`. Forks still run public
-validation. A self-hosted operator supplies their own deployment adapter and
-database credentials; they never need our protected environments or Pay repo.
-
-PuppyPay's private CI tests fresh/previous-revision upgrades against PostgreSQL
-without Cloud/Auth tables. It also checks the real public consumer selected by
-an immutable commit in `contracts/puppyone-consumer.json`. The private check
-round-trips entitlement publications/acknowledgements and billing facts, and
-validates requests emitted by Cloud's actual managed-inference service against
-Pay's request models. It uses synthetic data and an in-process HTTP transport;
-it is not a live checkout/provider or whole-application E2E test.
-
-A Cloud API change requires verifying its candidate SHA in the private workflow
-before enabling the hosted feature and updating the reviewed consumer pin. This
-private release check MUST NOT become a prerequisite of public schema upgrades
-or fork CI. Pay's own deployment waits for its local tests, container check, and
-consumer contract check. Compatible changes allow the two services to deploy
-independently; breaking API removals need a versioned transition. Installing a
-new schema and enabling a new hosted feature are separate release decisions.
-
-The Docker self-host bootstrap uses the same active migrations through a
-separate migration task. See [installation validation](14-self-hosted-installation.md)
-for the empty-stack test and supported upgrade boundaries. No hosted environment
-or GitHub branch-protection setting is changed by editing these workflow files.
-
-## One rule, two lanes
-
-### Active baseline and immutable archive
-
-`supabase/migrations/20260926000000_baseline_b1.sql` is the sole executable B1.
-Its 102 historical sources are preserved byte-for-byte in
-`supabase/archive/before_b1/migrations/`. Later schema changes append timestamped SQL to
-`migrations/`; the ordinary Supabase CLI never scans the archive. `baselines/b1`
-holds the source inventory, hashes and verification evidence, not another copy
-of the executable SQL. No independent current-schema snapshot is maintained.
-
-All eight pre-B1 data artifact directories are also archived unchanged under
-`supabase/archive/before_b1/data_migrations/`, including manifests, runners,
-verification and fixtures. The shared catalog resolves current and archived
-artifacts by immutable ID, pins their original checksums, and rejects duplicates.
-Moving files never rewrites database receipts or implies work is complete.
-Release selection and operator verification use this same catalog.
-
-`scripts/database_baseline.py` compares archived replay with B1 installation in
-an isolated Supabase PostgreSQL 17 stack, including ACL/RLS, ownership, functions,
-Auth triggers, reference data and later migrations. It also verifies populated
-upgrades and atomic migration-history adoption, with no hosted credentials.
-
-`scripts/database_history.py check` verifies an existing database without
-committing changes. `adopt` requires the complete archived history and reviewed
-catalog fingerprint before atomically preserving all original history rows in
-`migration_log` and replacing the covered tracking rows with B1. No customer
-rows or data-job completion receipts are rewritten. Missing history or schema
-/ permission drift stops before history writes. Surviving data jobs understand
-B1 schema coverage; retired jobs do not run against removed tables.
-
-The protected schema workflow performs adoption before native `db push`.
-Supabase's direct GitHub integration does not execute this custom admission:
-an existing branch needs the protected transition before that integration can
-resume. Fresh preview databases can apply B1 normally. This repository change
-does not itself assert that any hosted database has adopted B1.
-
-Older installations can materialize the full public archive with
-`database_history.py stage --output <new-directory>` and use the existing
-phased data/schema upgrade rules before adoption. No private Pay repository is
-needed. Historical data transformations are not replaced by schema stamping.
-
-See [`supabase/baselines/README.md`](../../supabase/baselines/README.md) for the
-commands and rollout boundary. Compose now targets PG17; an existing PG15 volume
-still requires a separate explicit major-version upgrade. Never automatically
-swap the image on an existing data volume. Assess future compaction at stable
-release milestones, not monthly.
+## Release execution
 
 ```text
-Schema lane
-supabase/migrations -> supabase db push -> supabase_migrations.schema_migrations
-
-Data lane
-supabase/data_migrations + archive/before_b1/data_migrations
-    -> shared ID catalog -> puppyone-db -> public.migration_log
+merge to qubits / main
+  -> qubits: database policy + release regressions + Gitleaks
+     main: full candidate CI, including populated Docker rehearsal
+  -> protected Supabase environment + database-wide release lock
+  -> validate complete schema history and the checksum-bound upgrade plan
+  -> ordinary SQL:
+       apply every missing migration through the official Supabase CLI
+       verify exact history, database contracts, Data API containment and drift
+       publish database result independently of application configuration
+  -> pending Contract or SQL with declared data prerequisites (no candidate SQL applied by the ordinary lane):
+       enter full coordinator; recheck actual prerequisites under the same lock
+       stop producers -> drain work -> stop consumers and verify writer exit
+       create and restore-test a private backup
+       compatible schema -> data run + verify -> dependent Contract -> verify DB
+  -> when application release is configured, or a cutover requires it:
+       build/deploy the exact source SHA to declared application services
+       authenticated Git, live workspace and real Agent acceptance
+       durable accepted receipt and GitHub deployment success
 ```
 
-Use `supabase/migrations` for DDL and small pure-SQL changes that are bounded,
-transactional, and need no pause, application secret, runtime code, or external
-service. Use `supabase/data_migrations` for bounded database transformations
-that need batching, retry/resume, Python, an application HMAC secret, or a
-release boundary between Expand and Contract.
+Historical data artifacts do not become prerequisites for every subsequent
+SQL deployment merely because they are listed in the full upgrade plan.
+The schema stage classifies pending SQL by the existing Contract naming and
+`requires-data-migration` declarations. It verifies an already-current schema
+even when old data jobs have no receipt. This never completes, skips or writes
+a receipt for those artifacts: the configured application coordinator still
+runs its complete ordered plan before accepting an application release.
+New SQL that depends on data transformation must declare that dependency;
+unready destructive cleanup stays outside active schema history.
 
-GitHub-hosted CI is a **Supabase-only** control plane. It must never enumerate,
-delete, copy, or otherwise mutate an external data plane such as S3. An
-external inventory/legacy-cleanup release declares
-`"execution_mode": "operator_local"` in its environment release pointer.
-The versioned, reviewed operator script is run locally with that environment's
-credentials and an explicit `--apply`; CI then executes only the immutable
-artifact's `verify.sql` against Supabase to prove the recorded completion state.
-This preserves a deployment gate without scheduling an S3 scan or deletion on
-every push.
+The only exception is a reviewed, source-controlled deferral in
+`supabase/releases/deferred-data.json`. Staging adopted the native engine through
+bounded per-project selections, so it defers the whole-environment
+`native-inventory` and destructive `native-recovery` phases. A deferred phase is
+never executed, skipped with a receipt or reported complete; the accepted
+result lists it under `deferred_data_phases`. Pending SQL that requires a
+deferred artifact still fails the release. Production cannot declare deferrals.
 
-`supabase/seed.sql` is only bootstrap/demo/test data. It is not a production
-upgrade mechanism.
+Ordinary additive releases keep the application online. Data migrations and
+Contract SQL use a maintenance window. Consumers must keep running until their
+queues drain; the Synchronize worker is a consumer, while its periodic
+producer belongs to the API. A task waiting for user approval is not silently
+approved or discarded by release automation. Drain has a bounded timeout and
+fails without applying the schema if work cannot finish.
 
-## Release orchestration
+GitHub concurrency queues releases separately for each environment. A
+PostgreSQL session advisory lock also serializes the physical database. The
+ordinary SQL stage holds it from history inspection through verification; the
+full coordinator reacquires the same lock and rechecks state before build,
+cutover, deployment and acceptance. The executor checks the owning
+connection between operations. Immutable data artifacts retain their own
+transaction or advisory locks and restart-safe checkpoints.
 
-The entire staging/production release and manual data dispatch share an outer
-`database-release-<environment>` concurrency group. Runs and pending releases
-are not cancelled (`queue: max`); reusable steps retain their separate
-`database-<environment>` lock. The outer lock prevents two releases from
-interleaving their schema/data phases. A failed release must be investigated
-before promoting another version; queue order is not a replacement for receipts.
+Application build/start never performs schema mutation. Railway's Automatic
+Deployments setting is disabled for coordinator-owned services. Repository-built
+services keep their GitHub connection attached; image-built services have no
+repository connection and run only the digest the coordinator sets. The full
+coordinator checks the provider's actual autodeploy status and source (repository
+or published image) before a coordinated cutover. Independent application
+autodeploy must not race a migration; enabling application release requires
+coordinator ownership, and its job depends on successful database admission. The
+coordinator explicitly deploys its immutable commit, checks every service's
+reported commit and health, and never substitutes the latest branch head.
+`serviceInstanceDeployV2` returns the deployment ID that subsequent polling verifies.
+`Wait for CI` alone cannot own a drain/data/Contract sequence.
 
-Main Release Gate checks exact-head Qubits deployment evidence for schema,
-data-only, release-pointer, archive, runner and database-workflow changes,
-including renames out of those paths. Operator attestations use catalog checksum
-validation and read-only verification with timeouts; failed checks emit no
-success attestation and never manufacture runner receipts.
-
-## Repository structure
+## Module and artifact ownership
 
 ```text
 supabase/
-├── migrations/                 # B1 and subsequent schema migrations
-├── archive/before_b1/
-│   ├── migrations/             # 102 immutable historical SQL files
-│   └── data_migrations/        # all 8 immutable historical task directories
-├── baselines/b1/               # hashes, coverage and verification evidence
-├── data_migrations/            # new post-B1 data artifacts
-│   ├── manifest.schema.json
-│   ├── schema_history_baseline.json # immutable pre-governance hashes
-│   └── <migration_id>/
-│       ├── manifest.yml
-│       ├── run.sql | run.py
-│       ├── verify.sql
-│       └── contract.pending.sql # optional reviewed future contract
-├── tests/
-└── seed.sql
-
-backend/src/infra/data_migrations/  # portable CLI and runner
-.github/workflows/                  # thin hosted adapters
+  migrations/                 official Supabase schema history
+  data_migrations/<id>/       immutable manifest, execution, verifier, fixtures
+  archive/before_b1/          immutable historical migration sources
+  baselines/b1/               baseline source inventory and checksums
+  releases/
+    upgrade-plan.json        ordered schema boundaries and data artifact IDs
+    control.sql              private coordinator journal bootstrap
+    deployed-bases.json      initial accepted-version adoption pins
+backend/src/infra/data_migrations/
+  catalog.py, runner.py       existing artifact validation/execution/receipts
+  release/
+    plan.py                  dependency, retirement and checksum validation
+    engine.py                coordinated environment release state machine
+    schema_only.py           independent compatible SQL stage and cutover handoff
+    target.py, schema.py      shared database operations and Supabase CLI
+    journal.py               private release progress and source ordering
+    docker.py, hosted.py      actual environment adapters
+    railway.py               provider deployment and process-exit boundary
+    backup.py, acceptance.py  restore proof and bounded application acceptance
 ```
 
-The manifest chooses only `sql` or `python` and one file in its directory. It
-does not contain an arbitrary shell command. Its checksum covers the normalized
-manifest, entrypoint, and verification SQL.
+Schema SQL uses the official `supabase_migrations.schema_migrations` history.
+Data transformations use `public.migration_log` receipts bound to immutable
+artifact checksums. `puppyone_release.runs` records source SHA, plan checksum,
+phase and private evidence; it is not exposed by PostgREST or granted to
+application roles. It is not a replacement schema-history table.
 
-SQL artifacts contain SQL only. The runner rejects transaction control, every
-psql meta-command, and `COPY ... PROGRAM`; the runner owns the transaction,
-connection, lock, verification, and receipt boundary.
+The B1 baseline and pre-B1 archive remain unchanged. Baseline adoption checks
+the covered history and public schema fingerprint before replacing tracking
+rows. Unknown or incomplete historical histories are rejected. `--include-all`
+only selects files; it does not establish data prerequisites.
 
-Standalone `verify` operations run in a read-only PostgreSQL transaction with
-both client and server timeouts. During an SQL data migration, entrypoint,
-verification, and receipt remain one atomic transaction so a failed
-postcondition rolls back the transformation.
+Each schema phase supplies the official CLI with the already-applied files and
+only that phase's pending files. Later pending Contract files are withheld
+until their data dependencies verify. SQL `requires-data-migration` markers
+must resolve to preceding artifacts with the declared checksum. Retired
+verifiers are skipped only after their declared Contract boundary is applied;
+removed historical tables must not be recreated to run an obsolete verifier.
 
-Python child processes receive only the environment variables declared by the
-manifest plus a small runtime/CA/proxy allowlist. They do not inherit the
-database URL, GitHub token, or an ambient `PYTHONPATH`. They run in Python
-isolated mode from the artifact directory. Python artifacts are single-file
-jobs and cannot import PuppyOne's mutable `src` application package or sibling
-helpers outside the checksum; third-party packages come from the repository's
-locked runtime.
+New schema-only changes append a migration. New application/S3 data work adds
+one immutable data artifact with its own verifier and representative fixtures,
+then places its ID between the appropriate schema boundaries in the plan.
+Changing an executed artifact's bytes or fabricating completion receipts is
+forbidden. `contract.pending.sql` stays outside active schema history until a
+complete ordered upgrade passes rehearsal; the live database need not already
+have run it before the source can merge.
 
-## Release state machine
+## Data scope and recovery
 
-```text
-Expand -> Data -> Cutover -> Contract
-```
+A completed data receipt eliminates execution of that transformation on
+subsequent ordinary releases. Release acceptance uses one owned test project;
+it does not audit all customer repositories or scan the bucket. A one-time
+legacy conversion may legitimately visit every row/object within that
+migration's declared scope. That cost belongs to the immutable migration,
+never to routine deployment or application startup.
 
-1. Expand adds compatible schema. The running application can tolerate old and
-   new rows.
-2. Data copies/transforms old facts. Qubits runs first; Production runs only
-   after Qubits verification.
-3. Cutover makes the application read/write only the new fact and waits for old
-   instances to drain.
-4. Contract removes the old schema in a later PR. SQL fails closed unless the
-   receipt checksum and actual row-level postcondition both pass.
+Historical business classifications are explicit reviewed inputs with source
+fingerprints. The executor checks them and applies the existing artifact;
+it never guesses whether a legacy source is an Import, Synchronize binding or
+both. Such input must be prepared for the historical cutover before release.
+New releases after that Contract do not require those classifications again.
 
-Do not put Expand and Contract in the same release. A fresh install with zero
-legacy rows may apply the final Contract without running irrelevant historical
-data jobs.
+Only breaking upgrades take a recovery point. Their recovery storage (a separate
+private versioned backup bucket and a versioned object bucket) is proven before
+any service stops, so an environment without it fails while still online.
+Ordinary additive releases neither need nor inspect it. Breaking upgrades stop
+writers before taking their recovery point. The backup
+includes Cloud public data, Auth identities and migration/release histories;
+it is restore-tested in a disposable PostgreSQL container before mutation.
+Hosted backups use a separate private, versioned object bucket and are read
+back to verify their digest. The application object bucket retains object
+versions, including versions deleted by a data transformation. A logical
+database restore alone is not a complete object-store rollback.
 
-An identity-representation cutover may intentionally use one atomic Contract
-without a dual-write phase only when both representations cannot safely coexist
-and all of the following stricter gates hold: a read-only immutable preflight,
-exact checksum receipt, mutation freeze, database restore point, one-transaction
-mapping, previous-schema upgrade fixture, dirty-data rejection proving no
-receipt/no mutation, credential-ID/hash continuity, and same-SHA application
-deployment. ISSUE-039 is this narrow case: keeping both a synthetic root Scope
-and Project-root identity would preserve the ambiguity the change removes. This
-exception does not permit ordinary feature Expand and Contract work to be
-collapsed.
+Object recovery defaults to bucket versioning. Some S3-compatible providers,
+including Supabase Storage, cannot version buckets and answer the bucket
+policy status without `IsPublic`. Such an environment may set
+`object_recovery` in `PUPPYONE_RELEASE_CONFIG` to
+`{"mode": "snapshot", "approved_by": "...", "reason": "..."}`; the approver and
+reason are mandatory and recorded in release evidence. In snapshot mode the
+recovery preflight still requires a separate, reachable, private backup bucket
+(privacy is read from the Supabase Storage `public` flag when the S3 policy
+status is inconclusive) but not versioning. After writers stop, the backup
+uploads the verified database dump without an object version, then copies every
+current object of the application bucket into
+`puppyone-releases/<environment>/<dump sha256>/objects/`, reads each copy back to
+compare SHA-256, re-lists the source to prove no writer changed it, and stores
+a digest-bound `objects.manifest.json`. `object_snapshot.restore` copies a
+snapshot back only after its manifest digest matches the release evidence and
+each backup copy matches its manifest entry; objects created after the snapshot
+are reported, never deleted automatically. Snapshot mode is bounded
+(1,000,000 objects, 200 GiB); larger stores need versioned storage.
 
-## Operator commands
+The Cloud release owns `public`, its migration history and its private release
+journal. PuppyPay owns its private financial schema and release history.
+Neither Cloud installation nor public CI needs PuppyPay tables or credentials.
+Public-schema drift checks must not adopt or delete another service's schema.
 
-From `backend/`:
+## Failure, retry and evidence
 
-```bash
-uv run puppyone-db lint
-uv run puppyone-db list
-DATA_MIGRATION_DATABASE_URL='postgresql://...' \
-  uv run puppyone-db plan <migration_id>
-DATA_MIGRATION_DATABASE_URL='postgresql://...' \
-  uv run puppyone-db run <migration_id>
-DATA_MIGRATION_DATABASE_URL='postgresql://...' \
-  uv run puppyone-db verify <migration_id>
-```
+Every phase completes before the next begins. Failed data verification blocks
+the dependent Contract. Failed schema verification blocks deployment. Failed
+application acceptance leaves the release unaccepted. Migration receipts and
+release checkpoints survive runner exit, so retry checks actual state and
+resumes pending work; it does not rerun a completed data copy.
 
-Protected `qubits` and `main` pushes use the environment release orchestrators
-to run schema deployment, CI-mode data plan/run/verify, and a final schema
-check as one serialized release. `operator_local` releases instead run their
-external-data script outside GitHub Actions, then the orchestrator verifies the
-Supabase completion SQL and performs the same final schema check. The standalone
-`Data Migration` GitHub workflow remains for protected-branch diagnosis and
-idempotent recovery of CI-mode artifacts; `plan` and `verify` are read-only,
-while `run` mutates database data and writes a receipt after verification.
+An accepted source is an idempotent no-op. A source older than the environment's
+recorded release, or a divergent sibling, is rejected. A descendant may repair
+a failed release, preserving the failed attempt's evidence. Changing the plan
+for an existing source SHA is rejected.
 
-The final drift check is explicitly scoped to PuppyOne's `public` schema.
-Protected databases may colocate schemas owned by another service, such as
-PuppyPay's `puppypay` schema; those schemas are neither PuppyOne migration input
-nor drift. Cross-schema platform invariants that PuppyOne depends on, including
-its trigger on `auth.users`, remain covered by the preceding smoke contracts.
+Automation never restarts an old binary against a partially upgraded schema.
+A breaking release may therefore remain in maintenance after failure. Retry
+the same revision or ship a forward fix through the same coordinator. A data
+restore is an explicit incident operation using the verified database backup
+and corresponding object versions. Read-only diagnosis never writes a success
+receipt or bypasses the environment lock.
 
-For the project-storage inventory, run the explicit operation from `backend/`
-against the intended environment only after a dry run:
+The accepted receipt means database verification, exact source deployment and
+application checks passed. A green build, a migration receipt or a healthy
+container alone is insufficient. Logs and backup contents stay private;
+public workflow output contains source, phase outcome and aggregate test
+results, without customer IDs, object paths, SQL errors or credentials.
 
-```bash
-uv run python ../scripts/backfill_project_storage_principals.py
-uv run python ../scripts/backfill_project_storage_principals.py --apply
-```
+## Hosted activation contract
 
-The script owns any S3 listing and any approved cleanup. It is not invoked by a
-deployment workflow. Its database postcondition is the checked-in
-`20260720_project_storage_inventory/verify.sql`; a failed CI verification means
-the operator operation has not completed and blocks the release.
+Every protected merge runs CI and the ordinary schema stage automatically.
+That stage uses `DATABASE_URL`, `SUPABASE_PROJECT_ID` and
+`SUPABASE_ACCESS_TOKEN` from the existing GitHub environment. The official
+Supabase CLI and locked Python migration runtime are installed on the runner;
+there is no Redis, Railway, S3 or self-hosted-runner requirement for SQL.
 
-The bundled GitHub adapter targets Supabase Cloud and therefore validates a
-project ref against canonical direct/session-pooler hosts. Self-hosted PuppyOne
-deployments use the same CLI/manifest contract from their own CI adapter and
-may omit `SUPABASE_PROJECT_ID` when those canonical hosts do not exist.
+Application deployment and data/Contract cutovers additionally need the
+following infrastructure contract:
 
-The database URL MUST be a direct or session-pooler PostgreSQL URI that supports
-session advisory locks. It is stored as an environment secret and passed to
-libpq through `PGDATABASE`, never rendered in command arguments.
+- GitHub-hosted `ubuntu-24.04` runners. The reusable release workflow admits
+  only protected `qubits`/`main` push or manual-dispatch events from the
+  canonical repository. PR jobs never receive release credentials. No
+  self-hosted machine, runner group or organization runner permission is needed.
+- GitHub environment branch policies and required checks that enforce the
+  source boundary without a routine manual approval between release phases.
+- An environment-scoped `PUPPYONE_RELEASE_CONFIG` secret containing the
+  existing format-version-1 release configuration: environment identity,
+  Railway project token and full API/frontend/Agent/Upload/Import/Synchronize/MCP
+  service inventory, Redis queue names, S3 storage, a dedicated acceptance
+  account and, only for breaking releases, a private versioned backup bucket
+  (or, for storage that cannot be versioned, a private backup bucket plus an
+  approved `object_recovery` snapshot policy; see Data scope and recovery).
+  Repository-built environments also declare public frontend build arguments;
+  image environments instead set `RELEASE_IMAGES=enabled` and the
+  `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`
+  (plus optional `NEXT_PUBLIC_AUTH_EMAIL_ONLY`, `NEXT_PUBLIC_DEV_MODE`,
+  `NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS`) GitHub
+  environment variables and the `NEXT_PUBLIC_SUPABASE_ANON_KEY` environment
+  secret (public by design, but kept out of public run logs), and give Railway pull
+  access to the GHCR packages (`railway.registry_credentials` with a
+  `read:packages` token, or public packages). Image-sourced services run the
+  image's start dispatcher, so their health checks, draining time and restart
+  policy are service settings rather than `railway.toml`.
+  Existing `DATABASE_URL`, `SUPABASE_PROJECT_ID`, `SUPABASE_ACCESS_TOKEN` and
+  `SUPABASE_SERVICE_ROLE_KEY` environment secrets bind database authority;
+  the JSON document cannot override that binding. After candidate CI passes,
+  `supabase/releases/github_actions.py` creates a mode-0600 configuration under
+  `$RUNNER_TEMP/puppyone-release-private`, removed at job completion.
+- The workflow installs Python 3.12, locked backend dependencies, Node build
+  support, PostgreSQL 17 tools and the pinned Supabase CLI, using Docker on the
+  GitHub VM. Recovery points remain in the private S3 backup bucket
+  and the release journal remains in PostgreSQL. Raw diagnostics stay private
+  in the temporary directory and are deleted with it; only the sanitized
+  release result is retained as a GitHub artifact.
+- For environments with a Fly sandbox: environment variables
+  `CLOUD_AGENT_FLY_APP`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` and
+  `RAILWAY_SANDBOX_IMAGE_SERVICES`, and secrets `CLOUD_AGENT_FLY_TOKEN` (registry
+  push) and `RAILWAY_TOKEN` (a project token scoped to that one Railway
+  environment). The `sandbox_image` job publishes and pins the image before any
+  application deployment; without `RAILWAY_TOKEN` it publishes and reports that
+  nothing was pinned. Environments without `CLOUD_AGENT_FLY_APP` skip it.
+- GitHub environment deployment-branch policies limit each environment's secrets
+  to its protected branches.
+- Disabled independent Railway and Supabase schema deployment bindings. The
+  shared workflow is the only normal schema writer; its full coordinator owns
+  data cutovers and configured application deployment.
 
-For hosted Supabase runs, the runner also proves that `SUPABASE_URL` and the
-direct/session-pooler database URI belong to `SUPABASE_PROJECT_ID`. It refuses
-an unprovable pairing so a legacy API backfill cannot mutate one project and
-write its receipt to another.
+Missing application configuration never blocks compatible SQL. The application
+stage is explicitly reported as not configured and does not deploy anything.
+When pending SQL declares a data prerequisite or Contract cutover, missing
+configuration fails the workflow before candidate SQL; no migration success
+is reported. A failed application stage after compatible SQL reports the
+database as ready and the application as failed. Repository implementation,
+database readiness and actual application activation are separate evidence.
 
-## Receipt semantics
+`pull_request_target` admission uses the target branch's trusted workflow, not
+the proposed replacement. A gate change must first reach that protected target
+through its existing owner-controlled admission procedure before it can govern
+subsequent promotions. This one-time gate handover never requires applying the
+candidate database migrations before merge.
 
-PuppyOne reuses `public.migration_log`:
+## Verification contract
 
-- no row: incomplete or failed;
-- row with matching artifact checksum: completed;
-- row with a different checksum: immutable-history violation.
+Tests cover an empty installation; the deployed old version with real fixture
+data; repeated execution; interruption after a committed data phase; Contract
+and acceptance failure; stale-source rejection; database-level concurrent
+release exclusion; connection loss; private journal permissions; exact
+deployment SHA; and consumer drain ordering. Integration fixtures own their
+database and object volumes and never accept production credentials.
 
-The JSON summary contains only checksum, source SHA, runner version, legacy
-flag, and verification state. Never write credentials or user data into it.
-GitHub/GitLab/Jenkins keeps detailed execution logs.
-
-## CI/CD gates
-
-Pull requests must pass:
-
-- manifest/schema validation;
-- immutable migration-file policy;
-- unique 14-digit, timestamped snake_case schema filenames;
-- no hidden Python/script instruction in new schema SQL;
-- marked data dependency for destructive Contract SQL;
-- an artifact checksum pinned in every destructive Contract;
-- fresh database rebuild and pgTAP;
-- legacy fixture -> data runner -> idempotent rerun -> Contract;
-- corruption fixture -> failed preflight -> no receipt and no schema mutation;
-- concurrent idempotent target enable and existing-credential continuity;
-- targeted backend runner and authorization-boundary tests;
-- no shared-database credentials in pull-request jobs.
-
-The pull-request workflow always publishes one stable `Database validation
-result` check. Non-database PRs finish after a read-only path check; database
-PRs cannot publish success until every policy, rebuild, upgrade, and lint job
-succeeds. This avoids the required-check deadlock caused by workflow-level
-path filters.
-
-Schema and data jobs for an environment share the same concurrency group and
-cannot cancel a running database operation. Production uses a protected GitHub
-Environment. A Production data `run` first verifies the same artifact checksum
-and row-level postcondition against the Staging environment; failure prevents
-Production execution.
-
-For a normal `qubits -> main` release that changes schema, Main Release Gate
-requires a successful Qubits schema deployment for the exact source SHA. A new
-Contract additionally requires:
-
-- successful staging `verify <migration_id>` on the Qubits head SHA;
-- successful production `verify <migration_id>` on the current main/base SHA.
-
-For non-owner releases, the owner's approval must also target the exact current
-head SHA; a commit pushed after review invalidates the gate. Database hotfix
-label changes re-run the same trusted metadata-only gate.
-
-The Qubits release orchestrator runs on every `qubits` push, including code-only
-commits. It resolves the staged release pointer and automatically executes the
-schema and data lanes for that exact SHA; a receipt makes already-completed
-artifacts a verified no-op. The Production orchestrator mirrors this sequence
-on `main`, but performs a read-only Qubits verification before any Production
-data write.
-
-### Application deployment ordering
-
-Schema deployment is a prerequisite of application deployment for the same
-source SHA. Every Railway service sourced from `qubits` (API and all workers)
-must enable GitHub Autodeploy **Wait for CI**. Railway then keeps the candidate
-deployment waiting until the push workflows, including `migrate-staging.yml`,
-finish successfully and skips the candidate if any workflow fails. A service
-must never be configured to become live from a `qubits` push while the database
-workflow for that SHA is still running. See Railway's
-[GitHub Autodeploy controls](https://docs.railway.com/deployments/github-autodeploys).
-
-This ordering is an environment setting as well as a repository contract. The
-release operator verifies **Wait for CI** for every service whenever a service
-is created, reconnected to GitHub, or changes its source branch. The schema
-attestation remains the durable evidence; a green application build alone is
-not evidence that its database contract exists.
-
-Runtime handling is defense in depth, not a substitute for ordering. A missing
-required database function or schema capability returns a sanitized,
-retryable `503 database_schema_outdated`; clients keep durable operation state
-and retry. Raw PostgREST/SQL errors and function signatures never cross the API
-boundary. Local code ahead of remote `qubits` uses a local database or accepts
-this fail-closed response; developers do not push migrations from laptops to a
-shared environment.
-
-When a data artifact contains `contract.pending.sql`, repository policy
-requires the promoted Contract migration to be a byte-for-byte copy. Its
-receipt checksum proves which data transformation ran; exact-copy enforcement
-proves that reviewers approved the destructive SQL that is being promoted.
-
-## Environment secrets
-
-Create protected `staging` and `production` GitHub Environments. Store the same
-generic names in each environment, with environment-specific values:
-
-```text
-SUPABASE_ACCESS_TOKEN
-SUPABASE_PROJECT_ID
-SUPABASE_DB_PASSWORD
-DATABASE_URL
-SUPABASE_SERVICE_ROLE_KEY
-ACCESS_CREDENTIAL_HASH_SECRET
-```
-
-The reusable workflows read only these Supabase/database secrets; callers do
-not inherit the repository's other secrets. S3 credentials belong only in the
-operator's local target-environment `.env` (or equivalent local secret store),
-never in a GitHub Environment. Allow `qubits` and `main` to reference `staging`
-(main performs the Production promotion check); allow only `main` to reference
-`production`. Require reviewers for Production writes.
-
-`DATABASE_URL` should prefer the Supabase session pooler on port `5432` when
-direct IPv4 DNS is unavailable. Do not use transaction-pooler port `6543` for
-jobs that hold session advisory locks.
+Docker acceptance checks old file contents and sessions after upgrade, then
+performs new authenticated writes and checks Data API containment. The hosted
+bounded check first verifies the published file, then follows Desktop's
+`GET/POST /projects/{id}/workbench` opening sequence. Initial allocation has a
+180-second request budget. The live file list/read/write APIs must preserve
+the edit's revision, leave the published Git content unchanged, and let the
+real Agent read that unpublished edit from the same workspace. A missing
+workbench route, mismatched checkout or stale worker blocks release acceptance;
+successful Git hosting alone does not prove Desktop Cloud readiness.
+Runtime suites separately cover sandbox reads/writes, publication, concurrency
+and database-request budgets. Those performance contracts remain part of the
+local/manual Qubits checks and automatic production Agent CI, not a repeated
+whole-customer-data release audit.
 
 ## Upstream alignment
 
-This extension preserves Supabase's documented contract: schema SQL stays in
-[`supabase/migrations`](https://supabase.com/docs/guides/deployment/database-migrations),
-`db reset` rebuilds from those files, and `db push` deploys unapplied versions.
-Supabase also recommends CI/CD or Branching for staged deployment and warns
-teams not to change remote schemas through the Dashboard once migration history
-is in use. Seed files remain insertion-only bootstrap data, consistent with the
-[Supabase seeding guide](https://supabase.com/docs/guides/local-development/seeding-your-database).
-
-## Commit and PR convention
-
-Branches:
-
-```text
-db/expand-<topic>
-db/data-<topic>
-db/cutover-<topic>
-db/contract-<topic>
-hotfix/db-<topic>
-```
-
-Commits:
-
-```text
-feat(db-expand): add project membership facts
-chore(data-migration): backfill project memberships
-refactor(db-cutover): read canonical project memberships
-refactor(db-contract): remove legacy permission table
-fix(db): add forward repair for membership constraint
-```
-
-One PR owns one phase. Applied/shared schema migrations and released data
-artifacts are immutable. Fix mistakes with a new forward artifact.
-
-At governance adoption, migrations already shared through Qubits are pinned in
-`supabase/data_migrations/schema_history_baseline.json`. They may be promoted
-unchanged to an older Production history even when they contain pre-governance
-patterns; changing their bytes or the baseline fails policy. Files outside that
-baseline follow all current rules immediately.
-
-Every database PR states its phase, affected tables, compatibility window,
-estimated rows/runtime/locks, migration ID, verification, retry behavior,
-forward-fix plan, destructive operations, and Qubits evidence.
-
-## Break glass
-
-Remote SQL Editor writes and laptop-to-shared-database pushes are forbidden in
-normal operation. An incident exception requires an incident record, reviewed
-SQL in Git, recoverable backup/PITR, bounded transaction/timeouts, captured
-output, and a follow-up forward migration. A database hotfix PR to `main`
-requires the `database-break-glass` label.
-
-## Historical production catch-up (2026-09-23)
-
-The deployed June production history can catch up to the already deployed July
-Qubits history through `supabase/releases/20260923_production_catchup.json`.
-This immutable plan pins every schema byte and data-artifact checksum and lists
-all intermediate boundaries. The single July 16 legacy filename receives an
-exact-checksum policy compatibility entry; new destructive SQL still requires
-the normal Contract metadata. The original baseline and SQL files stay unchanged.
-
-`historical_release.py` runs before ordinary production schema admission. It is
-a no-op after the July terminal version. Earlier databases require unexpired,
-project-bound `LEGACY_UPGRADE_AUTHORIZATION` containing the plan ID, a verified
-restore point, and verified write-freeze evidence. Official `supabase db push`
-applies unchanged prefixes; the portable runner executes each required data job.
-Final continuity checks preserve users, profiles, projects, commits, existing
-organization/project memberships, original credential hashes, and derived legacy
-credential hashes. No external storage operation runs in this job. The existing
-operator-local storage inventory and final public-schema diff still gate release.
-
-The connection adapter validates a protected project's direct/session-pooler URI.
-When `DATABASE_URL` is absent, it obtains short-lived official Supabase CLI login
-credentials with `SUPABASE_ACCESS_TOKEN`; it does not reset the database password.
-Connections are refreshed between phases and before the final drift check. The
-password travels through libpq environment variables, not process arguments.
-`SUPABASE_DB_PASSWORD` is no longer required by the hosted schema adapter. API
-backfills still require the matching service-role key and the original effective
-application HMAC key. These keys never appear in release evidence.
+Schema history follows the [Supabase CLI](https://supabase.com/docs/reference/cli/supabase-db-push).
+Release queuing follows [GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Private runners follow [GitHub runner security](https://docs.github.com/en/actions/reference/security/secure-use).
+Provider deployment uses the [Railway service API](https://docs.railway.com/integrations/api/manage-services).

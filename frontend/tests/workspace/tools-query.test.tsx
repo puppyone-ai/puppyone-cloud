@@ -37,7 +37,7 @@ it('keeps the pending fallback stable and then exposes the fetched tools', async
   const initial = hook.result.current.tools;
   hook.rerender();
   expect(hook.result.current.tools).toBe(initial);
-  const tools = [{ type: 'search' } as Tool];
+  const tools = [{ type: 'query_data' } as Tool];
   resolve(tools);
   await waitFor(() => expect(hook.result.current.tools).toEqual(tools));
   expect(getToolsByPath).toHaveBeenCalledTimes(1);

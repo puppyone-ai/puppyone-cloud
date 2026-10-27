@@ -25,6 +25,17 @@ def _env_str(name: str, default: str) -> str:
     return default if raw is None or not raw.strip() else raw.strip()
 
 
+# LogRecord extras kept in structured logs. Each must be a bounded report.
+REPORT_FIELDS = (
+    "agent_performance",
+    "agent_api_performance",
+    "agent_dispatch",
+    "dependency_failure",
+    "worker_stats",
+    "workspace_performance",
+)
+
+
 class InterceptHandler(logging.Handler):
     """Redirect standard-library logging records to Loguru."""
 
@@ -41,7 +52,12 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(
+        # These reports contain bounded operation names/counts/timings and
+        # internal identifiers (Run, worker, pool), never request payloads or
+        # credentials. Preserve them across the stdlib -> Loguru bridge;
+        # arbitrary third-party LogRecord extras must not reach JSON logs.
+        metrics = {key: getattr(record, key) for key in REPORT_FIELDS if hasattr(record, key)}
+        logger.bind(**metrics).opt(depth=depth, exception=record.exc_info).log(
             level, record.getMessage()
         )
 
@@ -123,6 +139,10 @@ def _intercept_stdlib_logging(log_level: str, disable_uvicorn_access: bool) -> N
 
     if disable_uvicorn_access:
         logging.getLogger("uvicorn.access").disabled = True
+
+    # httpx logs every request at INFO; a worker's idle claim loop alone emits
+    # two such lines a second. Request lines stay available at DEBUG.
+    logging.getLogger("httpx").setLevel(logging.NOTSET if log_level == "DEBUG" else logging.WARNING)
 
 
 def setup_logging() -> None:

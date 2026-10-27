@@ -8,6 +8,8 @@ import httpx
 from botocore.config import Config
 from redis.asyncio import Redis
 
+from src.infra.execution.runner import run_blocking
+
 
 def _probe_bucket():
     client = boto3.client(
@@ -41,14 +43,14 @@ async def core_dependency_errors() -> list[str]:
             result.raise_for_status()
 
     async def redis():
-        url = os.getenv("AUTH_SECURITY_REDIS_URL") or os.getenv("ETL_REDIS_URL")
+        url = os.getenv("ETL_REDIS_URL")
         if url:
             async with Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2) as client:
                 await client.ping()
 
     results = await asyncio.gather(
         database(),
-        asyncio.to_thread(_probe_bucket),
+        run_blocking(_probe_bucket),
         redis(),
         return_exceptions=True,
     )

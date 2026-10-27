@@ -2,6 +2,7 @@
 Scheduler service for managing scheduled agent executions.
 """
 
+import contextlib
 from datetime import datetime
 from typing import Optional
 
@@ -14,23 +15,59 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import settings
+from src.infra.execution.runner import run_blocking
 from src.infra.scheduler.config import scheduler_settings
 from src.infra.scheduler.jobs import (
     execute_agent_task,
     execute_sync_pull,
     process_git_object_gc,
+    process_native_projection,
     process_object_integrity_scan,
     process_project_deletion_cleanup,
     process_project_initialization_reconciliation,
     process_sync_run_reaper,
-    process_version_outbox,
 )
 from src.infra.scheduler.jobs.import_job_reaper import process_import_job_reaper
-from src.infra.scheduler.jobs.shadow_snapshot_reaper import (
-    process_shadow_snapshot_reaper,
-)
 from src.infra.scheduler.jobs.upload_job_reaper import process_upload_job_reaper
 from src.utils.logger import log_error, log_info, log_warning
+
+# Startup loaders read the database synchronously; the scheduler runs them in
+# a worker thread so application startup never blocks the event loop.
+
+
+def _scheduled_agent_rows() -> list[dict]:
+    from src.platform.access.surface_repository import AccessSurfaceRepository
+
+    return [
+        row
+        for row in AccessSurfaceRepository().list_all(kind="agent", status="active")
+        if (row.get("config") or {}).get("type") == "schedule"
+        and ((row.get("config") or {}).get("trigger") or {}).get("type") in {"cron", "scheduled"}
+    ]
+
+
+def _scheduled_sync_rows() -> list[dict]:
+    from src.infra.supabase.client import SupabaseClient
+
+    result = (
+        SupabaseClient()
+        .client.table("synchronize_bindings")
+        .select("id, provider, trigger_type, trigger_config, status")
+        .eq("status", "active")
+        .execute()
+    )
+    syncs = [
+        {
+            "id": row["id"],
+            "provider": row.get("provider", ""),
+            "trigger": {
+                "type": row.get("trigger_type"),
+                **(row.get("trigger_config") or {}),
+            },
+        }
+        for row in (result.data or [])
+    ]
+    return [sync for sync in syncs if sync["trigger"].get("type") == "scheduled"]
 
 
 class SchedulerService:
@@ -46,7 +83,7 @@ class SchedulerService:
     _instance: Optional["SchedulerService"] = None
 
     def __init__(self):
-        self.scheduler: Optional[AsyncIOScheduler] = None
+        self.scheduler: AsyncIOScheduler | None = None
         self._started = False
 
     @classmethod
@@ -99,14 +136,13 @@ class SchedulerService:
 
         if settings.VERSION_OUTBOX_ENABLED:
             self.scheduler.add_job(
-                process_version_outbox,
+                process_native_projection,
                 trigger=IntervalTrigger(
                     seconds=settings.VERSION_OUTBOX_INTERVAL_SECONDS,
                 ),
-                id="version-outbox",
-                name="Version Outbox Repair",
+                id="native-repository-projection",
+                name="Native Repository Projections",
                 replace_existing=True,
-                executor="threadpool",
             )
 
         if settings.VERSION_OBJECT_GC_ENABLED:
@@ -155,17 +191,6 @@ class SchedulerService:
                 executor="threadpool",
             )
 
-        if settings.SHADOW_SNAPSHOT_REAPER_ENABLED:
-            self.scheduler.add_job(
-                process_shadow_snapshot_reaper,
-                trigger=IntervalTrigger(
-                    seconds=settings.SHADOW_SNAPSHOT_REAPER_INTERVAL_SECONDS,
-                ),
-                id="shadow-snapshot-reaper",
-                name="Shadow Snapshot TTL Reaper",
-                replace_existing=True,
-            )
-
         if settings.SYNC_RUN_REAPER_ENABLED:
             self.scheduler.add_job(
                 process_sync_run_reaper,
@@ -175,6 +200,7 @@ class SchedulerService:
                 id="sync-run-reaper",
                 name="Integration Sync Run Lease Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         if settings.IMPORT_JOB_REAPER_ENABLED:
@@ -186,6 +212,7 @@ class SchedulerService:
                 id="import-job-reaper",
                 name="One-Time Import Job Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         if settings.UPLOAD_JOB_REAPER_ENABLED:
@@ -197,6 +224,7 @@ class SchedulerService:
                 id="upload-job-reaper",
                 name="Upload Job Reaper",
                 replace_existing=True,
+                executor="threadpool",
             )
 
         log_info(f"✅ APScheduler started with {scheduler_settings.max_workers} workers")
@@ -215,25 +243,16 @@ class SchedulerService:
             return
 
         try:
-            from src.platform.access.surface_repository import AccessSurfaceRepository
-
-            agents = [
-                row for row in AccessSurfaceRepository().list_all(
-                    kind="agent", status="active"
-                )
-                if (row.get("config") or {}).get("type") == "schedule"
-                and ((row.get("config") or {}).get("trigger") or {}).get("type")
-                in {"cron", "scheduled"}
-            ]
+            agents = await run_blocking(_scheduled_agent_rows)
             log_info(f"📋 Found {len(agents)} schedule agents to load")
 
             for agent in agents:
                 config = agent.get("config") or {}
                 trigger = config.get("trigger") or {}
-                await self.add_agent_job(
+                self.add_agent_job(
                     agent_id=agent["id"],
                     trigger_config=trigger.get("config") or trigger,
-                    agent_name=config.get("name", "Unknown")
+                    agent_name=config.get("name", "Unknown"),
                 )
 
             log_info(f"✅ Loaded {len(agents)} agent jobs")
@@ -241,12 +260,9 @@ class SchedulerService:
         except Exception as e:
             log_error(f"❌ Failed to load scheduled agents: {e}")
 
-    async def add_agent_job(
-        self,
-        agent_id: str,
-        trigger_config: dict,
-        agent_name: str = ""
-    ) -> Optional[Job]:
+    def add_agent_job(
+        self, agent_id: str, trigger_config: dict, agent_name: str = ""
+    ) -> Job | None:
         """
         Add a new agent job to the scheduler.
 
@@ -290,12 +306,12 @@ class SchedulerService:
 
     # ── Sync Trigger (unified API) ───────────────────────────
 
-    async def sync_trigger(
+    def sync_trigger(
         self,
         connection_id: str,
         provider: str = "",
         trigger_config: dict | None = None,
-    ) -> Optional[Job]:
+    ) -> Job | None:
         """Unified trigger registration for scheduled Connect rows.
 
         Connect routers should call this single method instead of directly
@@ -314,10 +330,8 @@ class SchedulerService:
 
         job_id = f"sync:{connection_id}"
 
-        try:
+        with contextlib.suppress(Exception):
             self.scheduler.remove_job(job_id)
-        except Exception:
-            pass
 
         if not trigger_config:
             return None
@@ -327,6 +341,7 @@ class SchedulerService:
             log_warning(f"Invalid trigger config for {connection_id}: {trigger_config}")
             return None
 
+        # Coroutine job on the default AsyncIOExecutor: arq's client is async.
         job = self.scheduler.add_job(
             execute_sync_pull,
             trigger=trigger,
@@ -334,7 +349,6 @@ class SchedulerService:
             name=f"Sync: {provider} ({connection_id[:8]})",
             args=[connection_id],
             replace_existing=True,
-            executor="threadpool",
         )
 
         next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A"
@@ -349,36 +363,12 @@ class SchedulerService:
             return
 
         try:
-            from src.infra.supabase.client import SupabaseClient
-
-            client = SupabaseClient().client
-            result = (
-                client.table("connections")
-                .select("id, provider, trigger_type, trigger_config, status")
-                .eq("status", "active")
-                .execute()
-            )
-
-            syncs = [
-                {
-                    "id": row["id"],
-                    "provider": row.get("provider", ""),
-                    "trigger": {
-                        "type": row.get("trigger_type"),
-                        **(row.get("trigger_config") or {}),
-                    },
-                }
-                for row in (result.data or [])
-            ]
-            scheduled = [
-                s for s in syncs
-                if (s.get("trigger") or {}).get("type") == "scheduled"
-            ]
+            scheduled = await run_blocking(_scheduled_sync_rows)
 
             log_info(f"Found {len(scheduled)} scheduled syncs to load")
 
             for sync_row in scheduled:
-                await self.sync_trigger(
+                self.sync_trigger(
                     connection_id=sync_row["id"],
                     provider=sync_row.get("provider", ""),
                     trigger_config=sync_row.get("trigger") or {},
@@ -415,8 +405,7 @@ class SchedulerService:
         if "schedule" in config:
             try:
                 return CronTrigger.from_crontab(
-                    config["schedule"],
-                    timezone=config.get("timezone", scheduler_settings.timezone)
+                    config["schedule"], timezone=config.get("timezone", scheduler_settings.timezone)
                 )
             except Exception as e:
                 log_error(f"Invalid cron expression '{config['schedule']}': {e}")
@@ -457,10 +446,7 @@ class SchedulerService:
                     dt = datetime.fromisoformat(date_str)
                     day_of_week = dt.weekday()  # 0=Monday, 6=Sunday
                     return CronTrigger(
-                        day_of_week=day_of_week,
-                        hour=hour,
-                        minute=minute,
-                        timezone=timezone
+                        day_of_week=day_of_week, hour=hour, minute=minute, timezone=timezone
                     )
                 except Exception as e:
                     log_error(f"Invalid date for weekly trigger '{date_str}': {e}")
@@ -472,7 +458,6 @@ class SchedulerService:
         else:
             log_warning(f"Unknown repeat_type: {repeat_type}")
             return None
-
 
 
 # Global instance getter

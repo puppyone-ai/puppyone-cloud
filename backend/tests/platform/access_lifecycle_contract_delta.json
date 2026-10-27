@@ -1,0 +1,28 @@
+{
+  "paths": {
+    "/api/v1/access/credentials/renew": "0d90c80548e4db3f1cdc0db6cea0574aeb7cb799f3d79a8c0485a5b1b0f4efa4",
+    "/api/v1/access/registrations": "545947b69b976d0f34d5a16da6a6acaac5fde9e153029e126c27b7736892a30e",
+    "/api/v1/access/registrations/{registration_id}": "57f5ddba2d3efdba8f71dfb0b1fceb314a2fccd9058c54beba2ace87150916c2",
+    "/api/v1/access/registrations/{registration_id}/credential": "9ed856d7cb57b05a6e33098a701be1f5d126451220e843afa070d33955b0a6e7",
+    "/api/v1/access/registrations/{registration_id}/grants": "7323682d494f4a30dd315ae1836e25198c515f26c71b35c36a47ea918f047da8",
+    "/api/v1/access/registrations/{registration_id}/requests": "d8faf75fee26c999f816d01ca97ddc5f1c84ae4232396c60a2810e4052e1de35",
+    "/api/v1/access/requests": "456a9af5225f2426eefb3ff5dbd56230e6c49abeedf91bc7134d7ceca7ad59fa",
+    "/api/v1/projects/{project_id}/access/grants/{grant_id}": "cb7cc517e8820b76ff4e5d773d894f802698952d847eb8b4ab0fbcc05eef4df6",
+    "/api/v1/projects/{project_id}/access/invitations": "b4f1cc0e56349fb09f24af7802eafb0935428cf014d0e8324e6af8f2984714cd",
+    "/api/v1/projects/{project_id}/access/invitations/{invitation_id}": "dc588d3a2bc580f8b07df4b9cb8d857c0f3c9e275eab0faaab7b92370e860fc3",
+    "/api/v1/projects/{project_id}/access/requests/{request_id}/decision": "d76b597c618400147d45dbc4b050dd671cead4c8053e603f64a334bde434d754",
+    "/api/v1/projects/{project_id}/access/sessions/{session_id}": "1f17c8f2872df6575fb8a6b33ff195d9474ad71328499ecf677c9f9a7c737063",
+    "/api/v1/projects/{project_id}/access/{collection}": "62964da295edf5338852f8d888153f80db2003b3bfe8a2ea211799db6f69fc8a"
+  },
+  "schemas": {
+    "AccessApplication": "fd0fcfc9cca18cbae4e7fd091d9294ed3dd5d58d752fdbdcc694740a731e1406",
+    "AccessCapability": "51bdb9810cfde7a55488940d559d00325ada55bd0d12204fa806a883a066b3ed",
+    "AccessChannel": "3d272e97d63352aa746a11125121637bd8a15ded5145ff519423419613f1c7d4",
+    "AccessDecision": "1495c8ecd6f587875f444a21fad6528c06d78b00ae502385a8a11501fb75d7f4",
+    "CredentialRenewal": "4950a8b54c50105e177e03f282ec463984ee1552116fa34dd3c220f5836e8004",
+    "InvitationCreate": "4b2d62cac9c4c7c83c1a74bc2733277d99b5a523928ac0ed07fa0f63e1d0a801",
+    "RegistrationCreate": "11457ae8c43141bc4790d1c8cb21e124756fcf7efc7eb65271e0ef4e0c81cf30",
+    "RegistrationKeyReset": "ef1a305619d41c21d9cedf7fdf596427cf396a515b03f2073b78fc8b29395ea1",
+    "StateChange": "704e1d70656a59fd6d212370728f1c36b82ecf1754ab56f4d14e0701b3805430"
+  }
+}

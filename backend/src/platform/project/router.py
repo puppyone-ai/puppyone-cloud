@@ -9,6 +9,7 @@ import asyncio
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from src.common_schemas import ApiResponse
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
@@ -87,7 +88,10 @@ def _count_user_access_points(project_ids: list[str]) -> dict[str, int]:
         return {}
     sb = get_supabase_client()
     connection_rows = (
-        sb.table("connections").select("project_id").in_("project_id", project_ids).execute()
+        sb.table("synchronize_bindings")
+        .select("project_id")
+        .in_("project_id", project_ids)
+        .execute()
     ).data or []
     from src.platform.access.surface_repository import AccessSurfaceRepository
 
@@ -266,15 +270,13 @@ async def create_project(
     entitlement_service: EntitlementService = Depends(get_entitlement_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
     version_engine: VersionWriteEngine = Depends(get_version_write_engine),
-    write_lease_factory: ProjectWriteLeaseFactory = Depends(
-        get_project_write_lease_factory
-    ),
+    write_lease_factory: ProjectWriteLeaseFactory = Depends(get_project_write_lease_factory),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     # The RPC is the authoritative membership + quota admission point.  Keep
     # the caller-selected tenant explicit; never reinterpret it as "first org".
     resolved_org_id = payload.org_id
-    project_limit = await asyncio.to_thread(
+    project_limit = await run_blocking(
         entitlement_service.enforced_limit_value,
         resolved_org_id,
         "projects.max",
@@ -289,18 +291,23 @@ async def create_project(
         created_by=current_user.user_id,
         project_limit=project_limit,
         publication_mode="empty",
-        source_fingerprint={"kind": "empty-git-repository", "version": 1},
+        source_fingerprint=(
+            {"kind": "native-git-repository", "version": 1, **payload.repository.model_dump()}
+            if payload.repository
+            else {"kind": "empty-git-repository", "version": 1}
+        ),
+        native_repository=payload.repository.model_dump() if payload.repository else None,
         write_lease_factory=write_lease_factory,
     )
     project = result.project
     grant, access_point_counts = await asyncio.gather(
-        asyncio.to_thread(
+        run_blocking(
             authorization.authorize,
             str(project.id),
             current_user.user_id,
             ProjectAction.PROJECT_READ,
         ),
-        asyncio.to_thread(_count_user_access_points, [str(project.id)]),
+        run_blocking(_count_user_access_points, [str(project.id)]),
     )
     response.status_code = status.HTTP_200_OK if result.replayed else status.HTTP_201_CREATED
     mark_idempotency_replay(response, replayed=result.replayed)
@@ -617,6 +624,7 @@ def get_project_git_view_health(
     return ApiResponse.success(
         data=git_view.health(
             str(authorized.project.id),
+            grant=authorized.grant,
             content_write_allowed=authorized.grant.allows(ProjectAction.CONTENT_WRITE),
             cache_rebuild_allowed=authorized.grant.allows(ProjectAction.PROJECT_MANAGE),
         ),
@@ -637,6 +645,6 @@ def rebuild_project_git_view_cache(
     """Rebuild both derived root-view cache variants from canonical facts."""
 
     return ApiResponse.success(
-        data=git_view.rebuild(str(authorized.project.id)),
+        data=git_view.rebuild(str(authorized.project.id), grant=authorized.grant),
         message="Project Git view caches rebuilt from canonical facts",
     )

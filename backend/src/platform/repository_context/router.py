@@ -23,7 +23,7 @@ from src.platform.repository_context.service import RepositoryContextService
 from src.platform.repository_target.models import repository_target_scope_id
 from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.schemas import repository_target_schema
-from src.version_engine.entrypoints.git.locator import canonical_git_url
+from src.platform.access.adapters.git.locator import canonical_git_url
 
 router = APIRouter(
     tags=["repository-context"],

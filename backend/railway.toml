@@ -6,15 +6,14 @@
 # REQUIRED Railway dashboard setting for every service that uses this repo:
 #   Settings -> Service -> Source -> Root Directory = `backend` (or `/backend`)
 #
-# Same Root Directory rule applies to the file_worker / import_worker /
+# Same Root Directory rule applies to the upload_worker / import_worker /
 # mcp_server services
 # that share this repo — they switch behavior via the SERVICE_ROLE env var.
 #
-# REQUIRED Railway dashboard setting for every GitHub-sourced service:
-#   Settings -> Service -> Source -> Wait for CI = enabled
-# `migrate-staging.yml` runs for every `qubits` push. Wait for CI guarantees
-# that a service cannot make code live before the schema deployment for the
-# same source SHA succeeds; a failed migration must skip the deployment.
+# The environment release coordinator owns application deployment after
+# database verification. Disable independent GitHub deployment triggers when
+# activating it; Wait for CI alone does not coordinate drain/data migrations.
+# See docs/architecture/13-database-release-governance.md for activation.
 #
 # DO NOT move build phases into this file. railway.toml's schema only knows
 # `[build]` / `[deploy]` — any `[phases.*]` section here is silently ignored
@@ -28,16 +27,27 @@ builder = "NIXPACKS"
 [deploy]
 # One repo, multiple Railway services:
 # - API service: SERVICE_ROLE=api (default)
-# - File Worker (file ETL / OCR): SERVICE_ROLE=file_worker
+# - Upload Worker (completion / file ETL / OCR): SERVICE_ROLE=upload_worker
 # - Import Worker (one-shot external imports): SERVICE_ROLE=import_worker
-# - Sync Worker (durable integration syncs): SERVICE_ROLE=sync_worker
+# - Synchronize Worker (generic + GitHub pulls): SERVICE_ROLE=synchronize_worker
+# - Worker (agent + sandbox modules): SERVICE_ROLE=agent_worker
 # - MCP Server (AI Agent protocol): SERVICE_ROLE=mcp_server
 #
 # Environment variables:
-# - SERVICE_ROLE: api | file_worker | import_worker | sync_worker | mcp_server
+# - SERVICE_ROLE: api | agent_worker | upload_worker | import_worker | synchronize_worker | mcp_server
 # - API service sets MCP_SERVER_URL to the MCP Server service URL
+# - agent_worker: WORKER_ROLES selects its modules (agent, sandbox; default both)
+#   so the same image can run them as separate services
 # - MCP Server service sets MAIN_SERVICE_URL to the API service URL
 # - API and MCP Server services share INTERNAL_API_SECRET
-startCommand = "sh -c 'case \"${SERVICE_ROLE:-api}\" in file_worker) arq src.ingest.file.jobs.worker.WorkerSettings ;; import_worker) arq src.platform.imports.worker.WorkerSettings ;; sync_worker) arq src.platform.synchronize.worker.WorkerSettings ;; mcp_server) uvicorn mcp_service.server:app --host 0.0.0.0 --port ${PORT} --no-access-log ;; *) uvicorn src.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY:-2} --no-access-log ;; esac'"
+# - Role dispatch lives in scripts/start-service.sh, shared with the hosted
+#   image (backend/Dockerfile) so both deployment paths start the same process.
+# - Every role is exec'd so SIGTERM reaches it. agent_worker stops claiming,
+#   finishes or hands off Runs within CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS
+#   (default 20), then releases their leases. drainingSeconds (SIGTERM to
+#   SIGKILL) must exceed that grace; without the window, successors wait for
+#   lease expiry instead.
+startCommand = "sh scripts/start-service.sh"
+drainingSeconds = 45
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

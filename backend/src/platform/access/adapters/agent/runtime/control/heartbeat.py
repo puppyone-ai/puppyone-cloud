@@ -1,0 +1,38 @@
+"""The renewal loop has no admission/configuration service dependency."""
+
+import asyncio
+
+from src.infra.execution.runner import run_blocking
+from src.infra.supabase.instrumentation import database_stage
+from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
+from src.platform.access.adapters.agent.runtime.control.ports import RenewalPort
+
+
+class EndRun(Exception):
+    def __init__(self, state, code):
+        self.state, self.code = state, code
+        super().__init__(code)
+
+
+class ExecutionLease:
+    def __init__(self, port: RenewalPort):
+        self.port = port
+
+    async def check(self, run):
+        try:
+            status = await run_blocking(self.port.renew_execution, run)
+        except Exception as exc:
+            # A failed renewal never grants permission to continue.
+            raise EndRun("outcome_unknown", "execution_fenced") from exc
+        if status["code"] and run["state"] not in TERMINAL:
+            raise EndRun(
+                "stopped" if status["code"] == "stop_requested" else "failed", status["code"]
+            )
+        return status
+
+    async def run(self, current, touch, *, interval=5):
+        while True:
+            await asyncio.sleep(interval)
+            with database_stage("heartbeat"):
+                await self.check(current())
+            await touch()

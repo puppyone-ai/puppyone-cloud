@@ -10,6 +10,7 @@ dependencies = [
     "cachetools>=5.0.0",
     "cashews>=7.4.4",
     "cryptography>=46.0.3",
+    "dulwich==1.2.1",
     "fastapi>=0.121.1",
     "fastmcp>=2.13.0.2",
     "firecrawl-py>=4.0.0",
@@ -33,7 +34,6 @@ dependencies = [
     "supabase>=2.25.0",
     "uvicorn>=0.38.0",
     "arq>=0.26.3",
-    "turbopuffer>=1.12.0",
     "aiohttp>=3.13.2",
     "aiohappyeyeballs>=2.6.1",
     "anthropic>=0.76.0",
@@ -45,9 +45,13 @@ dependencies = [
     "zipstream-ng>=1.9.0",
     "openpyxl>=3.1.0",
     "pyyaml>=6.0.0",
+    "e2b==2.53.1",
+    "asyncssh>=2.21,<3",
+    "websockets>=15,<16",
 ]
 
 [project.scripts]
+puppyone-ssh = "src.platform.access.adapters.ssh.gateway:main"
 puppyone-db = "src.infra.data_migrations.cli:main"
 
 [build-system]
@@ -64,7 +68,8 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "BLE"]
+# ASYNC: blocking calls inside coroutines (docs/architecture/18-concurrency-boundary.md).
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "BLE", "ASYNC"]
 ignore = [
     "E501",     # line too long — handled by formatter
     "B008",     # Depends() in defaults — standard FastAPI pattern
@@ -73,11 +78,17 @@ ignore = [
     "RUF001",   # ambiguous unicode chars (emoji in log messages)
     "RUF002",   # ambiguous unicode in docstrings (multiplication sign etc.)
     "RUF003",   # ambiguous unicode in comments (Chinese punctuation)
+    "ASYNC109", # timeout parameters on async provider APIs are an interface choice
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "D", "BLE001"]
-"src/ingest/file/jobs/worker.py" = ["E402"]
+"tests/*" = ["S101", "D", "BLE001", "ASYNC"]  # tests block on purpose (stall probes)
+"src/platform/upload/worker.py" = ["E402"]
+# Pending: local file I/O still runs inside these coroutines (move it behind
+# run_blocking). New modules get ASYNC230/ASYNC240 without exception.
+"src/infra/file_processing/mineru/client.py" = ["ASYNC230", "ASYNC240"]
+"src/platform/access/adapters/ssh/gateway.py" = ["ASYNC240"]
+"src/platform/sandbox/providers/fly/transport.py" = ["ASYNC240"]
 "src/ingest/router.py" = ["E402"]
 
 [tool.ruff.format]

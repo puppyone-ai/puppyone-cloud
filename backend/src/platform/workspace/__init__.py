@@ -1,14 +1,5 @@
-"""
-L3-Folder: Workspace File Interface Layer
+"""Shared workspace kernel: local files, hosted lifecycle, execution and providers.
 
-Provides Agents with data access via local folder structure.
-
-Responsible for:
-- Creating an isolated workspace for each Agent (APFS Clone / full copy / OverlayFS)
-- Detecting Agent changes (diff)
-- Providing /api/v1/workspace/* API endpoints
-
-No longer responsible for (migrated):
-- Syncing PG/S3 -> local -> migrated to src/sync/ (L2.5)
-- Conflict resolution / three-way merge -> migrated to src/collaboration/ (L2)
+HTTP and SSH entry points live under platform.access.adapters. Physical SQL
+identities, resource bindings and persisted process names are not renamed here.
 """

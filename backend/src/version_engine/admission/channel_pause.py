@@ -1,4 +1,4 @@
-"""Channel-level permission gate for admitted scope credentials."""
+"""Channel-level pause gate for admitted repository credentials."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import time
 
 from fastapi import HTTPException
 
+from src.platform.access.model_repository import AccessModelRepository
 from src.platform.repository_target.auth_context import repository_target_from_auth
 from src.platform.repository_target.models import repository_target_scope_id
-from src.platform.access.model_repository import AccessModelRepository
 from src.utils.logger import log_error, log_warning
-
 
 # Recognised channel headers. Anything else is silently ignored so that
 # unknown / future client kinds don't break authentication. The worst case is
@@ -19,7 +18,7 @@ from src.utils.logger import log_error, log_warning
 # request gets rejected.
 _KNOWN_CHANNELS = frozenset({"cli", "git_remote", "mcp"})
 _CHANNEL_PAUSE_CACHE_TTL_SECONDS = 2.0
-_channel_pause_cache: dict[tuple[str, str], tuple[float, str | None, str | None]] = {}
+_channel_pause_cache: dict[tuple[str, str | None, str], tuple[float, str | None, str | None]] = {}
 _channel_pause_cache_lock = threading.Lock()
 
 
@@ -28,23 +27,20 @@ def clear_channel_pause_cache(scope_id: str | None = None, channel: str | None =
 
     normalized_channel = (channel or "").strip().lower()
     with _channel_pause_cache_lock:
-        if scope_id and normalized_channel:
-            _channel_pause_cache.pop((scope_id, normalized_channel), None)
-        elif scope_id:
-            for key in list(_channel_pause_cache):
-                if key[0] == scope_id:
-                    _channel_pause_cache.pop(key, None)
-        elif normalized_channel:
-            for key in list(_channel_pause_cache):
-                if key[1] == normalized_channel:
-                    _channel_pause_cache.pop(key, None)
-        else:
-            _channel_pause_cache.clear()
+        for key in list(_channel_pause_cache):
+            _project_id, key_scope_id, key_channel = key
+            if scope_id is not None and key_scope_id != scope_id:
+                continue
+            if normalized_channel and key_channel != normalized_channel:
+                continue
+            _channel_pause_cache.pop(key, None)
 
 
-def _get_cached_channel_pause(scope_id: str, channel: str) -> tuple[str | None, str | None] | None:
+def _get_cached_channel_pause(
+    project_id: str, scope_id: str | None, channel: str
+) -> tuple[str | None, str | None] | None:
     now = time.monotonic()
-    key = (scope_id, channel)
+    key = (project_id, scope_id, channel)
     with _channel_pause_cache_lock:
         cached = _channel_pause_cache.get(key)
         if cached is None:
@@ -57,12 +53,13 @@ def _get_cached_channel_pause(scope_id: str, channel: str) -> tuple[str | None, 
 
 
 def _set_cached_channel_pause(
-    scope_id: str,
+    project_id: str,
+    scope_id: str | None,
     channel: str,
     connector_id: str | None,
     status: str | None,
 ) -> None:
-    key = (scope_id, channel)
+    key = (project_id, scope_id, channel)
     with _channel_pause_cache_lock:
         _channel_pause_cache[key] = (
             time.monotonic() + _CHANNEL_PAUSE_CACHE_TTL_SECONDS,
@@ -93,7 +90,7 @@ def enforce_channel_pause(
     scope_id = repository_target_scope_id(target)
     target_key = f"{target.project_id}\n{scope_id or '<project-root>'}"
     if normalized_channel in _KNOWN_CHANNELS:
-        cached = _get_cached_channel_pause(target_key, normalized_channel)
+        cached = _get_cached_channel_pause(target.project_id, scope_id, normalized_channel)
         if cached is None:
             try:
                 connector = AccessModelRepository().get_by_target_kind(
@@ -115,7 +112,11 @@ def enforce_channel_pause(
                     f"membership/mode/excludes still enforced)"
                 )
                 _set_cached_channel_pause(
-                    target_key, normalized_channel, None, None,
+                    target.project_id,
+                    scope_id,
+                    normalized_channel,
+                    None,
+                    None,
                 )
                 connector_id = None
                 connector_status = None
@@ -123,7 +124,8 @@ def enforce_channel_pause(
                 connector_id = connector.id if connector is not None else None
                 connector_status = connector.status if connector is not None else None
                 _set_cached_channel_pause(
-                    target_key,
+                    target.project_id,
+                    scope_id,
                     normalized_channel,
                     connector_id,
                     connector_status,
@@ -139,7 +141,7 @@ def enforce_channel_pause(
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    f"The '{normalized_channel}' connector for this scope is paused. "
+                    f"The '{normalized_channel}' connector for this repository target is paused. "
                     "Resume it from the Access page to re-enable this channel."
                 ),
             )

@@ -1,0 +1,35 @@
+{
+  "conditions": "Local S3/PG doubles; no network, final publication or Desktop; component-only.",
+  "pack_sha256": "d1b728576f4884a2048e11b91d85463ead789f927ea7c2ae33ba5f773e4644be",
+  "root": "4c21f2aa88311f1d854a473d3851d8d1ac9d5d15",
+  "before": {
+    "closure_component_seconds": 1.6703,
+    "closure_objects": 6013,
+    "manifest_sha256": "5eb86446d686d6c2a7a530032d016de75d59bb3826ffa7f4fe92110194d1339c",
+    "upload_puts": 5,
+    "upload_readback_gets": 5,
+    "closure_whole_gets": 0,
+    "closure_range_gets": 6003,
+    "closure_location_queries": 5318,
+    "closure_proof_queries": 2865,
+    "retained": {
+      "objects": 6014,
+      "metadata_budget_bytes": 5071948
+    }
+  },
+  "after": {
+    "closure_component_seconds": 0.6257,
+    "closure_objects": 6013,
+    "manifest_sha256": "5eb86446d686d6c2a7a530032d016de75d59bb3826ffa7f4fe92110194d1339c",
+    "upload_puts": 5,
+    "upload_readback_gets": 5,
+    "closure_whole_gets": 0,
+    "closure_range_gets": 0,
+    "closure_location_queries": 0,
+    "closure_proof_queries": 0,
+    "retained": {
+      "objects": 6014,
+      "metadata_budget_bytes": 5071948
+    }
+  }
+}

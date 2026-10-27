@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from src.version_engine.scoped_fs import resolver
+from src.platform.access.adapters.mcp_endpoint import resolver
 
 
 class _Query:
@@ -49,33 +49,34 @@ def test_resolver_builds_writable_context_when_scope_and_access_are_rw(monkeypat
         "created_by": "user-1",
         "kind": "mcp",
     }
-    sb = _Supabase({
-        "repository_scopes": [{
-            "id": "scope-1",
-            "project_id": "proj-1",
-            "path": "docs",
-            "exclude": ["private"],
-            "max_mode": "rw",
-        }],
-    })
+    sb = _Supabase(
+        {
+            "repository_scopes": [
+                {
+                    "id": "scope-1",
+                    "project_id": "proj-1",
+                    "path": "docs",
+                    "exclude": ["private"],
+                    "max_mode": "rw",
+                }
+            ],
+        }
+    )
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": False}]}},
+            {"id": "cred-1"},
+        ),
     )
 
-    ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
-
-    assert ctx.endpoint_id == "endpoint-1"
-    assert ctx.project_id == "proj-1"
-    assert ctx.user_id == "user-1"
-    assert ctx.scope_path == "docs"
-    assert ctx.exclude == ["private"]
-    assert ctx.mode == "rw"
-    assert ctx.allowed_tools is not None
-    assert "fs_write" in ctx.allowed_tools
-    assert "fs_rm" not in ctx.allowed_tools
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_scoped_fs_context("mcp_key")
+    assert exc.value.status_code == 501
+    assert exc.value.detail["code"] == "native_scope_not_available"
 
 
 def test_resolver_downgrades_to_readonly_without_writable_access(monkeypatch):
@@ -87,30 +88,35 @@ def test_resolver_downgrades_to_readonly_without_writable_access(monkeypatch):
         "status": "active",
         "kind": "mcp",
     }
-    sb = _Supabase({
-        "repository_scopes": [{
-            "id": "scope-1",
-            "project_id": "proj-1",
-            "path": "",
-            "exclude": [],
-            "max_mode": "rw",
-        }],
-        "projects": [{"created_by": "project-owner"}],
-    })
+    sb = _Supabase(
+        {
+            "repository_scopes": [
+                {
+                    "id": "scope-1",
+                    "project_id": "proj-1",
+                    "path": "",
+                    "exclude": [],
+                    "max_mode": "rw",
+                }
+            ],
+            "projects": [{"created_by": "project-owner"}],
+        }
+    )
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": True}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": True}]}},
+            {"id": "cred-1"},
+        ),
     )
 
-    ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
-
-    assert ctx.mode == "ro"
-    assert ctx.user_id == "project-owner"
-    assert ctx.allowed_tools is not None
-    assert "fs_ls" in ctx.allowed_tools
-    assert "fs_write" not in ctx.allowed_tools
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_scoped_fs_context("mcp_key")
+    assert exc.value.status_code == 501
+    assert exc.value.detail["code"] == "native_scope_not_available"
 
 
 def test_resolver_applies_mcp_tools_config(monkeypatch):
@@ -123,28 +129,37 @@ def test_resolver_applies_mcp_tools_config(monkeypatch):
         "created_by": "user-1",
         "kind": "mcp",
     }
-    sb = _Supabase({
-        "repository_scopes": [{
-            "id": "scope-1",
-            "project_id": "proj-1",
-            "path": "docs",
-            "exclude": [],
-            "max_mode": "rw",
-        }],
-    })
+    sb = _Supabase(
+        {
+            "repository_scopes": [
+                {
+                    "id": "scope-1",
+                    "project_id": "proj-1",
+                    "path": "docs",
+                    "exclude": [],
+                    "max_mode": "rw",
+                }
+            ],
+        }
+    )
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {
-            "fs_policy": {"accesses": [{"readonly": False}]},
-            "tools_policy": {"filesystem": {"allowed": ["fs_ls", "fs_rm"]}},
-        }),
+        lambda _key: (
+            endpoint,
+            {
+                "fs_policy": {"accesses": [{"readonly": False}]},
+                "tools_policy": {"filesystem": {"allowed": ["fs_ls", "fs_rm"]}},
+            },
+            {"id": "cred-1"},
+        ),
     )
 
-    ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
-
-    assert ctx.allowed_tools == frozenset({"fs_ls", "fs_rm"})
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_scoped_fs_context("mcp_key")
+    assert exc.value.status_code == 501
+    assert exc.value.detail["code"] == "native_scope_not_available"
 
 
 def test_resolver_rejects_non_mcp_key():
@@ -156,14 +171,16 @@ def test_resolver_rejects_non_mcp_key():
 
 # ── GAP-4: carved child-scope exclusion for MCP keys ──────────────────
 
+
 def test_merge_scope_excludes_carves_children_not_self_or_siblings():
     out = resolver._merge_scope_excludes(
-        ["docs/secret.txt"], "docs",
+        ["docs/secret.txt"],
+        "docs",
         [{"path": "docs"}, {"path": "docs/api"}, {"path": "docs/api/v1"}, {"path": "other"}],
     )
     assert "docs/api" in out and "docs/api/v1" in out  # declared children carved
-    assert "other" not in out and "docs" not in out     # sibling + self never carved
-    assert "docs/secret.txt" in out                      # user exclude preserved
+    assert "other" not in out and "docs" not in out  # sibling + self never carved
+    assert "docs/secret.txt" in out  # user exclude preserved
 
 
 def test_merge_scope_excludes_root_carves_nothing():
@@ -183,23 +200,157 @@ def test_resolver_carves_child_scopes_for_parent_mcp_key(monkeypatch):
         "created_by": "user-1",
         "kind": "mcp",
     }
-    sb = _Supabase({
-        "repository_scopes": [
-            {"id": "scope-1", "project_id": "proj-1", "path": "docs", "exclude": ["private"], "max_mode": "rw"},
-            {"id": "scope-2", "project_id": "proj-1", "path": "docs/api", "exclude": [], "max_mode": "rw"},
-            {"id": "scope-3", "project_id": "proj-1", "path": "other", "exclude": [], "max_mode": "rw"},
-        ],
-    })
+    sb = _Supabase(
+        {
+            "repository_scopes": [
+                {
+                    "id": "scope-1",
+                    "project_id": "proj-1",
+                    "path": "docs",
+                    "exclude": ["private"],
+                    "max_mode": "rw",
+                },
+                {
+                    "id": "scope-2",
+                    "project_id": "proj-1",
+                    "path": "docs/api",
+                    "exclude": [],
+                    "max_mode": "rw",
+                },
+                {
+                    "id": "scope-3",
+                    "project_id": "proj-1",
+                    "path": "other",
+                    "exclude": [],
+                    "max_mode": "rw",
+                },
+            ],
+        }
+    )
     monkeypatch.setattr(resolver, "get_supabase_client", lambda: sb)
     monkeypatch.setattr(
         resolver,
         "_resolve_surface",
-        lambda _key: (endpoint, {"fs_policy": {"accesses": [{"readonly": False}]}}),
+        lambda _key: (
+            endpoint,
+            {"fs_policy": {"accesses": [{"readonly": False}]}},
+            {"id": "cred-1"},
+        ),
     )
 
-    ctx = resolver.resolve_mcp_scoped_fs_context("mcp_key")
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_scoped_fs_context("mcp_key")
+    assert exc.value.status_code == 501
+    assert exc.value.detail["code"] == "native_scope_not_available"
 
-    assert "docs/api" in ctx.exclude   # child scope carved out
-    assert "private" in ctx.exclude    # user-configured exclude preserved
-    assert "other" not in ctx.exclude  # sibling scope not carved
-    assert "docs" not in ctx.exclude   # the bound scope itself not carved
+
+# --- Project-root MCP endpoints: native engine, owner's current grant ---------
+
+
+def _root_endpoint(**overrides):
+    endpoint = {
+        "id": "endpoint-root",
+        "name": "Project files",
+        "project_id": "proj-1",
+        "scope_id": None,
+        "status": "active",
+        "created_by": "owner-1",
+        "kind": "mcp",
+    }
+    endpoint.update(overrides)
+    return endpoint
+
+
+def _grant(role: str):
+    from src.platform.authorization.models import ROLE_CAPABILITIES, ProjectRole
+
+    capabilities = ROLE_CAPABILITIES[ProjectRole(role)]
+    return SimpleNamespace(allows=lambda action: action in capabilities)
+
+
+def _wire(monkeypatch, endpoint, policy, grant, calls=None):
+    monkeypatch.setattr(
+        resolver, "_resolve_surface", lambda _key: (endpoint, policy, {"id": "cred-1"})
+    )
+
+    def owner_grant(project_id, owner):
+        if calls is not None:
+            calls.append((project_id, owner))
+        if isinstance(grant, Exception):
+            raise grant
+        return grant
+
+    monkeypatch.setattr(resolver, "_owner_grant", owner_grant)
+
+
+WRITABLE = {"fs_policy": {"accesses": [{"path": "", "readonly": False}]}}
+
+
+def test_project_root_endpoint_serves_the_owners_editor_authority(monkeypatch):
+    calls = []
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, _grant("editor"), calls)
+    runtime = resolver.resolve_mcp_runtime("mcp_key")
+    ctx = runtime.context
+    assert calls == [("proj-1", "owner-1")]  # Evaluated now, for this request.
+    assert (ctx.project_id, ctx.scope_path, ctx.exclude, ctx.mode) == ("proj-1", "", [], "rw")
+    assert ctx.actor == "owner-1"  # Writes are attributed to the delegating member.
+    assert {"fs_write", "fs_ls"} <= ctx.allowed_tools
+
+
+def test_a_viewer_owner_caps_a_writable_endpoint_to_read_only(monkeypatch):
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, _grant("viewer"))
+    ctx = resolver.resolve_mcp_runtime("mcp_key").context
+    assert ctx.mode == "ro"
+    assert "fs_write" not in ctx.allowed_tools and "fs_ls" in ctx.allowed_tools
+
+
+def test_a_read_only_policy_narrows_an_admin_owner(monkeypatch):
+    policy = {"fs_policy": {"accesses": [{"path": "", "readonly": True}]}}
+    _wire(monkeypatch, _root_endpoint(), policy, _grant("admin"))
+    assert resolver.resolve_mcp_runtime("mcp_key").context.mode == "ro"
+
+
+@pytest.mark.parametrize("owner", ["owner-1", None])
+def test_an_owner_without_project_access_denies_the_key(monkeypatch, owner):
+    _wire(monkeypatch, _root_endpoint(created_by=owner), WRITABLE, None)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "mcp_owner_access_revoked"
+
+
+def test_authorization_storage_failure_is_not_a_denial_or_an_allow(monkeypatch):
+    unavailable = HTTPException(
+        status_code=503, detail={"code": "project_authorization_unavailable"}
+    )
+    _wire(monkeypatch, _root_endpoint(), WRITABLE, unavailable)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 503
+
+
+def test_scope_bound_endpoints_still_wait_for_native_scope_views(monkeypatch):
+    calls = []
+    _wire(monkeypatch, _root_endpoint(scope_id="scope-1"), WRITABLE, _grant("admin"), calls)
+    with pytest.raises(HTTPException) as exc:
+        resolver.resolve_mcp_runtime("mcp_key")
+    assert exc.value.status_code == 501 and calls == []
+
+
+@pytest.mark.parametrize(
+    ("role", "policy", "mode"), [("editor", WRITABLE, "rw"), ("viewer", WRITABLE, "r")]
+)
+def test_the_runtime_grant_binds_reads_and_publication_to_the_endpoint(
+    monkeypatch, role, policy, mode
+):
+    from src.platform.repository_target.models import ProjectRootTarget
+
+    _wire(monkeypatch, _root_endpoint(), policy, _grant(role))
+    grant = resolver.resolve_mcp_runtime("mcp_key").grant
+    assert grant.target == ProjectRootTarget(project_id="proj-1")
+    assert grant.mode.value == mode and grant.repository_view.max_mode == "rw"
+    assert (grant.principal.principal_id, grant.principal.credential_id) == (
+        "endpoint-root",
+        "cred-1",
+    )
+    assert grant.project_id == "proj-1"

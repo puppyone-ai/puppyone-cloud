@@ -13,13 +13,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.version_engine.scoped_fs.context import ScopedFsContext
-from src.version_engine.scoped_fs.errors import ScopedFsError, ScopedFsPermissionDenied
-from src.version_engine.scoped_fs.service import ScopedFsService
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.errors import ScopedFsError, ScopedFsPermissionDenied
+from src.platform.access.filesystem.service import ScopedFsService
 from src.version_engine.write_engine.errors import ConcurrentMutationError
 
 
 class _FakeOps:
+    def read_session(self, project_id):
+        from contextlib import nullcontext
+        return nullcontext(self)
+
     """ProductOperationAdapter stand-in — enough for read happy-paths."""
 
     def list_dir_in_scope(self, *_a, **_k):

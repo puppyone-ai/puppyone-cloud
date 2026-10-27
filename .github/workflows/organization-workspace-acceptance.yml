@@ -1,0 +1,109 @@
+name: Organization workspace acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/src/**'
+      - 'backend/tests/platform/organization/**'
+      - 'backend/tests/platform/test_project_authorization_policy.py'
+      - 'backend/tests/agent/runtime/**'
+      - 'backend/tests/repository_hosting/integration/test_read_request_budgets.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/**'
+      - 'e2e/organization/**'
+      - 'e2e/package*.json'
+      - 'supabase/**'
+      - 'scripts/testing/**'
+      - 'docker/Dockerfile.minio'
+      - '.github/workflows/organization-workspace-acceptance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/src/**'
+      - 'backend/tests/platform/organization/**'
+      - 'backend/tests/agent/runtime/**'
+      - 'backend/tests/platform/test_project_authorization_policy.py'
+      - 'backend/tests/repository_hosting/integration/test_read_request_budgets.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/**'
+      - 'e2e/**'
+      - 'supabase/**'
+      - 'scripts/testing/**'
+      - 'docker/Dockerfile.minio'
+      - '.github/workflows/organization-workspace-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  multi-user-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+      - name: Install owned PostgreSQL and application dependencies
+        timeout-minutes: 10
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-17 postgresql-17-pgtap
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          python -m pip install 'uv==0.5.11'
+          cd backend && uv sync --locked
+      - name: Prepare deterministic object storage and browser
+        run: |
+          docker build --target build -t puppyone-entrypoint-minio-build:local -f docker/Dockerfile.minio .
+          docker pull postgrest/postgrest:v14.13
+          npm --prefix frontend ci
+          npm --prefix e2e ci
+          cd e2e && npx playwright install --with-deps chromium
+      - name: Build production frontend for the owned identity provider
+        working-directory: frontend
+        env:
+          API_INTERNAL_URL: http://127.0.0.1:45461
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:45461
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: owned-acceptance-anon-key
+          NEXT_PUBLIC_AUTH_EMAIL_ONLY: 'true'
+          PUPPYONE_LOCAL_BUILD: '1'
+          PUPPYONE_NEXT_DIST_DIR: .next-org-acceptance
+        run: npm run build
+      - name: Verify role matrix, real API, concurrent invitations and seven browser identities
+        working-directory: backend
+        env:
+          APP_ENV: test
+          NO_PROXY: 127.0.0.1,localhost
+          PUPPYONE_TEST_ORG_BROWSER: '1'
+        run: |
+          mkdir -p .organization-test-results
+          uv run pytest tests/platform/organization tests/platform/test_project_authorization_policy.py \
+            tests/security/test_unified_authorization_architecture.py \
+            tests/repository_hosting/integration/test_read_request_budgets.py \
+            tests/agent/runtime/test_data_access.py::test_renewal_rejects_changed_authority_in_one_request \
+            tests/agent/runtime/test_data_access.py::test_revision_guard_serializes_concurrent_revocation \
+            tests/agent/runtime/test_data_access.py::test_history_has_one_query_independent_of_session_count_and_rechecks_access \
+            --hosting-live --hosting-s3 -q \
+            --junitxml=.organization-test-results/junit.xml --basetemp=.organization-test-results/cases
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: organization-workspace-acceptance
+          path: backend/.organization-test-results/
+          include-hidden-files: true
+          retention-days: 14

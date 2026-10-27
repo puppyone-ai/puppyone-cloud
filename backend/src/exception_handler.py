@@ -6,7 +6,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.common_schemas import ApiResponse
 from src.exceptions import AppException, ErrorCode
-from src.platform.auth.shared_security_store import SecurityStoreUnavailable
 from src.utils.request_context import request_id_var
 
 
@@ -105,28 +104,6 @@ def validation_exception_handler(request: Request, exc: RequestValidationError):
     return resp
 
 
-def security_store_unavailable_handler(
-    request: Request,
-    exc: SecurityStoreUnavailable,
-):
-    """Expose fail-closed authentication infrastructure failures as HTTP 503."""
-    rid = request_id_var.get()
-    logger.bind(request_id=rid).error(
-        "Authentication security store unavailable: {}",
-        exc,
-    )
-    resp = JSONResponse(
-        status_code=503,
-        content=ApiResponse.error(
-            code=ErrorCode.INTERNAL_SERVER_ERROR,
-            message="Authentication security store unavailable",
-        ).model_dump(),
-    )
-    if rid:
-        resp.headers["X-Request-Id"] = rid
-    return resp
-
-
 def generic_exception_handler(request: Request, exc: Exception):
     """Handle all uncaught exceptions"""
     # Log full stack trace; request context (request_id/path/method etc.) injected by middleware + patcher
@@ -141,3 +118,10 @@ def generic_exception_handler(request: Request, exc: Exception):
     if rid:
         resp.headers["X-Request-Id"] = rid
     return resp
+
+
+def execution_capacity_handler(request: Request, exc):
+    return http_exception_handler(request, StarletteHTTPException(
+        status_code=503, detail={"code": "file_reads_busy", "message": str(exc)},
+        headers={"Retry-After": "1"},
+    ))

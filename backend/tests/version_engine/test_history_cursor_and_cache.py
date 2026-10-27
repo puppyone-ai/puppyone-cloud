@@ -124,3 +124,47 @@ def _snapshot(character: str) -> HistoryGraphSnapshot:
         nodes={},
         unreadable_commit_ids=(),
     )
+
+
+@pytest.mark.parametrize("cancel_all", [False, True])
+def test_shared_build_cancellation_observes_subscribers(cancel_all):
+    from src.infra.execution.context import Execution, checkpoint, current_execution
+
+    cache = HistoryGraphCache()
+    started, proceed = Event(), Event()
+    first, second = Execution(), Execution()
+
+    def build():
+        started.set()
+        assert proceed.wait(2)
+        checkpoint()
+        return _snapshot("a")
+
+    def request(execution):
+        token = current_execution.set(execution)
+        try:
+            return cache.get_or_build(("p", "same"), build)
+        finally:
+            current_execution.reset(token)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(request, first)
+        assert started.wait(2)
+        subscriber = pool.submit(request, second)
+        deadline = time.monotonic() + 2
+        while cache.stats().waits == 0 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert cache.stats().waits == 1
+        first.cancelled.set()
+        if cancel_all:
+            second.cancelled.set()
+        proceed.set()
+        if cancel_all:
+            with pytest.raises(RuntimeError, match="cancelled"):
+                owner.result(2)
+            with pytest.raises(RuntimeError, match="cancelled"):
+                subscriber.result(2)
+            assert cache.stats().entries == 0
+        else:
+            assert owner.result(2) is subscriber.result(2)
+            assert cache.stats().builds == 1

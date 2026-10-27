@@ -1,17 +1,56 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
-from src.internal import mcp_runtime
-from src.version_engine.scoped_fs.errors import ScopedFsPermissionDenied
-from src.version_engine.scoped_fs.context import ScopedFsContext
-from src.version_engine.scoped_fs import service as scoped_fs_service
-from src.version_engine.scoped_fs.resolver import ResolvedMcpRuntime
-from src.version_engine.scoped_fs.service import ScopedFsService
+from src.platform.access.adapters.mcp_endpoint import runtime as mcp_runtime
+from src.platform.access.adapters.mcp_endpoint.resolver import ResolvedMcpRuntime
+from src.platform.access.filesystem import service as scoped_fs_service
+from src.platform.access.filesystem.context import ScopedFsContext
+from src.platform.access.filesystem.errors import ScopedFsPermissionDenied
+from src.platform.access.filesystem.service import ScopedFsService
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["tools", "call"])
+@pytest.mark.parametrize("configured,supplied,status", [
+    ("", "secret", 503),
+    ("secret", "wrong", 403),
+    ("secret", "secret", 501),
+])
+async def test_moved_runtime_keeps_internal_gate_before_credential_lookup(
+    monkeypatch, path, configured, supplied, status,
+):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "INTERNAL_API_SECRET", configured)
+    looked_up = []
+
+    def unavailable(key):
+        looked_up.append(key)
+        raise HTTPException(501, detail={"code": "native_scope_not_available"})
+
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", unavailable)
+    app = FastAPI()
+    app.include_router(mcp_runtime.router)
+    for dependency in (
+        mcp_runtime.get_product_operation_adapter,
+        mcp_runtime.get_version_write_command_service,
+    ):
+        app.dependency_overrides[dependency] = lambda: None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            f"/internal/mcp-runtime/{path}",
+            headers={"X-Internal-Secret": supplied},
+            json={"api_key": "mcp_test", "name": "fs_ls", "arguments": {}},
+        )
+    assert response.status_code == status
+    assert looked_up == (["mcp_test"] if status == 501 else [])
 
 
 def _ctx(mode: str) -> ScopedFsContext:
@@ -52,12 +91,10 @@ def _runtime(ctx: ScopedFsContext, kind: str = "mcp") -> ResolvedMcpRuntime:
     )
 
 
-@pytest.mark.asyncio
-async def test_runtime_tools_list_returns_complete_mcp_contract(monkeypatch):
+def test_runtime_tools_list_returns_complete_mcp_contract(monkeypatch):
     monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("rw")))
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
-    result = await mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
+    result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     tools = {tool["name"]: tool for tool in result["tools"]}
 
     assert result["mode"] == "mcp"
@@ -71,12 +108,10 @@ async def test_runtime_tools_list_returns_complete_mcp_contract(monkeypatch):
     assert tools["fs_write"]["annotations"]["readOnlyHint"] is False
 
 
-@pytest.mark.asyncio
-async def test_runtime_tools_list_hides_mutations_for_readonly_endpoint(monkeypatch):
+def test_runtime_tools_list_hides_mutations_for_readonly_endpoint(monkeypatch):
     monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("ro")))
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
-    result = await mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
+    result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     names = {tool["name"] for tool in result["tools"]}
 
     assert "fs_ls" in names
@@ -84,16 +119,14 @@ async def test_runtime_tools_list_hides_mutations_for_readonly_endpoint(monkeypa
     assert "fs_rm" not in names
 
 
-@pytest.mark.asyncio
-async def test_runtime_tools_list_respects_endpoint_tool_policy(monkeypatch):
+def test_runtime_tools_list_respects_endpoint_tool_policy(monkeypatch):
     monkeypatch.setattr(
         mcp_runtime,
         "resolve_mcp_runtime",
         lambda _key: _runtime(_ctx_with_tools("rw", frozenset({"fs_ls", "fs_rm"}))),
     )
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [])
 
-    result = await mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
+    result = mcp_runtime.list_runtime_tools(mcp_runtime.RuntimeToolsRequest(api_key="mcp_key"))
     names = {tool["name"] for tool in result["tools"]}
 
     assert names == {"fs_ls", "fs_rm"}
@@ -139,6 +172,10 @@ async def test_scoped_fs_grep_uses_shared_indexed_backend(monkeypatch):
         }
 
     class _Ops:
+        def read_session(self, project_id):
+            from contextlib import nullcontext
+            return nullcontext(self)
+
         def stat_in_scope(self, _project_id, _scope_path, _path, *, include_size=False):
             return None
 
@@ -170,72 +207,49 @@ async def test_scoped_fs_grep_uses_shared_indexed_backend(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_custom_search_is_dispatched_by_backend_runtime(monkeypatch):
-    runtime = _runtime(_ctx("rw"), kind="agent")
-    tool = SimpleNamespace(
-        id="tool-1",
-        name="search_docs",
-        type="search",
-        project_id="proj-1",
-        path="docs",
-        json_path="",
-        input_schema=None,
-        output_schema=None,
-        description="Search docs",
-    )
-    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [({}, tool)])
-    monkeypatch.setattr(
-        mcp_runtime.SearchIndexTaskRepository,
-        "get_by_tool_id",
-        lambda _self, _tool_id: None,
-    )
-    search = SimpleNamespace(search_scope=AsyncMock(return_value={"results": []}))
-
-    result = await mcp_runtime.call_runtime_tool(
-        mcp_runtime.RuntimeCallRequest(
-            api_key="mcp_key",
-            name="tool_search_docs",
-            arguments={"query": "hello", "top_k": 3},
-        ),
-        ops=None,
-        commands=None,
-        search_service=search,
-    )
-
-    assert result["structuredContent"] == {"results": []}
-    search.search_scope.assert_awaited_once_with(
-        project_id="proj-1",
-        path="docs",
-        tool_json_path="",
-        query="hello",
-        top_k=3,
-    )
-
-
-@pytest.mark.asyncio
-async def test_custom_search_cannot_escape_or_enter_excluded_scope(monkeypatch):
-    runtime = _runtime(_ctx("rw"), kind="agent")
-    tool = SimpleNamespace(
-        id="tool-1",
-        name="search_private",
-        type="search",
-        project_id="proj-1",
-        path="docs/private",
-        json_path="",
-    )
-    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
-    monkeypatch.setattr(mcp_runtime, "_list_custom_tools", lambda _runtime: [({}, tool)])
+async def test_retired_search_tools_are_unknown_to_the_runtime(monkeypatch):
+    # Search Tools were retired with the vector backend: only fs_* tools execute.
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: _runtime(_ctx("rw")))
 
     with pytest.raises(HTTPException) as exc:
         await mcp_runtime.call_runtime_tool(
             mcp_runtime.RuntimeCallRequest(
-                api_key="mcp_key",
-                name="tool_search_private",
-                arguments={"query": "secret"},
+                api_key="mcp_key", name="tool_search_docs", arguments={"query": "hello"}
             ),
             ops=None,
             commands=None,
-            search_service=SimpleNamespace(),
         )
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "UNKNOWN_TOOL"
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_bind_reads_and_writes_to_the_endpoint_grant(monkeypatch):
+    # Staging E2E: an unbound ProductOperationAdapter refused every MCP read and
+    # write ("Project grant required"). Both adapters must carry the runtime grant.
+    grant = object()
+    runtime = ResolvedMcpRuntime(context=_ctx("rw"), surface_kind="mcp", surface={}, grant=grant)
+    monkeypatch.setattr(mcp_runtime, "resolve_mcp_runtime", lambda _key: runtime)
+    bound = []
+
+    class Adapter:
+        def for_grant(self, value):
+            bound.append(value)
+            return self
+
+    class Service:
+        def __init__(self, ops, commands):
+            self.ops, self.commands = ops, commands
+
+        async def call(self, ctx, name, arguments):
+            assert isinstance(self.commands, mcp_runtime.VersionWriteCommandService)
+            return {"ok": True}
+
+    monkeypatch.setattr(mcp_runtime, "ScopedFsService", Service)
+    result = await mcp_runtime.call_runtime_tool(
+        mcp_runtime.RuntimeCallRequest(api_key="mcp_key", name="fs_ls", arguments={}),
+        ops=Adapter(),
+        commands=SimpleNamespace(ops=Adapter()),
+    )
+    assert result["structuredContent"] == {"ok": True}
+    assert bound == [grant, grant]

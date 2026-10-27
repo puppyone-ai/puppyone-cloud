@@ -1,0 +1,22 @@
+{
+  "paths": {
+    "/api/v1/content/{project_id}/commits": {
+      "before": "621cff585e5e923ae1601e3ce06670230404ecc4b5b32f592d9948439bfce0c3",
+      "after": "6660290ba80b8aaaf9cd552f835b908cbbb4975f10e1b3902edd2941434361e5"
+    },
+    "/api/v1/content/{project_id}/commit-detail": {
+      "before": null,
+      "after": "d743fa3f6d45a8d0852a47b7c0d5e9a640bbcfc1b9fc8a76d50abe3d0a2bedb3"
+    }
+  },
+  "schemas": {
+    "ApiResponse_FileVersionInfo_": {
+      "before": null,
+      "after": "ff53a1396dc60289d15d8ad4ff9380683fb58fa7be9416f51c968f95556f0144"
+    },
+    "FileVersionInfo": {
+      "before": "428ffe24dbd8a26d21f420fdc6d76556fe195503dd3230f8a90fe9bd9621b012",
+      "after": "97988b2f1daafd3b89d115d2ee2863336c1fa0bf9fceb590db1f3e175af9ad58"
+    }
+  }
+}

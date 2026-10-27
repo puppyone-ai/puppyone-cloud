@@ -12,6 +12,7 @@ Dual-layer routing architecture:
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -30,32 +31,42 @@ from fastapi import (
 )
 
 from src.exceptions import AppException
+from src.infra.file_formats import detect_ingest_type as detect_file_ingest_type
 from src.infra.file_formats import detect_mime, detect_node_type
+from src.infra.file_processing.exceptions import RuleNotFoundError
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.exceptions import S3Error, S3FileSizeExceededError, S3MultipartError
 from src.infra.s3.service import S3Service
-
-# Import underlying services for file processing
-from src.ingest.file.dependencies import get_etl_service
-from src.ingest.file.exceptions import RuleNotFoundError
-from src.ingest.file.service import ETLService
-from src.ingest.file.tasks.models import ETLTaskStatus
-from src.ingest.policy.upload_policy import (
-    PER_BATCH_MAX_BYTES as POLICY_PER_BATCH_MAX_BYTES,
-)
-from src.ingest.policy.upload_policy import (
-    PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
-)
-from src.ingest.policy.upload_policy import (
-    evaluate_batch_limits,
-    path_has_blocked_segment,
-)
-from src.ingest.schemas import (
-    IngestStatus,
+from src.infra.task_presentation import (
     IngestSubmitItem,
     IngestSubmitResponse,
     IngestType,
     SourceType,
+)
+from src.infra.task_status import IngestStatus
+from src.platform.auth.dependencies import get_current_user
+from src.platform.auth.models import CurrentUser
+from src.platform.authorization.dependencies import get_authorization_service
+from src.platform.authorization.models import ProjectAction
+from src.platform.authorization.service import AuthorizationService
+from src.platform.billing.runtime import guard_unmetered_hosted_runtime
+from src.platform.entitlements.dependencies import get_entitlement_service
+from src.platform.entitlements.service import EntitlementService
+
+# Import underlying services for file processing
+from src.platform.upload.dependencies import get_etl_service
+from src.file_operations.upload_policy import (
+    PER_BATCH_MAX_BYTES as POLICY_PER_BATCH_MAX_BYTES,
+)
+from src.file_operations.upload_policy import (
+    PER_FILE_MAX_BYTES as POLICY_PER_FILE_MAX_BYTES,
+)
+from src.file_operations.upload_policy import (
+    evaluate_batch_limits,
+    path_has_blocked_segment,
+)
+from src.platform.upload.repository import UploadJobRepository
+from src.platform.upload.schemas import (
     UploadAbortRequest,
     UploadAbortResponse,
     UploadCompleteBatchRequest,
@@ -68,16 +79,9 @@ from src.ingest.schemas import (
     UploadInitResponse,
     UploadPartResponse,
 )
-from src.ingest.shared.task.normalizers import detect_file_ingest_type
-from src.ingest.upload_jobs import UploadJobRepository
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
-from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
-from src.platform.authorization.service import AuthorizationService
-from src.platform.billing.runtime import guard_unmetered_hosted_runtime
-from src.platform.entitlements.dependencies import get_entitlement_service
-from src.platform.entitlements.service import EntitlementService
+from src.platform.upload.service import ETLService
+from src.platform.upload.tasks.models import ETLTaskStatus
+from src.infra.execution.runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +220,9 @@ async def submit_file_ingest(
 
     from src.platform.project.write_lease import build_leased_worker_write_commands
 
-    commands = build_leased_worker_write_commands()
+    commands = build_leased_worker_write_commands(
+        project_id=project_id, user_id=current_user.user_id
+    )
 
     target_parent_path = (parent_path or parent_id or "").strip("/")
 
@@ -444,7 +450,7 @@ async def _upload_to_s3(
 
     original_filename_b64 = base64.b64encode(original_filename.encode("utf-8")).decode("ascii")
 
-    await s3_service.upload_file(
+    await run_blocking(s3_service.upload_file,
         key=s3_key,
         content=content,
         content_type=content_type,
@@ -700,7 +706,7 @@ async def init_multipart_upload(
     # Defense-in-depth (Q8): the client also enforces these but a
     # third-party tool / future SDK / curl request could bypass the
     # client. The numbers come from the policy module
-    # (``src.ingest.policy.upload_policy``); see
+    # (``src.file_operations.upload_policy``); see
     # ``docs/proposals/PUP-3-folder-upload-policy.md`` Q4.
     for violation in evaluate_batch_limits(
         (f.size for f in request.files),
@@ -820,13 +826,13 @@ async def init_multipart_upload(
     # all per-file inserts saves (N-1) × ~400ms in etl_rules
     # queries alone for an N-file batch. The lookup itself is sync
     # Supabase work so we offload to a thread.
-    default_rule_id = await asyncio.to_thread(
+    default_rule_id = await run_blocking(
         etl_service.get_default_rule_id_for_user,
         current_user.user_id,
     )
 
     upload_job_repo = UploadJobRepository()
-    upload_job_id = await asyncio.to_thread(
+    upload_job_id = await run_blocking(
         upload_job_repo.create_job,
         project_id=request.project_id,
         created_by=current_user.user_id,
@@ -865,7 +871,7 @@ async def init_multipart_upload(
                 "original_filename_b64": original_filename_b64,
             }
             if f.size == 0:
-                await s3_service.upload_file(
+                await run_blocking(s3_service.upload_file,
                     key=s3_key,
                     content=b"",
                     content_type=f.content_type,
@@ -873,7 +879,7 @@ async def init_multipart_upload(
                 )
                 upload_id = ""
             else:
-                upload_id = await s3_service.create_multipart_upload(
+                upload_id = await run_blocking(s3_service.create_multipart_upload,
                     key=s3_key,
                     content_type=f.content_type,
                     metadata=s3_metadata,
@@ -881,10 +887,10 @@ async def init_multipart_upload(
 
             try:
                 # ``create_pending_upload_task`` is sync (Supabase
-                # REST), so wrap in to_thread to actually
+                # REST), so wrap in run_blocking to actually
                 # parallelize. With ``default_rule_id`` pre-resolved,
                 # this collapses to a single uploads INSERT per task.
-                task = await asyncio.to_thread(
+                task = await run_blocking(
                     etl_service.create_pending_upload_task,
                     user_id=current_user.user_id,
                     project_id=request.project_id,
@@ -900,7 +906,7 @@ async def init_multipart_upload(
                     default_rule_id=default_rule_id,
                     upload_job_id=upload_job_id,
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_job_repo.create_item,
                     upload_job_id=upload_job_id,
                     item_id=str(task.task_id),
@@ -923,7 +929,7 @@ async def init_multipart_upload(
                 )
                 try:
                     if upload_id:
-                        await s3_service.abort_multipart_upload(s3_key, upload_id)
+                        await run_blocking(s3_service.abort_multipart_upload, s3_key, upload_id)
                 except Exception as abort_err:
                     logger.warning(
                         f"Failed to abort orphaned multipart upload {s3_key}: {abort_err}"
@@ -962,34 +968,30 @@ async def init_multipart_upload(
     # orphans.
     first_error: HTTPException | BaseException | None = None
     for r in raw_results:
-        if isinstance(r, HTTPException):
-            first_error = first_error or r
-        elif isinstance(r, BaseException):
+        if isinstance(r, (HTTPException, BaseException)):
             first_error = first_error or r
 
     if first_error is not None:
-        try:
-            await asyncio.to_thread(
+        with contextlib.suppress(Exception):
+            await run_blocking(
                 upload_job_repo.mark_job_failed,
                 upload_job_id,
                 f"upload/init failed: {first_error}",
             )
-        except Exception:
-            pass
 
         async def _cleanup_successful_init(r) -> None:
             if not isinstance(r, UploadInitFileResponse):
                 return
             try:
                 if r.upload_id:
-                    await s3_service.abort_multipart_upload(r.s3_key, r.upload_id)
+                    await run_blocking(s3_service.abort_multipart_upload, r.s3_key, r.upload_id)
             except Exception as abort_err:
                 logger.warning(
                     f"Failed to abort multipart upload after init "
                     f"batch failure {r.s3_key}: {abort_err}"
                 )
             try:
-                await asyncio.to_thread(
+                await run_blocking(
                     etl_service.task_repository.delete_task,
                     r.task_id,
                 )
@@ -1116,7 +1118,7 @@ async def upload_part(
     _validate_part_body_shape(task.metadata, part_number, len(body))
 
     try:
-        etag = await s3_service.upload_part(
+        etag = await run_blocking(s3_service.upload_part,
             key=s3_key,
             upload_id=upload_id,
             part_number=part_number,
@@ -1205,7 +1207,7 @@ async def complete_upload(
         )
     else:
         try:
-            await s3_service.complete_multipart_upload(request.s3_key, request.upload_id, parts)
+            await run_blocking(s3_service.complete_multipart_upload, request.s3_key, request.upload_id, parts)
         except Exception as e:
             logger.error(
                 f"complete_multipart_upload failed for task {request.task_id}: {e}",
@@ -1215,7 +1217,7 @@ async def complete_upload(
             # multipart upload on the bucket.
             try:
                 if request.upload_id:
-                    await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
+                    await run_blocking(s3_service.abort_multipart_upload, request.s3_key, request.upload_id)
             except Exception:
                 pass
             task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1224,12 +1226,12 @@ async def complete_upload(
             upload_job_id = task.metadata.get("upload_job_id")
             if upload_job_id:
                 upload_repo = UploadJobRepository()
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     str(task.task_id),
                     f"S3 complete_multipart_upload failed: {e}",
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.refresh_job_from_items,
                     upload_job_id,
                 )
@@ -1239,7 +1241,7 @@ async def complete_upload(
     # Mismatch is non-fatal but worth logging — could indicate a
     # client that lied about the file size or a part ETag mismatch.
     try:
-        meta = await s3_service.get_file_metadata(request.s3_key)
+        meta = await run_blocking(s3_service.get_file_metadata, request.s3_key)
         if expected_size is not None and meta.size != expected_size:
             message = f"Declared size {expected_size} differs from S3 size {meta.size}"
             logger.warning(f"Task {request.task_id}: {message}")
@@ -1249,12 +1251,12 @@ async def complete_upload(
             upload_job_id = task.metadata.get("upload_job_id")
             if upload_job_id:
                 upload_repo = UploadJobRepository()
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     str(task.task_id),
                     message,
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.refresh_job_from_items,
                     upload_job_id,
                 )
@@ -1267,7 +1269,7 @@ async def complete_upload(
     # Run finalize INLINE: download from S3, write into ObjectStore, mark
     # task COMPLETED. The helper is also the body of the ARQ worker
     # job, so behaviour and runtime-state transitions are identical.
-    from src.ingest.file.jobs.jobs import finalize_upload_to_version
+    from src.platform.upload.jobs import finalize_upload_to_version
 
     try:
         result = await finalize_upload_to_version(
@@ -1282,12 +1284,12 @@ async def complete_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_repo.mark_item_failed,
                 str(task.task_id),
                 "Finalize timed out writing to ObjectStore",
             )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
         raise HTTPException(status_code=504, detail="Finalize timed out writing to ObjectStore")
 
     if not result.get("ok"):
@@ -1295,12 +1297,12 @@ async def complete_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
+            await run_blocking(
                 upload_repo.mark_item_failed,
                 str(task.task_id),
                 str(result.get("error") or "Finalize failed"),
             )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to finalize upload: {result.get('error', 'unknown error')}",
@@ -1309,12 +1311,12 @@ async def complete_upload(
     upload_job_id = task.metadata.get("upload_job_id")
     if upload_job_id:
         upload_repo = UploadJobRepository()
-        await asyncio.to_thread(
+        await run_blocking(
             upload_repo.mark_item_completed,
             str(task.task_id),
             result_path=result.get("path") or task.metadata.get("mount_path"),
         )
-        await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+        await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
 
     return UploadCompleteResponse(
         task_id=str(task.task_id),
@@ -1459,7 +1461,7 @@ async def complete_upload_batch(
             )
         else:
             try:
-                await s3_service.complete_multipart_upload(item.s3_key, item.upload_id, parts)
+                await run_blocking(s3_service.complete_multipart_upload, item.s3_key, item.upload_id, parts)
             except Exception as e:
                 logger.error(
                     f"complete_multipart_upload failed for task {item.task_id}: {e}",
@@ -1467,7 +1469,7 @@ async def complete_upload_batch(
                 )
                 try:
                     if item.upload_id:
-                        await s3_service.abort_multipart_upload(item.s3_key, item.upload_id)
+                        await run_blocking(s3_service.abort_multipart_upload, item.s3_key, item.upload_id)
                 except Exception:
                     pass
                 task.mark_failed(f"Failed to finalize multipart upload: {e}")
@@ -1484,7 +1486,7 @@ async def complete_upload_batch(
         # the single-file endpoint). Failure here just logs — we don't
         # block the upload on a missing HEAD.
         try:
-            meta = await s3_service.get_file_metadata(item.s3_key)
+            meta = await run_blocking(s3_service.get_file_metadata, item.s3_key)
             if expected_size is not None and meta.size != expected_size:
                 message = f"Declared size {expected_size} differs from S3 size {meta.size}"
                 logger.warning(f"Task {item.task_id}: {message}")
@@ -1526,7 +1528,7 @@ async def complete_upload_batch(
     # Phase 3: ONE bulk finalize for everything that made it this far.
     # ────────────────────────────────────────────────────────────────
     if completed_task_ids:
-        from src.ingest.file.jobs.jobs import finalize_uploads_to_version_batch
+        from src.platform.upload.jobs import finalize_uploads_to_version_batch
 
         try:
             batch_results = await finalize_uploads_to_version_batch(
@@ -1587,19 +1589,19 @@ async def complete_upload_batch(
         if upload_job_id:
             touched_upload_jobs.add(upload_job_id)
             if result.status == IngestStatus.COMPLETED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_completed,
                     item.task_id,
                     result_path=result.path,
                 )
             elif result.status == IngestStatus.CANCELLED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_cancelled,
                     item.task_id,
                     "Upload skipped",
                 )
             elif result.status == IngestStatus.FAILED:
-                await asyncio.to_thread(
+                await run_blocking(
                     upload_repo.mark_item_failed,
                     item.task_id,
                     result.error or "Upload failed",
@@ -1607,13 +1609,13 @@ async def complete_upload_batch(
         ordered.append(result)
 
     for upload_job_id in touched_upload_jobs:
-        await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+        await run_blocking(upload_repo.refresh_job_from_items, upload_job_id)
 
     return UploadCompleteBatchResponse(items=ordered)
 
 
 @router.post("/upload/abort", response_model=UploadAbortResponse)
-async def abort_upload(
+def abort_upload(
     request: UploadAbortRequest,
     s3_service: S3Service = Depends(get_s3_service),
     etl_service: ETLService = Depends(get_etl_service),
@@ -1633,7 +1635,7 @@ async def abort_upload(
 
     if request.upload_id:
         try:
-            await s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
+            s3_service.abort_multipart_upload(request.s3_key, request.upload_id)
         except Exception as e:
             # The most common reason this fails is "already aborted/
             # completed", which is fine — we still want to flag the task
@@ -1649,12 +1651,8 @@ async def abort_upload(
         upload_job_id = task.metadata.get("upload_job_id")
         if upload_job_id:
             upload_repo = UploadJobRepository()
-            await asyncio.to_thread(
-                upload_repo.mark_item_cancelled,
-                str(task.task_id),
-                "Upload aborted by client",
-            )
-            await asyncio.to_thread(upload_repo.refresh_job_from_items, upload_job_id)
+            upload_repo.mark_item_cancelled(str(task.task_id), "Upload aborted by client")
+            upload_repo.refresh_job_from_items(upload_job_id)
 
     return UploadAbortResponse(task_id=str(task.task_id), cancelled=True)
 

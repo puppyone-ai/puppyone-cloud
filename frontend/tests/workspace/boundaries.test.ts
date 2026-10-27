@@ -27,7 +27,7 @@ it('the project layout is the single persistent auxiliary-sidebar owner', () => 
   expect(headerShell).toContain('<ProjectAuxiliaryActions');
   expect(readFileSync(resolve(project, 'history/page.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
   expect(readFileSync(resolve('features/files/components/DataWorkspaceSurface.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
-  expect(readFileSync(resolve('components/ProjectsHeader.tsx'), 'utf8')).toContain("flex: '0 0 auto'");
+  expect(readFileSync(resolve('components/project/ProjectHeaderFrame.tsx'), 'utf8')).toContain("flex: '0 0 auto'");
   for (const view of ['history', 'access']) expect(readFileSync(resolve(project, view, 'page.tsx'), 'utf8')).not.toContain('<ProjectChatSidebar');
   expect(readFileSync(resolve(project, 'access/page.tsx'), 'utf8')).not.toContain('<ProjectsHeader');
   expect(readFileSync(resolve('components/ProjectsHeader.tsx'), 'utf8')).not.toContain("['access', 'Access'");

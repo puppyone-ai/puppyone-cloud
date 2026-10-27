@@ -1,0 +1,97 @@
+{
+  "date": "2026-10-23",
+  "result": "fly_functional_accepted_existing_workspace_backend_restored",
+  "backend_source": "fa7d505a205d12ce74c46c741c4c60e3837c0918",
+  "desktop_source": "1de682c5",
+  "desktop_connection_companion": "e8d3d8ba",
+  "runtime": {
+    "runtime_protocol": 1,
+    "file_protocol": 1,
+    "capabilities": [
+      "workspace_lifecycle",
+      "native_files",
+      "file_watch"
+    ],
+    "build_id": "4e4c2d624ac74ffc46f798f400cfaf72e7843bd7c247a74609b98bdb6b97959a"
+  },
+  "local_image": {
+    "tag": "puppyone-cloud-agent:workspace-readiness",
+    "platform": "linux/amd64",
+    "image_id": "sha256:32e4f8556fc177b7c55d21e029855346025af3cd9c1254f6fd12ec1e22282b31",
+    "manifest": "sha256:e4f8af0c48b17b974833a16bea76316da56b842f76681b18c110c06b81235be7",
+    "linux_amd64_manifest": "sha256:ce1e812801791968853531266f2a6ec870663d39d9d9d0dc98dec4a8d3baa0f3"
+  },
+  "checks": {
+    "backend_non_integration": {
+      "passed": 3480,
+      "skipped": 953,
+      "deselected": 409
+    },
+    "lifecycle_sql_and_populated_upgrade": {
+      "passed": 24,
+      "database": "owned PostgreSQL 17; Supabase auth stubs and extension exclusions as documented in native_postgres.py"
+    },
+    "node_protocol_git_tools": {
+      "passed": 26
+    },
+    "native_linux_process_and_git": {
+      "passed": 18,
+      "platform": "linux/arm64 BuildKit"
+    },
+    "native_file_service": {
+      "passed": 4,
+      "platform": "linux/amd64 BuildKit"
+    },
+    "desktop_affected": {
+      "passed": 455,
+      "files": 52
+    },
+    "desktop_types": "passed",
+    "desktop_boundaries": "passed",
+    "canonical_documentation": "passed",
+    "populated_upgrade_against_current_qubits": {
+      "passed": 9
+    },
+    "desktop_integration_with_preserved_wip": {
+      "passed": 70,
+      "files": 4
+    },
+    "canonical_backend_with_preserved_wip": {
+      "passed": 35,
+      "skipped": 1
+    }
+  },
+  "wider_desktop_regression": {
+    "passed": 587,
+    "failed": 1,
+    "baseline_failure": "tests/component/cloud/share/projectReach.test.tsx: previews the part of the project the link would cover",
+    "baseline_source": "e0270706",
+    "baseline_reproduced": true
+  },
+  "pending": [
+    "Actual native Desktop click/render acceptance (automation unavailable).",
+    "I/O target on actual local API / hosted database / SIN path: 1.83\u20131.92 second reads; owned-fixture LAX performance pass does not replace this.",
+    "Real model, billing, PTY and general production deployment are outside this scoped acceptance."
+  ],
+  "product_provider": "fly",
+  "e2b_activation": false,
+  "hosted_mutation_performed": true,
+  "live_fly": {
+    "sin": "readiness-20261023-fly-sin.json",
+    "lax": "readiness-20261023-fly-lax.json",
+    "functional": "passed in both regions",
+    "latency": "LAX passed p50 <= 300 ms and p95 <= 1000 ms; SIN failed p50 with local egress reaching LAX; control-only round trips have the same floor",
+    "fixture": "real provider/Pi/dispatcher/Git/files/SSE; deterministic model; owned PG/S3; billing disabled"
+  },
+  "hosted_mutation_scope": "Authorized image upload and disposable Fly tests with cleanup; protected qubits SQL release; explicit upgrade of original paused Machine with Volume snapshot, fenced artifact binding, original 861 file hashes and Git HEAD verified unchanged; paired local API/worker restarted.",
+  "integrated_backend_source": "657fd0b7f4a6f5f41e6557e537a0432056f480a2",
+  "release": {
+    "pr": "https://github.com/puppyone-ai/puppyone-cloud/pull/1406",
+    "database_workflow": "https://github.com/puppyone-ai/puppyone-cloud/actions/runs/39836939774",
+    "database_applied_count": 54,
+    "readiness_migration": "20261023010000",
+    "local_api_and_worker": "running from one configuration snapshot",
+    "existing_workspace": "readiness-20261023-restoration.json",
+    "hosted_api_deployment_claimed": false
+  }
+}

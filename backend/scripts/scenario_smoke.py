@@ -36,8 +36,8 @@ if str(ROOT) not in sys.path:
 from src.version_engine.adapters.batch.in_process_client import (
     InProcessVersionClient,
 )
-from src.version_engine.adapters.git.submission import submit_git_tree
-from src.version_engine.adapters.product.operation_adapter import (
+from src.platform.access.adapters.git.submission import submit_git_tree
+from src.file_operations.operation_adapter import (
     ProductOperationAdapter,
 )
 from src.version_engine.admission.permission import (
@@ -674,8 +674,8 @@ def scenario_j_shadow_snapshot_caps():
 def scenario_k_health_recommendations():
     _section("K. Health endpoint recommended_actions for all four states")
     from unittest.mock import patch
-    from src.version_engine.adapters.git import health
-    from src.version_engine.adapters.git.view_projection import GitViewHead
+    from src.platform.access.adapters.git import health
+    from src.platform.access.adapters.git.view_projection import GitViewHead
 
     states_seen = {}
     for state in ("empty", "healthy", "history_degraded", "current_corrupt"):

@@ -22,6 +22,11 @@ const nextConfig: NextConfig = {
   // Run production verification without overwriting a live dev server's cache.
   distDir: process.env.PUPPYONE_NEXT_DIST_DIR || '.next',
   reactStrictMode: true,
+  // Resource folders have a canonical trailing slash, files do not.
+  skipTrailingSlashRedirect: true,
+  // Native bulk suppressions are applied by the ESLint CLI, not Next 15's API pass.
+  // The separate frontend-readability workflow runs the full lint gate.
+  eslint: { ignoreDuringBuilds: true },
   transpilePackages: ['@puppyone/cloud-core'],
   output: 'standalone',
   outputFileTracingRoot: import.meta.dirname,
@@ -29,6 +34,8 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_APP_VERSION: loadVersion(),
   },
   experimental: {
+    // Explicit local preview builds must not fan out across the workstation.
+    cpus: process.env.PUPPYONE_LOCAL_BUILD === '1' ? 1 : undefined,
     optimizePackageImports: [
       'lucide-react',
       'framer-motion',

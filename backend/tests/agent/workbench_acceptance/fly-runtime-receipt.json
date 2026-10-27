@@ -1,0 +1,67 @@
+{
+  "provider": "fly",
+  "region": "lax",
+  "result": "passed",
+  "project_id": "f82fa0a4-e6c8-4e07-9301-71c1e7704681",
+  "image": "registry.fly.io/puppy-agent-io-20261019-f2cf0ddb@sha256:7aaf99f7cd590239ab87f8039e3010465e2c6bc9f8b881f48613471fa37ddf56",
+  "stages": [
+    "authenticated Chat -> default dispatcher -> real Fly/Pi",
+    "task IPv4/IPv6 egress denied -> Agent atomic save -> live read/watch before Git -> editor write -> Bash sees edit",
+    "real stock Git publication -> native refs and S3 objects",
+    "independent Chat sessions reuse one Machine and directory",
+    "lifecycle stop -> reads do not wake -> explicit reopen preserves Machine/disk/files"
+  ],
+  "metering": "disabled (not billing acceptance)",
+  "source_commit": "77f94f29b1e5cf6c5a10b5006a1c9f03554446f6",
+  "dirty_source": false,
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run_ids": [
+    "0d00dc0c-d479-46b2-aa60-f588aaa35275",
+    "6f52c9b0-5ed2-45bc-848f-740848c41920"
+  ],
+  "workbench_id": "30debefe-b855-4c5a-9753-b33b2c2b9b48",
+  "generation": "0063db8d-acb5-48b9-b784-c5e6d3cd4169",
+  "machine_id": "89013ec653d938",
+  "volume_id": "vol_40ojwlxgx6583j94",
+  "ready_seconds": 64.66,
+  "stage_seconds": [
+    64.66,
+    109.19,
+    113.29,
+    140.2,
+    176.59
+  ],
+  "firewall_rejected_packets": 3,
+  "publication": {
+    "refs": [
+      {
+        "new": {
+          "oid": "99915036d3d15f15a13446eaed2c2a33082086f5",
+          "kind": "oid"
+        },
+        "changed": true,
+        "name_b64": "cmVmcy9oZWFkcy93b3Jrc3BhY2VzL2E5OTkxNDM0LTljMTgtNGM5Zi1hMjZhLWUxNzk3ZmJhMjJiYg==",
+        "observed": {
+          "kind": "absent"
+        }
+      }
+    ],
+    "reason": null,
+    "status": "committed",
+    "commit_id": "99915036d3d15f15a13446eaed2c2a33082086f5",
+    "generation": 1,
+    "project_id": "f82fa0a4-e6c8-4e07-9301-71c1e7704681",
+    "receipt_id": "14dfc5a8-e0ed-527f-93e1-13c8ea16313c",
+    "target_ref": "refs/heads/workspaces/a9991434-9c18-4c9f-a26a-e1797fba22bb",
+    "ref_sequence": 2,
+    "transaction_id": "ddfed921-48b3-4cac-a69b-c878b3d34879"
+  },
+  "deleted_volumes": [
+    {
+      "id": "vol_40ojwlxgx6583j94",
+      "state": "pending_destroy"
+    }
+  ],
+  "cleanup": "owned Machines absent; Volumes deleted (absent or pending_destroy)",
+  "elapsed_seconds": 194.09
+}

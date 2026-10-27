@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header
 
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, ForbiddenException
+from src.infra.execution.runner import run_blocking
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.billing.gateway import (
@@ -71,7 +72,7 @@ async def _require_owner(
     org_id: str,
     user_id: str,
 ) -> None:
-    role = await asyncio.to_thread(org_service.get_my_role, org_id, user_id)
+    role = await run_blocking(org_service.get_my_role, org_id, user_id)
     if role != "owner":
         raise ForbiddenException("Organization owner role is required for billing")
 
@@ -195,8 +196,8 @@ async def usage(
         suffix="usage",
     )
     storage, raw_limit = await asyncio.gather(
-        asyncio.to_thread(StorageUsageRepository().get, org_id),
-        asyncio.to_thread(EntitlementService().limit_value, org_id, "storage.max_bytes"),
+        run_blocking(StorageUsageRepository().get, org_id),
+        run_blocking(EntitlementService().limit_value, org_id, "storage.max_bytes"),
     )
     limit_bytes = int(raw_limit) if raw_limit is not None else None
     percent = _usage_percent(storage.value, limit_bytes)
@@ -220,7 +221,7 @@ async def operations(
 ) -> list[dict[str, Any]]:
     _require_ui()
     await _require_owner(org_service, org_id, current_user.user_id)
-    items = await asyncio.to_thread(BillingOperationRepository().list_for_org, org_id)
+    items = await run_blocking(BillingOperationRepository().list_for_org, org_id)
     return [item.public_view().model_dump(mode="json") for item in items]
 
 
@@ -233,7 +234,7 @@ async def operation(
 ) -> dict[str, Any]:
     _require_ui()
     await _require_owner(org_service, org_id, current_user.user_id)
-    item = await asyncio.to_thread(BillingOperationRepository().get_by_id, org_id, operation_id)
+    item = await run_blocking(BillingOperationRepository().get_by_id, org_id, operation_id)
     if item is None:
         raise AppException(
             code=ErrorCode.NOT_FOUND,
@@ -388,7 +389,7 @@ async def _prepare_commercial_operation(
         if application_mode == "plan_change"
         else {"seat_increase", "seat_decrease"}
     )
-    existing = await asyncio.to_thread(repository.get_by_key, org_id, idempotency_key)
+    existing = await run_blocking(repository.get_by_key, org_id, idempotency_key)
     if existing is not None:
         return _validate_prepared_operation(
             existing,
@@ -396,7 +397,7 @@ async def _prepare_commercial_operation(
             application_mode=application_mode,
             allowed_kinds=allowed_kinds,
         )
-    existing_quote_operation = await asyncio.to_thread(
+    existing_quote_operation = await run_blocking(
         repository.get_by_quote_id,
         org_id,
         quote_id,
@@ -472,7 +473,7 @@ async def _prepare_commercial_operation(
             details={"code": "billing_quote_contract_invalid"},
         )
 
-    operation = await asyncio.to_thread(
+    operation = await run_blocking(
         repository.create_commercial_operation,
         org_id=org_id,
         kind=operation_kind,
@@ -522,7 +523,7 @@ async def _prepare_linked_membership_operation(
             message="Checkout request does not match the linked membership operation",
             details={"code": "billing_operation_intent_mismatch"},
         )
-    existing_quote_operation = await asyncio.to_thread(
+    existing_quote_operation = await run_blocking(
         repository.get_by_quote_id,
         org_id,
         quote_id,
@@ -586,7 +587,7 @@ async def _prepare_linked_membership_operation(
             message="Seat quote does not match the pending membership operation",
             details={"code": "billing_operation_seat_mismatch"},
         )
-    updated = await asyncio.to_thread(
+    updated = await run_blocking(
         repository.update_nonterminal,
         operation.id,
         {
@@ -637,7 +638,7 @@ async def _call_commercial_mutation(
     except AppException as exc:
         details = exc.details if isinstance(exc.details, dict) else {}
         if details.get("retryable") is False:
-            await asyncio.to_thread(
+            await run_blocking(
                 repository.update_nonterminal,
                 operation.id,
                 {
@@ -670,7 +671,7 @@ async def _submit_commercial_operation(
             details={"code": "billing_operation_provider_mismatch"},
         )
     if operation.status not in {"confirmed", "failed", "canceled"}:
-        updated = await asyncio.to_thread(
+        updated = await run_blocking(
             repository.update_nonterminal,
             operation.id,
             {
@@ -681,7 +682,7 @@ async def _submit_commercial_operation(
         )
         if updated is not None:
             operation = updated
-    return await asyncio.to_thread(
+    return await run_blocking(
         repository.reconcile_from_entitlement,
         org_id=org_id,
         operation_id=operation.id,
@@ -791,7 +792,7 @@ async def seat_quote(
     operation = None
     if payload.operation_id:
         repository = BillingOperationRepository()
-        operation = await asyncio.to_thread(
+        operation = await run_blocking(
             _seat_operation,
             repository=repository,
             org_id=org_id,
@@ -816,7 +817,7 @@ async def seat_quote(
                 message="Billing provider returned an inconsistent seat quote",
                 details={"code": "billing_quote_contract_invalid"},
             )
-        updated = await asyncio.to_thread(
+        updated = await run_blocking(
             repository.update_nonterminal,
             operation.id,
             {
@@ -896,7 +897,7 @@ async def checkout(
         )
     repository = BillingOperationRepository()
     if payload.operation_id:
-        item = await asyncio.to_thread(
+        item = await run_blocking(
             _seat_operation,
             repository=repository,
             org_id=org_id,
@@ -1039,7 +1040,7 @@ async def seats_change(
     repository = BillingOperationRepository()
     operation = None
     if payload.operation_id:
-        operation = await asyncio.to_thread(
+        operation = await run_blocking(
             _seat_operation,
             repository=repository,
             org_id=org_id,

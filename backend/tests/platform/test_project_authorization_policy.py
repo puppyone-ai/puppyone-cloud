@@ -16,6 +16,7 @@ from src.platform.authorization.models import (
 )
 from src.platform.authorization.repository import ProjectAuthorizationFacts
 from src.platform.authorization.service import AuthorizationService
+from tests.platform.organization.permission_matrix import ACTION_MINIMUM_ROLE, expected_allowed
 
 
 class FactsRepository:
@@ -49,6 +50,43 @@ def _facts(
         org_role=org_role,
         project_role=project_role,
         project_member_org_id=project_member_org_id,
+    )
+
+
+def test_acceptance_matrix_covers_every_named_action():
+    assert set(ACTION_MINIMUM_ROLE) == {action.value for action in ProjectAction}
+
+
+@pytest.mark.parametrize("action", list(ACTION_MINIMUM_ROLE))
+@pytest.mark.parametrize(
+    "org_role,project_role,visibility,expected_role",
+    [
+        ("owner", None, "private", "admin"),
+        ("member", "admin", "private", "admin"),
+        ("member", "editor", "private", "editor"),
+        ("member", "viewer", "private", "viewer"),
+        ("viewer", "editor", "private", "editor"),
+        ("member", None, "org", "viewer"),
+        ("viewer", None, "org", "viewer"),
+        ("member", None, "private", None),
+        (None, "admin", "org", None),
+    ],
+)
+def test_all_workspace_operations_by_role(
+    action, org_role, project_role, visibility, expected_role
+):
+    service = AuthorizationService(
+        FactsRepository(
+            _facts(
+                org_role=org_role,
+                project_role=project_role,
+                visibility=visibility,
+                project_member_org_id="org-1" if project_role else None,
+            )
+        )
+    )
+    assert service.allows("project-1", "user-1", ProjectAction(action)) == expected_allowed(
+        expected_role, action
     )
 
 
@@ -118,7 +156,7 @@ def test_repository_failure_fails_closed_as_retryable_unavailability():
     with pytest.raises(ServiceUnavailableException) as resolved:
         service.resolve_project_grant("project-1", "user-1")
     assert resolved.value.status_code == 503
-    assert resolved.value.details == {"retryable": True}
+    assert resolved.value.details == {"retryable": True, "code": "project_authorization_unavailable"}
     assert resolved.value.headers == {"Retry-After": "1"}
 
     with pytest.raises(ServiceUnavailableException) as authorized:

@@ -41,9 +41,10 @@ class _FailingBatchBackend(_MemoryBackend):
         super().__init__(project_id)
         self.fail_batch = True
 
-    async def async_put_many(
+    def put_objects(
         self,
         objects: dict[str, bytes],
+        *,
         concurrency: int = 20,
         skip_exists: bool = False,
     ) -> None:

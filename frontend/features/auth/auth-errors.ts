@@ -2,6 +2,8 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   auth_callback_failed: 'Sign-in failed. Please try again.',
   auth_cancelled: 'Sign-in was cancelled. You can try again.',
   auth_request_expired: 'Sign-in request expired. Start sign-in again from Desktop.',
+  website_auth_request_expired:
+    'Sign-in request expired. Start sign-in again from the PuppyOne website.',
 };
 
 export function backendAuthError(payload: unknown, fallback: string): Error {
@@ -16,7 +18,7 @@ export function backendAuthError(payload: unknown, fallback: string): Error {
   return new Error(message);
 }
 
-export function authEvent(stage: string, intent: 'web' | 'desktop', provider?: string) {
+export function authEvent(stage: string, intent: 'web' | 'desktop' | 'website', provider?: string) {
   // Only bounded, credential-free metadata. Never pass SDK sessions or URLs.
   if (typeof window !== 'undefined')
     window.dispatchEvent(

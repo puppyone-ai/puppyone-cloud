@@ -1,28 +1,6 @@
-"""Self-heal for stale bytes in the deferred-read namespace.
+"""Canonical reads reject retired storage without deleting source bytes.
 
-The legacy pre-Git-native finalize path (server-side ``copy_object``
-from the upload staging key) wrote **raw** user/tree payloads under
-keys that the current Git-native object store reads as loose Git
-objects. When the store falls back to the deferred namespace and
-zlib-decompresses those bytes, ``_verify_loose_hash`` raises
-``StorageWriteError("invalid git loose object …")`` and the user-
-facing bulk push surface dies with:
-
-    Bulk push failed: invalid git loose object for {hash}:
-    Error -3 while decompressing data: incorrect header check
-
-The behavior contract being asserted here:
-
-  1. Reading a hash whose ONLY presence is stale deferred-namespace
-     bytes must NOT raise ``StorageWriteError`` (or any other zlib-
-     surfaced error). The engine treats it as 404 so callers can
-     fall through to a clean "missing blob" error path.
-  2. The bytes themselves are NOT deleted — pre-Git-protocol JSON
-     tree records legitimately live in the deferred namespace and
-     a future migration tool may need them. Read-path side effects
-     must not destroy user data. Ops can hand-delete only after
-     confirming the bytes aren't recoverable.
-  3. Both the sync ``get()`` and ``async_get()`` paths self-heal.
+Historical objects are read only by the operator migration artifacts.
 """
 
 from __future__ import annotations
@@ -34,7 +12,6 @@ import pytest
 from src.version_engine.domain.errors import ObjectNotFoundError
 from src.version_engine.storage.backends.s3 import (
     S3StorageBackend,
-    _DEFERRED_STORAGE_NAMESPACE,
 )
 
 
@@ -51,7 +28,7 @@ class _StubS3:
         self.delete_calls: list[str] = []
         self.bucket_name = "test-bucket"
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         self.download_calls.append(key)
         if key not in self.bytes_by_key:
             # Match the production not-found detection (see
@@ -60,20 +37,21 @@ class _StubS3:
             # so the engine treats it as a 404 fall-through rather
             # than a fatal error.
             from src.infra.s3.exceptions import S3FileNotFoundError
+
             raise S3FileNotFoundError(key)
         return self.bytes_by_key[key]
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         return key in self.bytes_by_key
 
-    async def delete_file(self, key: str) -> None:
+    def delete_file(self, key: str) -> None:
         self.delete_calls.append(key)
         self.bytes_by_key.pop(key, None)
 
-    async def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
+    def upload_file(self, key: str, data: bytes, content_type: str = "") -> None:
         self.bytes_by_key[key] = data
 
-    async def list_files(
+    def list_files(
         self,
         prefix: str = "",
         max_keys: int = 1000,
@@ -83,11 +61,8 @@ class _StubS3:
         ``(items, common_prefixes, next_token, is_truncated)`` matching
         ``S3Service.list_files``; each item exposes ``.key``."""
         from types import SimpleNamespace
-        items = [
-            SimpleNamespace(key=k)
-            for k in sorted(self.bytes_by_key)
-            if k.startswith(prefix)
-        ]
+
+        items = [SimpleNamespace(key=k) for k in sorted(self.bytes_by_key) if k.startswith(prefix)]
         return items, [], None, False
 
 
@@ -121,7 +96,6 @@ def backend(stub_s3: _StubS3, project_id: str) -> S3StorageBackend:
         stub_s3,
         project_id=project_id,
         supabase=_supabase_wrapper(),
-        allow_deferred_namespace_reads=True,
     )
 
 
@@ -131,10 +105,7 @@ def backend(stub_s3: _StubS3, project_id: str) -> S3StorageBackend:
 def _stale_deferred_key(project_id: str, hash_hex: str) -> str:
     """The same key shape the production code uses for deferred-namespace
     reads: ``{namespace}/{project_id}/objects/{shard}/{rest}``."""
-    return (
-        f"{_DEFERRED_STORAGE_NAMESPACE}/{project_id}/objects/"
-        f"{hash_hex[:2]}/{hash_hex[2:]}"
-    )
+    return f"{'mut'}/{project_id}/objects/{hash_hex[:2]}/{hash_hex[2:]}"
 
 
 def _primary_loose_key(backend: S3StorageBackend, hash_hex: str) -> str:
@@ -149,7 +120,10 @@ class TestDeferredLooseSelfHeal:
     """Sync path."""
 
     def test_stale_deferred_bytes_do_not_propagate_zlib_error(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         """``get(h)`` for a hash whose ONLY presence is stale raw bytes
         in the deferred namespace must NOT raise ``StorageWriteError``
@@ -170,7 +144,10 @@ class TestDeferredLooseSelfHeal:
             backend.get(h)
 
     def test_stale_deferred_bytes_are_preserved_not_deleted(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         """Stale bytes MUST be preserved across reads. The earlier
         iteration of this code deleted them on the assumption they
@@ -198,7 +175,10 @@ class TestDeferredLooseSelfHeal:
         )
 
     def test_valid_loose_in_primary_namespace_is_preferred(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         """Even if a stale entry exists in the deferred namespace, a
         valid loose object in the PRIMARY namespace must be returned
@@ -217,12 +197,14 @@ class TestDeferredLooseSelfHeal:
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = loose_bytes
 
         # Primary read wins; the stale key is never fetched.
-        out = backend.get(h)
-        assert out == loose_bytes
+        assert backend.get(h) == loose_bytes
         assert _stale_deferred_key(project_id, h) not in stub_s3.download_calls
 
-    def test_valid_bytes_in_deferred_still_returned(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+    def test_valid_retired_bytes_are_not_runtime_readable(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         """The fallback path is still functional for the LEGITIMATE
         case it was designed for — valid loose bytes in the deferred
@@ -239,8 +221,8 @@ class TestDeferredLooseSelfHeal:
         # Only in deferred — no primary copy.
         stub_s3.bytes_by_key[_stale_deferred_key(project_id, h)] = loose_bytes
 
-        out = backend.get(h)
-        assert out == loose_bytes
+        with pytest.raises(ObjectNotFoundError):
+            backend.get(h)
         # And no delete — these bytes are valid.
         assert stub_s3.delete_calls == []
 
@@ -248,19 +230,23 @@ class TestDeferredLooseSelfHeal:
 class TestDeferredLooseSelfHealAsync:
     """Async path mirror — same contract, same regressions."""
 
-    @pytest.mark.asyncio
-    async def test_async_stale_deferred_bytes_do_not_propagate_zlib_error(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+    def test_async_stale_deferred_bytes_do_not_propagate_zlib_error(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         h = "520885e2ece1037b" + "1" * 24
         stub_s3.bytes_by_key[_stale_deferred_key(project_id, h)] = b'{"not": "loose"}'
 
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
 
-    @pytest.mark.asyncio
-    async def test_async_stale_deferred_bytes_preserved(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+    def test_async_stale_deferred_bytes_preserved(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         """Async mirror — read-path must not delete the bytes."""
         h = "5" + "b" * 39
@@ -268,7 +254,7 @@ class TestDeferredLooseSelfHealAsync:
         stub_s3.bytes_by_key[stale_key] = b"not zlib"
 
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
         assert stub_s3.delete_calls == [], (
             f"async read path must not delete; saw deletes={stub_s3.delete_calls}"
         )
@@ -298,7 +284,10 @@ class TestPrimaryNamespaceVerify:
     corrupt ones instead of handing zlib garbage to the caller."""
 
     def test_stale_primary_bytes_fall_through_to_404(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         h = "520885e2ece1037b" + "0" * 24
         # Garbage (not a valid zlib loose object) on the PRIMARY key.
@@ -308,31 +297,40 @@ class TestPrimaryNamespaceVerify:
         with pytest.raises(ObjectNotFoundError):
             backend.get(h)
 
-    def test_stale_primary_falls_through_to_valid_deferred(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+    def test_corrupt_primary_does_not_fall_back_to_retired_storage(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         h, good = _valid_loose(b"the real content")
         # Corrupt bytes on primary, valid bytes in deferred → caller
         # gets the valid deferred copy.
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = b"corrupt"
         stub_s3.bytes_by_key[_stale_deferred_key(project_id, h)] = good
-        assert backend.get(h) == good
+        with pytest.raises(ObjectNotFoundError):
+            backend.get(h)
 
     def test_valid_primary_bytes_returned(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         h, good = _valid_loose(b"healthy object")
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = good
         assert backend.get(h) == good
 
-    @pytest.mark.asyncio
-    async def test_async_stale_primary_falls_through(
-        self, backend: S3StorageBackend, stub_s3: _StubS3, project_id: str,
+    def test_async_stale_primary_falls_through(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
+        project_id: str,
     ) -> None:
         h = "5" + "c" * 39
         stub_s3.bytes_by_key[_primary_loose_key(backend, h)] = b"not loose"
         with pytest.raises(ObjectNotFoundError):
-            await backend.async_get(h)
+            backend.get(h)
 
 
 class TestHashOnWrite:
@@ -340,28 +338,30 @@ class TestHashOnWrite:
     key instead of trusting the dedup skip — the write-side half of
     the 520885e2 fix that makes re-upload self-heal."""
 
-    @pytest.mark.asyncio
-    async def test_put_overwrites_corrupt_resident_bytes(
-        self, backend: S3StorageBackend, stub_s3: _StubS3,
+    def test_put_overwrites_corrupt_resident_bytes(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
     ) -> None:
         h, good = _valid_loose(b"correct bytes")
         key = _primary_loose_key(backend, h)
         # Stale bytes already squatting on the key from a prior failed push.
         stub_s3.bytes_by_key[key] = b"stale garbage"
-        await backend.async_put(h, good)
+        backend._put(h, good)
         # The corrupt bytes were overwritten with the correct object.
         assert stub_s3.bytes_by_key[key] == good
 
-    @pytest.mark.asyncio
-    async def test_put_skips_when_resident_bytes_already_valid(
-        self, backend: S3StorageBackend, stub_s3: _StubS3,
+    def test_put_skips_when_resident_bytes_already_valid(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
     ) -> None:
         h, good = _valid_loose(b"already here")
         key = _primary_loose_key(backend, h)
         stub_s3.bytes_by_key[key] = good
         # No upload should happen — dedup skip stands for valid bytes.
         before_uploads = list(stub_s3.bytes_by_key.items())
-        await backend.async_put(h, good)
+        backend._put(h, good)
         assert list(stub_s3.bytes_by_key.items()) == before_uploads
 
 
@@ -372,9 +372,10 @@ class TestHashOnWrite:
 
 
 class TestPrimaryLooseIntegrityScan:
-    @pytest.mark.asyncio
-    async def test_scan_reports_corrupt_without_healing_by_default(
-        self, backend: S3StorageBackend, stub_s3: _StubS3,
+    def test_scan_reports_corrupt_without_healing_by_default(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
     ) -> None:
         good_h, good = _valid_loose(b"healthy")
         bad_h = "5" + "d" * 39
@@ -382,36 +383,38 @@ class TestPrimaryLooseIntegrityScan:
         bad_key = _primary_loose_key(backend, bad_h)
         stub_s3.bytes_by_key[bad_key] = b"corrupt squatter"
 
-        result = await backend.async_scan_primary_loose_integrity(heal=False)
+        result = backend.scan_primary_loose_integrity(heal=False)
         assert result["checked"] == 2
         assert result["corrupt"] == [bad_h]
         assert result["healed"] == 0
         assert bad_key in stub_s3.bytes_by_key
         assert stub_s3.delete_calls == []
 
-    @pytest.mark.asyncio
-    async def test_scan_heals_when_enabled(
-        self, backend: S3StorageBackend, stub_s3: _StubS3,
+    def test_scan_heals_when_enabled(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
     ) -> None:
         bad_h = "5" + "e" * 39
         bad_key = _primary_loose_key(backend, bad_h)
         stub_s3.bytes_by_key[bad_key] = b"corrupt"
 
-        result = await backend.async_scan_primary_loose_integrity(heal=True)
+        result = backend.scan_primary_loose_integrity(heal=True)
         assert result["corrupt"] == [bad_h]
         assert result["healed"] == 1
         assert bad_key not in stub_s3.bytes_by_key
         assert bad_key in stub_s3.delete_calls
 
-    @pytest.mark.asyncio
-    async def test_scan_clean_project_reports_no_corruption(
-        self, backend: S3StorageBackend, stub_s3: _StubS3,
+    def test_scan_clean_project_reports_no_corruption(
+        self,
+        backend: S3StorageBackend,
+        stub_s3: _StubS3,
     ) -> None:
         h1, b1 = _valid_loose(b"one")
         h2, b2 = _valid_loose(b"two")
         stub_s3.bytes_by_key[_primary_loose_key(backend, h1)] = b1
         stub_s3.bytes_by_key[_primary_loose_key(backend, h2)] = b2
-        result = await backend.async_scan_primary_loose_integrity()
+        result = backend.scan_primary_loose_integrity()
         assert result["checked"] == 2
         assert result["corrupt"] == []
         assert result["healed"] == 0
@@ -425,29 +428,32 @@ class TestPrimaryLooseIntegrityScan:
 # ``supported=False`` (worker) / 500'd (endpoint).
 # ---------------------------------------------------------------------------
 
+
 class _ScanCapableBackend:
     def __init__(self):
         self.called_with = None
 
-    async def async_scan_primary_loose_integrity(self, heal: bool = False):
+    def scan_primary_loose_integrity(self, heal: bool = False):
         self.called_with = heal
         return {"checked": 3, "corrupt": [], "healed": 0, "truncated": False, "supported": True}
 
 
 class _CacheWrapper:
     """Mimics CachedStorageBackend: holds ``_inner`` but lacks the scan method."""
+
     def __init__(self, inner):
         self._inner = inner
 
 
 def test_worker_unwraps_inner_chain_to_find_scan():
     from types import SimpleNamespace
+
     from src.version_engine.derived.object_integrity_worker import _scan_one_project
 
     inner = _ScanCapableBackend()
     store = SimpleNamespace(_backend=_CacheWrapper(inner))
     repo = SimpleNamespace(store=store)
-    repos = SimpleNamespace(get_server_repo=lambda pid: repo)
+    repos = SimpleNamespace(get_gc_repo=lambda pid: repo)
 
     result = _scan_one_project(repos, "proj-1", heal=True)
 
@@ -458,12 +464,13 @@ def test_worker_unwraps_inner_chain_to_find_scan():
 
 def test_worker_reports_unsupported_when_no_scan_anywhere():
     from types import SimpleNamespace
+
     from src.version_engine.derived.object_integrity_worker import _scan_one_project
 
     # A backend chain that never exposes the scan method (e.g. filesystem dev).
     store = SimpleNamespace(_backend=SimpleNamespace())
     repo = SimpleNamespace(store=store)
-    repos = SimpleNamespace(get_server_repo=lambda pid: repo)
+    repos = SimpleNamespace(get_gc_repo=lambda pid: repo)
 
     result = _scan_one_project(repos, "proj-1", heal=False)
     assert result.supported is False

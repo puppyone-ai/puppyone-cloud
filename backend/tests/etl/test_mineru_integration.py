@@ -74,15 +74,15 @@ from pathlib import Path
 import pytest
 from moto import mock_aws
 
-from src.ingest.file.mineru.client import MineRUClient
-from src.ingest.file.mineru.config import mineru_config
-from src.ingest.file.mineru.exceptions import (
+from src.infra.file_processing.mineru.client import MineRUClient
+from src.infra.file_processing.mineru.config import mineru_config
+from src.infra.file_processing.mineru.exceptions import (
     MineRUAPIError,
     MineRUAPIKeyError,
     MineRUTaskFailedError,
     MineRUTimeoutError,
 )
-from src.ingest.file.mineru.schemas import MineRUModelVersion, MineRUTaskState
+from src.infra.file_processing.mineru.schemas import MineRUModelVersion, MineRUTaskState
 from src.infra.s3.service import S3Service
 
 # 测试文件路径
@@ -126,7 +126,7 @@ async def s3_service():
         # 尝试访问 bucket 以验证配置是否正确
         try:
             # 检查 bucket 是否可访问（通过列出文件）
-            await service.list_files(max_keys=1)
+            service.list_files(max_keys=1)
             print(f"  ✓ Bucket '{service.bucket_name}' 可访问")
         except Exception as e:
             print(f"  ✗ 警告: 无法访问 bucket '{service.bucket_name}': {e}")
@@ -163,7 +163,7 @@ def test_mineru_client_initialization():
 def test_mineru_client_initialization_without_api_key():
     """测试没有 API Key 时的初始化失败"""
     # 临时修改 config 来模拟没有 API key 的情况
-    from src.ingest.file.mineru.config import mineru_config
+    from src.infra.file_processing.mineru.config import mineru_config
     
     original_key = mineru_config.mineru_api_key
     mineru_config.mineru_api_key = None
@@ -237,7 +237,7 @@ async def test_parse_document_complete_flow(mineru_client, s3_service):
 
     # 步骤 2: 上传到 S3
     s3_key = "test/mineru/test_pdf.pdf"
-    upload_result = await s3_service.upload_file(
+    upload_result = s3_service.upload_file(
         key=s3_key,
         content=pdf_content,
         content_type="application/pdf",
@@ -247,7 +247,7 @@ async def test_parse_document_complete_flow(mineru_client, s3_service):
     print(f"已上传到 S3: {s3_key}")
 
     # 步骤 3: 生成预签名 URL
-    presigned_url = await s3_service.generate_presigned_download_url(
+    presigned_url = s3_service.generate_presigned_download_url(
         key=s3_key,
     )
 
@@ -322,14 +322,14 @@ async def test_create_task_and_poll(mineru_client, s3_service):
 
     # 上传到 S3
     s3_key = "test/mineru/test_poll.pdf"
-    await s3_service.upload_file(
+    s3_service.upload_file(
         key=s3_key,
         content=pdf_content,
         content_type="application/pdf",
     )
 
     # 生成预签名 URL
-    presigned_url = await s3_service.generate_presigned_download_url(
+    presigned_url = s3_service.generate_presigned_download_url(
         key=s3_key,
         expires_in=3600,
     )
@@ -510,14 +510,14 @@ async def test_parse_document_different_models(mineru_client, s3_service):
 
         # 上传到 S3
         s3_key = f"test/mineru/{model_version}_test.pdf"
-        await s3_service.upload_file(
+        s3_service.upload_file(
             key=s3_key,
             content=pdf_content,
             content_type="application/pdf",
         )
 
         # 生成预签名 URL
-        presigned_url = await s3_service.generate_presigned_download_url(
+        presigned_url = s3_service.generate_presigned_download_url(
             key=s3_key,
             expires_in=3600,
         )

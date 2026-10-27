@@ -1,14 +1,22 @@
-"""S3 storage service core business logic"""
+"""S3 storage service: the synchronous boto3 implementation.
 
-import asyncio
+Every method blocks. Async callers use ``await run_blocking(s3.method, ...)``
+(``iterate_blocking`` for ``download_file_stream``); storage code in worker
+threads calls the methods directly. Project-owned writes hold a physical
+``ProjectWriteLease`` for the lifetime of the boto3 call.
+"""
+
+import copy
 import logging
 import re
-from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable, TypeVar
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import boto3
 from botocore.exceptions import ClientError
 
+from src.config import settings
 from src.infra.s3.config import s3_settings
 from src.infra.s3.exceptions import (
     S3Error,
@@ -29,11 +37,9 @@ from src.infra.s3.schemas import (
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
 _SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}"
 _PROJECT_KEY_PATTERNS = (
-    re.compile(rf"^(?:version|mut|projects|shadow-snapshots)/(?P<project>{_SEGMENT})/"),
+    re.compile(rf"^(?:version|projects|shadow-snapshots)/(?P<project>{_SEGMENT})/"),
     re.compile(
         rf"^users/{_SEGMENT}/(?:etl_artifacts|processed|raw)/"
         rf"(?P<project>{_SEGMENT})/"
@@ -78,6 +84,10 @@ class S3Service:
             retries={"max_attempts": 5, "mode": "adaptive"},
             connect_timeout=60,
             read_timeout=300,
+            # Every thread that may call S3 at once gets a pooled connection:
+            # request threads plus the Version Engine storage I/O pool.
+            max_pool_connections=settings.BLOCKING_THREAD_LIMIT
+            + settings.VERSION_STORAGE_IO_THREADS,
             # Disable SSL verification (if using self-signed certificates or dev environment)
             # Note: Production should use valid SSL certificates
             # verify=False
@@ -94,33 +104,71 @@ class S3Service:
             client_kwargs["endpoint_url"] = self.endpoint_url
 
         self.client = boto3.client(**client_kwargs)
+        self._single_attempt_clients = []
+        self._single_attempt_lock = threading.Lock()
+        self._single_attempt_io = False
 
-    async def _run_sync(self, func: Callable[..., T], *args, **kwargs) -> T:
+    def for_single_attempt_io(self) -> "S3Service":
+        """Isolated mutation client; never change the shared retry configuration.
+
+        Callers fencing uncertain I/O cannot infer quiescence from an SDK retry's
+        eventual success. Single PUTs also avoid hidden multipart worker/retry
+        lifetimes. Read/connect budgets, endpoint and proxy isolation are retained.
         """
-        Wrap a synchronous function for async execution.
+        from botocore.config import Config
 
-        Args:
-            func: Synchronous function
-            *args: Positional arguments
-            **kwargs: Keyword arguments
+        source = self.client
+        with self._single_attempt_lock:
+            client = next(
+                (target for origin, target in self._single_attempt_clients if origin is source),
+                None,
+            )
+            if client is None:
+                credentials = source._request_signer._credentials
+                frozen = credentials.get_frozen_credentials()
+                client = boto3.client(
+                    "s3",
+                    endpoint_url=source.meta.endpoint_url,
+                    region_name=source.meta.region_name,
+                    aws_access_key_id=frozen.access_key,
+                    aws_secret_access_key=frozen.secret_key,
+                    aws_session_token=frozen.token,
+                    config=source.meta.config.merge(
+                        Config(
+                            retries={"total_max_attempts": 1, "mode": "standard"},
+                        )
+                    ),
+                )
+                # Preserve the source's refreshable/session credentials without
+                # re-resolving ambient environment or another endpoint's identity.
+                client._request_signer._credentials = credentials
+                # Bind to the source client, not merely the service instance.
+                # A replaced endpoint must not keep using the previous client;
+                # older in-flight clients remain alive until service shutdown.
+                self._single_attempt_clients.append((source, client))
+        view = copy.copy(self)
+        view.client = client
+        view._single_attempt_io = True
+        view.max_file_size = min(self.max_file_size, 5 * 1024**3)
+        view.multipart_threshold = view.max_file_size
+        return view
 
-        Returns:
-            Function execution result
-        """
-        task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # boto3 work in a thread cannot be cancelled. Keep the surrounding
-            # Project lease alive until the physical I/O actually stops, then
-            # propagate cancellation to the request/worker.
-            try:
-                await task
-            finally:
-                raise
+    def close(self) -> None:
+        self.client.close()
+        for _source, client in self._single_attempt_clients:
+            client.close()
 
-    @asynccontextmanager
-    async def _project_write_guard(self, key: str, operation: str):
+    def _check_mutation_attempts(self, response: dict) -> None:
+        if not getattr(self, "_single_attempt_io", False):
+            return
+        attempts = response.get("ResponseMetadata", {}).get("RetryAttempts")
+        # Other SDK handlers (such as region redirects) can request a retry.
+        # Missing evidence or any retry retains the caller's uncertainty fence.
+        if type(attempts) is not int or attempts != 0:
+            raise S3OperationError("single-attempt mutation has uncertain retry history")
+
+    @contextmanager
+    def _project_write_guard(self, key: str, operation: str):
         project_id = project_id_from_owned_s3_key(key)
         if project_id is None:
             yield
@@ -140,7 +188,7 @@ class S3Service:
         # outer lease.
         parent = active_project_write_lease(project_id)
         proof = parent.initialization_proof() if parent is not None else {}
-        async with ProjectWriteLease(
+        with ProjectWriteLease(
             project_id,
             f"s3.{operation}",
             ttl_seconds=PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
@@ -153,9 +201,7 @@ class S3Service:
         """Handle boto3 ClientError"""
         error_code = error.response.get("Error", {}).get("Code", "Unknown")
         error_message = error.response.get("Error", {}).get("Message", str(error))
-        http_status = error.response.get("ResponseMetadata", {}).get(
-            "HTTPStatusCode", 0
-        )
+        http_status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
 
         logger.error(
             f"S3 {operation} failed: {error_code} - {error_message} (HTTP {http_status})",
@@ -184,7 +230,7 @@ class S3Service:
 
     # ============= File Upload =============
 
-    async def upload_file(
+    def upload_file(
         self,
         key: str,
         content: bytes,
@@ -218,9 +264,7 @@ class S3Service:
                 f"File size ({file_size} bytes) exceeds threshold ({self.multipart_threshold} bytes), "
                 f"using multipart upload for {key}"
             )
-            return await self._upload_file_multipart(
-                key, content, content_type, metadata
-            )
+            return self._upload_file_multipart(key, content, content_type, metadata)
 
         # Small files use single upload
         try:
@@ -230,15 +274,15 @@ class S3Service:
             if metadata:
                 extra_args["Metadata"] = metadata
 
-            async with self._project_write_guard(key, "put_object"):
-                response = await self._run_sync(
-                    self.client.put_object,
+            with self._project_write_guard(key, "put_object"):
+                response = self.client.put_object(
                     Bucket=self.bucket_name,
                     Key=key,
                     Body=content,
                     **extra_args,
                 )
 
+            self._check_mutation_attempts(response)
             logger.info(f"File uploaded successfully: {key} ({file_size} bytes)")
 
             return FileUploadResponse(
@@ -253,7 +297,7 @@ class S3Service:
             self._handle_client_error(e, "upload_file")
             raise  # Never reached, but required by type checker
 
-    async def _upload_file_multipart(
+    def _upload_file_multipart(
         self,
         key: str,
         content: bytes,
@@ -277,7 +321,7 @@ class S3Service:
 
         try:
             # 1. Create multipart upload
-            upload_id = await self.create_multipart_upload(key, content_type, metadata)
+            upload_id = self.create_multipart_upload(key, content_type, metadata)
 
             # 2. Upload parts
             parts = []
@@ -290,7 +334,7 @@ class S3Service:
                 chunk_data = content[offset : offset + chunk_size]
 
                 # Upload part
-                etag = await self.upload_part(key, upload_id, part_number, chunk_data)
+                etag = self.upload_part(key, upload_id, part_number, chunk_data)
                 parts.append((part_number, etag))
 
                 logger.info(
@@ -302,7 +346,7 @@ class S3Service:
                 part_number += 1
 
             # 3. Complete multipart upload
-            result = await self.complete_multipart_upload(key, upload_id, parts)
+            result = self.complete_multipart_upload(key, upload_id, parts)
 
             logger.info(f"Multipart upload completed for {key} ({file_size} bytes)")
 
@@ -318,17 +362,15 @@ class S3Service:
             # If upload failed, abort multipart upload
             if upload_id:
                 try:
-                    await self.abort_multipart_upload(key, upload_id)
+                    self.abort_multipart_upload(key, upload_id)
                     logger.info(f"Aborted multipart upload for {key}: {upload_id}")
                 except Exception as abort_error:
-                    logger.error(
-                        f"Failed to abort multipart upload for {key}: {abort_error}"
-                    )
+                    logger.error(f"Failed to abort multipart upload for {key}: {abort_error}")
 
             # Re-raise original error
             raise S3OperationError(f"Multipart upload failed for {key}: {e}")
 
-    async def upload_files_batch(
+    def upload_files_batch(
         self, files: list[tuple[str, bytes, str | None]]
     ) -> list[tuple[str, bool, str | None, FileUploadResponse | None]]:
         """
@@ -344,7 +386,7 @@ class S3Service:
 
         for key, content, content_type in files:
             try:
-                response = await self.upload_file(key, content, content_type)
+                response = self.upload_file(key, content, content_type)
                 results.append((key, True, None, response))
             except S3Error as e:
                 results.append((key, False, str(e), None))
@@ -356,7 +398,7 @@ class S3Service:
 
     # ============= File Download =============
 
-    async def download_file(self, key: str) -> bytes:
+    def download_file(self, key: str) -> bytes:
         """
         Download file and return full content.
 
@@ -371,12 +413,12 @@ class S3Service:
             S3OperationError: Download failed
         """
         try:
-            response = await self._run_sync(
-                self.client.get_object, Bucket=self.bucket_name, Key=key
+            response = self.client.get_object(
+                Bucket=self.bucket_name, Key=key
             )
 
             # Read full content
-            content = await self._run_sync(response["Body"].read)
+            content = response["Body"].read()
 
             logger.info(f"File downloaded successfully: {key} ({len(content)} bytes)")
             return content
@@ -385,7 +427,7 @@ class S3Service:
             self._handle_client_error(e, "download_file")
             raise
 
-    async def download_file_range(
+    def download_file_range(
         self, key: str, start: int = 0, limit: int | None = None
     ) -> tuple[bytes, int]:
         """
@@ -398,7 +440,7 @@ class S3Service:
             start = 0
 
         try:
-            metadata = await self.get_file_metadata(key)
+            metadata = self.get_file_metadata(key)
             total = metadata.size
             if start >= total or limit == 0:
                 return b"", total
@@ -411,8 +453,8 @@ class S3Service:
                 end = total - 1 if limit is None else min(total - 1, start + limit - 1)
                 kwargs["Range"] = f"bytes={start}-{end}"
 
-            response = await self._run_sync(self.client.get_object, **kwargs)
-            content = await self._run_sync(response["Body"].read)
+            response = self.client.get_object(**kwargs)
+            content = response["Body"].read()
 
             logger.info(
                 "File range downloaded successfully: %s (%s/%s bytes)",
@@ -426,9 +468,7 @@ class S3Service:
             self._handle_client_error(e, "download_file")
             raise
 
-    async def download_file_stream(
-        self, key: str, chunk_size: int = 8192
-    ) -> AsyncIterator[bytes]:
+    def download_file_stream(self, key: str, chunk_size: int = 8192) -> Iterator[bytes]:
         """
         Stream download a file.
 
@@ -450,13 +490,13 @@ class S3Service:
 
         try:
             # Get response in thread pool
-            response = await self._run_sync(_get_response)
+            response = _get_response()
             stream = response["Body"]
 
             try:
                 # Read data chunk by chunk
                 while True:
-                    chunk = await self._run_sync(stream.read, chunk_size)
+                    chunk = stream.read(chunk_size)
                     if not chunk:
                         break
                     yield chunk
@@ -471,7 +511,7 @@ class S3Service:
 
     # ============= File Existence Check =============
 
-    async def file_exists(self, key: str) -> bool:
+    def file_exists(self, key: str) -> bool:
         """
         Check if a file exists.
 
@@ -482,9 +522,7 @@ class S3Service:
             bool: Whether the file exists
         """
         try:
-            await self._run_sync(
-                self.client.head_object, Bucket=self.bucket_name, Key=key
-            )
+            self.client.head_object(Bucket=self.bucket_name, Key=key)
             return True
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
@@ -495,7 +533,7 @@ class S3Service:
 
     # ============= File Deletion =============
 
-    async def delete_file(self, key: str) -> None:
+    def delete_file(self, key: str) -> None:
         """
         Delete a single file.
 
@@ -506,21 +544,23 @@ class S3Service:
             S3FileNotFoundError: File not found
             S3OperationError: Delete failed
         """
-        # First check if file exists
-        if not await self.file_exists(key):
+        # Strict DELETE is idempotent and must not turn an ambiguous HEAD error
+        # into absence. The ordinary compatibility profile keeps its old contract.
+        if not getattr(self, "_single_attempt_io", False) and not self.file_exists(key):
             raise S3FileNotFoundError(key)
 
         try:
-            await self._run_sync(
-                self.client.delete_object, Bucket=self.bucket_name, Key=key
+            response = self.client.delete_object(
+                Bucket=self.bucket_name, Key=key
             )
+            self._check_mutation_attempts(response)
             logger.info(f"File deleted successfully: {key}")
 
         except ClientError as e:
             self._handle_client_error(e, "delete_file")
             raise
 
-    async def delete_files_batch(self, keys: list[str]) -> list[BatchDeleteResult]:
+    def delete_files_batch(self, keys: list[str]) -> list[BatchDeleteResult]:
         """
         Batch delete files.
 
@@ -534,29 +574,23 @@ class S3Service:
 
         for key in keys:
             try:
-                await self.delete_file(key)
+                self.delete_file(key)
                 results.append(BatchDeleteResult(key=key, success=True, message=None))
             except S3FileNotFoundError:
-                results.append(
-                    BatchDeleteResult(key=key, success=False, message="File not found")
-                )
+                results.append(BatchDeleteResult(key=key, success=False, message="File not found"))
             except S3Error as e:
-                results.append(
-                    BatchDeleteResult(key=key, success=False, message=str(e))
-                )
+                results.append(BatchDeleteResult(key=key, success=False, message=str(e)))
             except Exception as e:
                 logger.error(f"Unexpected error deleting {key}: {e}")
                 results.append(
-                    BatchDeleteResult(
-                        key=key, success=False, message=f"Unexpected error: {e}"
-                    )
+                    BatchDeleteResult(key=key, success=False, message=f"Unexpected error: {e}")
                 )
 
         return results
 
     # ============= File Listing =============
 
-    async def list_files(
+    def list_files(
         self,
         prefix: str = "",
         delimiter: str | None = None,
@@ -587,7 +621,7 @@ class S3Service:
             if continuation_token:
                 kwargs["ContinuationToken"] = continuation_token
 
-            response = await self._run_sync(self.client.list_objects_v2, **kwargs)
+            response = self.client.list_objects_v2(**kwargs)
 
             # Parse file list
             files = []
@@ -602,9 +636,7 @@ class S3Service:
                 )
 
             # Parse common prefixes (folders)
-            common_prefixes = [
-                cp["Prefix"] for cp in response.get("CommonPrefixes", [])
-            ]
+            common_prefixes = [cp["Prefix"] for cp in response.get("CommonPrefixes", [])]
 
             # Pagination info
             next_token = response.get("NextContinuationToken")
@@ -618,7 +650,7 @@ class S3Service:
 
     # ============= File Metadata =============
 
-    async def get_file_metadata(self, key: str) -> FileMetadata:
+    def get_file_metadata(self, key: str) -> FileMetadata:
         """
         Get file metadata.
 
@@ -633,8 +665,8 @@ class S3Service:
             S3OperationError: Retrieval failed
         """
         try:
-            response = await self._run_sync(
-                self.client.head_object, Bucket=self.bucket_name, Key=key
+            response = self.client.head_object(
+                Bucket=self.bucket_name, Key=key
             )
 
             return FileMetadata(
@@ -653,7 +685,7 @@ class S3Service:
 
     # ============= Presigned URLs =============
 
-    async def generate_presigned_upload_url(
+    def generate_presigned_upload_url(
         self, key: str, expires_in: int = 3600, content_type: str | None = None
     ) -> str:
         """
@@ -678,8 +710,7 @@ class S3Service:
             if content_type:
                 params["ContentType"] = content_type
 
-            url = await self._run_sync(
-                self.client.generate_presigned_url,
+            url = self.client.generate_presigned_url(
                 ClientMethod="put_object",
                 Params=params,
                 ExpiresIn=expires_in,
@@ -692,7 +723,7 @@ class S3Service:
             self._handle_client_error(e, "generate_presigned_upload_url")
             raise
 
-    async def generate_presigned_download_url(
+    def generate_presigned_download_url(
         self,
         key: str,
         expires_in: int = 3600,
@@ -715,8 +746,7 @@ class S3Service:
             if response_content_disposition:
                 params["ResponseContentDisposition"] = response_content_disposition
 
-            url = await self._run_sync(
-                self.client.generate_presigned_url,
+            url = self.client.generate_presigned_url(
                 ClientMethod="get_object",
                 Params=params,
                 ExpiresIn=expires_in,
@@ -731,7 +761,7 @@ class S3Service:
 
     # ============= Multipart Upload =============
 
-    async def create_multipart_upload(
+    def create_multipart_upload(
         self,
         key: str,
         content_type: str | None = None,
@@ -759,10 +789,8 @@ class S3Service:
             if metadata:
                 kwargs["Metadata"] = metadata
 
-            async with self._project_write_guard(key, "create_multipart"):
-                response = await self._run_sync(
-                    self.client.create_multipart_upload, **kwargs
-                )
+            with self._project_write_guard(key, "create_multipart"):
+                response = self.client.create_multipart_upload(**kwargs)
             upload_id = response["UploadId"]
 
             logger.info(f"Created multipart upload for {key}: {upload_id}")
@@ -772,9 +800,7 @@ class S3Service:
             self._handle_client_error(e, "create_multipart_upload")
             raise
 
-    async def upload_part(
-        self, key: str, upload_id: str, part_number: int, data: bytes
-    ) -> str:
+    def upload_part(self, key: str, upload_id: str, part_number: int, data: bytes) -> str:
         """
         Upload a single part.
 
@@ -802,9 +828,8 @@ class S3Service:
             )
 
         try:
-            async with self._project_write_guard(key, "upload_part"):
-                response = await self._run_sync(
-                    self.client.upload_part,
+            with self._project_write_guard(key, "upload_part"):
+                response = self.client.upload_part(
                     Bucket=self.bucket_name,
                     Key=key,
                     UploadId=upload_id,
@@ -820,7 +845,7 @@ class S3Service:
             logger.error(f"Failed to upload part {part_number} for {key}: {e}")
             raise S3MultipartError(f"Failed to upload part {part_number}: {e}")
 
-    async def complete_multipart_upload(
+    def complete_multipart_upload(
         self, key: str, upload_id: str, parts: list[tuple[int, str]]
     ) -> MultipartCompleteResponse:
         """
@@ -839,14 +864,11 @@ class S3Service:
         """
         try:
             multipart_upload = {
-                "Parts": [
-                    {"PartNumber": part_num, "ETag": etag} for part_num, etag in parts
-                ]
+                "Parts": [{"PartNumber": part_num, "ETag": etag} for part_num, etag in parts]
             }
 
-            async with self._project_write_guard(key, "complete_multipart"):
-                response = await self._run_sync(
-                    self.client.complete_multipart_upload,
+            with self._project_write_guard(key, "complete_multipart"):
+                response = self.client.complete_multipart_upload(
                     Bucket=self.bucket_name,
                     Key=key,
                     UploadId=upload_id,
@@ -857,7 +879,7 @@ class S3Service:
 
             # Get file size
             try:
-                metadata = await self.get_file_metadata(key)
+                metadata = self.get_file_metadata(key)
                 file_size = metadata.size
             except Exception:
                 file_size = None
@@ -873,7 +895,7 @@ class S3Service:
             logger.error(f"Failed to complete multipart upload for {key}: {e}")
             raise S3MultipartError(f"Failed to complete multipart upload: {e}")
 
-    async def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+    def abort_multipart_upload(self, key: str, upload_id: str) -> None:
         """
         Abort a multipart upload.
 
@@ -885,8 +907,7 @@ class S3Service:
             S3MultipartError: Abort failed
         """
         try:
-            await self._run_sync(
-                self.client.abort_multipart_upload,
+            self.client.abort_multipart_upload(
                 Bucket=self.bucket_name,
                 Key=key,
                 UploadId=upload_id,
@@ -898,7 +919,7 @@ class S3Service:
             logger.error(f"Failed to abort multipart upload for {key}: {e}")
             raise S3MultipartError(f"Failed to abort multipart upload: {e}")
 
-    async def list_multipart_uploads(
+    def list_multipart_uploads(
         self, prefix: str = "", max_uploads: int = 1000
     ) -> tuple[list[MultipartUploadListItem], str | None]:
         """
@@ -912,8 +933,7 @@ class S3Service:
             tuple: (upload list, next page token)
         """
         try:
-            response = await self._run_sync(
-                self.client.list_multipart_uploads,
+            response = self.client.list_multipart_uploads(
                 Bucket=self.bucket_name,
                 Prefix=prefix,
                 MaxUploads=max_uploads,
@@ -938,7 +958,7 @@ class S3Service:
 
     # ============= Server-side copy & existence =============
 
-    async def copy_object(
+    def copy_object(
         self,
         src_key: str,
         dst_key: str,
@@ -992,16 +1012,14 @@ class S3Service:
                 kwargs["Metadata"] = metadata
 
         try:
-            async with self._project_write_guard(dst_key, "copy_object"):
-                await self._run_sync(self.client.copy_object, **kwargs)
-            logger.info(
-                f"Copied object {src_key} -> {dst_key} (server-side, no egress)"
-            )
+            with self._project_write_guard(dst_key, "copy_object"):
+                self.client.copy_object(**kwargs)
+            logger.info(f"Copied object {src_key} -> {dst_key} (server-side, no egress)")
         except ClientError as e:
             self._handle_client_error(e, "copy_object")
             raise
 
-    async def object_exists(self, key: str) -> bool:
+    def object_exists(self, key: str) -> bool:
         """
         Return ``True`` iff an object exists at ``key`` in this
         bucket. Cheap (HEAD only). Treats ``NoSuchKey`` / 404 as
@@ -1014,15 +1032,11 @@ class S3Service:
         upload.
         """
         try:
-            await self._run_sync(
-                self.client.head_object, Bucket=self.bucket_name, Key=key
-            )
+            self.client.head_object(Bucket=self.bucket_name, Key=key)
             return True
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
-            http_status = e.response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode", 0
-            )
+            http_status = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
             if error_code in {"NoSuchKey", "404", "NotFound"} or http_status == 404:
                 return False
             self._handle_client_error(e, "object_exists")
@@ -1030,7 +1044,7 @@ class S3Service:
 
     # ============= Multipart parts listing =============
 
-    async def list_parts(
+    def list_parts(
         self, key: str, upload_id: str, max_parts: int = 1000
     ) -> tuple[list[MultipartPartListItem], int | None]:
         """
@@ -1045,8 +1059,7 @@ class S3Service:
             tuple: (parts list, next page part number marker)
         """
         try:
-            response = await self._run_sync(
-                self.client.list_parts,
+            response = self.client.list_parts(
                 Bucket=self.bucket_name,
                 Key=key,
                 UploadId=upload_id,

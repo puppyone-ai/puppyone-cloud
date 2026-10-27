@@ -14,7 +14,7 @@ services:
       # Only Supabase platform setup belongs in initdb, never product DDL.
       - ./db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -131,6 +131,7 @@ services:
       dockerfile: docker/Dockerfile.migrate
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      ENTITLEMENTS_MODE: ${ENTITLEMENTS_MODE:-disabled}
     depends_on:
       db:
         condition: service_healthy
@@ -144,6 +145,7 @@ services:
       dockerfile: Dockerfile.local
     environment: &backend-environment
       APP_ENV: development
+      ENTITLEMENTS_MODE: ${ENTITLEMENTS_MODE:-disabled}
       DEBUG: "false"
       SUPABASE_URL: http://kong:8000
       SUPABASE_KEY: ${SERVICE_ROLE_KEY:?Copy .env.example to .env}

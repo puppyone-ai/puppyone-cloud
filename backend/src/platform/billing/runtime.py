@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 from src.exceptions import AppException, ErrorCode
+from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.platform.billing.gateway import BillingGatewayError, PuppyPayGateway
 
@@ -220,7 +221,7 @@ class RuntimeMeteringService:
         if not org_id and project_id:
             from src.platform.project.repository import ProjectRepositorySupabase
 
-            project = await asyncio.to_thread(ProjectRepositorySupabase().get_by_id, project_id)
+            project = await run_blocking(ProjectRepositorySupabase().get_by_id, project_id)
             org_id = str(project.org_id if project is not None else "")
         run_id = str(audit_context.get("run_id") or "")
         if not run_id:
@@ -262,7 +263,7 @@ class RuntimeMeteringService:
             return await operation()
 
         started = time.monotonic()
-        await asyncio.to_thread(
+        await run_blocking(
             self._repo.update,
             run_id,
             {"status": "running", "started_at": datetime.now(UTC).isoformat()},
@@ -287,6 +288,20 @@ class RuntimeMeteringService:
                 # row and PuppyPay reservation lease are recovered later.
                 logger.exception("runtime_settlement_unexpected_failure", extra={"run_id": run_id})
 
+    async def ensure_session(self, *, audit_context: dict[str, Any]) -> str | None:
+        """Idempotently reserve or reattach one durable workspace compute epoch."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return None
+        identity = str(audit_context["run_id"])
+        existing = await run_blocking(self._repo.get, identity)
+        if existing is not None and existing.status == "running":
+            if existing.org_id != audit_context["org_id"]:
+                raise ValueError("Runtime organization binding changed")
+            return await self.resume_session(
+                identity, project_id=audit_context["project_id"], actor_id=audit_context["user_id"]
+            )
+        return await self.start_session(audit_context=audit_context)
+
     async def start_session(self, *, audit_context: dict[str, Any]) -> str | None:
         """Reserve before creating a provider resource and meter its full lifetime."""
 
@@ -297,7 +312,7 @@ class RuntimeMeteringService:
         if not org_id and project_id:
             from src.platform.project.repository import ProjectRepositorySupabase
 
-            project = await asyncio.to_thread(ProjectRepositorySupabase().get_by_id, project_id)
+            project = await run_blocking(ProjectRepositorySupabase().get_by_id, project_id)
             org_id = str(project.org_id if project is not None else "")
         run_id = str(audit_context.get("run_id") or "")
         if not run_id:
@@ -327,7 +342,7 @@ class RuntimeMeteringService:
         if run is None:
             return None
         if run.status != "running":
-            run = await asyncio.to_thread(
+            run = await run_blocking(
                 self._repo.update,
                 run_id,
                 {"status": "running", "started_at": datetime.now(UTC).isoformat()},
@@ -340,20 +355,75 @@ class RuntimeMeteringService:
         )
         return run_id
 
-    async def finish_session(self, run_id: str) -> None:
+    async def resume_session(self, run_id: str, *, project_id: str, actor_id: str) -> str | None:
+        """Reattach an independently fenced execution to its existing meter.
+
+        This does not reserve again or reset started_at. The caller must own
+        the Agent run lease; expired/settled reservations fail closed.
+        """
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return None
+        run = await run_blocking(self._repo.get, run_id)
+        if (
+            run is None
+            or run.project_id != project_id
+            or run.metadata.get("actor_id") != actor_id
+            or run.status != "running"
+            or not run.reservation_id
+        ):
+            raise ValueError("Runtime reservation cannot be resumed")
+        response = await self._gateway.request(
+            "POST",
+            f"/internal/v1/billing/runtime/reservations/{run.reservation_id}/heartbeat",
+            body={"extend_seconds": min(3600, settings.RUNTIME_BILLING_HEARTBEAT_SECONDS * 2)},
+        )
+        await run_blocking(
+            self._repo.update,
+            run_id,
+            {
+                "heartbeat_at": datetime.now(UTC).isoformat(),
+                "expires_at": response["expires_at"],
+            },
+        )
+        await self._stop_heartbeat(run_id)
+        self._heartbeat_tasks[run_id] = asyncio.create_task(
+            self._heartbeat_loop(run_id, run.reservation_id)
+        )
+        return run_id
+
+    async def check_session(self, run_id: str) -> None:
+        """Fail closed when a durable runtime reservation is no longer live."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        run = await run_blocking(self._repo.get, run_id)
+        if (
+            run is None
+            or run.status != "running"
+            or not run.expires_at
+            or run.expires_at <= datetime.now(UTC)
+        ):
+            raise ValueError("Runtime reservation expired or was exhausted")
+
+    async def detach_session(self, run_id: str) -> None:
+        """A fenced owner stops its local heartbeat without settling the run."""
+        await self._stop_heartbeat(run_id)
+
+    async def finish_session(self, run_id: str, *, retry: bool = False) -> bool:
         """Settle a successfully started provider resource exactly once."""
 
         await self._stop_heartbeat(run_id)
-        run = await asyncio.to_thread(self._repo.get, run_id)
+        run = await run_blocking(self._repo.get, run_id)
         if run is None or run.status in {"settled", "canceled"}:
-            return
+            return True
         runtime_seconds = 0
         if run.started_at:
             started = run.started_at
             if started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             runtime_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
-        await self._settle(run_id, runtime_seconds)
+        await self._settle(run_id, runtime_seconds, allow_retry=retry)
+        current = await run_blocking(self._repo.get, run_id)
+        return current is not None and current.status in {"settled", "canceled"}
 
     async def cancel_session(self, run_id: str) -> None:
         """Compensate a reservation when the provider never started."""
@@ -380,7 +450,7 @@ class RuntimeMeteringService:
         maximum_units: int,
     ) -> RuntimeBillingRun | None:
         idempotency_key = f"runtime-reserve:{run_id}"
-        run, created = await asyncio.to_thread(
+        run, created = await run_blocking(
             self._repo.create_or_get,
             {
                 "run_id": run_id,
@@ -425,7 +495,7 @@ class RuntimeMeteringService:
                     if updated_at <= stale_before:
                         claim_status = "pending_reservation"
             if claim_status is not None:
-                claimed = await asyncio.to_thread(
+                claimed = await run_blocking(
                     self._repo.claim_reservation_retry,
                     run_id=run_id,
                     expected_status=claim_status,
@@ -434,7 +504,7 @@ class RuntimeMeteringService:
                 if claimed is not None:
                     run = claimed
                 else:
-                    run = await asyncio.to_thread(self._repo.get, run_id) or run
+                    run = await run_blocking(self._repo.get, run_id) or run
             if claim_status is None or claimed is None:
                 code = (
                     "runtime_run_already_terminal"
@@ -470,7 +540,7 @@ class RuntimeMeteringService:
                 if exc.status_code < 500
                 else "reservation_failed"
             )
-            await asyncio.to_thread(
+            await run_blocking(
                 self._repo.update,
                 run_id,
                 {
@@ -486,7 +556,7 @@ class RuntimeMeteringService:
                 extra={"run_id": run_id, "reason": _billing_error_code(exc)},
             )
             return None
-        return await asyncio.to_thread(
+        return await run_blocking(
             self._repo.update,
             run_id,
             {
@@ -514,7 +584,7 @@ class RuntimeMeteringService:
                         )
                     },
                 )
-                await asyncio.to_thread(
+                await run_blocking(
                     self._repo.update,
                     run_id,
                     {
@@ -535,7 +605,7 @@ class RuntimeMeteringService:
         *,
         allow_retry: bool = False,
     ) -> bool:
-        run = await asyncio.to_thread(self._repo.get, run_id)
+        run = await run_blocking(self._repo.get, run_id)
         if (
             run is None
             or not run.reservation_id
@@ -559,7 +629,7 @@ class RuntimeMeteringService:
             "runtime_seconds": stable_runtime_seconds,
             "settlement_occurred_at": occurred_at,
         }
-        claimed = await asyncio.to_thread(
+        claimed = await run_blocking(
             self._repo.claim_action,
             run_id=run_id,
             expected_status=run.status,
@@ -580,7 +650,7 @@ class RuntimeMeteringService:
                 },
             )
         except BillingGatewayError as exc:
-            await asyncio.to_thread(
+            await run_blocking(
                 self._repo.update,
                 run_id,
                 {
@@ -595,7 +665,7 @@ class RuntimeMeteringService:
                 extra={"run_id": run_id, "reason": _billing_error_code(exc)},
             )
             return True
-        await asyncio.to_thread(
+        await run_blocking(
             self._repo.update,
             run_id,
             {
@@ -609,7 +679,7 @@ class RuntimeMeteringService:
         return True
 
     async def _cancel(self, run_id: str, *, allow_retry: bool = False) -> bool:
-        run = await asyncio.to_thread(self._repo.get, run_id)
+        run = await run_blocking(self._repo.get, run_id)
         if (
             run is None
             or not run.reservation_id
@@ -629,7 +699,7 @@ class RuntimeMeteringService:
         elif run.status not in {"reserved", "running"}:
             return False
         metadata = {**run.metadata, "cancel_requested": True}
-        claimed = await asyncio.to_thread(
+        claimed = await run_blocking(
             self._repo.claim_action,
             run_id=run_id,
             expected_status=run.status,
@@ -646,7 +716,7 @@ class RuntimeMeteringService:
                 idempotency_key=f"runtime-cancel:{run_id}",
             )
         except BillingGatewayError as exc:
-            await asyncio.to_thread(
+            await run_blocking(
                 self._repo.update,
                 run_id,
                 {
@@ -661,7 +731,7 @@ class RuntimeMeteringService:
                 extra={"run_id": run_id, "reason": _billing_error_code(exc)},
             )
             return True
-        await asyncio.to_thread(
+        await run_blocking(
             self._repo.update,
             run_id,
             {
@@ -679,7 +749,7 @@ class RuntimeMeteringService:
         retry_before = datetime.now(UTC) - timedelta(
             seconds=settings.RUNTIME_BILLING_RECOVERY_RETRY_SECONDS
         )
-        runs = await asyncio.to_thread(
+        runs = await run_blocking(
             self._repo.recoverable,
             retry_before=retry_before,
             limit=50,

@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.ingest.file.jobs import jobs
-from src.ingest.file.state.models import ETLPhase, ETLRuntimeState
-from src.ingest.file.tasks.models import ETLTaskStatus
+from src.platform.upload import jobs
+from src.platform.upload.state.models import ETLPhase, ETLRuntimeState
+from src.platform.upload.tasks.models import ETLTaskStatus
 
 TASK_ID = "task-1"
 PROJECT_ID = "project-1"
@@ -66,15 +66,15 @@ class S3:
     def __init__(self) -> None:
         self.uploads = []
 
-    async def generate_presigned_download_url(self, key, expires_in):
+    def generate_presigned_download_url(self, key, expires_in):
         assert expires_in == 3600
         return f"https://storage.invalid/{key}"
 
-    async def download_file(self, key):
+    def download_file(self, key):
         assert key == "artifact.md"
         return b"# parsed"
 
-    async def upload_file(self, **kwargs):
+    def upload_file(self, **kwargs):
         self.uploads.append(kwargs)
         raise AssertionError("S3 upload crossed a deleted Project write fence")
 

@@ -1,19 +1,20 @@
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Depends, Path
 
 from src.content.table.models import Table
 from src.content.table.repository import TableRepositorySupabase
 from src.content.table.service import TableService
+from src.exceptions import ErrorCode, NotFoundException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.exceptions import ErrorCode, NotFoundException
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
+from src.version_engine.bootstrap.dependencies import get_repo_manager
+from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 _table_repository = None
-_table_service = None
 
 
 def get_table_repository() -> TableRepositorySupabase:
@@ -23,19 +24,11 @@ def get_table_repository() -> TableRepositorySupabase:
     return _table_repository
 
 
-def get_table_service() -> TableService:
-    global _table_service
-    if _table_service is None:
-        from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-
-        repo = get_table_repository()
-        repo_manager = build_worker_version_engine_container().repo_manager
-
-        _table_service = TableService(
-            repo=repo,
-            repo_manager=repo_manager,
-        )
-    return _table_service
+def get_table_service(
+    repo: TableRepositorySupabase = Depends(get_table_repository),
+    repo_manager: VersionRepoManager = Depends(get_repo_manager),
+) -> TableService:
+    return TableService(repo=repo, repo_manager=repo_manager)
 
 
 def require_table_action(action: ProjectAction) -> Callable[..., Table]:
@@ -47,10 +40,9 @@ def require_table_action(action: ProjectAction) -> Callable[..., Table]:
     ) -> Table:
         table = table_service.get_by_id(table_id)
         if table is None or not table.project_id:
-            raise NotFoundException(
-                f"Table not found: {table_id}", code=ErrorCode.NOT_FOUND
-            )
+            raise NotFoundException(f"Table not found: {table_id}", code=ErrorCode.NOT_FOUND)
         authorization.authorize(table.project_id, current_user.user_id, action)
+        table_service.bind_user(current_user.user_id)
         return table
 
     return dependency

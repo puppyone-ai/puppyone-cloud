@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from src.ingest.schemas import IngestType
+from src.infra.task_presentation import IngestType
 
 
 @dataclass(frozen=True)
@@ -320,6 +320,16 @@ def detect_mime(name: str) -> str:
     """Filename → MIME string. Falls back to ``application/octet-stream``."""
     fmt = _resolve(name)
     return fmt.mime if fmt else "application/octet-stream"
+
+
+def is_text_format(name: str) -> bool:
+    """Whether the registered format contains text, including application/* code.
+
+    Derive this from the existing registry rather than maintaining a second MIME
+    allowlist in each reader. Unknown files must still pass an explicit decoder.
+    """
+    fmt = _resolve(name)
+    return fmt is not None and fmt.ingest == IngestType.TEXT
 
 
 def detect_node_type(name: str) -> str:

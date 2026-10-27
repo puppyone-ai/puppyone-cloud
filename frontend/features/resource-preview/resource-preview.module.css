@@ -1,0 +1,30 @@
+/* Route composition only. Header, row geometry and viewers belong to Workspace. */
+.body { display: flex; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
+.preview { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--po-editor-bg); }
+.actions { display: flex; align-items: center; gap: 6px; }
+.divider { width: 1px; height: 18px; background: var(--po-divider); flex-shrink: 0; }
+.filesTab { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 5px; background: var(--po-selected); font-size: 12px; font-weight: 500; flex-shrink: 0; }
+.download { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 5px; font-size: 12px; font-weight: 500; text-decoration: none; color: var(--po-text-muted); white-space: nowrap; }
+.download:hover { color: var(--po-text); background: var(--po-hover); }
+.download:focus-visible, .treeLink:focus-visible, .disclosure:focus-visible { outline: 2px solid var(--po-focus-ring); outline-offset: -2px; }
+.explorer { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+.treeScroll { flex: 1; min-height: 0; overflow: auto; overflow-x: hidden; padding: 6px 0; }
+.treeRow { color: var(--po-text-muted); }
+.treeRow:hover { background: var(--po-hover); }
+.treeRow[data-selected='true'] { color: var(--po-text); background: var(--po-selected); }
+.treeLink { flex: 1; min-width: 0; height: 100%; display: block; align-content: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: inherit; text-decoration: none; }
+.disclosure { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.treeEmpty { padding: 8px 14px; color: var(--po-text-disabled); font-size: 12px; }
+.pagination { display: flex; gap: 6px; align-items: center; justify-content: space-between; padding: 8px; font-size: 12px; color: var(--po-text-muted); }
+.pagination button { padding: 4px 6px; border-radius: 5px; }
+.pagination button:hover:not(:disabled) { background: var(--po-hover); }
+.pagination button:disabled { opacity: .45; }
+.content, .viewer { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.notice { flex-shrink: 0; padding: 8px 16px; font-size: 12px; color: var(--po-text-muted); border-top: 1px solid var(--po-divider); }
+.empty { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px; text-align: center; color: var(--po-text-muted); font-size: 13px; }
+.empty h1 { color: var(--po-text); font-size: 15px; font-weight: 500; }
+.signIn { padding: 6px 16px; border-radius: 6px; background: var(--po-selected); color: var(--po-text); }
+.brand { font-size: var(--po-font-size-chrome); font-weight: var(--po-font-weight-chrome); }
+@container project-workspace (max-width: 600px) {
+  .filesTab { display: none; }
+}

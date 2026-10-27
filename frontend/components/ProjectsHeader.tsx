@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { WorkspaceLink as Link, usePendingNavigation, returnToFiles } from '@/features/workspace/navigation';
 import { useRouter } from 'next/navigation';
 import { Files, GitBranch, LoaderCircle } from 'lucide-react';
-import { APP_Z_INDEX } from '@/lib/zIndex';
+import { ProjectHeaderFrame } from './project/ProjectHeaderFrame';
 import { ProjectHeaderBreadcrumbs, type BreadcrumbSegment } from './project/ProjectHeaderBreadcrumbs';
 export { ProjectHeaderBreadcrumbs, type BreadcrumbSegment } from './project/ProjectHeaderBreadcrumbs';
 import { useSessionValue } from '@/features/workspace/session';
@@ -61,9 +61,9 @@ export function ProjectsHeader({
   }, [projectId, router]);
 
   return (
-    <header ref={regions.header} data-workspace-header style={headerStyle} className={styles.header}>
+    <ProjectHeaderFrame headerRef={regions.header} actions={actionSlot}>
       {/* LEFT SIDE: Back + Breadcrumbs */}
-      <div style={headerLeftStyle} className={styles.left}>
+      <>
         <WorkspaceNavigationButton />
         {onBack && (
           <div
@@ -159,50 +159,7 @@ export function ProjectsHeader({
             })}
           </nav>
         )}
-      </div>
-      {actionSlot && <div style={headerActionStyle} className={styles.actions}>{actionSlot}</div>}
-    </header>
+      </>
+    </ProjectHeaderFrame>
   );
 }
-
-// Styles
-const headerStyle: CSSProperties = {
-  height: 'var(--project-header-height, 46px)',
-  width: '100%',
-  minWidth: 0,
-  minHeight: 'var(--project-header-height, 46px)',
-  maxHeight: 'var(--project-header-height, 46px)',
-  boxSizing: 'border-box',
-  flex: '0 0 auto',
-  paddingLeft: 'var(--project-header-padding, 16px)',
-  paddingRight: 'var(--project-header-padding, 16px)',
-  display: 'flex',
-  flexWrap: 'nowrap',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  // Persistent workspace chrome stays distinct from the document surface in
-  // both themes. Reuse the Desktop-aligned header token, not a local gray.
-  background: 'var(--po-header)',
-  borderBottom: '1px solid var(--po-divider)',
-  position: 'relative',
-  zIndex: APP_Z_INDEX.chrome,
-  overflow: 'visible',
-};
-
-const headerLeftStyle: CSSProperties = {
-  flex: '1 1 auto',
-  display: 'flex',
-  alignItems: 'center',
-  minWidth: 0,
-  overflow: 'visible',
-};
-
-const headerActionStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  flexShrink: 0,
-  marginLeft: 'auto',
-  position: 'relative',
-  zIndex: APP_Z_INDEX.chromeRaised,
-};

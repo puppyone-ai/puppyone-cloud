@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "artifact": "sha256:6035238f9bc6fcf69d3c5eb27f4e07becf3a78e585ade4f7b1e16417cbbc6a93",
+  "checks": [
+    "bundle install and retry",
+    "read-only management socket masked; root-only alias and UID isolation",
+    "UID firewall installed",
+    "native editor save/read",
+    "hold create/release",
+    "service restart and remount preserve files",
+    "bound artifact replacement rejected"
+  ],
+  "kind": "local_container_acceptance_not_hosted",
+  "date": "2026-10-26",
+  "hosted_acceptance": "separate hosted receipt required",
+  "source_files": {
+    "backend/src/platform/sandbox/providers/sprites/bootstrap.py": "c6852f247f2c9c6d41b178de67706b692868575dea72bd9c84f4deaef998aa25",
+    "backend/agent-worker/sprites-init.mjs": "7e700ee5968cac342bbc39bea4f418a1971f036f651fcd1c6b96a31f11fa121a",
+    "backend/agent-worker/sprites-control.py": "640547469df79e601c0cc3c33e93680389f632a4128f0318dbb87a09e0b8c08a",
+    "backend/tests/agent/workbench_acceptance/sprites_local.py": "bae333405fdacf01fd46364d1a3e56ba8d4330c59777cd876894312f30cf50aa",
+    "backend/src/platform/workspace/lifecycle.py": "bdba21f67bb4f094b490348d125acab0f33bed091f492ffe2b7ee49ea1e4341d"
+  }
+}
