@@ -65,6 +65,10 @@ jobs:
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
         with:
           version: '2.107.0'
+      - name: Use Supabase's Docker Hub mirror
+        # setup-cli defaults to GHCR, whose shared anonymous pull limit can
+        # block the drift check's shadow database. Same as the release job.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
       - name: Install locked rehearsal dependencies
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
