@@ -1,0 +1,160 @@
+name: Desktop email sign-in (end to end)
+
+# A person signs in to Desktop with email through the Cloud /login page, with
+# nothing simulated between the two products:
+#   - the Web is the release Dockerfile image, served on 0.0.0.0 as deployed;
+#   - Desktop is the real Main authentication service from its repository;
+#   - Supabase is a local, auth-only instance with a fresh confirmed account.
+# It needs no secrets, so it runs for every PR, including forks, and Desktop
+# PRs call it with their own commit (workflow_call).
+#
+# Pairing: Cloud qubits <-> Desktop qubits, Cloud main <-> Desktop main.
+
+on:
+  pull_request:
+    branches: [qubits, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [qubits, main]
+  workflow_dispatch:
+    inputs:
+      desktop_ref:
+        description: Desktop branch, tag or commit to sign in with
+        type: string
+        default: qubits
+  workflow_call:
+    inputs:
+      desktop_repository:
+        description: Desktop repository (owner/name) that provides the Main authentication service
+        type: string
+        default: puppyone-ai/puppyone
+      desktop_ref:
+        description: Desktop commit to sign in with
+        type: string
+        required: true
+      cloud_ref:
+        description: Cloud branch or commit that provides the Web
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-login-e2e-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.desktop_ref || 'paired' }}
+  cancel-in-progress: true
+
+jobs:
+  email-sign-in:
+    name: Desktop email sign-in
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      WEB_ORIGIN: http://localhost:3000
+    steps:
+      - name: Checkout Cloud
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: puppyone-ai/puppyone-cloud
+          ref: ${{ inputs.cloud_ref || github.sha }}
+          path: cloud
+          persist-credentials: false
+
+      - name: Checkout Desktop
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: ${{ inputs.desktop_repository || 'puppyone-ai/puppyone' }}
+          ref: ${{ inputs.desktop_ref || github.base_ref || github.ref_name }}
+          path: desktop
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cloud/e2e/desktop-login/package-lock.json
+
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: "2.107.0"
+
+      - name: Use Supabase's Docker Hub mirror
+        # Match the other workflows without GHCR's shared pull limit.
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
+
+      - name: Start auth-only Supabase
+        run: supabase start --workdir cloud/e2e/desktop-login
+
+      - name: Create the sign-in account
+        shell: bash
+        run: |
+          set -euo pipefail
+          eval "$(supabase status --workdir cloud/e2e/desktop-login -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
+          password="$(openssl rand -base64 24)"
+          echo "::add-mask::$password"
+          email="desktop-login-${GITHUB_RUN_ID}@example.test"
+          curl --fail --show-error --silent -X POST "$API_URL/auth/v1/admin/users" \
+            -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$email\",\"password\":\"$password\",\"email_confirm\":true}" > /dev/null
+          {
+            echo "SUPABASE_URL=$API_URL"
+            echo "SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "E2E_EMAIL=$email"
+            echo "E2E_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the Web image (release Dockerfile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --build-arg SOURCE_SHA="$(git -C cloud rev-parse HEAD)" --build-arg APP_VERSION=desktop-login-e2e \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:9 \
+            --build-arg NEXT_PUBLIC_APP_URL="$WEB_ORIGIN" \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL" \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            --build-arg NEXT_PUBLIC_AUTH_EMAIL_ONLY=true \
+            --build-arg NEXT_PUBLIC_DEV_MODE=false \
+            --build-arg NEXT_PUBLIC_AUTH_WEBSITE_ORIGINS= \
+            -t desktop-login-e2e-web cloud/frontend
+
+      - name: Start the Web as deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Deployed services listen on 0.0.0.0 behind the edge. A loopback-only
+          # server hides request-URL rewrites that break the Desktop handoff.
+          docker run -d --name web -p 127.0.0.1:3000:8080 -e PORT=8080 -e HOSTNAME=0.0.0.0 desktop-login-e2e-web
+          for _ in $(seq 1 60); do
+            curl --fail --silent --output /dev/null "$WEB_ORIGIN/api/health" && exit 0
+            sleep 1
+          done
+          docker logs web
+          exit 1
+
+      - name: Install the sign-in check
+        working-directory: cloud/e2e/desktop-login
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Sign in to Desktop with email through the Web
+        working-directory: cloud/e2e/desktop-login
+        env:
+          DESKTOP_ROOT: ${{ github.workspace }}/desktop
+          RESULTS_DIR: results
+        run: node run.mjs
+
+      - name: Web log
+        if: failure()
+        run: docker logs web 2>&1 | tail -n 200
+
+      - name: Retain results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-login-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cloud/e2e/desktop-login/results/
+          retention-days: 14
+          if-no-files-found: ignore
