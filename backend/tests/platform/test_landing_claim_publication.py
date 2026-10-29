@@ -575,7 +575,8 @@ async def test_private_visibility_must_be_confirmed_before_content_and_endpoint_
 
 
 @pytest.mark.asyncio
-async def test_pdf_preview_claim_and_readonly_mcp_read_use_the_same_private_project(monkeypatch):
+@pytest.mark.parametrize("source_format", ["pdf", "markdown", "mdx", "xlsx", "csv", "tsv", "openapi-json", "openapi-yaml"])
+async def test_preview_claim_and_readonly_mcp_read_use_the_same_private_project(monkeypatch, source_format):
     """Local flow acceptance with real PDF parsing, policies and MCP handlers.
 
     Only persistence/publication boundaries are in memory; no production
@@ -594,12 +595,47 @@ async def test_pdf_preview_claim_and_readonly_mcp_read_use_the_same_private_proj
 
     monkeypatch.setattr(settings, "JWT_SECRET", "landing-local-flow-unit-test-secret")
     monkeypatch.setattr(settings, "PUBLIC_URL", "https://cloud.example")
-    reference = "PDF-MCP-CHECK-20261029"
+    reference = source_format.upper() + "-MCP-CHECK-20261029"
     with fitz.open() as document:
         document.new_page().insert_text(
             (72, 72), "Public PDF to MCP acceptance fixture.\nReference code: " + reference
         )
         source = document.tobytes()
+
+    kind, filename, content_type, folder = "pdf", "资料.pdf", "application/pdf", "doc"
+    if source_format in {"markdown", "mdx"}:
+        kind, folder = "markdown", "doc"
+        filename, content_type = "资料." + ("mdx" if source_format == "mdx" else "md"), "text/markdown"
+        source = ("# Public document\n" + reference + "\n<Example />\n").encode()
+    elif source_format in {"xlsx", "csv", "tsv"}:
+        kind, folder, filename = "excel", "data", "资料." + source_format
+        if source_format == "xlsx":
+            from io import BytesIO
+            from openpyxl import Workbook
+
+            workbook = Workbook()
+            workbook.active.append(["reference", "value"])
+            workbook.active.append([reference, 42])
+            output = BytesIO()
+            workbook.save(output)
+            workbook.close()
+            source = output.getvalue()
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            delimiter = "," if source_format == "csv" else "\t"
+            source = f"reference{delimiter}value\n{reference}{delimiter}42\n".encode()
+            content_type = "text/csv" if source_format == "csv" else "text/tab-separated-values"
+    elif source_format.startswith("openapi-"):
+        import json
+        import yaml
+
+        kind, folder = "openapi", "api"
+        spec = {"openapi": "3.0.3", "info": {"title": "Public fixture", "version": "1.0.0", "description": reference},
+                "paths": {"/reference": {"get": {"summary": "Read public reference"}}}}
+        is_json = source_format.endswith("json")
+        source = (json.dumps(spec) if is_json else yaml.safe_dump(spec)).encode()
+        filename, content_type = ("资料.json", "application/json") if is_json else ("资料.yaml", "application/yaml")
+    imported_path = folder + "/资料.md"
 
     class Storage:
         objects: dict[str, bytes] = {}
@@ -643,13 +679,13 @@ async def test_pdf_preview_claim_and_readonly_mcp_read_use_the_same_private_proj
     service = _service(events, control_plane=_ControlPlane(events), s3=Storage())
 
     preview = await service.preview(
-        tool_kind="pdf", filename="资料.pdf", content=source, content_type="application/pdf"
+        tool_kind=kind, filename=filename, content=source, content_type=content_type
     )
-    assert preview["preview"]["filename"] == "资料.pdf"
+    assert preview["preview"]["filename"] == filename
     assert reference in preview["preview"]["excerpt"]
     claimed = await service.claim(ticket=preview["ticket"], org_id="org-1", user_id="user-1")
     assert claimed["project_id"] == "project-1"
-    assert list(files) == ["doc/资料.md"]
+    assert list(files) == [imported_path]
 
     def resolve_surface(key):
         if key != claimed["mcp"]["api_key"]:
@@ -679,14 +715,14 @@ async def test_pdf_preview_claim_and_readonly_mcp_read_use_the_same_private_proj
                 return "import-head"
             path = args[0]
             if method == "stat":
-                if path == "doc":
-                    return VersionEntry(name="doc", path="doc", type="folder")
+                if path == folder:
+                    return VersionEntry(name=folder, path=folder, type="folder")
                 if path in files:
                     return VersionEntry(name="资料.md", path=path, type="markdown")
                 return None
             if method == "list_dir":
-                assert path == "doc"
-                return [VersionEntry(name="资料.md", path="doc/资料.md", type="markdown")]
+                assert path == folder
+                return [VersionEntry(name="资料.md", path=imported_path, type="markdown")]
             if method == "read_file":
                 return files[path]
             raise AssertionError("unexpected storage operation: " + method)
@@ -699,16 +735,16 @@ async def test_pdf_preview_claim_and_readonly_mcp_read_use_the_same_private_proj
     reads = Reads()
     commands = SimpleNamespace(ops=reads)
     listing = await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
-        api_key=key, name="fs_ls", arguments={"path": "doc"}
+        api_key=key, name="fs_ls", arguments={"path": folder}
     ), ops=reads, commands=commands)
-    assert listing["structuredContent"]["entries"][0]["path"] == "doc/资料.md"
+    assert listing["structuredContent"]["entries"][0]["path"] == imported_path
     result = await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
-        api_key=key, name="fs_cat", arguments={"path": "doc/资料.md"}
+        api_key=key, name="fs_cat", arguments={"path": imported_path}
     ), ops=reads, commands=commands)
     assert reference in result["structuredContent"]["content_text"]
     with pytest.raises(HTTPException) as denied:
         await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
-            api_key=key, name="fs_write", arguments={"path": "doc/资料.md", "content": "changed"}
+            api_key=key, name="fs_write", arguments={"path": imported_path, "content": "changed"}
         ), ops=reads, commands=commands)
     assert denied.value.status_code == 403
     with pytest.raises(HTTPException) as unknown:

@@ -152,6 +152,11 @@ async def landing_preview(
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="The source could not be read. Use valid UTF-8 Markdown, OpenAPI JSON/YAML, or an XLSX/CSV/TSV file for the selected tool.",
+        ) from exc
     except Exception as exc:
         logger.exception("landing preview failed for tool_kind=%s", tool_kind)
         raise HTTPException(status_code=502, detail="Preview failed") from exc

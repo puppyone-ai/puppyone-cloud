@@ -1,6 +1,6 @@
-# Landing Project MCP Implementation Plan
+# Landing tools Project MCP Implementation Plan
 
-**Goal:** Restore PDF-to-MCP imports with Unicode filenames and the supported native Project-root, read-only MCP target.
+**Goal:** Restore PDF imports and bring Markdown, Excel/CSV/TSV and OpenAPI imports to the same verified native Project-root, read-only MCP path, preserving Unicode filenames.
 
 **Architecture:** Each import creates a new private Project in the user's explicitly selected organization. Its converted document stays in the existing tool folder, while a newly issued MCP bearer targets the entire Project read-only. Existing Scope credentials remain unavailable; they are never silently converted to Project-root credentials. The user approved this model and a PR into `qubits`, without a production merge or deployment.
 
@@ -61,10 +61,26 @@ Files: `backend/src/platform/project/control_plane.py`, `backend/tests/platform/
 - Renaming `mode` is insufficient: native non-root Scopes are currently unavailable and scoped MCP resolution returns 501.
 - Production operation-journal SELECT was denied; no user resources were retried or removed during diagnosis, and cleanup success has not been asserted.
 
-## Verification result
+## Initial PDF milestone verification
 
 - Focused landing, initialization query, Project control-plane/orchestration and MCP runtime suites: 77 passed.
 - Full offline backend suite: 3,688 passed, 963 skipped, 456 deselected; three worker tests failed because localhost Redis is unavailable. The same three failures were reproduced on the original unmodified landing service before the repair.
 - The local synthetic PDF flow exercises actual PDF parsing, MCP policy serialization, principal resolution, list/read handlers, mutation denial, invalid credentials and revoked-owner access. Persistence and publication are in memory; this is not production end-to-end acceptance.
 - Independent code review found no remaining blocking issues after replacing the ready-only metadata update with the initialization-specific control-plane operation.
 - No production code deployment or merge is part of this delivery.
+
+## Markdown, Excel and OpenAPI parity extension
+
+The same approved private Project/root read-only model now has real-parser → preview → claim → MCP list/read coverage for PDF, Markdown, MDX, XLSX, CSV, TSV and OpenAPI JSON/YAML. The persistence/publication boundary remains in memory; production end-to-end acceptance remains outstanding.
+
+Converter regressions reproduced before fixing:
+
+- TSV cells containing many commas were incorrectly split using the CSV delimiter. The ASCII staging suffix now selects the advertised delimiter.
+- CSV BOMs and pipe characters in headers corrupted table output; UTF-8 BOM handling and shared cell escaping now preserve it. CSV files beginning with PK are no longer mistaken for ZIP workbooks.
+- Multiline CSV/XLSX cells broke physical Markdown table rows. CRLF/CR/LF now become `<br>` within both headers and data.
+- Non-UTF-8/blank Markdown, invalid XLSX, legacy binary XLS and malformed OpenAPI were accepted as misleading context or failed opaquely. Input validation now rejects these before claim, and the preview route distinguishes input errors from service failures.
+- XLSX resources are closed after parsing; OpenAPI and spreadsheet conversions use the blocking execution boundary. Registry metadata matches XLSX/CSV/TSV support.
+
+Final verification: 100 focused backend tests passed. Full offline backend suite: 3,711 passed, 963 skipped, 456 deselected; the same three pre-existing worker failures remain because local Redis is unavailable. Independent code review found no remaining blocking issues after the multiline-cell fix.
+
+Companion Web commit: `puppyone-ai/puppyone-web` `herbbb` / `083415bf`. It includes published English/Japanese/Chinese connection guidance, explicit whole-Project read scope, corrected Excel idle input guidance, shared flow regression tests, six public acceptance files and `docs/testing/mcp-tools-cloud-acceptance.md`. Web product 39, i18n behavior 43, structured-data contract 30 tests and eight-locale key validation passed. Actual browser input states and all six configured English production OAuth return URLs were checked. No production source upload, Project creation, code merge or deployment was performed.
