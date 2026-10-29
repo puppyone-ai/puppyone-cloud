@@ -1,0 +1,13 @@
+{
+  "name": "@puppyone/desktop-login-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop email sign-in through the real Cloud /login page, end to end.",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.58.2"
+  }
+}
