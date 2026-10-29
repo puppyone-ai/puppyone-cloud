@@ -36,6 +36,10 @@ on:
         description: Cloud branch or commit that provides the Web
         type: string
         required: true
+      harness_ref:
+        description: Cloud ref of this workflow, which provides the check itself (match the @ref in `uses:`)
+        type: string
+        default: qubits
 
 permissions:
   contents: read
@@ -52,12 +56,23 @@ jobs:
     env:
       WEB_ORIGIN: http://localhost:3000
     steps:
-      - name: Checkout Cloud
+      - name: Checkout Cloud (Web under test)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: puppyone-ai/puppyone-cloud
           ref: ${{ inputs.cloud_ref || github.sha }}
           path: cloud
+          persist-credentials: false
+
+      - name: Checkout the sign-in check
+        # The check travels with this workflow, so a caller can test a Web
+        # branch that predates it (for example Desktop main against Cloud main).
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: puppyone-ai/puppyone-cloud
+          ref: ${{ inputs.harness_ref || inputs.cloud_ref || github.sha }}
+          path: harness
+          sparse-checkout: e2e/desktop-login
           persist-credentials: false
 
       - name: Checkout Desktop
@@ -72,7 +87,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: cloud/e2e/desktop-login/package-lock.json
+          cache-dependency-path: harness/e2e/desktop-login/package-lock.json
 
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
@@ -83,13 +98,13 @@ jobs:
         run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
 
       - name: Start auth-only Supabase
-        run: supabase start --workdir cloud/e2e/desktop-login
+        run: supabase start --workdir harness/e2e/desktop-login
 
       - name: Create the sign-in account
         shell: bash
         run: |
           set -euo pipefail
-          eval "$(supabase status --workdir cloud/e2e/desktop-login -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
+          eval "$(supabase status --workdir harness/e2e/desktop-login -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=')"
           password="$(openssl rand -base64 24)"
           echo "::add-mask::$password"
           email="desktop-login-${GITHUB_RUN_ID}@example.test"
@@ -134,13 +149,13 @@ jobs:
           exit 1
 
       - name: Install the sign-in check
-        working-directory: cloud/e2e/desktop-login
+        working-directory: harness/e2e/desktop-login
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
 
       - name: Sign in to Desktop with email through the Web
-        working-directory: cloud/e2e/desktop-login
+        working-directory: harness/e2e/desktop-login
         env:
           DESKTOP_ROOT: ${{ github.workspace }}/desktop
           RESULTS_DIR: results
@@ -155,6 +170,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: desktop-login-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cloud/e2e/desktop-login/results/
+          path: harness/e2e/desktop-login/results/
           retention-days: 14
           if-no-files-found: ignore
