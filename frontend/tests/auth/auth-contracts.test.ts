@@ -53,6 +53,47 @@ it('Desktop OAuth callback preserves intent without using Web cookie session', a
   expect(response.headers.get('referrer-policy')).toBe('no-referrer');
 });
 
+// Next.js rewrites the first loopback host anywhere in a server request URL to
+// `localhost`. A loopback dev server absorbs it in its own host; deployed
+// servers (0.0.0.0 or a private address) rewrite the Desktop callback instead.
+it.each(['http://127.0.0.1:3000', 'http://0.0.0.0:8080', 'http://[fd12::1]:8080'])(
+  'Desktop OAuth callback relays to 127.0.0.1 when served from %s',
+  async serverOrigin => {
+    const response = await GET(
+      new NextRequest(
+        `${serverOrigin}/auth/callback?desktop_state=${state}&desktop_callback=http%3A%2F%2F127.0.0.1%3A4000%2Fauth%2Fcallback&code=provider-code`
+      )
+    );
+    const target = new URL(response.headers.get('location')!);
+    expect(target.origin).toBe('http://127.0.0.1:4000');
+    expect(target.pathname).toBe('/auth/callback');
+    expect(target.searchParams.get('code')).toBe('provider-code');
+    expect(target.searchParams.get('state')).toBe(state);
+  }
+);
+
+it('Desktop OAuth callback still rejects non-loopback targets and logs only the reason', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    for (const callback of ['http://evil.test:4000/auth/callback', 'https://localhost:4000/auth/callback']) {
+      const response = await GET(
+        new NextRequest(
+          `http://0.0.0.0:8080/auth/callback?desktop_state=${state}&desktop_callback=${encodeURIComponent(callback)}&code=provider-code`
+        )
+      );
+      expect(new URL(response.headers.get('location')!).search).toBe('?error=auth_request_expired');
+    }
+    expect(log).toHaveBeenCalledWith('[auth/callback] delegated relay rejected', {
+      client: 'desktop',
+      reason: 'Invalid Desktop callback',
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(state);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('provider-code');
+  } finally {
+    log.mockRestore();
+  }
+});
+
 it('provider cancellation preserves the Desktop attempt', async () => {
   const response = await GET(
     new Request(
@@ -99,9 +140,19 @@ it('parallel Web completion initializes once without any Desktop handoff', async
   expect(fetcher.mock.calls[0][0]).toBe('/api/backend/api/v1/auth/initialize');
 });
 
+it('never relays a code to localhost, only to the IPv4 loopback Desktop listens on', () => {
+  const url = new URL('https://web.test/auth/callback');
+  url.search = new URLSearchParams({ desktop_state: state, desktop_callback: 'http://localhost:4000/auth/callback', code: 'code' }).toString();
+  expect(new URL(desktopCallbackTarget(url)).origin).toBe('http://127.0.0.1:4000');
+  // The browser-side intent sees the unmodified URL and stays strict.
+  expect(() => readLoginIntent(new URL(
+    `https://web.test/login?client=desktop&desktop_state=${state}&code_challenge=${'c'.repeat(43)}&desktop_callback=${encodeURIComponent('http://localhost:4000/auth/callback')}`
+  ))).toThrow();
+});
+
 it.each([
-  'https://evil.test/auth/callback', 'http://localhost:4000/auth/callback',
-  'http://127.0.0.1:4000/wrong', 'http://127.0.0.1:4000/auth/callback?code=injected',
+  'https://evil.test/auth/callback', 'https://localhost:4000/auth/callback',
+  'http://localhost:80/auth/callback', 'http://127.0.0.1:4000/wrong', 'http://127.0.0.1:4000/auth/callback?code=injected',
   'http://user@127.0.0.1:4000/auth/callback', 'http://127.0.0.1:80/auth/callback',
   'puppyone://auth/callback', 'http://127.0.0.1.evil.test:4000/auth/callback',
 ])('rejects unsafe callback destination %s', target => {

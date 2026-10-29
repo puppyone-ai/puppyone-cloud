@@ -5,8 +5,28 @@ export function desktopCallbackTarget(source: URL): string {
   return relayAuthorizationCode(
     source,
     'desktop',
-    desktopCallbackUrl(source.searchParams.get('desktop_callback') ?? '')
+    desktopCallbackUrl(restoreDesktopLoopbackHost(source.searchParams.get('desktop_callback') ?? ''))
   );
+}
+
+/**
+ * Next.js rewrites the first `127.x.x.x`, `[::1]` or `localhost` anywhere in a
+ * server request URL to `localhost` (next/dist/server/web/next-url.js). On a
+ * loopback dev server the request host absorbs that rewrite; on every deployed
+ * server it lands on this query value instead. Desktop only listens on
+ * 127.0.0.1, so a server-side `localhost` callback is restored before the
+ * strict check. Browser-side reads see the original value and stay strict.
+ */
+function restoreDesktopLoopbackHost(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+  if (url.protocol !== 'http:' || url.hostname !== 'localhost') return value;
+  url.hostname = '127.0.0.1';
+  return url.toString();
 }
 
 /** Only the exact per-attempt IP loopback endpoint can receive native auth. */
