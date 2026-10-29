@@ -1,20 +1,21 @@
 name: Frontend Build
 
-# Verifies that `frontend/` compiles cleanly. Required status check on `main`
-# only. Qubits runs application checks locally or by manual dispatch.
+# Verifies that `frontend/` compiles cleanly. Runs for every PR into the
+# integration branch (qubits) and the release branch (main), so a problem is
+# caught when it is integrated, not when it is promoted.
 #
 # Run deterministic React/unit regressions before compiling. Browser/e2e
 # coverage remains separate from this fast PR gate.
 
 on:
   # This workflow is a required status check on protected branches. It must run
-  # for every main PR, not only PRs that touch frontend paths; otherwise docs/CI-only
+  # for every PR, not only PRs that touch frontend paths; otherwise docs/CI-only
   # PRs would be blocked forever waiting for a check that never reports.
   pull_request:
-    branches: [main]
+    branches: [main, qubits]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, qubits]
   workflow_dispatch:
 
 # PR and push runs are separate: a PR from qubits cannot cancel its release CI.
