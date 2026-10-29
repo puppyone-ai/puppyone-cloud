@@ -34,7 +34,6 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.platform.repository_target.scope_service import ScopeService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 logger = logging.getLogger(__name__)
@@ -106,6 +105,7 @@ def _landing_result_metadata(*, operation_key: str, spec: ToolSpec) -> dict[str,
         "repo": spec.scope_path,
         "endpoint_name": f"{spec.kind}-mcp",
         "credential_derivation_version": 1,
+        "mcp_target": "project_root",
     }
 
 
@@ -261,13 +261,24 @@ class LandingService:
         ticket_id = uuid4().hex
         name = _safe_name(filename)
 
-        src_key = f"{LANDING_PREFIX}/{ticket_id}/source/{name}"
+        # Storage keys are implementation details, not user-visible names.
+        # Supabase S3 rejects Unicode and some punctuation in object keys.
+        # Keep the original name in the preview/ticket and preserve a bounded
+        # ASCII extension for providers that infer the input format from URLs.
+        source_ext = PurePosixPath(name).suffix.lower()
+        if not (
+            2 <= len(source_ext) <= 16
+            and source_ext[1:].isascii()
+            and source_ext[1:].isalnum()
+        ):
+            source_ext = next((ext for ext in spec.accept if ext.startswith(".")), "")
+        src_key = f"{LANDING_PREFIX}/{ticket_id}/source/input{source_ext}"
         await run_blocking(self._s3.upload_file, src_key, content, content_type or "application/octet-stream")
 
         markdown = await self._parse(spec, src_key=src_key, content=content, ticket_id=ticket_id)
 
         md_name = (PurePosixPath(name).stem or "document") + spec.output_ext
-        md_key = f"{LANDING_PREFIX}/{ticket_id}/parsed/{md_name}"
+        md_key = f"{LANDING_PREFIX}/{ticket_id}/parsed/content{spec.output_ext}"
         await run_blocking(self._s3.upload_file, md_key, markdown.encode("utf-8"), "text/markdown; charset=utf-8")
 
         exp = int(time.time()) + PREVIEW_TTL_SECONDS
@@ -391,17 +402,16 @@ class LandingService:
 
         async def initialize(project: Project) -> None:
             project_id = str(project.id)
-            # A single named leaf scope == the "separate repo" the user sees,
-            # and is the narrowest scope for everything written under it.
             await run_blocking(
-                ScopeService().create,
+                self._control_plane.make_initializing_project_private,
                 project_id=project_id,
-                name=spec.scope_path,
-                path=spec.scope_path,
-                exclude=[],
-                mode="rw",
+                org_id=org_id,
+                actor_user_id=user_id,
+                operation_key=operation_key,
             )
-
+            # Every import owns a dedicated Project. Native MCP currently
+            # supports its root, not a non-root Scope. The tool folder remains
+            # a normal Git path, and the newly issued Project key is read-only.
             file_path = f"{spec.scope_path}/{md_name}"
             await container.write_commands().bulk_write(
                 project_id,
@@ -415,13 +425,13 @@ class LandingService:
                 McpEndpointService().create_endpoint,
                 project_id=project_id,
                 name=f"{spec.kind}-mcp",
-                path=spec.scope_path,
+                path=None,
                 description=f"MCP for {src_name}",
                 accesses=[
                     McpAccessItem(
-                        path=spec.scope_path,
+                        path="",
                         json_path="",
-                        readonly=spec.readonly,
+                        readonly=True,
                     )
                 ],
                 created_by=user_id,
@@ -518,6 +528,9 @@ class LandingService:
             user_id,
             ProjectAction.PROJECT_READ,
         )
+        # Never widen a previously issued Scope credential into a Project key.
+        if metadata.get("mcp_target") != "project_root":
+            self._raise_unavailable_target(project_id=project_id)
         api_key = _landing_mcp_api_key(ticket_id=operation_key, user_id=user_id)
         credential = await run_blocking(
             AccessCredentialRepository().get_active_by_token,
@@ -536,18 +549,35 @@ class LandingService:
             McpEndpointService().get_endpoint,
             endpoint_id,
         )
+        accesses = endpoint.get("accesses") if endpoint else None
         if (
             not endpoint
             or str(endpoint.get("project_id") or "") != project_id
-            or str(endpoint.get("path") or "") != repo
+            or endpoint.get("scope_id") is not None
+            or endpoint.get("path") not in {None, ""}
+            or endpoint.get("status") != "active"
+            or not isinstance(accesses, list)
+            or any(
+                not isinstance(access, dict) or access.get("readonly") is not True
+                for access in accesses
+            )
         ):
-            self._raise_rotated_credential(project_id=project_id, endpoint_id=endpoint_id)
+            self._raise_unavailable_target(project_id=project_id)
 
         return self._claim_response(
             project_id=project_id,
             repo=repo,
             api_key=api_key,
             endpoint_id=endpoint_id,
+        )
+
+    @staticmethod
+    def _raise_unavailable_target(*, project_id: str) -> None:
+        raise AppException(
+            code=ErrorCode.VERSION_CONFLICT,
+            status_code=409,
+            message="The claimed MCP target or read-only policy is no longer available",
+            details={"code": "landing_claim_target_unavailable", "project_id": project_id},
         )
 
     @staticmethod
