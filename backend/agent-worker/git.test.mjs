@@ -19,6 +19,9 @@ for (const format of ['sha1','sha256']) {
     const result=await finalize(root,config,'empty');
     assert.equal(result.tip,null); assert.equal(result.changed,false);
     assert.equal(result.automatic_commit,false);
+    config.base_oid='a'.repeat(format==='sha256'?64:40); // Unmerged remote creation.
+    const later=await finalize(root,config,'still empty');
+    assert.equal(later.tip,null); assert.equal(later.changed,false);
   }));
   test(`${format}: files, executable mode, deletion and retries preserve exact history`,()=>fixture(format,async(root,config)=>{
     await writeFile(path.join(root,'中文.md'),'first');

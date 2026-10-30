@@ -109,6 +109,47 @@ Publication retries query the original operation receipt and use the original
 candidate OID even if the live local HEAD has advanced. These contracts do not
 activate the still-incomplete shared provider lifecycle.
 
+### Agent task completion and incoming changes
+
+Live file saves, local Git commits and remote publication are separate events.
+The native Filesystem write API acknowledges its atomic file replacement after
+file and directory synchronization; another reader can then read the saved
+working file without waiting for a chat to finish. This guarantee does not
+extend to arbitrary shell commands or to a different checkout's cached view.
+
+When one Agent Run settles, its task processes are quiesced and Git finalization
+records changed working content as a local commit. An unchanged tree does not
+create an empty commit. The durable checkpoint captures the candidate OID before
+publication. Push follows that checkpoint and targets the admitted workbench
+branch; closing the whole chat is not the trigger.
+
+Existing shared workbenches are not automatically pulled or merged at task start,
+task completion or successful push. Initial workspace materialization may fetch its
+admitted base. Incoming changes to an existing workspace require explicit user
+integration. After saving/protecting current work, the user fetches the selected
+remote branch, merges it, resolves any content conflicts, commits the merge when
+needed, and pushes the resulting tip. There is no dedicated merge-resolution UI
+in this change; this remains an explicit Git operation through existing tooling.
+
+If the remote ref changed, publication reports conflict and retains the original
+local commit and working files. Neither the runtime nor a retry automatically
+pulls, rebases, resets, force-pushes or reruns the Agent. A resolved merge is a new
+publication, not a replacement candidate under the old Run identity. A further
+remote advance can reject that new push again. A lost push acknowledgement is
+reconciled using the original operation receipt; absent confirmation, the Run
+reports `outcome_unknown` / `publication_outcome_unknown`.
+
+Stock Git may send an authenticated four-byte flush probe before a chunked
+receive-pack request. The Agent relay acknowledges this probe without opening
+object storage, changing refs or consuming the Run's publication identity. Only
+the subsequent actual push validates and publishes the bound candidate.
+
+These boundaries protect Git publication, not concurrent edits inside one shared
+working directory. The service Git lock serializes its metadata commands; it
+does not isolate arbitrary user/Agent writes, and finalization can capture other
+writers' saved changes. Independent per-Agent commits require isolated worktrees
+or coordinated writes as a separate architecture change.
+
 A receive operation lends its live snapshot to billing and file-policy checks.
 `get_version_publication_context` groups initial repository/result/policy reads;
 final publication still checks fresh authority and policy revisions. New objects

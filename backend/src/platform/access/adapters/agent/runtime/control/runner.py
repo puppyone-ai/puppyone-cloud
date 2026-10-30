@@ -857,9 +857,19 @@ class RunSupervisor:
         await self.loop.send(self.worker, {"type": "reply", "id": frame["id"], "result": result})
 
     async def publish(self, grant):
-        with database_stage("publication"):
-            result = await self.publication.publish(self.run, self.value, grant, self.worker)
-        await self.write("publication", result, publication=result)
+        try:
+            with database_stage("publication"):
+                result = await self.publication.publish(self.run, self.value, grant, self.worker)
+            await self.write("publication", result, publication=result)
+        except PublicationRejected:
+            raise
+        except Exception as exc:
+            # The task and local candidate already completed. A missing push
+            # receipt is not evidence that the Agent's work must run again.
+            logger.exception(
+                "cloud_agent_publication_unconfirmed", extra={"run_id": self.run["id"]}
+            )
+            raise EndRun("outcome_unknown", "publication_outcome_unknown") from exc
         await self.finish(
             "succeeded" if result["status"] in {"committed", "no_changes"} else "conflict",
             "completed",

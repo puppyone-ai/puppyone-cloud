@@ -66,6 +66,17 @@ async function fixture(fn, format = 'sha1', remote = null) {
 }
 
 for (const format of ['sha1', 'sha256']) {
+test(`${format}: an empty local workspace does not publish a missing candidate`,
+  { skip: !enabled, timeout: 30000 }, () => fixture(async (_, { identity, config }) => {
+    const client = connection(...identity, 20002);
+    try {
+      await client.control('prepare', { ...config, base_oid: 'a'.repeat(format === 'sha256' ? 64 : 40) });
+      const saved = await client.control('finalize', { message: 'No local changes' });
+      assert.equal(saved.tip, null); assert.equal(saved.changed, false);
+      assert.equal(saved.automatic_commit, false);
+    } finally { client.child.stdin.end(); await once(client.child, 'exit'); }
+  }, format));
+
 test(`${format}: shared inspect/finalize preserves config and leaves ordinary Git usable`,
   { skip: !enabled, timeout: 30000 }, () => fixture(async clients => {
     await user(20000, `import {writeFile} from 'node:fs/promises';
@@ -192,6 +203,29 @@ test('concurrent hostile Git config cannot execute code or alter the root-owned 
   }));
 
 for (const format of ['sha1', 'sha256']) {
+  test(`${format}: an unmerged remote advance preserves the local commit and rejects only push`,
+    { skip: !enabled, timeout: 30000 }, async () => {
+      const remote = await gitHttpFixture(format);
+      try {
+        await fixture(async (_, { identity, config, transport }) => {
+          const newer = await remote.advance('remote writer contents');
+          const client = connection(...identity, 20002, transport);
+          try {
+            await client.control('prepare', { ...config, base_oid: newer });
+            assert.equal(await readFile(`${ROOT}/note`, 'utf8'), 'cloud starting point');
+            await user(20002, `await import('node:fs/promises').then(fs=>fs.writeFile('note','local task contents'));`);
+            const saved = await client.control('finalize', { message: 'Unmerged local work' });
+            assert.equal(saved.automatic_commit, true);
+            assert.equal((await client.control('push', { candidate: saved.tip })).rejected, true);
+            assert.equal((await client.control('inspect')).tip, saved.tip);
+            assert.equal(await readFile(`${ROOT}/note`, 'utf8'), 'local task contents');
+            assert.equal(await remote.command('rev-parse', 'main'), newer);
+            assert.equal(await remote.command('show', 'main:note'), 'remote writer contents');
+          } finally { client.child.stdin.end(); await once(client.child, 'exit'); }
+        }, format, remote);
+      } finally { await remote.close(); }
+    });
+
   test(`${format}: actual shared control fetches, commits and retries the original candidate over stock Git HTTP`,
     { skip: !enabled, timeout: 30000 }, async () => {
       const remote = await gitHttpFixture(format);

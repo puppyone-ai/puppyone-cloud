@@ -14,10 +14,16 @@ it('does not fabricate completed tools after stopping or failure', () => {
   expect(messages[1].parts?.map(part => part.toolStatus)).toEqual(['completed', 'error']);
 });
 it('distinguishes publishing, conflict and unknown save outcomes from successful completion', () => {
-  expect(runStatus(makeRun({ state: 'publishing' }))).toContain('Saving');
+  expect(runStatus(makeRun({ state: 'publishing' }))).toContain('Uploading committed');
   expect(runStatus(makeRun({ state: 'conflict' }))).toContain('conflict');
   expect(runStatus(makeRun({ state: 'outcome_unknown' }))).toContain('confirmation');
   expect(runStatus(makeRun({ state: 'succeeded' }))).toBeNull();
+});
+it('keeps uncertain publication separate from uncertain tool execution', () => {
+  expect(runStatus(makeRun({ state: 'outcome_unknown', snapshot: { code: 'publication_outcome_unknown' } })))
+    .toContain('Upload confirmation');
+  expect(runStatus(makeRun({ state: 'outcome_unknown', snapshot: { code: 'tool_outcome_unknown' } })))
+    .not.toContain('local commit');
 });
 it('shows a recoverable failure on the tool while the Agent continues and finishes normally', () => {
   const tools = [{ call_id: 'denied', name: 'write', input: { path: '/recovery/test' }, state: 'completed' as const,

@@ -17,7 +17,8 @@ pytestmark = pytest.mark.hosting_component
 
 
 @pytest.mark.parametrize("attempt", [None, "41f38842-ef41-41d6-a259-0bd22690aa61", "opaque-probe-metadata"])
-def test_probe_does_not_open_storage_or_consume_publication_identity(tmp_path, attempt):
+@pytest.mark.parametrize("publication", [None, object()], ids=["ordinary", "agent-run"])
+def test_probe_does_not_open_storage_or_consume_publication_identity(tmp_path, attempt, publication):
     git = Git.init(tmp_path / "source")
     git.commit({"file": b"contents"})
     service, reads, pins, _ = storage(git)
@@ -30,13 +31,16 @@ def test_probe_does_not_open_storage_or_consume_publication_identity(tmp_path, a
     service.backend.put_git_pack_durable = forbidden
     path = tmp_path / "probe"
     path.write_bytes(b"0000")
-    response = NativeGitRepository(service).receive(grant("p"), path, initial_attempt=attempt)
+    response = NativeGitRepository(service).receive(
+        grant("p"), path, initial_attempt=attempt, publication=publication
+    )
     assert response.status_code == 200 and response.body == b""
     assert response.media_type == "application/x-git-receive-pack-result"
     assert not reads and not pins
 
 
-def test_probe_still_requires_write_authority_and_cannot_ack_a_publication(tmp_path):
+@pytest.mark.parametrize("publication", [None, object()], ids=["ordinary", "agent-run"])
+def test_probe_still_requires_write_authority(tmp_path, publication):
     git = Git.init(tmp_path / "source")
     git.commit({"file": b"contents"})
     service, reads, pins, _ = storage(git)
@@ -44,9 +48,7 @@ def test_probe_still_requires_write_authority_and_cannot_ack_a_publication(tmp_p
     path.write_bytes(b"0000")
     repository = NativeGitRepository(service)
     with pytest.raises(PermissionError):
-        repository.receive(grant("p", writable=False), path)
-    with pytest.raises(ValueError, match="Publication requires ref updates"):
-        repository.receive(grant("p"), path, publication=object())
+        repository.receive(grant("p", writable=False), path, publication=publication)
     assert not reads and not pins
 
 
