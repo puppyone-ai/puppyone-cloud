@@ -24,7 +24,9 @@ export function runStatus(run?: AgentRun): string | null {
     case 'queued': return 'Waiting to start';
     case 'waiting_approval': return 'Waiting for your approval';
     case 'publishing': return 'Uploading committed changes to Cloud';
-    case 'stopped': return 'Stopped';
+    case 'stopped': return run.snapshot.code === 'approval_expired'
+      ? 'Stopped because the approval request went unanswered. Your work is kept in this workspace.'
+      : 'Stopped';
     case 'conflict': return 'The Cloud has newer changes. Your work is kept in this workspace.';
     case 'outcome_unknown': return run.snapshot.code === 'publication_outcome_unknown'
       ? 'Upload confirmation is unavailable. Your work is kept, and the Agent task will not repeat automatically.'
