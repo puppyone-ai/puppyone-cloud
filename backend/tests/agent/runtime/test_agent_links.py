@@ -5,8 +5,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from uuid import uuid4
 
+import asyncssh
 import pytest
+from fastapi import HTTPException
 
+from src.config import settings
+from src.platform.access.agent_links import AgentLinkRepository, AgentLinkService
+from src.platform.access.credential_repository import access_token_hash
+from src.platform.access.lifecycle_schemas import AgentConnect, AgentLinkCreate
 from tests.agent.runtime.conftest import literal
 from tests.agent.runtime.test_access_lifecycle import call
 from tests.agent.runtime.test_live_workbench_control import running
@@ -127,6 +133,103 @@ def test_sign_in_link_waits_for_the_owner_and_then_keeps_working(postgres, submi
         sql_call(postgres, "access_agent_ssh_ticket", identity)
     assert postgres.row(f"SELECT state FROM access_sessions WHERE id='{first}'")["state"] == "stopping"
     assert link_command(postgres, "inventory", args["user"], project_id=args["project"])["connections"] == []
+
+
+@pytest.fixture
+def link_service(control_api, monkeypatch):
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "agent-link-test-secret")
+    monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
+    endpoint = {"host": "gateway.fixture", "port": 2222, "known_hosts": "gateway.fixture ssh-ed25519 AAAA"}
+    return AgentLinkService(AgentLinkRepository(control_api), endpoint=lambda: endpoint)
+
+
+def secret():
+    return "pai_" + uuid4().hex * 2
+
+
+def agent_request(invitation):
+    # The service validates a real key; the SQL tests above bypass that layer.
+    key = asyncssh.generate_private_key("ssh-ed25519").export_public_key().decode()
+    return AgentConnect(invitation=invitation, name="Test agent", public_key=key)
+
+
+async def issue(service, args, row, admission):
+    invitation = secret()
+    await service.create(
+        args["user"],
+        args["project"],
+        AgentLinkCreate(
+            id=uuid4(), secret=invitation, workbench_id=row["id"], admission=admission
+        ),
+    )
+    return invitation
+
+
+@pytest.mark.asyncio
+async def test_open_links_stay_closed_until_the_deployment_opens_them(
+    postgres, submitted, link_service
+):
+    args, _ = submitted
+    row = running(postgres, args)
+
+    with pytest.raises(HTTPException) as refused:
+        await issue(link_service, args, row, "link")
+    assert refused.value.status_code == 409
+    assert refused.value.detail == {"code": "agent_open_links_closed"}
+    assert postgres.row(
+        f"SELECT count(*) AS n FROM access_invitations WHERE admission='link' AND project_id='{args['project']}'"
+    )["n"] == 0
+
+    invitation = await issue(link_service, args, row, "sign_in")
+    assert (await link_service.connect(agent_request(invitation)))["status"] == "pending"
+    inventory = await link_service.inventory(args["user"], args["project"])
+    assert inventory["open_links_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_link_issued_while_open_stops_admitting_when_closed_and_works_again_reopened(
+    postgres, submitted, link_service, monkeypatch
+):
+    args, _ = submitted
+    row = running(postgres, args)
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
+    invitation = await issue(link_service, args, row, "link")
+    assert (await link_service.inventory(args["user"], args["project"]))["open_links_enabled"] is True
+    admitted = (
+        "SELECT count(*) AS n FROM access_agent_connections c JOIN access_invitations i "
+        f"ON i.id=c.invitation_id WHERE i.project_id='{args['project']}'"
+    )
+
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", False)
+    with pytest.raises(HTTPException) as closed:
+        await link_service.connect(agent_request(invitation))
+    with pytest.raises(HTTPException) as unknown:
+        await link_service.connect(agent_request(secret()))
+    # A holder cannot tell a closed link from one that never existed.
+    assert closed.value.status_code == unknown.value.status_code == 403
+    assert closed.value.detail == unknown.value.detail == {"code": "agent_link_unavailable"}
+    assert postgres.row(admitted)["n"] == 0
+
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
+    assert (await link_service.connect(agent_request(invitation)))["status"] == "ready"
+
+
+def test_the_closed_check_matches_the_stored_hash_of_a_link(postgres, submitted, control_api, monkeypatch):
+    args, _ = submitted
+    row = running(postgres, args)
+    monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "agent-link-test-secret")
+    invitation = secret()
+    create_key = access_token_hash(invitation)
+    link_command(
+        postgres, "create", args["user"], id=str(uuid4()), project_id=args["project"],
+        workbench_id=row["id"], admission="link", key_hash=create_key,
+    )
+    sign_in = create_link(postgres, args, row, "sign_in")
+    repository = AgentLinkRepository(control_api)
+    assert repository.admits_without_sign_in([create_key]) is True
+    assert repository.admits_without_sign_in([sign_in]) is False
+    assert repository.admits_without_sign_in([hash_of()]) is False
 
 
 def test_a_link_admits_any_agent_and_stopping_sharing_ends_every_one(postgres, submitted):

@@ -114,6 +114,18 @@ class AgentLinkRepository(AccessRepository):
     def command(self, action, user, **payload):
         return self.call("access_agent_link_command", action=action, user=user, payload=payload)
 
+    def admits_without_sign_in(self, key_hashes):
+        rows = (
+            self.client.table("access_invitations")
+            .select("id")
+            .in_("key_hash", key_hashes)
+            .eq("admission", "link")
+            .limit(1)
+            .execute()
+            .data
+        )
+        return bool(rows)
+
 
 class AgentLinkService:
     def __init__(self, repository=None, endpoint=None):
@@ -135,6 +147,8 @@ class AgentLinkService:
         }
 
     async def create(self, user, project, request):
+        if request.admission == "link" and not settings.AGENT_OPEN_LINKS_ENABLED:
+            raise HTTPException(409, detail={"code": "agent_open_links_closed"})
         self.endpoint()  # A link that cannot be connected to must not be issued.
         secret = request.secret.get_secret_value()
         origin = public_origin()
@@ -151,7 +165,8 @@ class AgentLinkService:
         return {**row, "agent_url": f"{origin}/agent/{secret}"}
 
     async def inventory(self, user, project):
-        return await run_blocking(self.repository.command, "inventory", user, project_id=project)
+        row = await run_blocking(self.repository.command, "inventory", user, project_id=project)
+        return {**row, "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED}
 
     async def stop(self, user, project):
         return await run_blocking(self.repository.command, "stop", user, project_id=project)
@@ -173,12 +188,19 @@ class AgentLinkService:
         if not web:
             raise HTTPException(503, detail={"code": "agent_link_not_configured"})
         self.endpoint()
+        key_hashes = access_token_hash_candidates(request.invitation.get_secret_value())
+        # Links issued before admission closed stay refused, in the same words
+        # as an expired one: a link holder learns nothing about the switch.
+        if not settings.AGENT_OPEN_LINKS_ENABLED and await run_blocking(
+            self.repository.admits_without_sign_in, key_hashes
+        ):
+            raise HTTPException(403, detail={"code": "agent_link_unavailable"})
         poll_secret = generate_access_token("pac")
         try:
             row = await run_blocking(
                 self.repository.call,
                 "access_agent_connect",
-                key_hashes=access_token_hash_candidates(request.invitation.get_secret_value()),
+                key_hashes=key_hashes,
                 poll_hash=access_token_hash(poll_secret),
                 agent_name=request.name,
                 public_key=key,
