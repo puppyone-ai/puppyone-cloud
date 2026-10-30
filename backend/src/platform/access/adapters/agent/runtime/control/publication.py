@@ -13,12 +13,32 @@ from src.platform.workspace.filesystem.port import FilesystemPort
 from src.version_engine.read.ref_metadata import GitBranchBase
 
 
+# Overlapping tasks in one Workspace can race for the same ref; each retry re-reads it.
+PUSH_ATTEMPTS = 3
+
+
 class PublicationRejected(ValueError):
     """A preflight rejected the candidate before publication."""
 
 
 def actor(run):
     return f"cloud-agent:{run['id']}:{run['execution_id']}:{run['fence']}"
+
+
+def same_branch(first, second):
+    """Whether two ref descriptions differ only in where the branch now points."""
+    first, second = GitBranchBase.parse(first), GitBranchBase.parse(second)
+    return (
+        first.object_format == second.object_format
+        and first.generation == second.generation
+        and first.ref_name == second.ref_name
+        and first.head_guard == second.head_guard
+    )
+
+
+def outcome(state, status, code=None):
+    value = {"status": status, "commit_id": state["tip"], "target_ref": state["target_ref"]}
+    return {**value, "code": code} if code else value
 
 
 class Publication:
@@ -87,34 +107,47 @@ class Publication:
         if result is not None and result["status"] == "pending":
             raise RuntimeError("Original Git publication is still pending")
         if result is None:
-            current = await run_blocking(self.describe, run, grant)
-            if GitBranchBase.parse(current) != GitBranchBase.parse(checkpoint["base"]):
-                return {
-                    "status": "conflict",
-                    "commit_id": state["tip"],
-                    "target_ref": state["target_ref"],
-                    "code": "cloud_branch_changed",
-                }
-            try:
-                pushed = await self.filesystem.push(worker, state["tip"])
-            except Exception:
-                # ACK loss must be reconciled by original identity, never by current HEAD.
+            shared = self.target(run) is not None
+            admitted = checkpoint["base"]
+            for attempt in range(PUSH_ATTEMPTS):
+                current = await run_blocking(self.describe, run, grant)
+                remote_tip = None
+                if GitBranchBase.parse(current) != GitBranchBase.parse(checkpoint["base"]):
+                    if not shared or not same_branch(current, checkpoint["base"]):
+                        return outcome(state, "conflict", "cloud_branch_changed")
+                    # Tasks in one Workspace share a worktree, so another task's
+                    # publication advances this Run's branch without diverging
+                    # from it. Git and the host still refuse a non-fast-forward.
+                    remote_tip = current["expected_oid"]
+                    if remote_tip == state["tip"]:
+                        return outcome(state, "no_changes")
+                    checkpoint["base"] = current
+                try:
+                    pushed = await self.filesystem.push(
+                        worker, state["tip"], remote_tip=remote_tip
+                    )
+                except Exception:
+                    # ACK loss must be reconciled by original identity, never by current HEAD.
+                    result = await run_blocking(
+                        self.transport.result, run["project_id"], grant, run["id"]
+                    )
+                    if result is None:
+                        raise
+                    break
                 result = await run_blocking(
                     self.transport.result, run["project_id"], grant, run["id"]
                 )
-                if result is None:
-                    raise
-            else:
-                result = await run_blocking(
-                    self.transport.result, run["project_id"], grant, run["id"]
-                )
-                if result is None and pushed.get("rejected"):
-                    return {
-                        "status": "conflict",
-                        "commit_id": state["tip"],
-                        "target_ref": state["target_ref"],
-                        "code": "git_push_rejected",
-                    }
+                if result is not None:
+                    break
+                if pushed.get("contained"):
+                    return outcome(state, "no_changes")
+                if not pushed.get("rejected"):
+                    break
+                # A refused push is final unless a parallel task moved the branch.
+                moved = await run_blocking(self.describe, run, grant) if shared else current
+                if moved == current or attempt == PUSH_ATTEMPTS - 1:
+                    checkpoint["base"] = admitted
+                    return outcome(state, "conflict", "git_push_rejected")
         if result is None or result["status"] == "pending":
             raise RuntimeError("Git publication outcome unavailable")
         return {**result, "commit_id": state["tip"], "target_ref": state["target_ref"]}

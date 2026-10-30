@@ -241,6 +241,12 @@ for (const format of ['sha1', 'sha256']) {
           await clients[0].control('push', {candidate:first.tip});
           assert.equal(await remote.command('rev-parse','main'), first.tip);
           assert.equal(await remote.command('show','main:note'), 'candidate A');
+          // Run B descends from Run A, so it follows the branch Run A just moved.
+          assert.equal((await clients[1].control('push', {candidate:second.tip, remote_tip:first.tip})).rejected, undefined);
+          assert.equal(await remote.command('rev-parse','main'), second.tip);
+          // Run A's work is now inside Run B's commit: nothing is left to publish.
+          assert.equal((await clients[0].control('push', {candidate:first.tip, remote_tip:second.tip})).contained, true);
+          assert.equal(await remote.command('rev-parse','main'), second.tip);
           assert.equal((await clients[1].control('inspect')).tip, second.tip);
           assert.equal(await readFile(`${ROOT}/note`, 'utf8'), 'human unsaved');
         }, format, remote);

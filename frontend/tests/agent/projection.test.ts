@@ -15,7 +15,7 @@ it('does not fabricate completed tools after stopping or failure', () => {
 });
 it('distinguishes publishing, conflict and unknown save outcomes from successful completion', () => {
   expect(runStatus(makeRun({ state: 'publishing' }))).toContain('Uploading committed');
-  expect(runStatus(makeRun({ state: 'conflict' }))).toContain('conflict');
+  expect(runStatus(makeRun({ state: 'conflict' }))).toContain('newer changes');
   expect(runStatus(makeRun({ state: 'outcome_unknown' }))).toContain('confirmation');
   expect(runStatus(makeRun({ state: 'succeeded' }))).toBeNull();
 });

@@ -131,9 +131,16 @@ remote branch, merges it, resolves any content conflicts, commits the merge when
 needed, and pushes the resulting tip. There is no dedicated merge-resolution UI
 in this change; this remains an explicit Git operation through existing tooling.
 
-If the remote ref changed, publication reports conflict and retains the original
-local commit and working files. Neither the runtime nor a retry automatically
-pulls, rebases, resets, force-pushes or reruns the Agent. A resolved merge is a new
+Tasks in one Workspace share a worktree, so one task's publication advances the
+ref under another task without diverging from it. A candidate that descends from
+the new tip publishes as an ordinary fast-forward; a candidate the new tip already
+contains has nothing left to publish. Publication re-reads the ref for each
+attempt and the host's CAS still arbitrates.
+
+If the remote ref changed and the candidate does not descend from it, publication
+reports conflict and retains the original local commit and working files. Neither
+the runtime nor a retry automatically pulls, rebases, resets, force-pushes or
+reruns the Agent. A resolved merge is a new
 publication, not a replacement candidate under the old Run identity. A further
 remote advance can reject that new push again. A lost push acknowledgement is
 reconciled using the original operation receipt; absent confirmation, the Run

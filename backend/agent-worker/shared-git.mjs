@@ -75,6 +75,13 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
     if (config.readonly || typeof candidate !== 'string' || !new RegExp(`^[0-9a-f]{${width}}$`).test(candidate))
       throw new Error('Invalid publication candidate');
     if (await run(['cat-file', '-t', candidate]) !== 'commit') throw new Error('Publication candidate is not a commit');
+    // A parallel task may already have published this work inside a later commit.
+    if (value.remote_tip !== undefined) {
+      if (typeof value.remote_tip !== 'string' || !new RegExp(`^[0-9a-f]{${width}}$`).test(value.remote_tip))
+        throw new Error('Invalid publication remote tip');
+      try { await run(['merge-base', '--is-ancestor', candidate, value.remote_tip]); return { contained: true }; }
+      catch { /* Not contained, or the tip is unknown here: let the push decide. */ }
+    }
     try { return { output: await run(['push', '--porcelain', '--no-verify', remote, `${candidate}:${target}`]) }; }
     catch (error) {
       if (/^!\t[^\n]+\t\[rejected\] \((fetch first|non-fast-forward)\)$/m.test(error.output || '')) return { rejected: true };
