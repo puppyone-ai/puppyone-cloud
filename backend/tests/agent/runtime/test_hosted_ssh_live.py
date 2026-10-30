@@ -412,10 +412,10 @@ async def test_new_owner_reaps_lost_gateway_connection(live):
 
 
 @asynccontextmanager
-async def agent_machines(live):
+async def agent_machines(live, transport=None):
     """A first connection starts a machine, so the sandbox module has to be running.
 
-    The Project is empty here: a Workspace initializes from no base.
+    Without a real ``transport`` the Project is empty: a Workspace initializes from no base.
     """
     workspace = live.workspace
 
@@ -426,7 +426,8 @@ async def agent_machines(live):
             "expected_oid": None,
         }
 
-    workspace.transport = workspace.lifecycle.transport = SimpleNamespace(describe=describe)
+    transport = transport or SimpleNamespace(describe=describe)
+    workspace.transport = workspace.lifecycle.transport = transport
     meter = SimpleNamespace(
         ensure_session=AsyncMock(),
         check_session=AsyncMock(),
