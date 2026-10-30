@@ -158,7 +158,7 @@ BEGIN
      OR p_public_key IS NULL OR p_public_key NOT LIKE 'ssh-ed25519 %' THEN
      RAISE EXCEPTION 'access_denied' USING ERRCODE='42501'; END IF;
    w:=public.access_grant_agent_workspace(g.id);
-   -- A paused workspace keeps its generation; resuming it is a separately approved capability.
+   -- Without wake the client waits: the refusal itself starts the Agent's own machine.
    IF w.owner_deleted_at IS NOT NULL OR NOT (w.state='running' OR ('workspace.wake'=ANY(g.capabilities)
      AND w.state IN ('paused','pausing','resuming'))) THEN
      RAISE EXCEPTION 'access_workspace_unavailable' USING ERRCODE='55000'; END IF;
