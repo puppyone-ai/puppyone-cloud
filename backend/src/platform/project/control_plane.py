@@ -92,6 +92,21 @@ class ProjectControlPlaneRepository:
             operation="get_project_create_operation_replay",
         )
 
+    def make_initializing_project_private(
+        self, *, project_id: str, org_id: str, actor_user_id: str
+    ) -> dict[str, Any] | None:
+        response = (
+            self._client.table("projects")
+            .update({"visibility": "private"})
+            .eq("id", project_id)
+            .eq("org_id", org_id)
+            .eq("created_by", actor_user_id)
+            .eq("lifecycle_status", "initializing")
+            .execute()
+        )
+        rows = response.data
+        return rows[0] if isinstance(rows, list) and len(rows) == 1 else None
+
     def abandon_initialization(
         self,
         *,
@@ -252,6 +267,38 @@ class ProjectControlPlaneService:
     ):
         self._repository = repository
         self._deletion_quiescence_seconds = deletion_quiescence_seconds
+
+    def make_initializing_project_private(
+        self, *, project_id: str, org_id: str, actor_user_id: str, operation_key: str
+    ) -> None:
+        """Set privacy under the owned initializer lease, before publication.
+
+        Normal Project metadata APIs only accept ready Projects. This narrow
+        initializer operation cannot change visibility on an existing Project.
+        """
+        from src.platform.project.write_lease import active_project_write_lease
+
+        lease = active_project_write_lease(project_id)
+        proof = lease.initialization_proof() if lease is not None else {}
+        if (
+            proof.get("initialization_operation_key") != operation_key
+            or proof.get("initialization_actor") != actor_user_id
+        ):
+            raise RuntimeError("A private import requires its owned initialization lease")
+        row = self._repository.make_initializing_project_private(
+            project_id=project_id, org_id=org_id, actor_user_id=actor_user_id
+        )
+        if not isinstance(row, dict) or any(
+            row.get(key) != value
+            for key, value in {
+                "id": project_id,
+                "org_id": org_id,
+                "created_by": actor_user_id,
+                "lifecycle_status": "initializing",
+                "visibility": "private",
+            }.items()
+        ):
+            raise RuntimeError("The initializing import Project could not be confirmed private")
 
     def create_project(
         self,

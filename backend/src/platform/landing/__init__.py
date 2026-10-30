@@ -9,8 +9,10 @@ Two generic, tool-kind-parameterized endpoints (see ``router.py``):
   *ticket* + a preview. No Supabase user, no project/org rows are created.
 
 * ``POST /landing/claim`` — requires a real (logged-in) user. Validates the
-  ticket and runs the standard create-chain (project → scope → write content →
-  mcp-endpoint) so the artifacts are *born owned* by that user. No
+  ticket and runs the standard create-chain (dedicated private project → write
+  content → Project-root read-only MCP) so the artifacts are *born owned* by
+  that user in their selected organization. The MCP can read the entire
+  dedicated Project, including files added to that Project later. No
   re-parenting / ownership migration.
 
 Why this shape (Option C): ``created_by`` is a hard FK to ``auth.users``, so

@@ -34,7 +34,6 @@ from src.platform.project.control_plane import (
 )
 from src.platform.project.models import Project
 from src.platform.project.orchestration import create_project_with_tree
-from src.platform.repository_target.scope_service import ScopeService
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 logger = logging.getLogger(__name__)
@@ -106,6 +105,7 @@ def _landing_result_metadata(*, operation_key: str, spec: ToolSpec) -> dict[str,
         "repo": spec.scope_path,
         "endpoint_name": f"{spec.kind}-mcp",
         "credential_derivation_version": 1,
+        "mcp_target": "project_root",
     }
 
 
@@ -121,37 +121,55 @@ _HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 def _openapi_to_markdown(content: bytes) -> str:
     """Render an OpenAPI/Swagger spec (JSON or YAML) into a readable markdown
     summary the MCP fs tools can serve."""
-    text = content.decode("utf-8", errors="replace")
+    text = content.decode("utf-8-sig")
     spec: object
     try:
         spec = json.loads(text)
-    except Exception:
+    except json.JSONDecodeError:
         import yaml
 
-        spec = yaml.safe_load(text)
+        try:
+            spec = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError("OpenAPI must be valid JSON or YAML") from exc
     if not isinstance(spec, dict):
         raise ValueError("Not a valid OpenAPI/Swagger document")
 
     info = spec.get("info") or {}
+    version = spec.get("openapi")
+    if not (
+        isinstance(version, str) and version.startswith("3.")
+        or spec.get("swagger") == "2.0"
+    ) or not isinstance(info, dict) or not all(
+        isinstance(info.get(key), str) and info[key].strip() for key in ("title", "version")
+    ):
+        raise ValueError("OpenAPI requires a supported version and info.title/info.version")
     lines = [f"# {info.get('title', 'API')} {info.get('version', '')}".strip()]
     if info.get("description"):
         lines += ["", str(info["description"])]
 
     servers = spec.get("servers") or []
+    if not isinstance(servers, list):
+        raise ValueError("OpenAPI servers must be a list")
     server_urls = [s.get("url", "") for s in servers if isinstance(s, dict)]
     if server_urls:
         lines += ["", "## Servers"] + [f"- {u}" for u in server_urls if u]
 
     paths = spec.get("paths") or {}
+    if not isinstance(paths, dict):
+        raise ValueError("OpenAPI paths must be an object")
     if isinstance(paths, dict) and paths:
         lines += ["", "## Endpoints"]
         for path, ops in paths.items():
             if not isinstance(ops, dict):
-                continue
+                raise ValueError("OpenAPI path entries must be objects")
             for method, op in ops.items():
+                if not isinstance(method, str):
+                    raise ValueError("OpenAPI method names must be strings")
                 if method.lower() not in _HTTP_METHODS:
                     continue
-                op = op or {}
+                if not isinstance(op, dict):
+                    raise ValueError("OpenAPI operations must be objects")
                 summary = op.get("summary") or op.get("operationId") or ""
                 entry = f"- `{method.upper()} {path}`"
                 lines.append(f"{entry} — {summary}" if summary else entry)
@@ -165,15 +183,21 @@ def _openapi_to_markdown(content: bytes) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _table_cell(value: str) -> str:
+    # Markdown table rows must remain on one physical line, even when the
+    # spreadsheet/quoted CSV cell contains a newline.
+    return value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>").replace("|", "\\|")
+
+
 def _rows_to_md_table(rows: list[list[str]], truncated: bool, max_rows: int) -> list[str]:
     out: list[str] = []
     if rows:
         width = max(len(r) for r in rows)
         pad = lambda r: r + [""] * (width - len(r))  # noqa: E731
-        out.append("| " + " | ".join(pad(rows[0])) + " |")
+        out.append("| " + " | ".join(_table_cell(c) for c in pad(rows[0])) + " |")
         out.append("| " + " | ".join(["---"] * width) + " |")
         for r in rows[1:]:
-            out.append("| " + " | ".join(c.replace("|", "\\|") for c in pad(r)) + " |")
+            out.append("| " + " | ".join(_table_cell(c) for c in pad(r)) + " |")
     if truncated:
         out.append(f"\n_(truncated at {max_rows} rows)_")
     return out
@@ -190,39 +214,53 @@ def _pdf_extract_text(content: bytes) -> str:
     return "\n\n".join(p for p in parts if p).strip()
 
 
-def _excel_to_markdown(content: bytes, max_rows: int = 200, max_cols: int = 30) -> str:
+def _excel_to_markdown(
+    content: bytes, max_rows: int = 200, max_cols: int = 30, *, delimiter: str | None = None
+) -> str:
     """Render each worksheet of an .xlsx workbook as a markdown table. CSV/TSV
     uploads (detected by NOT being a zip/xlsx) go through the CSV path — we
     branch on the magic bytes so a binary xlsx is never fed to the CSV reader."""
     # .xlsx/.xlsm are zip archives ("PK\x03\x04"); real CSV/TSV is text.
-    if content[:2] != b"PK":
-        return _csv_to_markdown(content, max_rows, max_cols)
+    if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        raise ValueError("Legacy .xls workbooks are unsupported; export as .xlsx, .csv or .tsv")
+    if not content.startswith(b"PK\x03\x04"):
+        return _csv_to_markdown(content, max_rows, max_cols, delimiter=delimiter)
 
     from openpyxl import load_workbook
 
-    wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError("The .xlsx workbook could not be read") from exc
     out: list[str] = []
-    for ws in wb.worksheets:
-        out.append(f"## {ws.title}")
-        rows: list[list[str]] = []
-        truncated = False
-        for r, row in enumerate(ws.iter_rows(values_only=True)):
-            if r >= max_rows:
-                truncated = True
-                break
-            rows.append(["" if c is None else str(c) for c in row[:max_cols]])
-        out += _rows_to_md_table(rows, truncated, max_rows)
-        out.append("")
+    try:
+        for ws in wb.worksheets:
+            out.append(f"## {ws.title}")
+            rows: list[list[str]] = []
+            truncated = False
+            for r, row in enumerate(ws.iter_rows(values_only=True)):
+                if r >= max_rows:
+                    truncated = True
+                    break
+                rows.append(["" if c is None else str(c) for c in row[:max_cols]])
+            out += _rows_to_md_table(rows, truncated, max_rows)
+            out.append("")
+    finally:
+        wb.close()
     return "\n".join(out).rstrip() + "\n"
 
 
-def _csv_to_markdown(content: bytes, max_rows: int, max_cols: int) -> str:
+def _csv_to_markdown(
+    content: bytes, max_rows: int, max_cols: int, *, delimiter: str | None = None
+) -> str:
     import csv
     import io
 
-    text = content.decode("utf-8", errors="replace")
+    text = content.decode("utf-8-sig")
+    if not text.strip() or "\x00" in text:
+        raise ValueError("CSV/TSV must contain non-empty UTF-8 text")
     sample = text[:4096]
-    delimiter = "\t" if sample.count("\t") > sample.count(",") else ","
+    delimiter = delimiter or ("\t" if sample.count("\t") > sample.count(",") else ",")
     rows: list[list[str]] = []
     truncated = False
     for r, row in enumerate(csv.reader(io.StringIO(text), delimiter=delimiter)):
@@ -261,13 +299,24 @@ class LandingService:
         ticket_id = uuid4().hex
         name = _safe_name(filename)
 
-        src_key = f"{LANDING_PREFIX}/{ticket_id}/source/{name}"
+        # Storage keys are implementation details, not user-visible names.
+        # Supabase S3 rejects Unicode and some punctuation in object keys.
+        # Keep the original name in the preview/ticket and preserve a bounded
+        # ASCII extension for providers that infer the input format from URLs.
+        source_ext = PurePosixPath(name).suffix.lower()
+        if not (
+            2 <= len(source_ext) <= 16
+            and source_ext[1:].isascii()
+            and source_ext[1:].isalnum()
+        ):
+            source_ext = next((ext for ext in spec.accept if ext.startswith(".")), "")
+        src_key = f"{LANDING_PREFIX}/{ticket_id}/source/input{source_ext}"
         await run_blocking(self._s3.upload_file, src_key, content, content_type or "application/octet-stream")
 
         markdown = await self._parse(spec, src_key=src_key, content=content, ticket_id=ticket_id)
 
         md_name = (PurePosixPath(name).stem or "document") + spec.output_ext
-        md_key = f"{LANDING_PREFIX}/{ticket_id}/parsed/{md_name}"
+        md_key = f"{LANDING_PREFIX}/{ticket_id}/parsed/content{spec.output_ext}"
         await run_blocking(self._s3.upload_file, md_key, markdown.encode("utf-8"), "text/markdown; charset=utf-8")
 
         exp = int(time.time()) + PREVIEW_TTL_SECONDS
@@ -295,11 +344,18 @@ class LandingService:
 
     async def _parse(self, spec: ToolSpec, *, src_key: str, content: bytes, ticket_id: str) -> str:
         if spec.parser == "passthrough":
-            return content.decode("utf-8", errors="replace")
+            text = content.decode("utf-8-sig")
+            if not text.strip() or "\x00" in text:
+                raise ValueError("Markdown must contain non-empty UTF-8 text")
+            return text
         if spec.parser == "openapi":
-            return _openapi_to_markdown(content)
+            return await run_blocking(_openapi_to_markdown, content)
         if spec.parser == "excel":
-            return _excel_to_markdown(content)
+            suffix = PurePosixPath(src_key).suffix.lower()
+            if suffix == ".xlsx" and not content.startswith(b"PK\x03\x04"):
+                raise ValueError("Expected a valid .xlsx workbook")
+            delimiter = {".csv": ",", ".tsv": "\t"}.get(suffix)
+            return await run_blocking(_excel_to_markdown, content, delimiter=delimiter)
         if spec.parser == "pdf":
             # Text-layer PDFs extract directly (no API key). Only fall back to
             # the OCR provider for scanned/image-only PDFs that yield no text.
@@ -391,17 +447,16 @@ class LandingService:
 
         async def initialize(project: Project) -> None:
             project_id = str(project.id)
-            # A single named leaf scope == the "separate repo" the user sees,
-            # and is the narrowest scope for everything written under it.
             await run_blocking(
-                ScopeService().create,
+                self._control_plane.make_initializing_project_private,
                 project_id=project_id,
-                name=spec.scope_path,
-                path=spec.scope_path,
-                exclude=[],
-                mode="rw",
+                org_id=org_id,
+                actor_user_id=user_id,
+                operation_key=operation_key,
             )
-
+            # Every import owns a dedicated Project. Native MCP currently
+            # supports its root, not a non-root Scope. The tool folder remains
+            # a normal Git path, and the newly issued Project key is read-only.
             file_path = f"{spec.scope_path}/{md_name}"
             await container.write_commands().bulk_write(
                 project_id,
@@ -415,13 +470,13 @@ class LandingService:
                 McpEndpointService().create_endpoint,
                 project_id=project_id,
                 name=f"{spec.kind}-mcp",
-                path=spec.scope_path,
+                path=None,
                 description=f"MCP for {src_name}",
                 accesses=[
                     McpAccessItem(
-                        path=spec.scope_path,
+                        path="",
                         json_path="",
-                        readonly=spec.readonly,
+                        readonly=True,
                     )
                 ],
                 created_by=user_id,
@@ -518,6 +573,9 @@ class LandingService:
             user_id,
             ProjectAction.PROJECT_READ,
         )
+        # Never widen a previously issued Scope credential into a Project key.
+        if metadata.get("mcp_target") != "project_root":
+            self._raise_unavailable_target(project_id=project_id)
         api_key = _landing_mcp_api_key(ticket_id=operation_key, user_id=user_id)
         credential = await run_blocking(
             AccessCredentialRepository().get_active_by_token,
@@ -536,18 +594,35 @@ class LandingService:
             McpEndpointService().get_endpoint,
             endpoint_id,
         )
+        accesses = endpoint.get("accesses") if endpoint else None
         if (
             not endpoint
             or str(endpoint.get("project_id") or "") != project_id
-            or str(endpoint.get("path") or "") != repo
+            or endpoint.get("scope_id") is not None
+            or endpoint.get("path") not in {None, ""}
+            or endpoint.get("status") != "active"
+            or not isinstance(accesses, list)
+            or any(
+                not isinstance(access, dict) or access.get("readonly") is not True
+                for access in accesses
+            )
         ):
-            self._raise_rotated_credential(project_id=project_id, endpoint_id=endpoint_id)
+            self._raise_unavailable_target(project_id=project_id)
 
         return self._claim_response(
             project_id=project_id,
             repo=repo,
             api_key=api_key,
             endpoint_id=endpoint_id,
+        )
+
+    @staticmethod
+    def _raise_unavailable_target(*, project_id: str) -> None:
+        raise AppException(
+            code=ErrorCode.VERSION_CONFLICT,
+            status_code=409,
+            message="The claimed MCP target or read-only policy is no longer available",
+            details={"code": "landing_claim_target_unavailable", "project_id": project_id},
         )
 
     @staticmethod
