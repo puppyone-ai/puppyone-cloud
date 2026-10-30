@@ -253,3 +253,79 @@ for (const format of ['sha1', 'sha256']) {
       } finally { await remote.close(); }
     });
 }
+
+for (const format of ['sha1', 'sha256']) {
+  test(`${format}: a Workspace saves, takes in the Project, resolves a conflict and publishes`,
+    { skip: !enabled, timeout: 60000 }, async () => {
+      const remote = await gitHttpFixture(format), identity = [randomUUID(), randomUUID()];
+      const target = 'refs/heads/workspaces/owner', main = 'refs/heads/main';
+      const config = { project_id: 'fixture', object_format: format, target_ref: target,
+        source_ref: main, base_oid: remote.base };
+      const lifecycle = connection(...identity, null, remote);
+      const git = (action, value = {}) => lifecycle.control('workspace-git', { action, config, value });
+      const write = (name, text) => user(1000, `await import('node:fs/promises').then(fs=>fs.writeFile(${JSON.stringify(name)},${JSON.stringify(text)}));`);
+      const note = () => readFile(`${ROOT}/note`, 'utf8');
+      const message = 'Bring in changes';
+      try {
+        await lifecycle.control('initialize', config);
+        assert.equal((await lifecycle.control('capabilities')).workspace_git, 1);
+
+        // Saving reaches only the Workspace's own branch.
+        await write('local.md', 'local work');
+        const saved = await git('save', { message: 'Save' });
+        assert.equal(saved.status, 'saved');
+        assert.notEqual(saved.tip, remote.base);
+        assert.equal((await git('publish', { destination_ref: target })).status, 'pushed');
+        assert.equal(await remote.command('rev-parse', target), saved.tip);
+        assert.equal(await remote.command('rev-parse', main), remote.base);
+
+        // The Project moved on: separate work merges without a person.
+        const moved = await remote.advance('cloud change');
+        const merged = await git('sync', { source_ref: main, message });
+        assert.equal(merged.status, 'merged');
+        assert.equal(await note(), 'cloud change');
+        assert.equal(await readFile(`${ROOT}/local.md`, 'utf8'), 'local work');
+        assert.equal((await exec('git', ['-c', `safe.directory=${ROOT}`, 'rev-parse', `${merged.tip}^2`], { cwd: ROOT })).stdout.trim(), moved);
+        assert.equal((await git('sync', { source_ref: main, message })).status, 'up_to_date');
+
+        // A real conflict stays in the files until a person resolves it.
+        await write('note', 'human edit');
+        await remote.advance('agent edit');
+        const conflict = await git('sync', { source_ref: main, message });
+        assert.equal(conflict.status, 'conflict');
+        assert.deepEqual(conflict.paths, ['note']);
+        assert.match(await note(), /^<{7} /m);
+        const waiting = conflict.tip;
+        assert.equal((await git('save', { message: 'Save' })).status, 'merging');
+        assert.equal((await git('publish', { destination_ref: main })).status, 'merging');
+        assert.equal((await git('sync', { source_ref: main, message })).status, 'conflict');
+        const unresolved = await git('sync-finish', { message });
+        assert.equal(unresolved.status, 'conflict');
+        assert.deepEqual(unresolved.paths, ['note']);
+        await write('note', 'resolved by a person');
+        const finished = await git('sync-finish', { message });
+        assert.equal(finished.status, 'merged');
+        assert.equal(await note(), 'resolved by a person');
+
+        // Only now can the work reach the Project's branch, as a fast-forward.
+        assert.equal((await git('publish', { destination_ref: main })).status, 'pushed');
+        assert.equal(await remote.command('rev-parse', main), finished.tip);
+        assert.equal(await remote.command('show', `${main}:note`), 'resolved by a person');
+        assert.notEqual(finished.tip, waiting);
+
+        // Giving up returns to the saved work and lets the Workspace carry on.
+        await write('note', 'second human edit');
+        await remote.advance('second agent edit');
+        const second = await git('sync', { source_ref: main, message });
+        assert.equal(second.status, 'conflict');
+        assert.equal((await git('sync-abort')).status, 'aborted');
+        assert.equal(await note(), 'second human edit');
+        assert.equal((await git('save', { message: 'Save' })).status, 'saved');
+      } finally {
+        if (lifecycle.child.exitCode === null) { lifecycle.child.stdin.end(); await once(lifecycle.child, 'exit'); }
+        await rm(ROOT, { recursive: true, force: true });
+        await rm(CONTROL_ROOT, { recursive: true, force: true });
+        await remote.close();
+      }
+    });
+}
