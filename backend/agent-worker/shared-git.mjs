@@ -1,7 +1,45 @@
 /** Shared native Git operations without reading or rewriting user Git config. */
-import { mkdir, lstat, readFile } from 'node:fs/promises';
+import { mkdir, lstat, readFile, writeFile, rm } from 'node:fs/promises';
 import { ROOT, git, exists } from './git.mjs';
 import { gitControl } from './workbench-git-layout.mjs';
+
+const MERGE_STATE = `${ROOT}/.git/puppyone-merge.json`;
+
+async function isAncestor(run, older, newer) {
+  try { await run(['merge-base', '--is-ancestor', older, newer]); return true; }
+  catch (error) { if (error.code === 1) return false; throw error; }
+}
+
+/**
+ * Bring source into tip through plumbing: no hooks, no user config, and HEAD stays
+ * on the Workspace branch. A conflict leaves marked files in the worktree, so they
+ * are resolved where the work happens, and nothing is committed until then.
+ */
+export async function mergeBranch(run, { tip, source, target, message, width }) {
+  if (tip === source || (tip && await isAncestor(run, source, tip))) return { status: 'up_to_date', tip };
+  const advance = async next => {
+    await run(tip ? ['read-tree', '-m', '-u', tip, next] : ['read-tree', '-m', '-u', next]);
+    await run(['update-ref', '--create-reflog', '-m', message, target, next, tip || '0'.repeat(width)]);
+  };
+  if (!tip || await isAncestor(run, tip, source)) {
+    await advance(source);
+    return { status: 'fast_forward', tip: source };
+  }
+  let tree, paths = [];
+  try { tree = (await run(['merge-tree', '--write-tree', '--name-only', '--no-messages', tip, source])).split('\n')[0]; }
+  catch (error) {
+    if (error.code !== 1 || !error.output) throw error;
+    const lines = error.output.split('\n').filter(Boolean);
+    tree = lines[0]; paths = lines.slice(1);
+  }
+  if (paths.length) {
+    await run(['read-tree', '-m', '-u', tip, tree]);
+    return { status: 'conflict', tip, source, paths };
+  }
+  const merged = await run(['commit-tree', tree, '-p', tip, '-p', source, '-m', message]);
+  await advance(merged);
+  return { status: 'merged', tip: merged };
+}
 
 export async function sharedGit(action, config, value, remote, transport = {}) {
   const target = config.target_ref, directory = gitControl(config.object_format);
@@ -49,8 +87,20 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
     if (await run(['ls-files', '--others'])) throw new Error('Initialization has unique files');
     return before;
   }
+  // A waiting merge owns the worktree: its marked files must not become a commit.
+  const merging = async () => (await exists(MERGE_STATE)) ? JSON.parse(await readFile(MERGE_STATE, 'utf8')) : null;
+  async function save(message) {
+    await run(['add', '-A', '--', '.']);
+    const previousTree = before.tip || await run(['hash-object', '-w', '-t', 'tree', '/dev/null']);
+    try { await run(['diff', '--cached', '--quiet', '--exit-code', previousTree, '--']); return before.tip; }
+    catch (error) { if (error.code !== 1) throw error; }
+    const tree = await run(['write-tree']);
+    const candidate = await run(['commit-tree', tree, ...(before.tip ? ['-p', before.tip] : []), '-m', message]);
+    await run(['update-ref', '--create-reflog', '-m', message, target, candidate, before.tip || '0'.repeat(width)]);
+    return candidate;
+  }
   if (action === 'finalize') {
-    if (config.readonly) return { ...before, changed: false, automatic_commit: false };
+    if (config.readonly || await merging()) return { ...before, changed: false, automatic_commit: false };
     await run(['add', '-A', '--', '.']);
     let candidate = before.tip;
     const previousTree = before.tip || await run(['hash-object', '-w', '-t', 'tree', '/dev/null']);
@@ -85,6 +135,59 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
     try { return { output: await run(['push', '--porcelain', '--no-verify', remote, `${candidate}:${target}`]) }; }
     catch (error) {
       if (/^!\t[^\n]+\t\[rejected\] \((fetch first|non-fast-forward)\)$/m.test(error.output || '')) return { rejected: true };
+      throw error;
+    }
+  }
+  if (action === 'save') {
+    if (await merging()) return { ...before, status: 'merging' };
+    const tip = await save(value.message);
+    return { ...before, tip, status: 'saved', changed: tip !== before.tip };
+  }
+  if (action === 'sync') {
+    const waiting = await merging();
+    if (waiting) return { status: 'conflict', tip: before.tip, ...waiting };
+    if (typeof value.source_ref !== 'string' || !value.source_ref.startsWith('refs/heads/'))
+      throw new Error('Invalid sync source');
+    await run(['check-ref-format', value.source_ref]);
+    const tip = await save(value.message);
+    await run(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${value.source_ref}:refs/remotes/origin/sync`]);
+    const source = await run(['rev-parse', 'refs/remotes/origin/sync']);
+    const result = await mergeBranch(run, { tip, source, target, message: value.message, width });
+    if (result.status === 'conflict')
+      await writeFile(MERGE_STATE, JSON.stringify({ source, source_ref: value.source_ref, paths: result.paths }));
+    return result;
+  }
+  if (action === 'sync-finish' || action === 'sync-abort') {
+    const waiting = await merging();
+    if (!waiting) return { status: 'up_to_date', tip: before.tip };
+    if (action === 'sync-abort') {
+      await run(['read-tree', '--reset', '-u', before.tip]);
+      await rm(MERGE_STATE);
+      return { status: 'aborted', tip: before.tip };
+    }
+    const unresolved = [];
+    for (const path of waiting.paths) {
+      const text = await readFile(`${ROOT}/${path}`, 'utf8').catch(() => '');
+      if (/^(<{7}|>{7})( |$)/m.test(text)) unresolved.push(path);
+    }
+    if (unresolved.length) return { status: 'conflict', tip: before.tip, ...waiting, paths: unresolved };
+    await run(['add', '-A', '--', '.']);
+    const tree = await run(['write-tree']);
+    const merged = await run(['commit-tree', tree, '-p', before.tip, '-p', waiting.source, '-m', value.message]);
+    await run(['update-ref', '--create-reflog', '-m', value.message, target, merged, before.tip]);
+    await rm(MERGE_STATE);
+    return { status: 'merged', tip: merged };
+  }
+  if (action === 'publish') {
+    if (await merging()) return { status: 'merging', tip: before.tip };
+    const destination = value.destination_ref;
+    if (typeof destination !== 'string' || !destination.startsWith('refs/heads/'))
+      throw new Error('Invalid publication destination');
+    await run(['check-ref-format', destination]);
+    if (!before.tip) return { status: 'no_changes', tip: null };
+    try { return { status: 'pushed', tip: before.tip, output: await run(['push', '--porcelain', '--no-verify', remote, `${before.tip}:${destination}`]) }; }
+    catch (error) {
+      if (/^!\t[^\n]+\t\[rejected\] \((fetch first|non-fast-forward)\)$/m.test(error.output || '')) return { status: 'rejected', tip: before.tip };
       throw error;
     }
   }

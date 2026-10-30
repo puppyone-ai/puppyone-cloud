@@ -75,6 +75,10 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     ("GET", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_READ),
     ("PUT", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_WRITE),
     ("GET", "/api/v1/projects/{project_id}/workbench/events"): _human(ProjectAction.CONTENT_READ),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync/finish"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync/abort"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/publish"): _human(ProjectAction.CONTENT_WRITE),
 
     # Content and History surfaces.
     # Managed Office sessions are resource-owner operations, not project grants.

@@ -17,6 +17,8 @@ export async function gitHttpFixture(format) {
     await command(directory, 'clone', '--bare', seed, remote);
     return { base, command: (...args) => command(remote, ...args), close: () => rm(directory, {recursive:true, force:true}),
       advance: async contents => {
+        // A Workspace may have published since the last advance.
+        await command(seed, 'pull', '--ff-only', remote, 'main');
         await writeFile(`${seed}/note`, contents);
         await command(seed, 'add', '.');
         await command(seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'Remote writer');

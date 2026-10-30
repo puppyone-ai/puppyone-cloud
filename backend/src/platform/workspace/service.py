@@ -18,6 +18,7 @@ from .errors import WorkspaceError
 from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
+from .sync import WorkspaceGit
 
 
 @asynccontextmanager
@@ -99,6 +100,7 @@ class WorkbenchService(WorkbenchAdmission):
         )
         self.lifecycle = WorkbenchLifecycle(self)
         self.opening = WorkspaceOpening(self)
+        self.git = WorkspaceGit(self)
 
     async def current(self, user, project):
         context, _ = await run_blocking(
