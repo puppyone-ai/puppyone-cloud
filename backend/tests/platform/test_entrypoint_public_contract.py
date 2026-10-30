@@ -407,6 +407,18 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & lifecycle[category].keys()
         expected["contract"][category].update(lifecycle[category])
+    agent_links = json.loads(Path(__file__).with_name("agent_links_contract_delta.json").read_text())
+    assert set(agent_links["paths"]) == {
+        "/api/v1/projects/{project_id}/agent-links",
+        "/api/v1/agent-links/connect",
+        "/api/v1/agent-links/connections/{connection_id}",
+        "/api/v1/agent-links/connections/{connection_id}/review",
+        "/api/v1/agent-links/connections/{connection_id}/decision",
+    }
+    assert set(agent_links["schemas"]) == {"AgentConnect", "AgentConnectionDecision", "AgentLinkCreate"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & agent_links[category].keys()
+        expected["contract"][category].update(agent_links[category])
     # Search Tools and the vector (Turbopuffer) backend are retired exactly. Tool
     # type enums lose "search" (ToolOut keeps reading existing rows) and the
     # dashboard drops index fields; every other wire stays identical.

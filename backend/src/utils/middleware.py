@@ -25,8 +25,13 @@ _LEGACY_GIT_SECRET_PATH = re.compile(
 )
 
 
+_AGENT_LINK_PATH = re.compile(r"^/agent/[^/]+$")
+
+
 def _sanitize_path_for_access_log(request: Request) -> str:
     path = str(request.url.path)
+    if _AGENT_LINK_PATH.fullmatch(path):
+        return "/agent/<redacted>"
     match = _LEGACY_GIT_SECRET_PATH.fullmatch(path)
     if match is None:
         return path
