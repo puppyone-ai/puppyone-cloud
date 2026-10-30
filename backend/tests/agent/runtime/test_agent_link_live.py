@@ -177,6 +177,7 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
 
 async def test_the_page_alone_connects_an_agent_from_a_link(live, tmp_path, monkeypatch):  # noqa: F811
     link = new_link()
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
     async with stack(live, monkeypatch) as owner:
         created = await owner.post(
             f"/api/v1/projects/{live.args['project']}/agent-links",
