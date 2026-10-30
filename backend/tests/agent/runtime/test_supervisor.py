@@ -913,8 +913,9 @@ async def test_native_rewritten_history_cannot_replace_existing_cloud_history(pr
         case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
     )
     assert model.calls == 2
-    assert result["state"] in {"failed", "outcome_unknown"}, result
-    assert not result["publication"]
+    # Finalization keeps the rewritten commit; the host refuses the non-fast-forward push.
+    assert result["state"] == "conflict", result
+    assert result["publication"]["status"] == "conflict"
     saved = await case.checkpoints.load(result, result["checkpoint"])
     assert recovery_git(saved, "rev-parse", "HEAD") != saved["base"]["expected_oid"]
     assert recovery_file(saved, "notes.md") == b"rewritten"
