@@ -126,10 +126,11 @@ branch; closing the whole chat is not the trigger.
 Existing shared workbenches are not automatically pulled or merged at task start,
 task completion or successful push. Initial workspace materialization may fetch its
 admitted base. Incoming changes to an existing workspace require explicit user
-integration. After saving/protecting current work, the user fetches the selected
-remote branch, merges it, resolves any content conflicts, commits the merge when
-needed, and pushes the resulting tip. There is no dedicated merge-resolution UI
-in this change; this remains an explicit Git operation through existing tooling.
+integration through `POST /workbench/sync`: stock Git in the Workspace merges the
+selected branch, a clean result lands as a merge commit, and a conflict stays in
+the files until `sync/finish` or `sync/abort`. `POST /workbench/publish` then moves
+the Project's branch as a fast-forward. Both refuse while a task is running, and
+Desktop's Bring in review is built on them.
 
 Tasks in one Workspace share a worktree, so one task's publication advances the
 ref under another task without diverging from it. A candidate that descends from

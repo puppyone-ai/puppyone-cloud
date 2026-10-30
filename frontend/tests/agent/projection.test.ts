@@ -19,6 +19,11 @@ it('distinguishes publishing, conflict and unknown save outcomes from successful
   expect(runStatus(makeRun({ state: 'outcome_unknown' }))).toContain('confirmation');
   expect(runStatus(makeRun({ state: 'succeeded' }))).toBeNull();
 });
+it('says why a Run stopped when its approval request went unanswered', () => {
+  expect(runStatus(makeRun({ state: 'stopped' }))).toBe('Stopped');
+  expect(runStatus(makeRun({ state: 'stopped', snapshot: { code: 'approval_expired' } })))
+    .toContain('went unanswered');
+});
 it('keeps uncertain publication separate from uncertain tool execution', () => {
   expect(runStatus(makeRun({ state: 'outcome_unknown', snapshot: { code: 'publication_outcome_unknown' } })))
     .toContain('Upload confirmation');

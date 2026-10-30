@@ -91,6 +91,7 @@ class HostedSshAccess:
         self.sessions = sessions
         self.agent_links = agent_links
         self.resume_seconds = 180
+        self.first_start_seconds = 420
 
     def endpoint(self):
         return ssh_endpoint(self.config)
@@ -213,6 +214,18 @@ class HostedSshAccess:
         if row["generation"] != grant["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
+    async def start_agent_workspace(self, connection, notify=None):
+        """A ticket binds one generation, so a machine must exist before it is minted."""
+        row = await self.linked_agents().workspace(connection)
+        if row["state"] == "running" or row["state"] in RESUMABLE_STATES:
+            return
+        if notify:
+            await notify("Preparing your workspace; this can take a few minutes.\r\n")
+        async with asyncio.timeout(self.first_start_seconds):
+            await self.workspace.ensure_running(
+                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+            )
+
     async def authenticate(self, identity, key):
         try:
             async with asyncio.timeout(10):
@@ -231,6 +244,7 @@ class HostedSshAccess:
         if connection:
             # A linked Agent keeps one key; each connection is still one ticket.
             with access_denials():
+                await self.start_agent_workspace(connection, notify)
                 identity = await self.linked_agents().ticket(connection)
         grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)

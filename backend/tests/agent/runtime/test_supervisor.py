@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.platform.access.adapters.agent.runtime.control import tool_policy
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
 from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
@@ -452,6 +453,23 @@ async def test_stop_waiting_approval_has_no_tool_effect(prepared):
     await asyncio.wait_for(task, 30)
     completed = case.repo.get(case.run["id"])
     assert completed["state"] == "stopped", completed
+    assert case.repo.tools(case.run["id"])[0]["state"] == "waiting"
+    with pytest.raises(FileNotFoundError):
+        read_case(case, "result.txt")
+    assert not case.repo.executions(case.run["id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_unanswered_approval_ends_the_run_without_tool_effect(prepared, monkeypatch):
+    case = prepared
+    monkeypatch.setattr(tool_policy, "APPROVAL_WAIT_SECONDS", 2)
+    task = asyncio.create_task(case.supervisor(model=DestructiveModel()).run_claim(case.run))
+    await wait_for_approval(case, task)
+    await asyncio.wait_for(task, 30)
+    completed = case.repo.get(case.run["id"])
+    assert completed["state"] == "stopped", completed
+    assert completed["snapshot"]["code"] == "approval_expired"
     assert case.repo.tools(case.run["id"])[0]["state"] == "waiting"
     with pytest.raises(FileNotFoundError):
         read_case(case, "result.txt")

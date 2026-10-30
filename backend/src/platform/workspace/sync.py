@@ -74,7 +74,10 @@ class WorkspaceGit:
         host = self.service.channel_factory(row)
         host.git_handler = exchange
         try:
-            await host.connect(await self.service.connection(row))
+            # An Agent's work is saved while its Workspace is pausing, not after.
+            await host.connect(
+                await self.service.connection(row, states=("running", "pausing"))
+            )
             capability = await host.control("capabilities")
             if capability.get("workspace_git") != 1:
                 raise WorkspaceError(409, {"code": "workspace_capability_missing"})

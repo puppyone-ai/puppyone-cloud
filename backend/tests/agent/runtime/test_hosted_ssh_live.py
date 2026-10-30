@@ -3,8 +3,10 @@
 import asyncio
 import base64
 import hashlib
+import json
 import os
-from contextlib import suppress
+import subprocess
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -409,8 +411,51 @@ async def test_new_owner_reaps_lost_gateway_connection(live):
         assert result.exit_status == 0
 
 
+@asynccontextmanager
+async def agent_machines(live, transport=None):
+    """A first connection starts a machine, so the sandbox module has to be running.
+
+    Without a real ``transport`` the Project is empty: a Workspace initializes from no base.
+    """
+    workspace = live.workspace
+
+    def describe(project, grant, target_ref=None):
+        return {
+            "object_format": "sha1",
+            "target_ref": target_ref or "refs/heads/main",
+            "expected_oid": None,
+        }
+
+    transport = transport or SimpleNamespace(describe=describe)
+    workspace.transport = workspace.lifecycle.transport = transport
+    meter = SimpleNamespace(
+        ensure_session=AsyncMock(),
+        check_session=AsyncMock(),
+        detach_session=AsyncMock(),
+        resume_session=AsyncMock(),
+        finish_session=AsyncMock(return_value=True),
+    )
+    workspace.billing = workspace.lifecycle.billing = meter
+    stop = asyncio.Event()
+    lifecycle = asyncio.create_task(workspace.lifecycle.serve(stop=stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await asyncio.wait_for(lifecycle, 15)
+        machines = await asyncio.to_thread(
+            live.db.sql,
+            f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
+            WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
+        )
+        for machine in machines.split():
+            await asyncio.to_thread(
+                subprocess.run, ["docker", "rm", "-f", machine], capture_output=True
+            )
+
+
 async def test_registered_external_agent_real_shell_and_parent_revocation(live):
-    """External identity reaches the owner's exact VM, then loses its live shell."""
+    """A registered Agent reaches its own machine, not the owner's, then loses its shell."""
     from src.platform.access.grant_repository import AccessRepository, GrantRepository
     from src.platform.access.grants import GrantService
     from src.platform.access.sessions import AccessSessions
@@ -421,24 +466,44 @@ async def test_registered_external_agent_real_shell_and_parent_revocation(live):
     live.service.authority = GrantService(GrantRepository(db_client))
     live.service.sessions = AccessSessions(AccessRepository(db_client))
     context = await asyncio.to_thread(setup_access, live.db, live.args, workspace=live.row)
-    ticket, _, _ = await asyncio.to_thread(
-        issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+    # What the renewal endpoint does on first contact, before the client retries.
+    machine = json.loads(
+        await asyncio.to_thread(
+            live.db.sql,
+            f"SELECT to_jsonb(public.access_grant_agent_workspace('{context['grant']}'))",
+        )
     )
-    grant = {**ticket, "username": ticket["id"]}
-    async with await connect(live, grant) as conn:
-        proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding=None)
-        async with asyncio.timeout(20):
-            assert await proc.stdout.readline() == b"ready\n"
-        assert await read_file(live, "registered.txt") == b"registered"
-        await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
-                                id=context["grant"], project_id=context["project"], state="revoked")
-        async with asyncio.timeout(25):
-            await proc.wait_closed()
-    await until_released(live, ticket["id"])
-    row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
-    assert row["state"] == "closed" and row["registration_id"] == context["registration"]
-    with pytest.raises(asyncssh.PermissionDenied):
-        await connect(live, grant)
+    assert machine["id"] != live.row["id"]
+    async with agent_machines(live):
+        await asyncio.wait_for(
+            live.workspace.ensure_running(
+                {"user_id": machine["user_id"], "project_id": machine["project_id"]}, machine
+            ),
+            120,
+        )
+        ticket, _, _ = await asyncio.to_thread(
+            issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+        )
+        grant = {**ticket, "username": ticket["id"]}
+        assert grant["workbench_id"] == machine["id"]
+        async with await connect(live, grant) as conn:
+            proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding="utf-8")
+            async with asyncio.timeout(20):
+                assert await proc.stdout.readline() == "ready\n"
+            hidden = await live.api.get(
+                f"/api/v1/projects/{live.args['project']}/workbench/file",
+                params={"generation": live.row["generation"], "path": "registered.txt"},
+            )
+            assert hidden.status_code == 404
+            await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
+                                    id=context["grant"], project_id=context["project"], state="revoked")
+            async with asyncio.timeout(25):
+                await proc.wait_closed()
+        await until_released(live, ticket["id"])
+        row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
+        assert row["state"] == "closed" and row["registration_id"] == context["registration"]
+        with pytest.raises(asyncssh.PermissionDenied):
+            await connect(live, grant)
 
 
 @pytest.mark.skipif(not os.environ.get("PUPPYONE_TEST_CLI_ROOT"), reason="standalone CLI candidate required")

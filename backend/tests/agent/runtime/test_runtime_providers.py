@@ -238,6 +238,7 @@ async def test_fly_allocation_keeps_files_on_private_persisted_disk(monkeypatch)
         if request.method == "POST" and request.url.path.endswith("/volumes"):
             assert len(body["name"]) <= 30
             assert body["encrypted"] is True
+            assert body["size_gb"] == 10
             return httpx.Response(200, json={"id": "disk-one", "region": "sin"})
         if request.method == "POST" and request.url.path.endswith("/machines"):
             return httpx.Response(200, json={"id": "machine-created"})

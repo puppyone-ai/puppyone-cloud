@@ -440,6 +440,7 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
+    CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_SPRITES_TOKEN: str = ""

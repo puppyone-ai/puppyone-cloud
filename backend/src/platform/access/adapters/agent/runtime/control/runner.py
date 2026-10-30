@@ -17,7 +17,10 @@ from src.platform.access.adapters.agent.runtime.control.ports import BindingCapa
 from src.platform.access.adapters.agent.runtime.control.publication import PublicationRejected
 from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
 from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
-from src.platform.access.adapters.agent.runtime.control.tool_policy import approval_reason
+from src.platform.access.adapters.agent.runtime.control.tool_policy import (
+    approval_expired,
+    approval_reason,
+)
 from src.platform.access.adapters.agent.runtime.control.tool_results import (
     approval_denied,
     tool_denial,
@@ -778,6 +781,8 @@ class RunSupervisor:
             )
             return
         while receipt["state"] == "waiting":
+            if approval_expired(receipt):
+                raise EndRun("stopped", "approval_expired")
             await asyncio.sleep(1)
             reply = await self.command(
                 self.repo.begin_tool,
