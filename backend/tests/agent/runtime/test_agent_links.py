@@ -64,6 +64,26 @@ def status(db, connection, poll):
     return sql_call(db, "access_agent_connection_status", connection, [poll])
 
 
+def set_state(db, row, state):
+    db.sql(
+        "ALTER TABLE cloud_workbenches DISABLE TRIGGER USER;"
+        f"UPDATE cloud_workbenches SET state='{state}' WHERE id='{row['id']}';"
+        "ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;"
+    )
+
+
+def agent_workspace(db, connection):
+    return sql_call(db, "access_agent_workspace", connection)
+
+
+def admitted(db, args, row, key=KEY):
+    """One Agent, through its own link, with its own machine running."""
+    connection, _ = connect(db, create_link(db, args, row, "link"), key=key)
+    workspace = agent_workspace(db, connection["id"])
+    set_state(db, workspace, "running")
+    return connection, workspace
+
+
 def stranger(db):
     user = str(uuid4())
     db.sql(f"INSERT INTO auth.users(id) VALUES('{user}');")
@@ -102,13 +122,20 @@ def test_sign_in_link_waits_for_the_owner_and_then_keeps_working(postgres, submi
     assert sql_call(postgres, "access_agent_ssh_admit", identity, KEY) is True
     assert sql_call(postgres, "access_agent_ssh_admit", identity, KEY + "x") is False
 
+    # Approving does not start a machine; the Agent's own one is prepared on first use.
+    workspace = agent_workspace(postgres, identity)
+    assert workspace["state"] == "retired"
+    assert workspace["id"] != row["id"] and workspace["is_default"] is False
+    set_state(postgres, workspace, "running")
+
     # Each connection is its own one-use ticket under the existing session path.
     first = sql_call(postgres, "access_agent_ssh_ticket", identity)["id"]
     second = sql_call(postgres, "access_agent_ssh_ticket", identity)["id"]
     assert first != second
     consumed = call(postgres, "workspace_ssh_grant_consume", id=first)
     assert consumed["public_key"] == KEY
-    assert consumed["generation"] == row["generation"]
+    assert consumed["workbench_id"] == workspace["id"]
+    assert consumed["generation"] == workspace["generation"]
     assert consumed["user_id"] == args["user"]
     with pytest.raises(RuntimeError, match="ssh_grant_unavailable"):
         call(postgres, "workspace_ssh_grant_consume", id=first)
@@ -232,15 +259,16 @@ def test_the_closed_check_matches_the_stored_hash_of_a_link(postgres, submitted,
     assert repository.admits_without_sign_in([hash_of()]) is False
 
 
-def test_a_link_admits_any_agent_and_stopping_sharing_ends_every_one(postgres, submitted):
+def test_a_link_admits_one_agent_and_stopping_sharing_ends_it(postgres, submitted):
     args, _ = submitted
     row = running(postgres, args)
     link = create_link(postgres, args, row, "link")
 
-    (first, first_poll), (second, _) = connect(postgres, link), connect(postgres, link)
-    assert first["state"] == second["state"] == "approved"
-    assert first["id"] != second["id"]
+    first, first_poll = connect(postgres, link)
+    assert first["state"] == "approved"
     assert sql_call(postgres, "access_agent_ssh_admit", first["id"], KEY) is True
+    with pytest.raises(RuntimeError, match="access_denied"):
+        connect(postgres, link)
 
     grant = postgres.row(
         f"""SELECT g.expires_at,g.approved_by,i.expires_at AS link_expires_at,g.capabilities
@@ -253,11 +281,108 @@ def test_a_link_admits_any_agent_and_stopping_sharing_ends_every_one(postgres, s
 
     link_command(postgres, "stop", args["user"], project_id=args["project"])
     assert status(postgres, first["id"], first_poll)["state"] == "revoked"
-    assert sql_call(postgres, "access_agent_ssh_admit", second["id"], KEY) is False
+    assert sql_call(postgres, "access_agent_ssh_admit", first["id"], KEY) is False
     with pytest.raises(RuntimeError, match="access_denied"):
         connect(postgres, link)
     inventory = link_command(postgres, "inventory", args["user"], project_id=args["project"])
     assert inventory == {"links": [], "connections": []}
+
+
+def test_every_external_agent_has_its_own_machine_and_branch(postgres, submitted):
+    args, _ = submitted
+    owner = running(postgres, args)
+    (first, one), (second, two) = admitted(postgres, args, owner), admitted(postgres, args, owner)
+
+    assert len({owner["id"], one["id"], two["id"]}) == 3
+    assert len({owner["target_ref"], one["target_ref"], two["target_ref"]}) == 3
+    for workspace in (one, two):
+        assert workspace["is_default"] is False
+        assert workspace["user_id"] == args["user"]
+        assert workspace["project_id"] == args["project"]
+        assert workspace["target_ref"].startswith("refs/heads/agents/")
+    assert agent_workspace(postgres, first["id"])["id"] == one["id"]  # Reconnecting returns to it.
+
+    tickets = {
+        connection["id"]: sql_call(postgres, "access_agent_ssh_ticket", connection["id"])["id"]
+        for connection in (first, second)
+    }
+    reached = {
+        identity: postgres.row(f"SELECT workbench_id FROM workspace_ssh_grants WHERE id='{ticket}'")
+        for identity, ticket in tickets.items()
+    }
+    assert reached[first["id"]]["workbench_id"] == one["id"]
+    assert reached[second["id"]]["workbench_id"] == two["id"]
+    inventory = link_command(postgres, "inventory", args["user"], project_id=args["project"])
+    assert {item["branch"] for item in inventory["connections"]} == {
+        one["target_ref"],
+        two["target_ref"],
+    }
+
+
+def test_the_project_owner_keeps_one_internal_machine(postgres, submitted):
+    args, _ = submitted
+    owner = running(postgres, args)
+    admitted(postgres, args, owner)
+    internal = postgres.row(
+        f"""SELECT count(*) AS machines FROM cloud_workbenches WHERE project_id='{args['project']}'
+        AND user_id='{args['user']}' AND is_default"""
+    )
+    assert internal["machines"] == 1
+    assert sql_call(
+        postgres, "cloud_workbench_context", args["user"], args["project"]
+    )["workbench"]["id"] == owner["id"]
+
+
+def test_a_grant_on_the_owners_machine_moves_when_its_agent_connects(postgres, submitted):
+    args, _ = submitted
+    owner = running(postgres, args)
+    connection, _ = connect(postgres, create_link(postgres, args, owner, "link"))
+    grant = postgres.row(
+        f"SELECT grant_id FROM access_agent_connections WHERE id='{connection['id']}'"
+    )["grant_id"]
+    assert (
+        postgres.row(f"SELECT workbench_id FROM access_grants WHERE id='{grant}'")["workbench_id"]
+        == owner["id"]
+    )
+    workspace = agent_workspace(postgres, connection["id"])
+    assert (
+        postgres.row(f"SELECT workbench_id FROM access_grants WHERE id='{grant}'")["workbench_id"]
+        == workspace["id"]
+    )
+
+
+def test_a_project_has_at_most_five_agent_seats(postgres, submitted):
+    args, _ = submitted
+    owner = running(postgres, args)
+    for _ in range(5):
+        admitted(postgres, args, owner)
+    connection, _ = connect(postgres, create_link(postgres, args, owner, "link"))
+    with pytest.raises(RuntimeError, match="workspace_agent_seat_limit"):
+        agent_workspace(postgres, connection["id"])
+
+
+def test_an_agents_machine_takes_connections_of_its_own(postgres, submitted):
+    args, _ = submitted
+    owner = running(postgres, args)
+    _, workspace = admitted(postgres, args, owner)
+    postgres.sql(
+        "ALTER TABLE cloud_workbenches DISABLE TRIGGER USER;"
+        f"""UPDATE cloud_workbenches SET resource='{{"allocation_pending":false}}'
+        WHERE id='{workspace['id']}';"""
+        "ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;"
+    )
+    context = sql_call(postgres, "cloud_workbench_context", args["user"], args["project"])
+    connection = sql_call(
+        postgres,
+        "cloud_workbench_connection_acquire",
+        str(uuid4()),
+        workspace["id"],
+        workspace["generation"],
+        args["user"],
+        args["project"],
+        context["revision"],
+    )
+    assert connection["workbench_id"] == workspace["id"]
 
 
 def test_only_the_workspace_owner_can_create_a_link_and_a_client_cannot_widen_it(postgres, submitted):
@@ -366,12 +491,12 @@ def test_the_polling_secret_belongs_to_one_connection(postgres, submitted):
 
 def test_a_stopped_workspace_needs_its_wake_capability(postgres, submitted):
     args, _ = submitted
-    row = running(postgres, args)
-    connection, _ = connect(postgres, create_link(postgres, args, row, "link"))
-    postgres.sql(f"ALTER TABLE cloud_workbenches DISABLE TRIGGER USER; UPDATE cloud_workbenches SET state='paused' WHERE id='{row['id']}'; ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;")
+    owner = running(postgres, args)
+    connection, workspace = admitted(postgres, args, owner)
+    set_state(postgres, workspace, "paused")
     # Agent links carry wake, so a paused workspace still issues a ticket.
     assert sql_call(postgres, "access_agent_ssh_ticket", connection["id"])["id"]
-    postgres.sql(f"ALTER TABLE cloud_workbenches DISABLE TRIGGER USER; UPDATE cloud_workbenches SET state='retained' WHERE id='{row['id']}'; ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;")
+    set_state(postgres, workspace, "retired")
     with pytest.raises(RuntimeError, match="access_workspace_unavailable"):
         sql_call(postgres, "access_agent_ssh_ticket", connection["id"])
 

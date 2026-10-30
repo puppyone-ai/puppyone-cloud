@@ -79,8 +79,10 @@ Run `ssh.install_known_hosts` once. Then use `ssh.command`, adding what to run:
 
     SSH_COMMAND 'pwd && ls'
 
-Each command starts in the workspace's files. Your person sees your changes as
-you make them. A sleeping workspace can take up to a minute to wake.
+Each command starts in your own copy of the project, on a machine only you use.
+Your files are saved to your own branch when the machine goes to sleep, and your
+person decides when they join the project. Your first connection can take a few
+minutes while the machine is prepared; after that, waking takes up to a minute.
 """
 
 
@@ -237,6 +239,12 @@ class AgentLinkService:
     async def admits(self, connection, key):
         return await run_blocking(
             self.repository.call, "access_agent_ssh_admit", id=connection, public_key=key
+        )
+
+    async def workspace(self, connection):
+        """The Agent's own machine; it may not have been started yet."""
+        return await run_blocking(
+            self.repository.call, "access_agent_workspace", id=connection
         )
 
     async def ticket(self, connection):

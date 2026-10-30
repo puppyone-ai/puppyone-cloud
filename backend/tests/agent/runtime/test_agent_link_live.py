@@ -5,6 +5,7 @@ the instructions cannot drift from the gateway, the API or the workspace.
 """
 
 import asyncio
+import base64
 import json
 import re
 import secrets
@@ -12,6 +13,8 @@ import shlex
 import socket
 import subprocess
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -42,6 +45,22 @@ async def stack(live, monkeypatch):  # noqa: F811
     monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
     monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "agent-link-test-secret")
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
+    # An Agent's first connection starts a machine, so the sandbox module has to be
+    # running. The Project is empty here: a Workspace initializes from no base.
+    workspace = live.workspace
+    def describe(project, grant, target_ref=None):
+        return {"object_format": "sha1", "target_ref": target_ref or "refs/heads/main", "expected_oid": None}
+    workspace.transport = workspace.lifecycle.transport = SimpleNamespace(describe=describe)
+    meter = SimpleNamespace(
+        ensure_session=AsyncMock(),
+        check_session=AsyncMock(),
+        detach_session=AsyncMock(),
+        resume_session=AsyncMock(),
+        finish_session=AsyncMock(return_value=True),
+    )
+    workspace.billing = workspace.lifecycle.billing = meter
+    stop_lifecycle = asyncio.Event()
+    lifecycle = asyncio.create_task(workspace.lifecycle.serve(stop=stop_lifecycle))
     app = FastAPI()
     app.include_router(routes.router)
     app.include_router(routes.instructions_router)
@@ -64,6 +83,20 @@ async def stack(live, monkeypatch):  # noqa: F811
     finally:
         server.should_exit = True
         await serving
+        stop_lifecycle.set()
+        await asyncio.wait_for(lifecycle, 15)
+        await cleanup_agent_machines(live)
+
+
+async def cleanup_agent_machines(live):
+    project = live.args["project"]
+    rows = await asyncio.to_thread(
+        live.db.sql,
+        f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
+        WHERE project_id='{project}' AND agent_registration_id IS NOT NULL""",
+    )
+    for machine in rows.split():
+        await asyncio.to_thread(subprocess.run, ["docker", "rm", "-f", machine], capture_output=True)
 
 
 async def run(command, *, check=True):
@@ -153,8 +186,31 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
         assert first.stdout.strip() == "/workspace/repo"
         again = await run(command + " " + shlex.quote("cat agent.txt"))
         assert again.stdout.strip() == "written-by-agent"
-        # The owner's Editor reads the same live file before any Git publication.
-        assert (await read_file(live, "agent.txt")).strip() == b"written-by-agent"
+        # The Agent is on its own machine: nothing crosses until Git carries it.
+        files = f"/api/v1/projects/{live.args['project']}/workbench/file"
+        generation = {"generation": live.row["generation"]}
+        hidden = await live.api.get(files, params={**generation, "path": "agent.txt"})
+        assert hidden.status_code == 404
+        written = await live.api.put(
+            files,
+            params={**generation, "path": "owner.txt"},
+            json={
+                "path": "owner.txt",
+                "content_base64": base64.b64encode(b"owner").decode(),
+                "expected_revision": None,
+            },
+        )
+        assert written.status_code == 200, written.text
+        assert (await read_file(live, "owner.txt")) == b"owner"
+        unseen = await run(command + " " + shlex.quote("test -e owner.txt"), check=False)
+        assert unseen.returncode == 1
+        machine = await asyncio.to_thread(
+            live.db.row,
+            f"""SELECT resource->>'resource_id' AS machine, target_ref FROM cloud_workbenches
+            WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
+        )
+        assert machine["machine"] and machine["machine"] != live.row["resource"]["resource_id"]
+        assert machine["target_ref"].startswith("refs/heads/agents/")
 
         # A different key on the same stable user is refused.
         stranger = tmp_path / "stranger"

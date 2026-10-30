@@ -130,10 +130,36 @@ class CredentialService:
             )
         except ValueError as exc:
             raise HTTPException(422, detail={"code": "ssh_ed25519_public_key_required"}) from exc
+        key_hashes = access_token_hash_candidates(secret)
+        try:
+            return await self._issue(key_hashes, request, public_key)
+        except HTTPException as exc:
+            if str(request.channel) == "ssh" and exc.detail == {
+                "code": "access_workspace_unavailable"
+            }:
+                await self._start_workspace(key_hashes, request)
+            raise
+
+    async def _start_workspace(self, key_hashes, request):
+        """Record the intent and return: the client retries once the machine is up."""
+        row = await run_blocking(
+            self.repository.call,
+            "access_registered_workspace",
+            key_hashes=key_hashes,
+            grant=str(request.grant_id),
+        )
+        if row["state"] == "retired":
+            from .composition import get_workbench_service
+
+            await get_workbench_service().request_open(row["user_id"], row["project_id"], row)
+
+    async def _issue(self, key_hashes, request, public_key):
+        from .credential_repository import access_token_hash
+
         result = await run_blocking(
             self.repository.call,
             "access_issue_credential",
-            key_hashes=access_token_hash_candidates(secret),
+            key_hashes=key_hashes,
             next_key_hash=access_token_hash(request.next_secret.get_secret_value()),
             request=str(request.request_id),
             grant=str(request.grant_id),

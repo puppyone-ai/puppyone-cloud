@@ -206,6 +206,18 @@ class WorkbenchRepository:
             action="pause",
         )
 
+    def retire(self, row):
+        return self.command(
+            "idle_claim",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+            action="retire",
+        )
+
+    def saved(self, row):
+        return self.command("saved", workbench=row["id"], generation=row["generation"])
+
     def reclaim_claim(self, row):
         """Claim a deleted owner's workspace for destruction once unoccupied."""
         return self.command(
