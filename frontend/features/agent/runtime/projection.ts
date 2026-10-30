@@ -25,9 +25,9 @@ export function runStatus(run?: AgentRun): string | null {
     case 'waiting_approval': return 'Waiting for your approval';
     case 'publishing': return 'Uploading committed changes to Cloud';
     case 'stopped': return 'Stopped';
-    case 'conflict': return 'Cloud has newer changes. Your local commit has been retained. Merge the remote changes when ready, resolve any conflicts, then push again.';
+    case 'conflict': return 'The Cloud has newer changes. Your work is kept in this workspace.';
     case 'outcome_unknown': return run.snapshot.code === 'publication_outcome_unknown'
-      ? 'Upload confirmation is unavailable. Your work has been retained. Check publication status before retrying the push; the Agent task will not repeat automatically.'
+      ? 'Upload confirmation is unavailable. Your work is kept, and the Agent task will not repeat automatically.'
       : 'Result confirmation is unavailable. The Agent task will not repeat automatically.';
     case 'failed': return `Agent could not finish${run.snapshot.code ? ` (${run.snapshot.code})` : ''}.`;
     default: return null;
