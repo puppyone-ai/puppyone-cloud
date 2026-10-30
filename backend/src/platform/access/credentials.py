@@ -148,10 +148,10 @@ class CredentialService:
             key_hashes=key_hashes,
             grant=str(request.grant_id),
         )
-        if row["state"] == "retired":
-            from .composition import get_workbench_service
+        if row["state"] != "running":
+            from .composition import build_workbench_service
 
-            await get_workbench_service().request_open(row["user_id"], row["project_id"], row)
+            await build_workbench_service().request_open(row["user_id"], row["project_id"], row)
 
     async def _issue(self, key_hashes, request, public_key):
         from .credential_repository import access_token_hash

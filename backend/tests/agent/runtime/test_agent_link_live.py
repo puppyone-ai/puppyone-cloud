@@ -13,8 +13,6 @@ import shlex
 import socket
 import subprocess
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -30,7 +28,7 @@ from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from tests.agent.runtime.test_hosted_ssh_live import live, read_file  # noqa: F401
+from tests.agent.runtime.test_hosted_ssh_live import agent_machines, live, read_file  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -45,22 +43,6 @@ async def stack(live, monkeypatch):  # noqa: F811
     monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
     monkeypatch.setattr(settings, "ACCESS_CREDENTIAL_HASH_SECRET", "agent-link-test-secret")
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
-    # An Agent's first connection starts a machine, so the sandbox module has to be
-    # running. The Project is empty here: a Workspace initializes from no base.
-    workspace = live.workspace
-    def describe(project, grant, target_ref=None):
-        return {"object_format": "sha1", "target_ref": target_ref or "refs/heads/main", "expected_oid": None}
-    workspace.transport = workspace.lifecycle.transport = SimpleNamespace(describe=describe)
-    meter = SimpleNamespace(
-        ensure_session=AsyncMock(),
-        check_session=AsyncMock(),
-        detach_session=AsyncMock(),
-        resume_session=AsyncMock(),
-        finish_session=AsyncMock(return_value=True),
-    )
-    workspace.billing = workspace.lifecycle.billing = meter
-    stop_lifecycle = asyncio.Event()
-    lifecycle = asyncio.create_task(workspace.lifecycle.serve(stop=stop_lifecycle))
     app = FastAPI()
     app.include_router(routes.router)
     app.include_router(routes.instructions_router)
@@ -78,25 +60,11 @@ async def stack(live, monkeypatch):  # noqa: F811
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.02)
-        async with httpx.AsyncClient(base_url=origin, timeout=10) as owner:
+        async with agent_machines(live), httpx.AsyncClient(base_url=origin, timeout=10) as owner:
             yield owner
     finally:
         server.should_exit = True
         await serving
-        stop_lifecycle.set()
-        await asyncio.wait_for(lifecycle, 15)
-        await cleanup_agent_machines(live)
-
-
-async def cleanup_agent_machines(live):
-    project = live.args["project"]
-    rows = await asyncio.to_thread(
-        live.db.sql,
-        f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
-        WHERE project_id='{project}' AND agent_registration_id IS NOT NULL""",
-    )
-    for machine in rows.split():
-        await asyncio.to_thread(subprocess.run, ["docker", "rm", "-f", machine], capture_output=True)
 
 
 async def run(command, *, check=True):

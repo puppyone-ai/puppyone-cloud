@@ -96,8 +96,8 @@ BEGIN
  SELECT * INTO k FROM public.access_registration_credentials
  WHERE key_hash=ANY(p_key_hashes) AND state='active' AND expires_at>clock_timestamp();
  SELECT * INTO g FROM public.access_grants WHERE id=p_grant AND registration_id=k.registration_id;
- IF k.id IS NULL OR g.id IS NULL OR NOT('workspace.wake'=ANY(g.capabilities)) THEN
-   RAISE EXCEPTION 'access_denied' USING ERRCODE='42501'; END IF;
+ -- Starting its own machine reaches nothing but that machine, so it takes no wake capability.
+ IF k.id IS NULL OR g.id IS NULL THEN RAISE EXCEPTION 'access_denied' USING ERRCODE='42501'; END IF;
  PERFORM public.access_grant_context(g.id,'ssh');
  RETURN to_jsonb(public.access_grant_agent_workspace(g.id));
 END $$;
