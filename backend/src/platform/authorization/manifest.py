@@ -363,3 +363,14 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     )
 })
 PROJECT_ROUTE_AUTHORIZATION[("POST", "/api/v1/access/credentials/renew")] = _runtime("access.registration_renewal")
+PROJECT_ROUTE_AUTHORIZATION.update({
+    (method, "/api/v1/projects/{project_id}/agent-links"): _human(ProjectAction.CREDENTIAL_MANAGE)
+    for method in ("POST", "GET", "DELETE")
+})
+PROJECT_ROUTE_AUTHORIZATION.update({
+    ("GET", "/api/v1/agent-links/connections/{connection_id}/review"): _owner("access.agent_connection_owner"),
+    ("POST", "/api/v1/agent-links/connections/{connection_id}/decision"): _owner("access.agent_connection_owner"),
+    ("GET", "/agent/{invitation}"): _runtime("access.agent_link"),
+    ("POST", "/api/v1/agent-links/connect"): _runtime("access.agent_link"),
+    ("GET", "/api/v1/agent-links/connections/{connection_id}"): _runtime("access.agent_link"),
+})
