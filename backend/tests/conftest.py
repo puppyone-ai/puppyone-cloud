@@ -47,6 +47,8 @@ if not _configured_git_cache:
 @pytest.fixture(scope="session", autouse=True)
 def _project_write_admission():
     """Production processes install this at startup; see test_write_admission_wiring."""
+    from src.composition.agent import install_agent
     from src.platform.project.write_lease import install_storage_write_admission
 
     install_storage_write_admission()
+    install_agent()

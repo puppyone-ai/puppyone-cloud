@@ -134,6 +134,7 @@ database_import_router_duration = time.time() - database_import_router_start
 
 # Scheduler service import
 scheduler_start = time.time()
+from src.composition.agent import install_agent
 from src.composition.scheduled_jobs import scheduled_jobs
 from src.infra.scheduler.config import scheduler_settings
 from src.infra.scheduler.service import get_scheduler_service
@@ -143,6 +144,7 @@ scheduler_import_duration = time.time() - scheduler_start
 from src.platform.project.write_lease import install_storage_write_admission
 
 install_storage_write_admission()
+install_agent()
 
 
 def _validate_security_baseline() -> None:

@@ -19,6 +19,7 @@ from src.tool.repository import ToolRepositoryBase
 from src.tool.supabase_schemas import (
     ToolCreate as SbToolCreate,
 )
+from src.tool.surface_bindings import tool_surface_bindings
 from src.tool.supabase_schemas import (
     ToolUpdate as SbToolUpdate,
 )
@@ -114,20 +115,17 @@ class ToolService:
         - Invalidate by access-surface id, so rotation never needs to retrieve
           a stored plaintext key.
         """
-        from src.platform.access.adapters.agent.config.repository import AgentRepository
-
+        # Outside the try: a missing install must not look like a failed best effort.
+        bindings = tool_surface_bindings()
         try:
-            agent_repo = AgentRepository()
             seen_surfaces = set()
 
-            for conn_id in agent_repo.list_access_surface_ids_by_tool(tool_id):
-                agent = agent_repo.get_by_id(conn_id)
-                if not agent or not agent.mcp_enabled:
+            for conn_id in bindings.surface_ids(tool_id):
+                surface_id = bindings.mcp_surface_id(conn_id)
+                if not surface_id or surface_id in seen_surfaces:
                     continue
-                if agent.id in seen_surfaces:
-                    continue
-                seen_surfaces.add(agent.id)
-                invalidate_mcp_surface_cache(agent.id)
+                seen_surfaces.add(surface_id)
+                invalidate_mcp_surface_cache(surface_id)
         except Exception:
             pass
 
@@ -152,13 +150,10 @@ class ToolService:
         Check if updating tool name would conflict with sibling tools
         in the same connection (Agent or MCP).
         """
-        from src.platform.access.adapters.agent.config.repository import AgentRepository
-
+        bindings = tool_surface_bindings()
         try:
-            agent_repo = AgentRepository()
-
-            for conn_id in agent_repo.list_access_surface_ids_by_tool(tool_id):
-                agent_tools = agent_repo.get_tools_by_agent_id(conn_id)
+            for conn_id in bindings.surface_ids(tool_id):
+                agent_tools = bindings.tools_on(conn_id)
                 self._check_sibling_name_conflict(tool_id, user_id, new_name, conn_id, agent_tools)
         except BusinessException:
             raise

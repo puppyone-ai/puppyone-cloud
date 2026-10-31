@@ -15,6 +15,7 @@ from src.common_schemas import ApiResponse
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, NotFoundException
 from src.infra.supabase.client import SupabaseClient
+from src.platform.access.surface_kinds import surface_kind
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.models import ACCESS_KINDS
 from src.platform.access import public_schemas as contracts
@@ -460,9 +461,7 @@ def regenerate_key(
             message="Key regenerated",
         )
     elif provider == "agent":
-        from src.platform.access.adapters.agent.config.repository import AgentRepository
-
-        new_key = AgentRepository(sb).regenerate_mcp_api_key(connection_id)
+        new_key = surface_kind("agent").regenerate_key(connection_id, sb)
         if not new_key:
             raise NotFoundException("Agent not found", code=ErrorCode.NOT_FOUND)
         return ApiResponse.success(
@@ -513,36 +512,7 @@ def _public_mcp_server_url() -> str | None:
 
 
 def _create_agent(payload: contracts.AccessSurfaceConfigure) -> contracts.AccessSurfaceCreated:
-    from src.platform.access.adapters.agent.config.repository import AgentRepository
-    from src.platform.access.adapters.agent.config.schemas import AgentBashCreate
-    from src.platform.access.adapters.agent.config.service import AgentConfigService
-
-    service = AgentConfigService(repository=AgentRepository())
-
-    bash_accesses = []
-    if payload.accesses:
-        bash_accesses = [
-            AgentBashCreate(
-                path=a["path"],
-                readonly=a.get("readonly", a.get("terminal_readonly", True)),
-            )
-            for a in payload.accesses
-        ]
-
-    cfg = payload.config
-    agent = service.create_agent(
-        project_id=payload.project_id,
-        name=payload.name or cfg.get("name", "Chat Agent"),
-        icon=cfg.get("icon", "✨"),
-        type=cfg.get("type", "chat"),
-        description=cfg.get("description"),
-        bash_accesses=bash_accesses,
-        trigger_type=cfg.get("trigger_type", "manual"),
-        trigger_config=cfg.get("trigger_config"),
-        task_content=cfg.get("task_content"),
-        task_path=cfg.get("task_path"),
-        external_config=cfg.get("external_config"),
-    )
+    agent = surface_kind("agent").create(payload)
     return contracts.AccessSurfaceCreated(
         id=agent.id,
         project_id=payload.project_id,
