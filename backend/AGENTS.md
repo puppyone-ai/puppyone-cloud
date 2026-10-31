@@ -94,7 +94,10 @@ derived projection jobs.**
 
 `version_engine`、`infra`、`provider`、`shared_types` 不能 import FastAPI 或 Starlette。
 
-不允许用 `ignore_imports` 豁免任何 import。下层确实需要上层能力时，在下层定义端口，由上层实现并在启动时安装，
+业务层内部也按 `pyproject.toml` 里的 “Business modules point downward” 分层，从上到下依次是：访问入口、数据进出、
+内容能力、项目核心、计费、身份与组织。它的 `ignore_imports` 是待清理的存量：修一处删一条，不要新增。
+
+其他规则不允许用 `ignore_imports` 豁免任何 import。下层确实需要上层能力时，在下层定义端口，由上层实现并在启动时安装，
 例如 `src/infra/write_admission.py`。新增会写存储的进程必须在启动时调用
 `install_storage_write_admission()`。
 

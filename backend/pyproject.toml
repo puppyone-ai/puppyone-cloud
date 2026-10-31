@@ -117,6 +117,69 @@ type = "forbidden"
 source_modules = ["src.version_engine", "src.infra", "src.provider", "src.shared_types"]
 forbidden_modules = ["fastapi", "starlette"]
 
+[[tool.importlinter.contracts]]
+name = "Business modules point downward"
+type = "layers"
+layers = [
+    "src.platform.access : src.internal",
+    "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.sandbox : src.platform.landing",
+    "src.content : src.tool : src.context_publish : src.platform.provider_accounts : src.platform.managed_ai : src.platform.office : src.platform.template_registry",
+    "src.platform.repository_target : src.platform.project : src.platform.repository_context : src.file_operations",
+    "src.platform.billing : src.platform.analytics : src.platform.activity",
+    "src.platform.auth : src.platform.organization : src.platform.profile : src.platform.entitlements : src.platform.authorization",
+    "src.platform.idempotency : src.platform.query_contract",
+]
+# Existing violations. Remove an entry when its import is fixed; never add one.
+# tests/platform/test_import_layers.py pins the count.
+ignore_imports = [
+    "src.platform.auth.dependencies -> src.platform.project.control_plane_dependencies",
+    "src.platform.auth.dependencies -> src.platform.project.dependencies",
+    "src.platform.auth.initialization -> src.platform.billing.provisioning",
+    "src.platform.auth.initialization -> src.platform.project.control_plane",
+    "src.platform.auth.initialization -> src.platform.project.orchestration",
+    "src.platform.auth.initialization -> src.platform.project.service",
+    "src.platform.auth.initialization -> src.platform.project.templates",
+    "src.platform.auth.router -> src.platform.billing.provisioning",
+    "src.platform.authorization.dependencies -> src.platform.project.dependencies",
+    "src.platform.authorization.dependencies -> src.platform.project.models",
+    "src.platform.authorization.dependencies -> src.platform.project.repository",
+    "src.platform.billing.runtime -> src.platform.project.repository",
+    "src.platform.landing.service -> src.platform.access.adapters.mcp_endpoint.schemas",
+    "src.platform.landing.service -> src.platform.access.adapters.mcp_endpoint.service",
+    "src.platform.landing.service -> src.platform.access.credential_repository",
+    "src.platform.organization.router -> src.platform.billing.provisioning",
+    "src.platform.organization.service -> src.platform.billing.provisioning",
+    "src.platform.organization.service -> src.platform.billing.seats",
+    "src.platform.profile.dependencies -> src.platform.project.dependencies",
+    "src.platform.profile.service -> src.platform.project.service",
+    "src.platform.project.deletion_cleanup -> src.platform.sandbox",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.config",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.dependencies",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.tasks.repository",
+    "src.platform.project.deletion_cleanup -> src.platform.workspace.project_cleanup",
+    "src.platform.project.git_view -> src.platform.access.adapters.git.native",
+    "src.platform.project.resource_dashboard -> src.platform.access.public_schemas",
+    "src.platform.project.resource_dashboard -> src.platform.access.router",
+    "src.platform.project.resource_dashboard -> src.platform.access.surface_repository",
+    "src.platform.project.resource_dashboard -> src.platform.synchronize.repository",
+    "src.platform.project.resource_dashboard -> src.platform.synchronize.router",
+    "src.platform.project.resource_dashboard -> src.platform.synchronize.run_repository",
+    "src.platform.project.router -> src.platform.access.surface_repository",
+    "src.platform.project.router -> src.platform.template_registry.dependencies",
+    "src.platform.project.router -> src.platform.template_registry.exceptions",
+    "src.platform.project.router -> src.platform.template_registry.http_errors",
+    "src.platform.project.router -> src.platform.template_registry.schemas",
+    "src.platform.project.router -> src.platform.template_registry.service",
+    "src.platform.project.write_lease -> src.platform.access.adapters.git.auth",
+    "src.platform.project.write_lease -> src.platform.access.adapters.git.router",
+    "src.platform.repository_context.repository -> src.platform.access.credential_repository",
+    "src.platform.repository_context.router -> src.platform.access.adapters.git.locator",
+    "src.platform.repository_context.service -> src.platform.access.credential_repository",
+    "src.platform.repository_target.scope_router -> src.platform.access.model_repository",
+    "src.tool.service -> src.platform.access.adapters.agent.config.repository",
+    "src.tool.service -> src.platform.access.adapters.mcp_cache",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

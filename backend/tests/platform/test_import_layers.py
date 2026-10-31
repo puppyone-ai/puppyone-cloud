@@ -8,6 +8,10 @@ import tomllib
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BUSINESS_CONTRACT = "Business modules point downward"
+
+# Lower this when an entry leaves ignore_imports. It only ever goes down.
+KNOWN_BUSINESS_VIOLATIONS = 46
 
 
 def _contracts() -> list[dict]:
@@ -26,8 +30,14 @@ def test_dependencies_only_point_downward():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_no_import_is_exempt():
-    assert not any("ignore_imports" in contract for contract in _contracts())
+def test_only_the_business_contract_has_known_violations():
+    exempt = [contract["name"] for contract in _contracts() if "ignore_imports" in contract]
+    assert exempt == [BUSINESS_CONTRACT]
+
+
+def test_known_business_violations_only_shrink():
+    contract = next(item for item in _contracts() if item["name"] == BUSINESS_CONTRACT)
+    assert len(contract["ignore_imports"]) == KNOWN_BUSINESS_VIOLATIONS
 
 
 def test_every_top_level_module_has_a_layer():
