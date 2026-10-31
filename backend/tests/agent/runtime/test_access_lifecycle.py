@@ -418,7 +418,9 @@ def test_populated_upgrade_preserves_existing_credentials_and_connections(postgr
             scratch.sql(path.read_text())
         for table, row in before.items():
             after = scratch.row(f"SELECT * FROM {table} WHERE id='{row['id']}'")
-            assert {key: after[key] for key in row} == row
+            # The one intended change: an internal Workspace may reach the internet.
+            expected = {**row, "internet_access": True} if table == "cloud_workbenches" else row
+            assert {key: after[key] for key in row} == expected
         assert scratch.sql("SELECT count(*) FROM access_grants") == "0"
         resolved = call(scratch, "resolve_access_git_credential", key_hash="a" * 64, channel="git")
         assert resolved["credential_id"] == credential and resolved["registration_id"] is None

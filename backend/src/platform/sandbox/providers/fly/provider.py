@@ -188,6 +188,8 @@ class FlyRuntimeProvider:
 
     async def _create_machine(self, host, volume):
         resource = host.resource
+        # Only a machine alone on its private network may open the internet.
+        internet = getattr(host, "internet_access", False) and dedicated(resource)
         machine = await self._request(
             resource,
             "POST",
@@ -204,6 +206,7 @@ class FlyRuntimeProvider:
                     "auto_destroy": False,
                     "restart": {"policy": "no"},
                     "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
+                    "env": {"PUPPYONE_TASK_INTERNET": "open"} if internet else {},
                 },
             },
         )

@@ -328,6 +328,35 @@ async def test_a_workspace_creates_its_private_network_before_its_disk(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "internet,own_app,env",
+    [
+        (True, True, {"PUPPYONE_TASK_INTERNET": "open"}),
+        (False, True, {}),
+        # A machine on the shared network never opens, whatever its row says.
+        (True, False, {}),
+    ],
+)
+async def test_only_a_machine_alone_on_its_network_opens_the_internet(
+    monkeypatch, internet, own_app, env
+):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = dedicated_binding() if own_app else {**resource(), "allocation_pending": True}
+    app = binding["app"]
+    client, calls = fly_api({**allocation_routes(app), f"GET /v1/apps/{app}": (200, {"network": app})})
+    host = SimpleNamespace(
+        resource=binding,
+        artifact=binding["image_id"],
+        restore_point=None,
+        internet_access=internet,
+    )
+    async with client:
+        await FlyRuntimeProvider(client=client).allocate(host)
+    created = next(body for key, body in calls if key == f"POST /v1/apps/{app}/machines")
+    assert created["config"]["env"] == env
+
+
+@pytest.mark.asyncio
 async def test_a_lost_app_reply_is_recovered_by_name(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
     monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")

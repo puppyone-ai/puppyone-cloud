@@ -79,7 +79,7 @@ jobs:
             --ignore=tests/agent/runtime/test_desktop_integration.py \
             --hosting-live --hosting-s3 \
             -q --junitxml=.agent-test-results/junit.xml --basetemp=.agent-test-results/cases
-          node --test agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs agent-worker/tools.test.mjs \
+          node --test agent-worker/fly-egress.test.mjs agent-worker/git.test.mjs agent-worker/tool-execution.test.mjs agent-worker/tools.test.mjs \
             agent-worker/controller.test.mjs agent-worker/providers/*.test.mjs \
             agent-worker/workbench-publication.test.mjs agent-worker/workbench-relay.test.mjs agent-worker/workspace-merge.test.mjs
           docker build --network=none --no-cache --progress=plain \

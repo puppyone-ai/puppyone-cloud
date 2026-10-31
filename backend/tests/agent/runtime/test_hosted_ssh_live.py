@@ -227,6 +227,16 @@ async def until_released(live, identity):
             await asyncio.sleep(0.1)
 
 
+async def test_the_gateway_refuses_port_forwarding(live):
+    """Forwarding would carry a machine past its firewall through the client's network."""
+    grant = await issue(live)
+    async with await connect(live, grant) as conn:
+        with pytest.raises(asyncssh.ChannelOpenError):
+            await conn.open_connection("1.1.1.1", 443)
+        with pytest.raises(asyncssh.ChannelListenError):
+            await conn.forward_remote_port("127.0.0.1", 0, "127.0.0.1", 9)
+
+
 async def test_stock_ssh_exec_binary_and_editor_same_uncommitted_files(live):
     grant = await issue(live)
     payload = b"\x00\xffhello native filesystem\n" * 16384

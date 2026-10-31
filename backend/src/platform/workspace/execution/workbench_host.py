@@ -28,6 +28,7 @@ class WorkbenchChannel(ControlChannel):
             if row.get("is_default") or row.get("agent_registration_id")
             else None
         )
+        self.internet_access = row.get("internet_access") is True
         super().__init__(
             str(UUID(row["generation"])),
             row["project_id"],
