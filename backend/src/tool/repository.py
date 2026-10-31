@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.infra.supabase.repository import SupabaseRepository
+from src.tool.supabase_repo import ToolRepository
 from src.tool.models import Tool
 from src.tool.supabase_schemas import (
     ToolCreate as SbToolCreate,
@@ -43,8 +43,8 @@ class ToolRepositoryBase(ABC):
 
 
 class ToolRepositorySupabase(ToolRepositoryBase):
-    def __init__(self, supabase_repo: SupabaseRepository):
-        self._repo = supabase_repo
+    def __init__(self, repository: ToolRepository):
+        self._repo = repository
 
     def _to_model(self, resp) -> Tool:
         return Tool(
@@ -68,11 +68,11 @@ class ToolRepositorySupabase(ToolRepositoryBase):
         )
 
     def create(self, tool: SbToolCreate) -> Tool:
-        resp = self._repo.create_tool(tool)
+        resp = self._repo.create(tool)
         return self._to_model(resp)
 
     def get_by_id(self, tool_id: str) -> Tool | None:
-        resp = self._repo.get_tool(tool_id)
+        resp = self._repo.get_by_id(tool_id)
         if not resp:
             return None
         return self._to_model(resp)
@@ -86,16 +86,16 @@ class ToolRepositorySupabase(ToolRepositoryBase):
         path: str | None = None,
         project_id: str | None = None,
     ) -> list[Tool]:
-        resps = self._repo.get_tools(
+        resps = self._repo.get_list(
             skip=skip, limit=limit, org_id=org_id, path=path, project_id=project_id
         )
         return [self._to_model(r) for r in resps]
 
     def update(self, tool_id: str, tool: SbToolUpdate) -> Tool | None:
-        resp = self._repo.update_tool(tool_id, tool)
+        resp = self._repo.update(tool_id, tool)
         if not resp:
             return None
         return self._to_model(resp)
 
     def delete(self, tool_id: str) -> bool:
-        return self._repo.delete_tool(tool_id)
+        return self._repo.delete(tool_id)

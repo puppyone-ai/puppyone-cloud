@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from src.content.table.dependencies import get_table_repository, get_table_service
-from src.infra.supabase.dependencies import get_supabase_client, get_supabase_repository
+from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.authorization.dependencies import get_authorization_service
 from src.tool.dependencies import get_tool_service
 from src.version_engine.bootstrap.container import VersionEngineContainer
@@ -20,7 +20,7 @@ async def test_request_services_share_engine_and_keep_users_isolated():
     app = FastAPI()
     manager = object()
     app.state.version_engine = VersionEngineContainer(manager, object())
-    for dependency in (get_supabase_client, get_supabase_repository, get_table_repository):
+    for dependency in (get_supabase_client, get_table_repository):
         app.dependency_overrides[dependency] = lambda: SimpleNamespace()
     app.dependency_overrides[get_authorization_service] = lambda: SimpleNamespace()
     observed = []

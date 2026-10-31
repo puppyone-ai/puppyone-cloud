@@ -112,10 +112,9 @@ def backend_consumers(status: dict) -> None:
     # Consumers of the historical containment schema, over real PostgREST.
     # Current authorization uses newer RPCs and is checked after the full reset.
     os.environ.update(SUPABASE_URL=status["API_URL"], SUPABASE_KEY=status["SERVICE_ROLE_KEY"], SKIP_AUTH="false")
-    # Bootstrap the normal facade before domain repositories: its existing
-    # re-exports otherwise form an import cycle in a fresh standalone process.
-    from src.infra.supabase import SupabaseClient, TableRepository
+    from src.content.table.supabase_repo import TableRepository
     from src.content.table.supabase_schemas import TableCreate, TableUpdate
+    from src.infra.supabase import SupabaseClient
     from src.version_engine.infrastructure.supabase.audit_repository import AuditRepository
 
     db = SupabaseClient()

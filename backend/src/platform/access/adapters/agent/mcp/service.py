@@ -14,7 +14,8 @@ from typing import List, Optional
 from src.platform.access.adapters.agent.config.models import Agent, AgentTool
 from src.platform.access.adapters.agent.config.repository import AgentRepository
 from src.tool.repository import ToolRepositoryBase, ToolRepositorySupabase
-from src.infra.supabase.dependencies import get_supabase_repository
+from src.tool.supabase_repo import ToolRepository
+from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.access.adapters.mcp_cache import invalidate_mcp_surface_cache
 from src.exceptions import NotFoundException, ErrorCode, BusinessException
 
@@ -33,7 +34,7 @@ class McpV3Service:
         tool_repo: ToolRepositoryBase = None,
     ):
         self._agent_repo = agent_repo or AgentRepository()
-        self._tool_repo = tool_repo or ToolRepositorySupabase(get_supabase_repository())
+        self._tool_repo = tool_repo or ToolRepositorySupabase(ToolRepository(get_supabase_client()))
 
     def _tool_in_agent_boundary(self, agent: Agent, tool) -> bool:
         """Agent child grants never import a sibling/foreign Project tool."""

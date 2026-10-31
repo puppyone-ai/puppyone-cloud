@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 from src.config import settings
 from src.exception_handler import app_exception_handler
 from src.exceptions import AppException
-from src.infra.supabase.repository import SupabaseRepository
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.auth.service import AuthService
 from src.platform.authorization.repository import ProjectMembershipRepository
@@ -127,7 +126,7 @@ async def team(prepared, services, postgres, monkeypatch):
         app.include_router(router, prefix="/api/v1")
     for router in (resource_router, read_router, write_router):
         app.include_router(router, prefix="/api/v1/content")
-    project_repo = ProjectRepositorySupabase(SupabaseRepository())
+    project_repo = ProjectRepositorySupabase()
     app.dependency_overrides[get_org_service] = lambda: org_service
     app.dependency_overrides[get_project_repository] = lambda: project_repo
     app.dependency_overrides[get_project_membership_repository] = lambda: (

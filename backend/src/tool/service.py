@@ -11,7 +11,6 @@ from src.exceptions import (
     NotFoundException,
     PermissionException,
 )
-from src.infra.supabase.dependencies import get_supabase_repository
 from src.platform.access.adapters.mcp_cache import invalidate_mcp_surface_cache
 from src.platform.authorization.models import ProjectAction
 from src.platform.authorization.service import AuthorizationService
@@ -69,17 +68,10 @@ class ToolService:
         repo: ToolRepositoryBase,
         ops: ProductOperationAdapter,
         authorization: AuthorizationService,
-        supabase_repository: Any | None = None,
     ):
         self.repo = repo
         self._ops = ops
         self.authorization = authorization
-        self._sb = supabase_repository
-
-    def _get_supabase_repository(self):
-        if self._sb is None:
-            self._sb = get_supabase_repository()
-        return self._sb
 
     def get_path_with_access_check(self, user_id: str, path: str):
         """Check that a path is accessible.

@@ -181,7 +181,6 @@ def services(control_api, object_endpoint, monkeypatch):
         monkeypatch.setattr(s3_settings, key, value)
     monkeypatch.setattr(SupabaseClient(), "_client", control_api)
     monkeypatch.setattr(dependencies, "_supabase_client", control_api)
-    monkeypatch.setattr(dependencies, "_supabase_repository", None)
     monkeypatch.setattr(settings, "MANAGED_AI_ENABLED", True)
     monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "disabled")
     storage = S3Service()
