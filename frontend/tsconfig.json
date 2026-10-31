@@ -41,9 +41,10 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    ".next-desktop-login/types/**/*.ts",
+    ".next-restore-login/types/**/*.ts",
     ".next/types/**/*.ts",
-    "next-env.d.ts",
-    ".next-desktop-login/types/**/*.ts"
+    "next-env.d.ts"
   ],
   "exclude": [
     "node_modules"
