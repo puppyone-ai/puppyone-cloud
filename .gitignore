@@ -165,3 +165,6 @@ e2e/test-results/
 
 # Local and CI test evidence stays out of the tree
 /artifacts/
+
+# Puppyone Desktop workspace state
+/.puppyone/

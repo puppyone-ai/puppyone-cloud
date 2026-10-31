@@ -101,7 +101,6 @@ It aggregates information scattered across various sources into a unified Contex
 
 - **`backend/`** — Python (FastAPI) backend service
 - **`frontend/`** — Next.js frontend application
-- **`cli/`** — Node.js command-line tool (Commander.js)
 
 ## Deprecated Directories (do not modify)
 
@@ -308,6 +307,14 @@ store. Preserve the existing desktop appearance during responsive changes.
 - **State management**: Zustand + React Context
 - **Data fetching**: SWR
 
+### UI conventions
+
+- Colours come from the `--po-*` tokens; `npm run theme:audit` reports raw colours.
+- Use `StatusDot` or `StatusIndicator` from `frontend/components/ui/StatusDot.tsx`
+  for every runtime status marker. Do not hand-roll status dots or add glow,
+  pulse or page-local colour tables.
+- Write the product name as `puppyone`: lowercase, one word, no space or hyphen.
+
 ### Directory Structure
 
 ```
@@ -392,41 +399,11 @@ NEXT_PUBLIC_DEV_MODE            # Dev mode flag
 
 ## CLI
 
-- **Language**: JavaScript (ESM)
-- **Framework**: Commander.js
-- **Install**: `npm install -g puppyone`
-
-### Directory Structure
-
-```
-cli/
-├── bin/puppyone.js             # Entrypoint & command registration
-├── src/
-│   ├── commands/               # Command implementations
-│   │   ├── auth.js             # Auth (login/logout/whoami/targets)
-│   │   ├── org.js              # Organization management
-│   │   ├── project.js          # Project management
-│   │   ├── access.js           # Unified Access Point management (all access types)
-│   │   ├── ap/                 # Access Point profile command domain
-│   │   │   ├── index.js        # ap command registration
-│   │   │   └── profiles.js     # login/use/list/current/logout/clear
-│   │   ├── fs/                 # Access Point scoped filesystem command domain
-│   │   │   ├── index.js        # fs command registration
-│   │   │   ├── commands/       # ls/tree/find/cat/head/tail/stat/write/mkdir/touch/cp/mv/rm/upload/download
-│   │   │   └── lib/            # shared FS context/http/path/render/read/transfer helpers
-│   │   ├── ap.js               # Compatibility re-export only
-│   │   ├── chat.js             # Agent chat (SSE streaming)
-│   │   ├── config-cmd.js       # CLI configuration
-│   │   ├── global.js           # Global commands (status/ps)
-│   │   └── _daemon.js          # Filesystem sync daemon (internal, legacy)
-│   ├── api.js                  # HTTP client
-│   ├── config.js               # Config file read/write
-│   ├── daemon.js               # Background daemon management
-│   ├── registry.js             # Local access registry
-│   ├── output.js               # Output formatting (human/JSON)
-│   ├── helpers.js              # Shared utilities
-│   └── state.js                # Sync state management
-```
+The CLI lives in [`puppyone-ai/puppyone-cli`](https://github.com/puppyone-ai/puppyone-cli)
+and is published to npm as `puppyone` (`npm install -g puppyone`). Do not add its
+sources here: `backend/tests/platform/test_cli_not_vendored.py` fails if they
+reappear. Contract tests resolve the real binary through
+`backend/tests/support/cli_binary.py`.
 
 ### Key Commands
 

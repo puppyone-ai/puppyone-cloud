@@ -27,7 +27,9 @@ refs and S3 immutable Git objects are the only runtime version authority.
 `ProductOperationAdapter.for_grant(...)` / `.for_user(...)` opens pinned native
 reads and publishes through `NativeOperationWriter` and `RefTransactionService`.
 There is no project-root publisher, server-repository facade, startup root repair,
-old storage namespace fallback, or scoped transport materialization.
+old storage namespace fallback, or scoped transport materialization. Do not
+reintroduce the removed pre-Git protocol, removed external version package, or
+old source/module naming. Native Git clients enter through `/git/...`.
 
 Old Scope credentials fail closed; new Scope views are a separate future feature.
 Data preservation is an operator migration/archive concern, not runtime protocol
@@ -240,6 +242,7 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 uv sync                 # 安装依赖
 uv run uvicorn src.main:app --host 0.0.0.0 --port 9090 --reload --log-level info --no-access-log
 uv run pytest           # 运行测试
+uv run pytest tests/version_engine -q  # 只跑 Version Engine 测试
 ```
 
 ## 部署 (Railway / Nixpacks)

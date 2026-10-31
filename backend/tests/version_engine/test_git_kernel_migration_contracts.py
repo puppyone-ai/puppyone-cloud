@@ -52,7 +52,6 @@ PRODUCT_WRITE_MODULES = (
 ACTIVE_RUNTIME_SCAN_ROOTS = (
     "AGENTS.md",
     "backend/AGENTS.md",
-    "backend/CLAUDE.md",
     "backend/mcp_service",
     "backend/scripts",
     "backend/src/platform/repository_target",
