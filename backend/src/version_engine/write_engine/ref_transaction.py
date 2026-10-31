@@ -340,6 +340,10 @@ class RefTransactionService:
         if pin is not None and manifest is None and self.billing is not None:
             # A sealed retry can contain not-yet-published roots. Verify its own
             # publication proof; never add those roots to a reader's snapshot.
+            # Its own proofs would end the walk at the root, which changes the
+            # sealed digest and hides new blobs from the file size policy.
+            if self.verifier.proofs is not None:
+                self.verifier.proofs.distrust_unpublished()
             manifest = self.verifier.verify(roots, progress=renew)
         self.progress()
         if self.billing is not None:
