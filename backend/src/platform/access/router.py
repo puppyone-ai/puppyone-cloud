@@ -499,15 +499,6 @@ def list_connection_types():
             "category": "access",
             "icon": "plug",
         },
-        {
-            "kind": "sandbox",
-            "display_name": "Sandbox",
-            "description": "Isolated script execution environment",
-            "auth": "none",
-            "creation_mode": "direct",
-            "category": "access",
-            "icon": "box",
-        },
     ]
 
     return ApiResponse.success(data=[contracts.AccessSurfaceKind(**row) for row in access_types])
@@ -647,11 +638,11 @@ def create_connection(
     from src.platform.project.repository import ProjectRepositorySupabase
 
     provider = payload.kind
-    if provider not in {"agent", "mcp", "sandbox"}:
+    if provider not in {"agent", "mcp"}:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unknown Access kind: {provider}. Use Import or Synchronize APIs "
+                f"Unknown Access kind: {provider}. Use Import APIs "
                 "for external datasource connections."
             ),
         )

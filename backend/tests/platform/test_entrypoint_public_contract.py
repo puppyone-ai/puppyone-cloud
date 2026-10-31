@@ -5,6 +5,8 @@ import json
 from datetime import UTC
 from pathlib import Path
 
+import pytest
+
 
 def normalize(value):
     if isinstance(value, dict):
@@ -478,13 +480,28 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, digest in handoff[category]["added"].items():
             assert name not in expected["contract"][category]
             expected["contract"][category][name] = digest
+    # Sandbox endpoints stopped executing with the native engine and are not an
+    # access method: agents use MCP, CLI, SSH and Git.
+    sandbox = json.loads(
+        Path(__file__).with_name("sandbox_endpoint_retirement_contract_delta.json").read_text()
+    )
+    assert all("/sandbox-endpoint" in name for name in sandbox["paths"]["removed"])
+    assert not any(
+        category[kind]
+        for category in (sandbox["paths"], sandbox["schemas"])
+        for kind in ("added", "changed")
+    )
+    for category in ("paths", "schemas"):
+        for name, digest in sandbox[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
 
 
-def test_external_synchronization_is_not_registered():
+@pytest.mark.parametrize("retired", ["/synchronize", "/sandbox-endpoint"])
+def test_retired_entry_points_are_not_registered(retired):
     from src.main import app
 
-    assert not [route.path for route in app.routes if "/synchronize" in route.path]
+    assert not [route.path for route in app.routes if retired in route.path]
 
 
 def test_access_domain_kind_and_target_are_serialized_without_legacy_provider():

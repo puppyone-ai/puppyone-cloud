@@ -351,12 +351,7 @@ async def delete_table_context_data(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post(
-    "/sandbox-endpoint-by-key",
-    summary="Get standalone Sandbox endpoint configuration by access key",
-    description="External consumers call this to get Sandbox endpoint mounts, runtime, and other configuration before execution",
-    dependencies=[Depends(verify_internal_secret)],
-)
+# Not registered: Sandbox endpoints are not offered as an access method.
 def get_sandbox_endpoint_by_key(access_key: str = Body(..., embed=True)):
     from src.platform.access.adapters.sandbox_endpoint.repository import SandboxEndpointRepository
 

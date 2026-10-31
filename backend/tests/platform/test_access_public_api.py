@@ -293,7 +293,6 @@ def test_global_static_catalog_create_and_one_time_credentials(environment):
         assert [row["kind"] for row in client.get(BASE + "/types").json()["data"]] == [
             "agent",
             "mcp",
-            "sandbox",
         ]
         created = client.post(
             BASE, json={"project_id": "project-1", "kind": "mcp", "name": "Endpoint"}
