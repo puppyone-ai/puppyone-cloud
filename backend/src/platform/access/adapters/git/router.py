@@ -42,7 +42,7 @@ from src.utils.logger import log_info
 from src.version_engine.admission.repo_facade import (
     repo_facade_from_auth,
 )
-from src.version_engine.bootstrap.dependencies import get_repo_manager
+from src.file_operations.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.storage.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
 from src.version_engine.write_engine.trace import VersionTrace, use_version_trace

@@ -10,7 +10,7 @@ from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
 from src.file_operations.commands import VersionWriteCommandService
 from src.file_operations.dependencies import get_version_write_command_service
-from src.version_engine.bootstrap.dependencies import get_version_write_engine
+from src.file_operations.dependencies import get_version_write_engine
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 from .config import TemplateRegistrySettings, template_registry_settings

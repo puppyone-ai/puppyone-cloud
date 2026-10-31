@@ -13,7 +13,7 @@ from src.file_operations.upload_policy import (
     PREFLIGHT_BYTES_THRESHOLD as POLICY_PREFLIGHT_BYTES_THRESHOLD,
     PREFLIGHT_FILE_THRESHOLD as POLICY_PREFLIGHT_FILE_THRESHOLD,
 )
-from src.version_engine.admission.permission import is_mode_writable
+from src.platform.access.permission import is_mode_writable
 from src.platform.access.filesystem.capabilities import scoped_fs_capabilities, upload_policy_document
 
 from . import read, search, write

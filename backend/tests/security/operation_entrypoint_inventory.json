@@ -34,6 +34,9 @@
   ],
   "references": {
     "factories": {
+      "file_operations/dependencies.py": {
+        "get_version_engine_container::build_version_engine_container": 1
+      },
       "main.py": {
         "app_lifespan::build_version_engine_container": 1
       },
@@ -68,9 +71,7 @@
         "_do_import::build_worker_version_engine_container": 1
       },
       "version_engine/bootstrap/dependencies.py": {
-        "build_request_version_engine_container::build_version_engine_container": 1,
-        "build_worker_version_engine_container::build_version_engine_container": 1,
-        "get_version_engine_container::build_version_engine_container": 1
+        "build_worker_version_engine_container::build_version_engine_container": 1
       },
       "version_engine/derived/object_gc_worker.py": {
         "process_object_gc_projects::build_worker_version_engine_container": 1

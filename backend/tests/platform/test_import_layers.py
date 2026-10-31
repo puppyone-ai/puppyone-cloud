@@ -10,9 +10,9 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _contract() -> dict:
+def _contracts() -> list[dict]:
     config = tomllib.loads((BACKEND_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    return config["tool"]["importlinter"]["contracts"][0]
+    return config["tool"]["importlinter"]["contracts"]
 
 
 def test_dependencies_only_point_downward():
@@ -27,11 +27,12 @@ def test_dependencies_only_point_downward():
 
 
 def test_no_import_is_exempt():
-    assert "ignore_imports" not in _contract()
+    assert not any("ignore_imports" in contract for contract in _contracts())
 
 
 def test_every_top_level_module_has_a_layer():
-    layered = {name.strip() for layer in _contract()["layers"] for name in layer.split(":")}
+    layers = _contracts()[0]["layers"]
+    layered = {name.strip() for layer in layers for name in layer.split(":")}
     source = BACKEND_ROOT / "src"
     modules = {path.stem for path in source.glob("*.py") if path.stem != "__init__"}
     packages = {path.parent.name for path in source.glob("*/__init__.py")}

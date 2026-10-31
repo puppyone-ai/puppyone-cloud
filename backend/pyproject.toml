@@ -96,6 +96,7 @@ quote-style = "double"
 
 [tool.importlinter]
 root_package = "src"
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "Dependencies only point downward"
@@ -109,6 +110,12 @@ layers = [
     "src.exception_handler : src.exceptions : src.config : src.utils : src.schemas : src.common_schemas",
     "src.shared_types",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Core and base layers do not know the web framework"
+type = "forbidden"
+source_modules = ["src.version_engine", "src.infra", "src.provider", "src.shared_types"]
+forbidden_modules = ["fastapi", "starlette"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -54,10 +54,7 @@ from src.platform.template_registry.exceptions import TemplateRegistryError
 from src.platform.template_registry.http_errors import registry_http_exception
 from src.platform.template_registry.schemas import TemplateDetail, TemplateSummary
 from src.platform.template_registry.service import TemplateRegistryService
-from src.version_engine.bootstrap.dependencies import (
-    get_repo_manager,
-    get_version_write_engine,
-)
+from src.file_operations.dependencies import get_repo_manager, get_version_write_engine
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.write_engine.engine import VersionWriteEngine
 

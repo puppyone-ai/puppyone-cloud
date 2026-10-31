@@ -111,7 +111,7 @@ def test_full_application_metadata_routes_never_enter_transport_lease(monkeypatc
     monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
     from src.main import create_app
     from src.platform.project import write_lease
-    from src.version_engine.bootstrap.dependencies import get_repo_manager
+    from src.file_operations.dependencies import get_repo_manager
     from src.platform.access.adapters.git import auth, operations
     from tests.repository_hosting.unit.test_native_operation_status import runtime_grant
 

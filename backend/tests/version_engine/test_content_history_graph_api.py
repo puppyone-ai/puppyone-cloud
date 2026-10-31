@@ -10,10 +10,7 @@ from src.platform.access.adapters.api.history import history_router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.file_operations.dependencies import get_product_operation_adapter
-from src.version_engine.bootstrap.dependencies import (
-    get_history_graph_service,
-    get_version_admin_service,
-)
+from src.file_operations.dependencies import get_history_graph_service, get_version_admin_service
 from src.version_engine.read.admin import VersionAdminService
 from src.version_engine.read.history_cursor import HistoryCursorCodec
 from src.version_engine.read.history_graph import HistoryGraphService

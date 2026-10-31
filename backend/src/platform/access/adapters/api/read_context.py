@@ -8,7 +8,7 @@ from contextlib import contextmanager
 
 from fastapi import HTTPException
 
-from src.version_engine.admission.validation import MAX_PATH_LENGTH, validate_path
+from src.platform.access.validation import MAX_PATH_LENGTH, validate_path
 from src.version_engine.domain.errors import (
     ObjectNotFoundError,
     PathNotFoundError,

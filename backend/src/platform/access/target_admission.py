@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.platform.access.channel_pause import enforce_channel_pause
-from src.version_engine.admission.permission import (
+from src.platform.access.permission import (
     ensure_repo_readable,
     ensure_repo_writable,
 )

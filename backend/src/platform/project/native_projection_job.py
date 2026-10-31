@@ -20,7 +20,7 @@ from src.version_engine.derived.native_events import (
 
 async def process_native_events(*, repo_manager=None, limit=20) -> int:
     from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
-    from src.version_engine.derived.notifications import NotificationManager
+    from src.platform.project.commit_notifications import NotificationManager
 
     if repo_manager is None:
         repo_manager = (await run_blocking(build_worker_version_engine_container)).repo_manager

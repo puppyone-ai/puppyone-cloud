@@ -92,6 +92,8 @@ derived projection jobs.**
 5. 通用层：`config`、`exceptions`、`utils`、`schemas`、`common_schemas`、`exception_handler`
 6. 纯类型：`shared_types`（授权工牌、仓库目标等，不 import 任何 `src` 代码）
 
+`version_engine`、`infra`、`provider`、`shared_types` 不能 import FastAPI 或 Starlette。
+
 不允许用 `ignore_imports` 豁免任何 import。下层确实需要上层能力时，在下层定义端口，由上层实现并在启动时安装，
 例如 `src/infra/write_admission.py`。新增会写存储的进程必须在启动时调用
 `install_storage_write_admission()`。

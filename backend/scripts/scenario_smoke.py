@@ -40,7 +40,7 @@ from src.platform.access.adapters.git.submission import submit_git_tree
 from src.file_operations.operation_adapter import (
     ProductOperationAdapter,
 )
-from src.version_engine.admission.permission import (
+from src.platform.access.permission import (
     ensure_repo_writable,
 )
 from src.version_engine.admission.repo_facade import RepoFacade

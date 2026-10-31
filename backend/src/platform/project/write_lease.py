@@ -25,7 +25,7 @@ from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.infra.write_admission import install_project_write_admission
 from src.version_engine.bootstrap.container import VersionEngineContainer
-from src.version_engine.bootstrap.dependencies import get_version_engine_container
+from src.file_operations.dependencies import get_version_engine_container
 
 MAX_PROJECT_WRITE_LEASE_TTL_SECONDS = 7200
 PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS = 7200

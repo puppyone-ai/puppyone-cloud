@@ -17,7 +17,7 @@ from src.file_operations.operation_adapter import (
     WriteResult,
 )
 from src.version_engine.domain.intents import ProjectWriteState
-from src.version_engine.admission.validation import validate_content_size, validate_path
+from src.platform.access.validation import validate_content_size, validate_path
 
 _EXT_MAP = {"json": ".json", "markdown": ".md"}
 

@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.file_operations.queries import ProductQueries, run_read
-from src.version_engine.admission.validation import validate_limit
+from src.platform.access.validation import validate_limit
 from src.file_operations.dependencies import get_product_operation_adapter
 
 from .context import (

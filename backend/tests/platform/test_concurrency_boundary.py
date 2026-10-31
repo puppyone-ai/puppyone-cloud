@@ -185,8 +185,6 @@ def test_blocking_only_routes_and_dependencies_are_plain_functions():
 # The synchronous data core: repositories and the Version Engine. Async code
 # lives at the edges and calls into it with run_blocking/run_owned.
 _ASYNC_EDGES_IN_CORE = {
-    # WebSocket fan-out and Redis pub/sub for commit notifications.
-    "version_engine/derived/notifications.py": "async-only WebSocket/Redis clients",
     # ETL runtime state shares ARQ's async Redis connection.
     "platform/upload/state/repository.py": "async Redis client shared with ARQ",
     # Unreferenced modules kept until ISSUE-123 A4 deletes them.
