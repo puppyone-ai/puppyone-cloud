@@ -34,7 +34,7 @@
   ],
   "references": {
     "factories": {
-      "file_operations/dependencies.py": {
+      "file_operations/engine_dependencies.py": {
         "get_version_engine_container::build_version_engine_container": 1
       },
       "main.py": {

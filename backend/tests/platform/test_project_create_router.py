@@ -27,7 +27,7 @@ from src.platform.project.control_plane_dependencies import get_project_control_
 from src.platform.project.dependencies import get_project_repository
 from src.platform.project.models import Project
 from src.platform.project.write_lease import get_project_write_lease_factory
-from src.file_operations.dependencies import get_version_write_engine
+from src.file_operations.engine_dependencies import get_version_write_engine
 
 OPERATION_KEY = "123e4567-e89b-42d3-a456-426614174000"
 

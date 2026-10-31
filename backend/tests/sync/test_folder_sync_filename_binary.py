@@ -1,6 +1,6 @@
 """Tests for version filename validation with binary file extensions."""
 
-from src.platform.access.validation import validate_version_filename
+from src.file_operations.validation import validate_version_filename
 
 
 def test_validate_filename_accepts_binary_extension():

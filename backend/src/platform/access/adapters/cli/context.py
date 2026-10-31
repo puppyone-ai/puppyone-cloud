@@ -25,7 +25,7 @@ from src.version_engine.admission.repo_facade import (
     RepositoryViewResolutionError,
     repo_facade_from_auth,
 )
-from src.platform.access.validation import validate_limit, validate_path
+from src.file_operations.validation import validate_limit, validate_path
 
 
 def _is_not_found_error(exc: Exception) -> bool:

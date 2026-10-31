@@ -1,6 +1,6 @@
 """Tests for version filename validation used by FS CLI writes."""
 
-from src.platform.access.validation import validate_version_filename
+from src.file_operations.validation import validate_version_filename
 
 
 def test_validate_filename_rejects_traversal():

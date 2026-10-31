@@ -16,7 +16,7 @@ from src.platform.authorization.dependencies import AuthorizedProject, require_p
 from src.shared_types.grants import ProjectAction
 from src.platform.project.schemas import NativeRepositoryCreate
 from src.platform.project.write_lease import ProjectWriteLease
-from src.file_operations.dependencies import get_repo_manager
+from src.file_operations.engine_dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.ref_metadata import repository_ref_metadata
 from src.version_engine.write_engine.ref_transaction import RefEdit, RefState, admitted_actor

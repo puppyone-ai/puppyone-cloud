@@ -20,7 +20,7 @@ from src.platform.access.repository_schemas import (
     NativeRepositoryMetadataEnvelope,
 )
 from src.shared_types.grants import RuntimeGrant
-from src.file_operations.dependencies import get_repo_manager
+from src.file_operations.engine_dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 operations_router = APIRouter()

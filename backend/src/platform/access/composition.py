@@ -3,7 +3,7 @@
 from fastapi import Depends, Request
 
 from src.platform.workspace.service import WorkbenchService
-from src.file_operations.dependencies import get_version_engine_container
+from src.file_operations.engine_dependencies import get_version_engine_container
 
 
 def get_workbench_service(request: Request, engine=Depends(get_version_engine_container)):

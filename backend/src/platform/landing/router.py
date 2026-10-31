@@ -27,7 +27,7 @@ from src.platform.landing.schemas import (
 from src.platform.landing.service import LandingService
 from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
-from src.file_operations.dependencies import get_version_write_engine
+from src.file_operations.engine_dependencies import get_version_write_engine
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 logger = logging.getLogger(__name__)
