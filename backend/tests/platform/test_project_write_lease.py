@@ -88,7 +88,7 @@ async def test_copied_background_context_cannot_reuse_released_outer_claim(
 
     async def late_write() -> None:
         await continue_background.wait()
-        with s3._project_write_guard("version/project-1/objects/aa/blob", "put_object"):
+        with s3._object_write_guard("version/project-1/objects/aa/blob", "put_object"):
             pass
 
     async with outer:
@@ -137,7 +137,7 @@ async def test_physical_child_inherits_live_initializer_proof(monkeypatch) -> No
             "src.platform.project.write_lease.ProjectWriteLease",
             RecordingChildLease,
         )
-        with s3._project_write_guard("projects/project-1/uploads/staged", "put_object"):
+        with s3._object_write_guard("projects/project-1/uploads/staged", "put_object"):
             pass
 
     assert recorded[0]["reuse_active"] is False

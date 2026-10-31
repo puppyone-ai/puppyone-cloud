@@ -53,7 +53,7 @@ async def stage_blob_from_s3(
     its initiating user's current grant before publication. This function cannot
     use existence of an arbitrary S3 object as native publication authority.
     """
-    from src.infra.s3.service import project_id_from_owned_s3_key
+    from src.platform.project.storage_keys import project_id_from_owned_s3_key
     from src.version_engine.write_engine.git_object_format import hash_object
 
     if src_key.startswith("version/") or project_id_from_owned_s3_key(src_key) != project_id:

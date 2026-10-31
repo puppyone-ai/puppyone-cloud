@@ -24,6 +24,7 @@ from src.infra.execution.context import Execution, current_execution
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.infra.write_admission import install_project_write_admission
+from src.platform.project.storage_keys import project_id_from_owned_s3_key
 from src.version_engine.bootstrap.container import VersionEngineContainer
 from src.file_operations.dependencies import get_version_engine_container
 
@@ -343,8 +344,15 @@ class ProjectLeaseAdmission:
     def active_lease(self, project_id: str) -> ProjectWriteLease | None:
         return active_project_write_lease(project_id)
 
+    def requires_lease(self, key: str) -> bool:
+        return project_id_from_owned_s3_key(key) is not None
+
     @contextmanager
-    def object_write(self, project_id: str, operation: str):
+    def object_write(self, key: str, operation: str):
+        project_id = project_id_from_owned_s3_key(key)
+        if project_id is None:
+            yield
+            return
         # Physical storage admission is intentionally independent from the
         # logical Product lease. A ContextVar is copied into background tasks,
         # and boto3 threads outlive asyncio cancellation; reusing only the

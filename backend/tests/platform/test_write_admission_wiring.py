@@ -13,6 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.infra import write_admission
+from src.infra.s3.exceptions import S3OperationError
 from src.infra.s3.service import S3Service
 from src.platform.project import write_lease
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
@@ -118,12 +119,30 @@ def test_storage_refuses_project_writes_without_admission(storage, write):
     assert storage.client.method_calls == []
 
 
-@pytest.mark.usefixtures("no_admission")
-def test_storage_writes_keys_no_project_owns_without_admission(storage):
+def test_keys_no_project_owns_take_no_lease(monkeypatch):
+    monkeypatch.setattr(write_lease, "ProjectWriteLease", Mock(side_effect=AssertionError))
+    admission = write_lease.ProjectLeaseAdmission()
     entered = []
-    with storage._project_write_guard("public/logo.png", "put_object"):
+    with admission.object_write("public/logo.png", "put_object"):
         entered.append(True)
     assert entered == [True]
+    assert admission.requires_lease("public/logo.png") is False
+
+
+def test_project_keys_require_a_lease():
+    assert write_lease.ProjectLeaseAdmission().requires_lease(OWNED_KEY) is True
+
+
+def test_presigned_upload_refuses_project_keys(storage):
+    with pytest.raises(S3OperationError, match="Project-owned"):
+        storage.generate_presigned_upload_url(OWNED_KEY)
+    storage.generate_presigned_upload_url("public/logo.png")
+
+
+@pytest.mark.usefixtures("no_admission")
+def test_presigned_upload_is_refused_without_admission(storage):
+    with pytest.raises(RuntimeError, match="not installed"):
+        storage.generate_presigned_upload_url("public/logo.png")
 
 
 def _ref_authority():

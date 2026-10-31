@@ -8,7 +8,6 @@ threads calls the methods directly. Project-owned writes hold a physical
 
 import copy
 import logging
-import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -37,24 +36,6 @@ from src.infra.s3.schemas import (
 from src.infra.write_admission import project_write_admission
 
 logger = logging.getLogger(__name__)
-
-_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}"
-_PROJECT_KEY_PATTERNS = (
-    re.compile(rf"^(?:version|projects|shadow-snapshots)/(?P<project>{_SEGMENT})/"),
-    re.compile(
-        rf"^users/{_SEGMENT}/(?:etl_artifacts|processed|raw)/"
-        rf"(?P<project>{_SEGMENT})/"
-    ),
-)
-
-
-def project_id_from_owned_s3_key(key: str) -> str | None:
-    for pattern in _PROJECT_KEY_PATTERNS:
-        matched = pattern.match(key)
-        if matched:
-            return matched.group("project")
-    return None
-
 
 class S3Service:
     """S3 storage service class"""
@@ -169,12 +150,8 @@ class S3Service:
             raise S3OperationError("single-attempt mutation has uncertain retry history")
 
     @contextmanager
-    def _project_write_guard(self, key: str, operation: str):
-        project_id = project_id_from_owned_s3_key(key)
-        if project_id is None:
-            yield
-            return
-        with project_write_admission().object_write(project_id, operation):
+    def _object_write_guard(self, key: str, operation: str):
+        with project_write_admission().object_write(key, operation):
             yield
 
     def _handle_client_error(self, error: ClientError, operation: str) -> None:
@@ -254,7 +231,7 @@ class S3Service:
             if metadata:
                 extra_args["Metadata"] = metadata
 
-            with self._project_write_guard(key, "put_object"):
+            with self._object_write_guard(key, "put_object"):
                 response = self.client.put_object(
                     Bucket=self.bucket_name,
                     Key=key,
@@ -679,7 +656,7 @@ class S3Service:
         Returns:
             str: Presigned URL
         """
-        if project_id_from_owned_s3_key(key) is not None:
+        if project_write_admission().requires_lease(key):
             raise S3OperationError(
                 "Presigned upload is unavailable for Project-owned storage; "
                 "use the leased multipart upload API"
@@ -769,7 +746,7 @@ class S3Service:
             if metadata:
                 kwargs["Metadata"] = metadata
 
-            with self._project_write_guard(key, "create_multipart"):
+            with self._object_write_guard(key, "create_multipart"):
                 response = self.client.create_multipart_upload(**kwargs)
             upload_id = response["UploadId"]
 
@@ -808,7 +785,7 @@ class S3Service:
             )
 
         try:
-            with self._project_write_guard(key, "upload_part"):
+            with self._object_write_guard(key, "upload_part"):
                 response = self.client.upload_part(
                     Bucket=self.bucket_name,
                     Key=key,
@@ -847,7 +824,7 @@ class S3Service:
                 "Parts": [{"PartNumber": part_num, "ETag": etag} for part_num, etag in parts]
             }
 
-            with self._project_write_guard(key, "complete_multipart"):
+            with self._object_write_guard(key, "complete_multipart"):
                 response = self.client.complete_multipart_upload(
                     Bucket=self.bucket_name,
                     Key=key,
@@ -953,9 +930,8 @@ class S3Service:
         5 GB single-call limit).
 
         Used by the upload finalize path to move a freshly uploaded
-        object from its staging key (``projects/.../uploads/...``) to
-        its content-addressed location in the version object store
-        (``version/{project}/objects/<hh>/<rest>``) without round-tripping
+        object from its staging key to its content-addressed location in
+        the version object store without round-tripping
         the bytes through the FastAPI process. The version write that
         follows sees the blob is already
         there, so no part of the file payload travels over the
@@ -992,7 +968,7 @@ class S3Service:
                 kwargs["Metadata"] = metadata
 
         try:
-            with self._project_write_guard(dst_key, "copy_object"):
+            with self._object_write_guard(dst_key, "copy_object"):
                 self.client.copy_object(**kwargs)
             logger.info(f"Copied object {src_key} -> {dst_key} (server-side, no egress)")
         except ClientError as e:
