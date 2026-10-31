@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 
 from src.common_schemas import ApiResponse
 from src.config import settings
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
 from src.shared_types.grants import ProjectAction

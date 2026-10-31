@@ -11,7 +11,7 @@ from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.project import resource_dashboard as dashboard
 from src.platform.project.dependencies import get_project_repository
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from tests.authorization_fakes import authorization_for, install_authorization
 from tests.version_engine.test_dashboard_usage_buckets import FakeSB, FakeTable
 

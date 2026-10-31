@@ -64,7 +64,9 @@ async def entry(services, postgres, monkeypatch):
     """)
     enrolled = enroll_billing(SimpleNamespace(pg=postgres, project=project, org=org))
     enroll_file_policy(enrolled, maximum=65536)
-    ops = engine.product_operations().for_user(project, user)
+    from src.file_operations.dependencies import product_operations
+
+    ops = product_operations(engine).for_user(project, user)
     async with ProjectWriteLease(project, "acceptance.seed"):
         await ops.write_file(project, "seed.txt", b"seed", who="user:" + user)
     monkeypatch.setattr(agent_dependencies, "_agent_service", None)

@@ -32,7 +32,8 @@ from src.platform.project.repository import ProjectRepositorySupabase
 from src.platform.project.write_lease import ProjectWriteLease
 from src.utils.middleware import RequestContextMiddleware
 from src.file_operations.commands import VersionWriteCommandService
-from src.version_engine.bootstrap.dependencies import (
+from src.file_operations.dependencies import (
+    product_operations,
     get_product_operation_adapter,
     get_version_write_command_service,
 )
@@ -132,9 +133,9 @@ async def team(prepared, services, postgres, monkeypatch):
     app.dependency_overrides[get_project_membership_repository] = lambda: (
         ProjectMembershipRepository(api)
     )
-    app.dependency_overrides[get_product_operation_adapter] = container.product_operations
+    app.dependency_overrides[get_product_operation_adapter] = lambda: product_operations(container)
     app.dependency_overrides[get_version_write_command_service] = lambda: (
-        VersionWriteCommandService(container.product_operations())
+        VersionWriteCommandService(product_operations(container))
     )
     app.dependency_overrides[get_agent_service] = lambda: c.service
 

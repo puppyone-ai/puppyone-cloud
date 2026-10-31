@@ -10,7 +10,7 @@ from src.platform.authorization.service import AuthorizationService
 from src.tool.repository import ToolRepositorySupabase
 from src.tool.service import ToolService
 from src.tool.supabase_repo import ToolRepository
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 
 def get_tool_service(

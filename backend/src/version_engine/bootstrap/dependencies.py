@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
-from src.file_operations.commands import VersionWriteCommandService
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.infra.s3.dependencies import get_s3_service
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
@@ -49,18 +47,6 @@ def get_history_graph_service(
     container: VersionEngineContainer = Depends(get_version_engine_container),
 ) -> HistoryGraphService:
     return container.history_graph()
-
-
-def get_product_operation_adapter(
-    container: VersionEngineContainer = Depends(get_version_engine_container),
-) -> ProductOperationAdapter:
-    return container.product_operations()
-
-
-def get_version_write_command_service(
-    container: VersionEngineContainer = Depends(get_version_engine_container),
-) -> VersionWriteCommandService:
-    return container.write_commands()
 
 
 def get_version_write_engine(

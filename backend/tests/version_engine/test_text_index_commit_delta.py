@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.infra.search import text_indexer
-from src.infra.search.text_indexer import (
+from src.version_engine.derived import text_indexer
+from src.version_engine.derived.text_indexer import (
     _commit_delta_content_hash,
     _is_delete_change,
     index_commit_delta,

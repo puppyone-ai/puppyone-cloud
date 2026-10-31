@@ -268,7 +268,9 @@ async def accept_runtime(case, monkeypatch, probe):
             final = await completed(run["id"])
             assert final["publication"]["target_ref"] == status["target_ref"]
             grant = build_authorization_service().resolve_project_grant(case.project, case.user)
-            ops = case.engine.product_operations()
+            from src.file_operations.dependencies import product_operations
+
+            ops = product_operations(case.engine)
             with ops.open_read(
                 case.project, grant, selector=status["target_ref"].encode()
             ) as reader:

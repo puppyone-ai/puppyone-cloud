@@ -31,9 +31,9 @@ from src.platform.authorization.dependencies import get_authorization_service
 from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.version_engine.admission.validation import validate_path
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.version_engine.bootstrap.dependencies import (
     get_history_graph_service,
-    get_product_operation_adapter,
     get_repo_manager,
     get_version_admin_service,
 )

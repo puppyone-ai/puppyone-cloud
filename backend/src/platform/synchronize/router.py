@@ -53,7 +53,7 @@ from src.platform.synchronize.service import SynchronizeService
 from src.provider._base import AuthRequirement
 from src.provider.registry import ProviderRegistry
 from src.utils.logger import log_error
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 _PROJECT_ID_DESC = "Project ID"
 _PULL_DIRECTIONS = {"inbound", "bidirectional"}

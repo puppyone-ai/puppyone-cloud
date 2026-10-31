@@ -16,12 +16,13 @@ pytestmark = pytest.mark.hosting_component
 
 def test_assembly_uses_canonical_file_operations_implementations():
     from src.file_operations import commands, operation_adapter
+    from src.file_operations.dependencies import product_operations, write_commands
     from src.version_engine.bootstrap.container import VersionEngineContainer
     from src.platform.access.adapters.api import write as content_write
 
     container = VersionEngineContainer(repo_manager=Mock(), history_graph_service=Mock())
-    assert type(container.product_operations()) is operation_adapter.ProductOperationAdapter
-    assert type(container.write_commands()) is commands.VersionWriteCommandService
+    assert type(product_operations(container)) is operation_adapter.ProductOperationAdapter
+    assert type(write_commands(container)) is commands.VersionWriteCommandService
     assert content_write.VersionWriteCommandService is commands.VersionWriteCommandService
 
 

@@ -19,7 +19,7 @@ from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.shared_types.grants import ProjectAction, ProjectGrant
 from src.platform.authorization.service import AuthorizationService
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 operations_router = APIRouter()
 

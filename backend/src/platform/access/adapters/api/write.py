@@ -21,7 +21,7 @@ from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
 from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
-from src.version_engine.bootstrap.dependencies import get_version_write_command_service
+from src.file_operations.dependencies import get_version_write_command_service
 from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.write_engine.engine import ConcurrentMutationError
 from src.version_engine.write_engine.errors import NativeRevisionConflictError

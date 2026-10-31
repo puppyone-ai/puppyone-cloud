@@ -566,9 +566,7 @@ def create_app() -> FastAPI:
         get_leased_version_write_command_service,
         git_project_write_lease,
     )
-    from src.version_engine.bootstrap.dependencies import (
-        get_version_write_command_service,
-    )
+    from src.file_operations.dependencies import get_version_write_command_service
 
     app.dependency_overrides[get_version_write_command_service] = (
         get_leased_version_write_command_service

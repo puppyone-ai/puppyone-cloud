@@ -229,7 +229,9 @@ async def prepared(services, postgres, submitted, request):
     args, first = submitted
     postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE id='{first['id']}'")
     project, user, agent = args["project"], args["user"], args["agent"]
-    ops = container.product_operations().for_user(project, user)
+    from src.file_operations.dependencies import product_operations
+
+    ops = product_operations(container).for_user(project, user)
     profile = getattr(request, "param", "native")
     from tests.repository_hosting.integration.test_repository_file_policy import (
         enroll_file_policy,

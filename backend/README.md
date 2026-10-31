@@ -306,7 +306,7 @@ Notion / GitHub / Google (Sheets, Gmail, Drive, Calendar, Docs) / Linear / Airta
 
 ### 搜索
 
-搜索走自建的文本索引（`infra/search/text_indexer.py`），由版本提交增量构建。
+搜索走自建的文本索引（`version_engine/derived/text_indexer.py`），由版本提交增量构建。
 基于 Turbopuffer 的向量检索和 Search Tool 已下线，Agent 与 MCP 不再暴露语义搜索工具。
 
 ### Agent 执行引擎

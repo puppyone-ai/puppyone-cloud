@@ -398,12 +398,13 @@ def build_leased_worker_write_commands(
     operation_key: str | None = None,
 ) -> LeasedVersionWriteCommandService:
     from src.file_operations.commands import VersionWriteCommandService
+    from src.file_operations.dependencies import product_operations
     from src.version_engine.bootstrap.dependencies import (
         build_worker_version_engine_container,
     )
 
     container = build_worker_version_engine_container()
-    ops = container.product_operations()
+    ops = product_operations(container)
     if project_id is not None or user_id is not None:
         if not project_id or not user_id:
             raise PermissionError("producer requires its Project and initiating user")
@@ -418,8 +419,10 @@ def get_leased_version_write_command_service(
     container: VersionEngineContainer = Depends(get_version_engine_container),
     write_lease_factory: ProjectWriteLeaseFactory = Depends(get_project_write_lease_factory),
 ) -> LeasedVersionWriteCommandService:
+    from src.file_operations.dependencies import write_commands
+
     return lease_write_commands(
-        container.write_commands(),
+        write_commands(container),
         write_lease_factory=write_lease_factory,
     )
 

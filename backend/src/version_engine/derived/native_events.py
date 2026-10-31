@@ -14,7 +14,7 @@ import json
 import uuid
 
 from src.config import settings
-from src.infra.search.text_indexer import _chunk_text, _decode_for_index
+from src.version_engine.derived.text_indexer import _chunk_text, _decode_for_index
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     RefAuthorityRepository,
 )

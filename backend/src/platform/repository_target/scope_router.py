@@ -21,7 +21,7 @@ from src.platform.repository_target.schemas import (
     ScopePatch,
 )
 from src.platform.repository_target.scope_service import ScopeService, get_scope_service
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 router = APIRouter(
     prefix="/projects/{project_id}/scopes",

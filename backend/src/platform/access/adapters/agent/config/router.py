@@ -7,7 +7,7 @@ REST API for Agent configuration.
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.file_operations.operation_adapter import ProductOperationAdapter
 
 from src.platform.access.adapters.agent.config.service import AgentConfigService

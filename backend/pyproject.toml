@@ -113,12 +113,6 @@ layers = [
 # tests/platform/test_import_layers.py pins the count.
 ignore_imports = [
     "src.infra.s3.service -> src.platform.project.write_lease",
-    "src.infra.search.text_indexer -> src.version_engine.infrastructure.supabase.text_index_repository",
-    "src.infra.search.text_indexer -> src.version_engine.write_engine.git_object_format",
-    "src.version_engine.bootstrap.container -> src.file_operations.commands",
-    "src.version_engine.bootstrap.container -> src.file_operations.operation_adapter",
-    "src.version_engine.bootstrap.dependencies -> src.file_operations.commands",
-    "src.version_engine.bootstrap.dependencies -> src.file_operations.operation_adapter",
     "src.version_engine.infrastructure.supabase.repo_manager -> src.platform.project.write_lease",
 ]
 

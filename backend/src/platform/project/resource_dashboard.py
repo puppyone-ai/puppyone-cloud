@@ -35,7 +35,7 @@ from src.platform.synchronize.repository import SynchronizeRepository
 from src.platform.synchronize.router import _ensure_classified_binding
 from src.platform.synchronize.run_repository import NEW_TABLE as SYNCHRONIZE_RUNS_TABLE
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.infra.execution.runner import run_blocking
 
 

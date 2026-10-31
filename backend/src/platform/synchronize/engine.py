@@ -53,14 +53,13 @@ class SynchronizeEngine:
         if not target_path:
             return False
         try:
+            from src.file_operations.dependencies import product_operations
             from src.version_engine.bootstrap.dependencies import (
                 build_worker_version_engine_container,
             )
 
-            ops = (
-                build_worker_version_engine_container()
-                .product_operations()
-                .for_user(project_id, user_id)
+            ops = product_operations(build_worker_version_engine_container()).for_user(
+                project_id, user_id
             )
             ops.read_file(project_id, target_path)
             return True

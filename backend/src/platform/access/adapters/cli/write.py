@@ -25,7 +25,7 @@ from src.platform.access.repository_schemas import (
     TouchRequest,
     WriteFileRequest,
 )
-from src.version_engine.bootstrap.dependencies import get_version_write_command_service
+from src.file_operations.dependencies import get_version_write_command_service
 from src.version_engine.write_engine.errors import (
     ConcurrentMutationError,
     NativeRevisionConflictError,
