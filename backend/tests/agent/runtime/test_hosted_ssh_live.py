@@ -38,6 +38,8 @@ from tests.agent.runtime.test_live_workbench_control import default, rpc, transi
 pytestmark = pytest.mark.integration
 IMAGE = "puppyone-workspace-ssh-acceptance:local"
 PROVIDER = os.environ.get("CLOUD_AGENT_TEST_SSH_PROVIDER", "docker")
+# A first connection waits for a new machine, which takes over a minute on a VM.
+FIRST_CONNECTION_S = 240 if PROVIDER == "fly" else 60
 
 
 @pytest.fixture
@@ -443,15 +445,17 @@ async def agent_machines(live, transport=None):
     finally:
         stop.set()
         await asyncio.wait_for(lifecycle, 15)
-        machines = await asyncio.to_thread(
-            live.db.sql,
-            f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
-            WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
-        )
-        for machine in machines.split():
-            await asyncio.to_thread(
-                subprocess.run, ["docker", "rm", "-f", machine], capture_output=True
+        # Fly machines leave with the Project in cleanup_owned.
+        if PROVIDER == "docker":
+            machines = await asyncio.to_thread(
+                live.db.sql,
+                f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
+                WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
             )
+            for machine in machines.split():
+                await asyncio.to_thread(
+                    subprocess.run, ["docker", "rm", "-f", machine], capture_output=True
+                )
 
 
 async def test_registered_external_agent_real_shell_and_parent_revocation(live):
@@ -519,6 +523,7 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
     from fastapi import Header, HTTPException
 
     from src.config import settings
+    from src.platform.access import composition
     from src.platform.access import lifecycle_router as routes
     from src.platform.access.adapters.ssh import hosted
     from src.platform.access.credentials import CredentialService
@@ -542,6 +547,8 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
     live.service.sessions = AccessSessions(AccessRepository(client))
     monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
     monkeypatch.setattr(hosted, "ssh_settings", lambda: live.service.config)
+    # The first renewal starts the Agent's machine through this service.
+    monkeypatch.setattr(composition, "build_workbench_service", lambda: live.workspace)
     app = FastAPI()
     app.include_router(routes.router)
 
@@ -568,20 +575,32 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
                     await serving
                 await asyncio.sleep(0.01)
         result_file = tmp_path / "result.json"
-        process = await asyncio.create_subprocess_exec(
-            "node", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "PUPPY_ACCESS_TEST_API": f"http://127.0.0.1:{port}",
-                 "PUPPY_ACCESS_TEST_PROJECT": live.args["project"], "PUPPY_ACCESS_TEST_WORKSPACE": live.row["id"],
-                 "PUPPY_ACCESS_TEST_OWNER": owner_key, "PUPPY_ACCESS_TEST_GUEST": guest_key,
-                 "PUPPY_ACCESS_TEST_STORE": str(tmp_path / "client"), "PUPPY_ACCESS_TEST_RESULT": str(result_file)},
-        )
-        async with asyncio.timeout(90):
-            stdout, stderr = await process.communicate()
-        assert process.returncode == 0, stderr.decode().replace(owner_key, "[redacted]").replace(guest_key, "[redacted]")
-        assert b"cli-connected" in stdout
-        assert await read_file(live, "cli-access.txt") == b"cli-through-http"
-        result = json.loads(result_file.read_text())
-        await until_released(live, result["ticket"])
+        async with agent_machines(live):
+            process = await asyncio.create_subprocess_exec(
+                "node", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PUPPY_ACCESS_TEST_API": f"http://127.0.0.1:{port}",
+                     "PUPPY_ACCESS_TEST_PROJECT": live.args["project"], "PUPPY_ACCESS_TEST_WORKSPACE": live.row["id"],
+                     "PUPPY_ACCESS_TEST_OWNER": owner_key, "PUPPY_ACCESS_TEST_GUEST": guest_key,
+                     "PUPPY_ACCESS_TEST_STORE": str(tmp_path / "client"), "PUPPY_ACCESS_TEST_RESULT": str(result_file)},
+            )
+            async with asyncio.timeout(FIRST_CONNECTION_S + 30):
+                stdout, stderr = await process.communicate()
+            assert process.returncode == 0, stderr.decode().replace(owner_key, "[redacted]").replace(guest_key, "[redacted]")
+            assert b"cli-connected" in stdout
+            # Read back on the Agent's machine: the write never reaches the owner's.
+            assert b"cli-through-http" in stdout
+            result = json.loads(result_file.read_text())
+            await until_released(live, result["ticket"])
+            machine = await asyncio.to_thread(
+                live.db.row,
+                f"SELECT id FROM cloud_workbenches WHERE agent_registration_id='{result['registration']}'",
+            )
+            assert machine["id"] != live.row["id"]
+            hidden = await live.api.get(
+                f"/api/v1/projects/{live.args['project']}/workbench/file",
+                params={"generation": live.row["generation"], "path": "cli-access.txt"},
+            )
+            assert hidden.status_code == 404
     finally:
         if process and process.returncode is None:
             process.kill()

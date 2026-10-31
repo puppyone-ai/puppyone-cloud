@@ -28,7 +28,12 @@ from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from tests.agent.runtime.test_hosted_ssh_live import agent_machines, live, read_file  # noqa: F401
+from tests.agent.runtime.test_hosted_ssh_live import (  # noqa: F401
+    FIRST_CONNECTION_S,
+    agent_machines,
+    live,
+    read_file,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -70,7 +75,11 @@ async def stack(live, monkeypatch):  # noqa: F811
 async def run(command, *, check=True):
     """The Agent's shell: one command line, in its own process, with no help from us."""
     result = await asyncio.to_thread(
-        subprocess.run, ["bash", "-c", command], capture_output=True, text=True, timeout=60
+        subprocess.run,
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        timeout=FIRST_CONNECTION_S,
     )
     if check:
         assert result.returncode == 0, result.stderr
