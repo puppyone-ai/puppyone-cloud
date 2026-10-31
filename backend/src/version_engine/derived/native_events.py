@@ -1,6 +1,6 @@
 """Rebuild derived indexes from native ref events, with fenced retries.
 
-Synchronous steps; the scheduler job (infra/scheduler/jobs/native_projection_job)
+Synchronous steps; the async scheduler job (platform/project/native_projection_job)
 orchestrates them and broadcasts the WebSocket notification.
 
 Only the maintenance worker uses the internal read-pin capability. API readers

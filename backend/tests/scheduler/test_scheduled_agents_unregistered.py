@@ -7,7 +7,10 @@ import pytest
 from fastapi import HTTPException
 
 import src.infra.scheduler.service as scheduler_module
+from src.composition.scheduled_jobs import scheduled_jobs
+from src.platform.access.adapters.agent import schedule as agent_schedule
 from src.platform.access.adapters.agent.config import router
+from src.platform.synchronize import schedule as sync_schedule
 
 
 @pytest.mark.asyncio
@@ -25,18 +28,18 @@ async def test_starting_the_scheduler_loads_no_agent_or_sync_job(monkeypatch):
             jobs.append(func)
             return SimpleNamespace(next_run_time=None)
 
-    async def forbidden(_self):
+    async def forbidden():
         raise AssertionError("scheduled Agents and syncs must not be registered")
 
     monkeypatch.setattr(scheduler_module, "AsyncIOScheduler", FakeScheduler)
-    monkeypatch.setattr(scheduler_module.SchedulerService, "_load_scheduled_agents", forbidden)
-    monkeypatch.setattr(scheduler_module.SchedulerService, "_load_scheduled_syncs", forbidden)
+    monkeypatch.setattr(agent_schedule, "load_scheduled_agents", forbidden)
+    monkeypatch.setattr(sync_schedule, "load_scheduled_syncs", forbidden)
     monkeypatch.setattr(scheduler_module.scheduler_settings, "enabled", True)
 
-    await scheduler_module.SchedulerService().start()
+    await scheduler_module.SchedulerService().start(scheduled_jobs())
 
-    assert scheduler_module.execute_agent_task not in jobs
-    assert scheduler_module.execute_sync_pull not in jobs
+    assert agent_schedule.execute_agent_task not in jobs
+    assert sync_schedule.execute_sync_pull not in jobs
 
 
 def update(service, agent, **fields):

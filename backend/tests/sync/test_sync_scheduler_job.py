@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.infra.scheduler.jobs.sync_job import _execute_sync_pull_async
+from src.platform.synchronize.scheduled_pull import _execute_sync_pull_async
 from src.platform.synchronize.router import _queue_sync_run
 
 

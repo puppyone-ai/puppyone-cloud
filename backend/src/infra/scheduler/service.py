@@ -1,10 +1,14 @@
 """
-Scheduler service for managing scheduled agent executions.
+Generic APScheduler wrapper: run a function on a trigger.
+
+It knows nothing about the jobs it runs. Each module declares its own jobs and
+the composition layer passes them to `start`.
 """
 
-import contextlib
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -14,70 +18,31 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from src.config import settings
-from src.infra.execution.runner import run_blocking
 from src.infra.scheduler.config import scheduler_settings
-from src.infra.scheduler.jobs import (
-    execute_agent_task,
-    execute_sync_pull,
-    process_git_object_gc,
-    process_native_projection,
-    process_object_integrity_scan,
-    process_project_deletion_cleanup,
-    process_project_initialization_reconciliation,
-    process_sync_run_reaper,
-)
-from src.infra.scheduler.jobs.import_job_reaper import process_import_job_reaper
-from src.infra.scheduler.jobs.upload_job_reaper import process_upload_job_reaper
 from src.utils.logger import log_error, log_info, log_warning
 
-# Startup loaders read the database synchronously; the scheduler runs them in
-# a worker thread so application startup never blocks the event loop.
+THREAD_POOL = "threadpool"
 
 
-def _scheduled_agent_rows() -> list[dict]:
-    from src.platform.access.surface_repository import AccessSurfaceRepository
+@dataclass(frozen=True)
+class IntervalJob:
+    """A periodic job. Modules declare these; the composition layer collects them."""
 
-    return [
-        row
-        for row in AccessSurfaceRepository().list_all(kind="agent", status="active")
-        if (row.get("config") or {}).get("type") == "schedule"
-        and ((row.get("config") or {}).get("trigger") or {}).get("type") in {"cron", "scheduled"}
-    ]
-
-
-def _scheduled_sync_rows() -> list[dict]:
-    from src.infra.supabase.client import SupabaseClient
-
-    result = (
-        SupabaseClient()
-        .client.table("synchronize_bindings")
-        .select("id, provider, trigger_type, trigger_config, status")
-        .eq("status", "active")
-        .execute()
-    )
-    syncs = [
-        {
-            "id": row["id"],
-            "provider": row.get("provider", ""),
-            "trigger": {
-                "type": row.get("trigger_type"),
-                **(row.get("trigger_config") or {}),
-            },
-        }
-        for row in (result.data or [])
-    ]
-    return [sync for sync in syncs if sync["trigger"].get("type") == "scheduled"]
+    id: str
+    name: str
+    run: Callable[[], Any]
+    seconds: int
+    executor: str | None = None
 
 
 class SchedulerService:
     """
-    Service for managing APScheduler and agent jobs.
+    Service for managing APScheduler.
 
     Responsibilities:
     - Start/stop the scheduler
-    - Run maintenance jobs
-    - Keep the agent and sync job paths, which nothing registers while they are off
+    - Register the jobs it is given
+    - Parse trigger configuration into APScheduler triggers
     """
 
     _instance: Optional["SchedulerService"] = None
@@ -93,7 +58,7 @@ class SchedulerService:
             cls._instance = cls()
         return cls._instance
 
-    async def start(self):
+    async def start(self, jobs: Sequence[IntervalJob] = ()):
         """Initialize and start the scheduler."""
         if not scheduler_settings.enabled:
             log_info("⏭️  Scheduler disabled (SCHEDULER_ENABLED=false)")
@@ -109,7 +74,7 @@ class SchedulerService:
         # APScheduler awaits coroutine jobs instead of running them in a thread.
         executors = {
             "default": AsyncIOExecutor(),
-            "threadpool": ThreadPoolExecutor(scheduler_settings.max_workers),
+            THREAD_POOL: ThreadPoolExecutor(scheduler_settings.max_workers),
         }
 
         # Configure job defaults
@@ -130,99 +95,13 @@ class SchedulerService:
         self.scheduler.start()
         self._started = True
 
-        # Automation and Synchronize are not offered, so neither registers a job.
-
-        if settings.VERSION_OUTBOX_ENABLED:
-            self.scheduler.add_job(
-                process_native_projection,
-                trigger=IntervalTrigger(
-                    seconds=settings.VERSION_OUTBOX_INTERVAL_SECONDS,
-                ),
-                id="native-repository-projection",
-                name="Native Repository Projections",
-                replace_existing=True,
-            )
-
-        if settings.VERSION_OBJECT_GC_ENABLED:
-            self.scheduler.add_job(
-                process_git_object_gc,
-                trigger=IntervalTrigger(
-                    seconds=settings.VERSION_OBJECT_GC_INTERVAL_SECONDS,
-                ),
-                id="version-object-gc",
-                name="Version Engine Git Object GC",
-                replace_existing=True,
-                executor="threadpool",
-            )
-
-        if settings.PROJECT_DELETION_CLEANUP_ENABLED:
-            self.scheduler.add_job(
-                process_project_deletion_cleanup,
-                trigger=IntervalTrigger(
-                    seconds=settings.PROJECT_DELETION_CLEANUP_INTERVAL_SECONDS,
-                ),
-                id="project-deletion-cleanup",
-                name="Project Object Prefix Cleanup",
-                replace_existing=True,
-            )
-
-        if settings.PROJECT_INITIALIZATION_RECONCILE_ENABLED:
-            self.scheduler.add_job(
-                process_project_initialization_reconciliation,
-                trigger=IntervalTrigger(
-                    seconds=settings.PROJECT_INITIALIZATION_RECONCILE_INTERVAL_SECONDS,
-                ),
-                id="project-initialization-reconciler",
-                name="Project Root Initialization Reconciler",
-                replace_existing=True,
-            )
-
-        if settings.VERSION_INTEGRITY_SCAN_ENABLED:
-            self.scheduler.add_job(
-                process_object_integrity_scan,
-                trigger=IntervalTrigger(
-                    seconds=settings.VERSION_INTEGRITY_SCAN_INTERVAL_SECONDS,
-                ),
-                id="version-object-integrity-scan",
-                name="Version Engine Object Integrity Scan",
-                replace_existing=True,
-                executor="threadpool",
-            )
-
-        if settings.SYNC_RUN_REAPER_ENABLED:
-            self.scheduler.add_job(
-                process_sync_run_reaper,
-                trigger=IntervalTrigger(
-                    seconds=settings.SYNC_RUN_REAPER_INTERVAL_SECONDS,
-                ),
-                id="sync-run-reaper",
-                name="Integration Sync Run Lease Reaper",
-                replace_existing=True,
-                executor="threadpool",
-            )
-
-        if settings.IMPORT_JOB_REAPER_ENABLED:
-            self.scheduler.add_job(
-                process_import_job_reaper,
-                trigger=IntervalTrigger(
-                    seconds=settings.IMPORT_JOB_REAPER_INTERVAL_SECONDS,
-                ),
-                id="import-job-reaper",
-                name="One-Time Import Job Reaper",
-                replace_existing=True,
-                executor="threadpool",
-            )
-
-        if settings.UPLOAD_JOB_REAPER_ENABLED:
-            self.scheduler.add_job(
-                process_upload_job_reaper,
-                trigger=IntervalTrigger(
-                    seconds=settings.UPLOAD_JOB_REAPER_INTERVAL_SECONDS,
-                ),
-                id="upload-job-reaper",
-                name="Upload Job Reaper",
-                replace_existing=True,
-                executor="threadpool",
+        for job in jobs:
+            self.add_job(
+                job.run,
+                IntervalTrigger(seconds=job.seconds),
+                job_id=job.id,
+                name=job.name,
+                executor=job.executor,
             )
 
         log_info(f"✅ APScheduler started with {scheduler_settings.max_workers} workers")
@@ -235,163 +114,45 @@ class SchedulerService:
             self._started = False
             log_info("✅ APScheduler stopped")
 
-    async def _load_scheduled_agents(self):
-        """Load all schedule agents from database and register jobs."""
-        if not self.scheduler:
-            return
+    @property
+    def running(self) -> bool:
+        return self.scheduler is not None and self._started
 
-        try:
-            agents = await run_blocking(_scheduled_agent_rows)
-            log_info(f"📋 Found {len(agents)} schedule agents to load")
-
-            for agent in agents:
-                config = agent.get("config") or {}
-                trigger = config.get("trigger") or {}
-                self.add_agent_job(
-                    agent_id=agent["id"],
-                    trigger_config=trigger.get("config") or trigger,
-                    agent_name=config.get("name", "Unknown"),
-                )
-
-            log_info(f"✅ Loaded {len(agents)} agent jobs")
-
-        except Exception as e:
-            log_error(f"❌ Failed to load scheduled agents: {e}")
-
-    def add_agent_job(
-        self, agent_id: str, trigger_config: dict, agent_name: str = ""
-    ) -> Job | None:
-        """
-        Add a new agent job to the scheduler.
-
-        Args:
-            agent_id: The agent's unique ID (used as job_id)
-            trigger_config: Configuration containing schedule info
-                - schedule: cron expression (e.g., "0 9 * * *")
-                - timezone: optional timezone override
-                - date: ISO date for one-time execution
-                - repeat_type: 'once', 'daily', 'weekly'
-            agent_name: Human-readable name for logging
-        """
-        if not self.scheduler or not self._started:
-            log_warning(f"Scheduler not running, skipping job for agent {agent_id}")
-            return None
-
-        # Remove existing job if any
-        self.remove_agent_job(agent_id)
-
-        # Parse trigger configuration
-        trigger = self._parse_trigger(trigger_config)
-        if not trigger:
-            log_warning(f"Invalid trigger config for agent {agent_id}: {trigger_config}")
-            return None
-
-        # Add the job
-        job = self.scheduler.add_job(
-            execute_agent_task,
-            trigger=trigger,
-            id=agent_id,
-            name=f"Agent: {agent_name or agent_id}",
-            args=[agent_id],
-            replace_existing=True,
-            executor="threadpool",
-        )
-
-        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A"
-        log_info(f"📅 Added job for agent '{agent_name}' ({agent_id}), next run: {next_run}")
-
-        return job
-
-    # ── Sync Trigger (unified API) ───────────────────────────
-
-    def sync_trigger(
+    def add_job(
         self,
-        connection_id: str,
-        provider: str = "",
-        trigger_config: dict | None = None,
-    ) -> Job | None:
-        """Unified trigger registration for scheduled Connect rows.
-
-        Connect routers should call this single method instead of directly
-        manipulating scheduler jobs.
-
-        Args:
-            connection_id: The connection / sync row ID.
-            provider: Source provider name (e.g. "gmail", "github").
-            trigger_config: Scheduling config dict, or *None* to remove.
-
-        Returns:
-            The registered ``Job``, or ``None`` if removed / skipped.
-        """
-        if not self.scheduler or not self._started:
-            return None
-
-        job_id = f"sync:{connection_id}"
-
-        with contextlib.suppress(Exception):
-            self.scheduler.remove_job(job_id)
-
-        if not trigger_config:
-            return None
-
-        trigger = self._parse_trigger(trigger_config)
-        if not trigger:
-            log_warning(f"Invalid trigger config for {connection_id}: {trigger_config}")
-            return None
-
-        # Coroutine job on the default AsyncIOExecutor: arq's client is async.
-        job = self.scheduler.add_job(
-            execute_sync_pull,
+        func: Callable[..., Any],
+        trigger,
+        *,
+        job_id: str,
+        name: str,
+        args: Sequence[Any] = (),
+        executor: str | None = None,
+    ) -> Job:
+        """Register a job. Without an executor it runs on the asyncio default."""
+        options: dict[str, Any] = {"args": list(args)} if args else {}
+        if executor:
+            options["executor"] = executor
+        return self.scheduler.add_job(
+            func,
             trigger=trigger,
             id=job_id,
-            name=f"Sync: {provider} ({connection_id[:8]})",
-            args=[connection_id],
+            name=name,
             replace_existing=True,
+            **options,
         )
 
-        next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A"
-        log_info(f"📅 Registered trigger for {provider} ({connection_id[:8]}), next: {next_run}")
-        return job
-
-    # ── Internal: startup loaders ─────────────────────────────
-
-    async def _load_scheduled_syncs(self):
-        """Load all syncs with trigger type 'scheduled' and register jobs."""
-        if not self.scheduler:
-            return
-
-        try:
-            scheduled = await run_blocking(_scheduled_sync_rows)
-
-            log_info(f"Found {len(scheduled)} scheduled syncs to load")
-
-            for sync_row in scheduled:
-                self.sync_trigger(
-                    connection_id=sync_row["id"],
-                    provider=sync_row.get("provider", ""),
-                    trigger_config=sync_row.get("trigger") or {},
-                )
-
-            if scheduled:
-                log_info(f"Loaded {len(scheduled)} sync polling jobs")
-
-        except Exception as e:
-            log_error(f"Failed to load scheduled syncs: {e}")
-
-    def remove_agent_job(self, agent_id: str) -> bool:
-        """Remove an agent job from the scheduler."""
+    def remove_job(self, job_id: str) -> bool:
+        """Remove a job; a job that does not exist is not an error."""
         if not self.scheduler:
             return False
 
         try:
-            self.scheduler.remove_job(agent_id)
-            log_info(f"🗑️  Removed job for agent {agent_id}")
+            self.scheduler.remove_job(job_id)
             return True
         except Exception:
-            # Job doesn't exist, that's fine
             return False
 
-    def _parse_trigger(self, config: dict):
+    def parse_trigger(self, config: dict):
         """
         Parse trigger configuration and return APScheduler trigger.
 

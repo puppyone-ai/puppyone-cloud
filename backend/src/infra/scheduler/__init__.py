@@ -1,7 +1,5 @@
 """
-Scheduler module for scheduled agent execution.
-
-Uses APScheduler to run agent tasks at specified times.
+Generic job scheduler built on APScheduler.
 """
 
 from src.infra.scheduler.service import SchedulerService

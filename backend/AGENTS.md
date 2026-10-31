@@ -85,7 +85,7 @@ derived projection jobs.**
 依赖只能从上往下。`uv run lint-imports` 负责检查，CI 通过
 `tests/platform/test_import_layers.py` 执行：
 
-1. 入口与组装：`src.main`
+1. 入口与组装：`src.main`、`src.composition`（唯一可以认识所有模块的地方）
 2. 业务层：`platform`、`content`、`tool`、`context_publish`、`file_operations`、`ingest`、`internal`
 3. 核心层：`version_engine`
 4. 基础层：`infra`、`provider`

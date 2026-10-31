@@ -10,6 +10,7 @@ is a dead-process orphan we fail so it stops looking active.
 from __future__ import annotations
 
 from src.config import settings
+from src.infra.scheduler.service import THREAD_POOL, IntervalJob
 from src.infra.supabase.client import SupabaseClient
 from src.platform.upload.repository import UploadJobRepository
 from src.utils.logger import log_error
@@ -26,3 +27,17 @@ def process_upload_job_reaper() -> dict:
     except Exception as exc:  # noqa: BLE001
         log_error(f"[upload-job-reaper] scheduler job failed: {exc}")
         return {"status": "failed", "error": str(exc)}
+
+
+def scheduled_jobs() -> list[IntervalJob]:
+    if not settings.UPLOAD_JOB_REAPER_ENABLED:
+        return []
+    return [
+        IntervalJob(
+            id="upload-job-reaper",
+            name="Upload Job Reaper",
+            run=process_upload_job_reaper,
+            seconds=settings.UPLOAD_JOB_REAPER_INTERVAL_SECONDS,
+            executor=THREAD_POOL,
+        )
+    ]

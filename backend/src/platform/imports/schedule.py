@@ -10,6 +10,7 @@ worker timeout so a still-live job is never reaped.
 from __future__ import annotations
 
 from src.config import settings
+from src.infra.scheduler.service import THREAD_POOL, IntervalJob
 from src.infra.supabase.client import SupabaseClient
 from src.platform.imports.config import import_config
 from src.platform.imports.repository import ImportJobRepository
@@ -35,3 +36,17 @@ def process_import_job_reaper() -> dict:
     except Exception as exc:  # noqa: BLE001
         log_error(f"[import-job-reaper] scheduler job failed: {exc}")
         return {"status": "failed", "error": str(exc)}
+
+
+def scheduled_jobs() -> list[IntervalJob]:
+    if not settings.IMPORT_JOB_REAPER_ENABLED:
+        return []
+    return [
+        IntervalJob(
+            id="import-job-reaper",
+            name="One-Time Import Job Reaper",
+            run=process_import_job_reaper,
+            seconds=settings.IMPORT_JOB_REAPER_INTERVAL_SECONDS,
+            executor=THREAD_POOL,
+        )
+    ]

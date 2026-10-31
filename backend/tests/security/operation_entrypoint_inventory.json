@@ -34,9 +34,6 @@
   ],
   "references": {
     "factories": {
-      "infra/scheduler/jobs/native_projection_job.py": {
-        "process_native_events::build_worker_version_engine_container": 1
-      },
       "main.py": {
         "app_lifespan::build_version_engine_container": 1
       },
@@ -54,6 +51,9 @@
       },
       "platform/project/initialization_reconciler.py": {
         "process_project_initialization_reconciliation::build_worker_version_engine_container": 1
+      },
+      "platform/project/native_projection_job.py": {
+        "process_native_events::build_worker_version_engine_container": 1
       },
       "platform/project/write_lease.py": {
         "build_leased_worker_write_commands::build_worker_version_engine_container": 1

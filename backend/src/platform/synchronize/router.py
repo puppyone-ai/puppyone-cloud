@@ -47,6 +47,7 @@ from src.platform.synchronize.public_schemas import (
     SynchronizeStatusItem,
     SynchronizeTriggerUpdate,
 )
+from src.platform.synchronize.schedule import sync_trigger
 from src.platform.synchronize.schemas import binding_to_response
 from src.platform.synchronize.service import SynchronizeService
 from src.provider._base import AuthRequirement
@@ -422,9 +423,7 @@ async def create_connection(
 
     if execution_result and body.sync_mode == "scheduled" and body.trigger:
         try:
-            from src.infra.scheduler.service import get_scheduler_service
-
-            get_scheduler_service().sync_trigger(
+            sync_trigger(
                 connection_id=connection.id,
                 provider=provider,
                 trigger_config=body.trigger,
@@ -477,9 +476,7 @@ def delete_connection(
         action=ProjectAction.SYNCHRONIZE_MANAGE,
     )
     try:
-        from src.infra.scheduler.service import get_scheduler_service
-
-        get_scheduler_service().sync_trigger(connection_id)
+        sync_trigger(connection_id)
     except Exception:
         pass
     service.remove_sync(connection_id)
@@ -574,9 +571,7 @@ def update_connection_trigger(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        from src.infra.scheduler.service import get_scheduler_service
-
-        get_scheduler_service().sync_trigger(
+        sync_trigger(
             connection_id=connection_id,
             provider=connection.provider,
             trigger_config=trigger_data if body.sync_mode == "scheduled" else None,
@@ -834,11 +829,8 @@ async def bootstrap(
 
     if body.sync_mode == "scheduled" and body.trigger:
         try:
-            from src.infra.scheduler.service import get_scheduler_service
-
-            scheduler = get_scheduler_service()
             for connection in queued_connections:
-                scheduler.sync_trigger(
+                sync_trigger(
                     connection_id=connection.id,
                     provider=provider,
                     trigger_config=body.trigger,

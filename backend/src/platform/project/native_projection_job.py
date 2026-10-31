@@ -1,4 +1,5 @@
-"""Consume native repository ref events on the scheduler's async event loop.
+"""Async edge over the synchronous Version Engine: consume native repository
+ref events on the scheduler's event loop.
 
 Each claimed project is rebuilt off the loop (synchronous Version Engine
 work), broadcast to WebSocket subscribers, then finished. A failed rebuild or

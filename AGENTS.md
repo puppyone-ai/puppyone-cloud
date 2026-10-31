@@ -212,7 +212,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `oauth_connections` | `provider/oauth/repository.py` | OAuth integrations |
 | `chat_sessions` | `agent/chat/repository.py` | Agent chat sessions |
 | `chat_messages` | `agent/chat/repository.py` | Agent chat messages |
-| `agent_execution_logs` | `agent/config/repository.py`, `scheduler/jobs/agent_job.py` | Scheduled agent execution logs |
+| `agent_execution_logs` | `agent/config/repository.py`, `platform/access/adapters/agent/schedule.py` | Scheduled agent execution logs |
 | `file_versions` | _(deprecated — no longer used in code)_ | Legacy file version history |
 | `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |

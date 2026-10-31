@@ -134,6 +134,7 @@ database_import_router_duration = time.time() - database_import_router_start
 
 # Scheduler service import
 scheduler_start = time.time()
+from src.composition.scheduled_jobs import scheduled_jobs
 from src.infra.scheduler.config import scheduler_settings
 from src.infra.scheduler.service import get_scheduler_service
 
@@ -222,7 +223,7 @@ async def _init_scheduler() -> None:
         if scheduler_settings.enabled:
             log_info("⏰ Initializing Scheduler service...")
             scheduler_service = get_scheduler_service()
-            await scheduler_service.start()
+            await scheduler_service.start(scheduled_jobs())
             scheduler_duration = time.time() - scheduler_init_start
             log_info(
                 f"✅ Scheduler service started successfully (took: {scheduler_duration * 1000:.2f}ms)"
