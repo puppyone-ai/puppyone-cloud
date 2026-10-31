@@ -19,7 +19,11 @@ from supabase import ClientOptions, create_client
 
 from src.infra.s3.service import S3Service
 from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
+from src.platform.project.write_lease import (
+    ProjectWriteLease,
+    ProjectWriteLeaseRepository,
+    install_storage_write_admission,
+)
 from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
@@ -28,6 +32,7 @@ from tests.repository_hosting.harness.s3_service import validate_s3_environment
 
 
 async def run(request):
+    install_storage_write_admission()
     validate_s3_environment(os.environ)
     proxy = urlsplit(request['proxy'])
     if (proxy.scheme != 'http' or proxy.hostname != '127.0.0.1' or not proxy.port

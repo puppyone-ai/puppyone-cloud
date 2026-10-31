@@ -109,12 +109,6 @@ layers = [
     "src.exception_handler : src.exceptions : src.config : src.utils : src.schemas : src.common_schemas",
     "src.shared_types",
 ]
-# Existing violations. Remove an entry when its import is fixed; never add one.
-# tests/platform/test_import_layers.py pins the count.
-ignore_imports = [
-    "src.infra.s3.service -> src.platform.project.write_lease",
-    "src.version_engine.infrastructure.supabase.repo_manager -> src.platform.project.write_lease",
-]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

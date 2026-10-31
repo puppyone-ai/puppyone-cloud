@@ -7,6 +7,8 @@ use pytest marks and skip appropriately.
 import os
 from pathlib import Path
 
+import pytest
+
 # Set minimal env vars so test modules can import without crashing.
 # These are dummy values — tests that need real services should mock them.
 os.environ.setdefault("SUPABASE_URL", "http://localhost:54321")
@@ -40,3 +42,11 @@ from src.config import settings as _settings  # noqa: E402,F401
 if not _configured_git_cache:
     _settings.GIT_VIEW_CACHE_DIR = Path(f"/tmp/puppyone-git-view-cache-{os.getpid()}")
     os.environ.pop("PUPPYONE_GIT_VIEW_CACHE_DIR", None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _project_write_admission():
+    """Production processes install this at startup; see test_write_admission_wiring."""
+    from src.platform.project.write_lease import install_storage_write_admission
+
+    install_storage_write_admission()

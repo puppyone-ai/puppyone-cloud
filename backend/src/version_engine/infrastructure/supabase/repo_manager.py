@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from src.config import settings
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
+from src.infra.write_admission import project_write_admission
 from src.version_engine.infrastructure.supabase.audit_backend import SupabaseAuditManager
 from src.version_engine.storage.backends.s3 import S3StorageBackend
 from src.version_engine.storage.object_store import ObjectStore
@@ -106,7 +107,6 @@ class VersionRepoManager:
             "sha256",
         }:
             raise ValueError("repository metadata binding mismatch")
-        from src.platform.project.write_lease import active_project_write_lease
         from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling
         from src.version_engine.infrastructure.supabase.capacity_repository import (
             RepositoryCapacity,
@@ -122,7 +122,8 @@ class VersionRepoManager:
 
         control = AdmittedRefAuthorityRepository(
             self._supabase.client,
-            lease_provider=active_project_write_lease,
+            # Resolved per write so reads never depend on write admission.
+            lease_provider=lambda project: project_write_admission().active_lease(project),
         )
         return RefTransactionService(
             control,

@@ -26,6 +26,7 @@ from arq.connections import RedisSettings
 
 from src.infra.llm.service import LLMService
 from src.infra.s3.service import S3Service
+from src.platform.project.write_lease import install_storage_write_admission
 from src.platform.upload.config import upload_config
 from src.platform.upload.jobs import (
     etl_finalize_upload_job,
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 async def startup(ctx: dict) -> None:
+    install_storage_write_admission()
     """
     Initialize services for ETL jobs.
     """

@@ -140,6 +140,10 @@ from src.infra.scheduler.service import get_scheduler_service
 
 scheduler_import_duration = time.time() - scheduler_start
 
+from src.platform.project.write_lease import install_storage_write_admission
+
+install_storage_write_admission()
+
 
 def _validate_security_baseline() -> None:
     """Validate critical security configuration in non-development environments."""

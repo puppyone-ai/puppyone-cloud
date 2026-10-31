@@ -34,6 +34,7 @@ from src.infra.s3.schemas import (
     MultipartPartListItem,
     MultipartUploadListItem,
 )
+from src.infra.write_admission import project_write_admission
 
 logger = logging.getLogger(__name__)
 
@@ -173,28 +174,7 @@ class S3Service:
         if project_id is None:
             yield
             return
-        from src.platform.project.write_lease import (
-            PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
-            ProjectWriteLease,
-            active_project_write_lease,
-        )
-
-        # Physical storage admission is intentionally independent from the
-        # logical Product lease. A ContextVar is copied into background tasks,
-        # and boto3 threads outlive asyncio cancellation; reusing only the
-        # outer project id would therefore permit a late PUT after the outer
-        # lease was released. The child claim lives through the real boto
-        # future and inherits initializer proof only from a currently-live
-        # outer lease.
-        parent = active_project_write_lease(project_id)
-        proof = parent.initialization_proof() if parent is not None else {}
-        with ProjectWriteLease(
-            project_id,
-            f"s3.{operation}",
-            ttl_seconds=PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
-            reuse_active=False,
-            **proof,
-        ):
+        with project_write_admission().object_write(project_id, operation):
             yield
 
     def _handle_client_error(self, error: ClientError, operation: str) -> None:

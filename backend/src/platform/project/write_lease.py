@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar, Token
 from types import TracebackType
 from typing import Any, Protocol
@@ -23,6 +23,7 @@ from src.exceptions import AppException, ErrorCode
 from src.infra.execution.context import Execution, current_execution
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
+from src.infra.write_admission import install_project_write_admission
 from src.version_engine.bootstrap.container import VersionEngineContainer
 from src.version_engine.bootstrap.dependencies import get_version_engine_container
 
@@ -334,6 +335,38 @@ class ProjectWriteLease:
         finally:
             self._close_context()
         return False
+
+
+class ProjectLeaseAdmission:
+    """Implements storage's write-admission port with the Project write lease."""
+
+    def active_lease(self, project_id: str) -> ProjectWriteLease | None:
+        return active_project_write_lease(project_id)
+
+    @contextmanager
+    def object_write(self, project_id: str, operation: str):
+        # Physical storage admission is intentionally independent from the
+        # logical Product lease. A ContextVar is copied into background tasks,
+        # and boto3 threads outlive asyncio cancellation; reusing only the
+        # outer project id would therefore permit a late PUT after the outer
+        # lease was released. The child claim lives through the real boto
+        # future and inherits initializer proof only from a currently-live
+        # outer lease.
+        parent = active_project_write_lease(project_id)
+        proof = parent.initialization_proof() if parent is not None else {}
+        with ProjectWriteLease(
+            project_id,
+            f"s3.{operation}",
+            ttl_seconds=PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
+            reuse_active=False,
+            **proof,
+        ):
+            yield
+
+
+def install_storage_write_admission() -> None:
+    """Call once at process startup, before anything writes Project storage."""
+    install_project_write_admission(ProjectLeaseAdmission())
 
 
 _WRITE_METHODS = {

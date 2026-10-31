@@ -25,6 +25,7 @@ from collections import Counter
 from contextlib import suppress
 from datetime import UTC, datetime
 
+from src.platform.project.write_lease import install_storage_write_admission
 from src.infra.execution.process import start_process_concurrency
 from src.infra.execution.runner import run_blocking
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
@@ -308,6 +309,7 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
 
 
 async def main():
+    install_storage_write_admission()
     # Exit before claiming when the database lacks routed dispatch, instead of
     # retrying a missing RPC in the claim loop.
     await run_blocking(RunRepository().verify_dispatch_contract)

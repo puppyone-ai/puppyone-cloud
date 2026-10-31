@@ -11,6 +11,7 @@ from pathlib import Path
 import asyncssh
 
 from src.infra.execution.runner import run_blocking
+from src.platform.project.write_lease import install_storage_write_admission
 from src.platform.workspace.errors import WorkspaceError
 
 from .config import ssh_settings
@@ -296,6 +297,7 @@ async def run():
 
 def main():
     logging.basicConfig(level=logging.INFO)
+    install_storage_write_admission()
     asyncio.run(run())
 
 
