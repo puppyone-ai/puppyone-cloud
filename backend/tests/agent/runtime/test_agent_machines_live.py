@@ -222,25 +222,28 @@ c=socket.socket(socket.AF_INET6);c.settimeout(6);c.connect((sys.argv[1],22));pri
 
 
 async def as_root(resource, command):
-    process = await asyncio.create_subprocess_exec(
-        settings.CLOUD_AGENT_FLY_CLI,
-        "ssh",
-        "console",
-        "--quiet",
-        "--app",
-        resource["app"],
-        "--machine",
-        resource["resource_id"],
-        "--user",
-        "root",
-        "--command",
-        command,
-        env={**os.environ, "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN},
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    async with asyncio.timeout(90):
-        stdout, _ = await process.communicate()
+    from tests.agent.workbench_acceptance.accept_fly import fly_cli_environment
+
+    async with fly_cli_environment() as env:
+        process = await asyncio.create_subprocess_exec(
+            settings.CLOUD_AGENT_FLY_CLI,
+            "ssh",
+            "console",
+            "--quiet",
+            "--app",
+            resource["app"],
+            "--machine",
+            resource["resource_id"],
+            "--user",
+            "root",
+            "--command",
+            command,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        async with asyncio.timeout(90):
+            stdout, _ = await process.communicate()
     return stdout.decode(errors="replace")
 
 

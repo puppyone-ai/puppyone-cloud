@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import os
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 import httpx
@@ -17,6 +18,7 @@ import pytest
 from src.config import settings
 from src.platform.sandbox.providers.fly.naming import dedicated
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
+from src.platform.sandbox.providers.fly.transport import acquire_transport
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
 )
@@ -56,25 +58,40 @@ def fly_configuration():
     FlyRuntimeProvider().validate(settings.CLOUD_AGENT_FLY_IMAGE)
 
 
+@asynccontextmanager
+async def fly_cli_environment():
+    """The product's isolated agent; default flyctl config keeps a peer for each network."""
+    transport = await acquire_transport(
+        settings.CLOUD_AGENT_FLY_APP,
+        settings.CLOUD_AGENT_FLY_TOKEN,
+        settings.CLOUD_AGENT_FLY_CLI,
+    )
+    try:
+        yield transport.env
+    finally:
+        transport.release()
+
+
 async def firewall_hits(resource):
     """Read the provider firewall counter; product files still use their API."""
-    process = await asyncio.create_subprocess_exec(
-        settings.CLOUD_AGENT_FLY_CLI,
-        "ssh",
-        "console",
-        "--quiet",
-        "--app",
-        resource["app"],
-        "--machine",
-        resource["resource_id"],
-        "--user",
-        "root",
-        "--command",
-        "nft -j list chain inet puppyone_task_egress output",
-        env={**os.environ, "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN},
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    async with fly_cli_environment() as env:
+        process = await asyncio.create_subprocess_exec(
+            settings.CLOUD_AGENT_FLY_CLI,
+            "ssh",
+            "console",
+            "--quiet",
+            "--app",
+            resource["app"],
+            "--machine",
+            resource["resource_id"],
+            "--user",
+            "root",
+            "--command",
+            "nft -j list chain inet puppyone_task_egress output",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     try:
         async with asyncio.timeout(45):
             stdout, _stderr = await process.communicate()
