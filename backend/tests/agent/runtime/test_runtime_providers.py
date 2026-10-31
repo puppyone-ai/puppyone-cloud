@@ -7,13 +7,16 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from src.platform.workspace.errors import WorkspaceError
 
 from src.config import settings
 from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
-from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.sandbox.providers.fly import provider as fly_provider
+from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from src.platform.sandbox.registry import runtime_provider
+from src.platform.workspace.errors import WorkspaceError
+from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.workbench_host import WorkbenchChannel
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.service import WorkbenchAdmission
 
@@ -223,6 +226,221 @@ def test_e2b_allocation_intent_pins_template_before_create(monkeypatch):
     )
     assert host.resource["template"] == "original-template"
     assert host.resource["allocation_pending"] is True
+
+
+def dedicated_binding():
+    workbench_id = str(uuid4())
+    return {
+        **resource(),
+        "app": workspace_app(workbench_id),
+        "workbench_id": workbench_id,
+        "allocation_pending": True,
+    }
+
+
+def workspace_row(**fields):
+    return {
+        "id": str(uuid4()),
+        "generation": str(uuid4()),
+        "project_id": "project",
+        "binding": {"provider": "fly", "artifact": "registry/app@sha256:" + "a" * 64},
+        "resource": None,
+        **fields,
+    }
+
+
+@pytest.mark.parametrize(
+    "fields,own_app",
+    [
+        ({"is_default": True}, True),
+        ({"agent_registration_id": "agent"}, True),
+        ({"is_default": False, "agent_registration_id": None}, False),
+    ],
+)
+def test_internal_and_agent_workspaces_get_their_own_app(monkeypatch, fields, own_app):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_APP", "shared")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")
+    row = workspace_row(**fields)
+    expected = workspace_app(row["id"]) if own_app else "shared"
+    assert WorkbenchChannel(row).resource["app"] == expected
+
+
+def test_without_an_org_every_workspace_stays_on_the_shared_app(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_APP", "shared")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "")
+    assert WorkbenchChannel(workspace_row(is_default=True)).resource["app"] == "shared"
+
+
+def test_a_persisted_workspace_never_moves_to_another_app(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_APP", "shared")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")
+    row = workspace_row(is_default=True, resource={"app": "old-shared", "resource_id": "m"})
+    assert WorkbenchChannel(row).resource["app"] == "old-shared"
+
+
+def fly_api(routes):
+    """Answer by ``METHOD path``; anything else is a provider call the test forbids."""
+    calls = []
+
+    def handle(request):
+        key = f"{request.method} {request.url.path}"
+        calls.append((key, json.loads(request.content) if request.content else None))
+        answers = routes[key]
+        answer = answers.pop(0) if isinstance(answers, list) else answers
+        return httpx.Response(answer[0], json=answer[1])
+
+    client = httpx.AsyncClient(
+        base_url="https://api.machines.dev", transport=httpx.MockTransport(handle)
+    )
+    return client, calls
+
+
+def allocation_routes(app):
+    root = f"/v1/apps/{app}"
+    return {
+        f"GET {root}/machines": (200, []),
+        f"GET {root}/volumes": (200, []),
+        f"POST {root}/volumes": (200, {"id": "disk-one", "region": "sin"}),
+        f"POST {root}/machines": (200, {"id": "machine-created"}),
+        f"GET {root}/machines/machine-created/wait": (200, {"state": "started"}),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_workspace_creates_its_private_network_before_its_disk(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")
+    binding = dedicated_binding()
+    app = binding["app"]
+    routes = {
+        **allocation_routes(app),
+        f"GET /v1/apps/{app}": (404, {"error": "app not found"}),
+        "POST /v1/apps": (201, {"id": "created"}),
+    }
+    client, calls = fly_api(routes)
+    host = SimpleNamespace(resource=binding, artifact=binding["image_id"], restore_point=None)
+    async with client:
+        await FlyRuntimeProvider(client=client).allocate(host)
+    created = [body for key, body in calls if key == "POST /v1/apps"]
+    assert created == [{"app_name": app, "org_slug": "org", "network": app}]
+    order = [key for key, _ in calls]
+    assert order.index("POST /v1/apps") < order.index(f"POST /v1/apps/{app}/volumes")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "internet,own_app,env",
+    [
+        (True, True, {"PUPPYONE_TASK_INTERNET": "open"}),
+        (False, True, {}),
+        # A machine on the shared network never opens, whatever its row says.
+        (True, False, {}),
+    ],
+)
+async def test_only_a_machine_alone_on_its_network_opens_the_internet(
+    monkeypatch, internet, own_app, env
+):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = dedicated_binding() if own_app else {**resource(), "allocation_pending": True}
+    app = binding["app"]
+    client, calls = fly_api({**allocation_routes(app), f"GET /v1/apps/{app}": (200, {"network": app})})
+    host = SimpleNamespace(
+        resource=binding,
+        artifact=binding["image_id"],
+        restore_point=None,
+        internet_access=internet,
+    )
+    async with client:
+        await FlyRuntimeProvider(client=client).allocate(host)
+    created = next(body for key, body in calls if key == f"POST /v1/apps/{app}/machines")
+    assert created["config"]["env"] == env
+
+
+@pytest.mark.asyncio
+async def test_a_lost_app_reply_is_recovered_by_name(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")
+    monkeypatch.setattr(fly_provider, "APP_CREATE_RETRY_SECONDS", 0)
+    binding = dedicated_binding()
+    app = binding["app"]
+    routes = {
+        **allocation_routes(app),
+        f"GET /v1/apps/{app}": [(404, {}), (200, {"network": app})],
+        "POST /v1/apps": (422, {"status": "name_taken"}),
+    }
+    client, calls = fly_api(routes)
+    host = SimpleNamespace(resource=binding, artifact=binding["image_id"], restore_point=None)
+    async with client:
+        await FlyRuntimeProvider(client=client).allocate(host)
+    assert [key for key, _ in calls].count("POST /v1/apps") == 1
+    assert host.resource["resource_id"] == "machine-created"
+
+
+@pytest.mark.asyncio
+async def test_an_app_on_another_network_is_refused_before_any_disk(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = dedicated_binding()
+    app = binding["app"]
+    client, calls = fly_api({f"GET /v1/apps/{app}": (200, {"network": "default"})})
+    host = SimpleNamespace(resource=binding, artifact=binding["image_id"], restore_point=None)
+    async with client:
+        with pytest.raises(PermissionError):
+            await FlyRuntimeProvider(client=client).allocate(host)
+    assert [key for key, _ in calls] == [f"GET /v1/apps/{app}"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_held_by_another_owner_stops_retrying(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    monkeypatch.setattr(fly_provider, "APP_CREATE_ATTEMPTS", 2)
+    monkeypatch.setattr(fly_provider, "APP_CREATE_RETRY_SECONDS", 0)
+    binding = dedicated_binding()
+    client, _ = fly_api(
+        {
+            f"GET /v1/apps/{binding['app']}": (404, {}),
+            "POST /v1/apps": (422, {"status": "name_taken"}),
+        }
+    )
+    host = SimpleNamespace(resource=binding, artifact=binding["image_id"], restore_point=None)
+    async with client:
+        with pytest.raises(WorkerDisconnected):
+            await FlyRuntimeProvider(client=client).allocate(host)
+
+
+@pytest.mark.asyncio
+async def test_a_crash_before_the_app_exists_resolves_to_nothing(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = dedicated_binding()
+    client, _ = fly_api({f"GET /v1/apps/{binding['app']}/machines": (404, {})})
+    async with client:
+        assert await FlyRuntimeProvider(client=client).resolve(binding) == []
+
+
+@pytest.mark.asyncio
+async def test_destroying_a_dedicated_workspace_deletes_only_its_own_app(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = dedicated_binding()
+    client, calls = fly_api({f"DELETE /v1/apps/{binding['app']}": (202, {})})
+    async with client:
+        await FlyRuntimeProvider(client=client).destroy_workspace(binding)
+    assert [key for key, _ in calls] == [f"DELETE /v1/apps/{binding['app']}"]
+
+
+@pytest.mark.asyncio
+async def test_destroying_on_the_shared_app_never_deletes_the_app(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    binding = resource()
+    root = f"/v1/apps/{binding['app']}"
+    client, calls = fly_api(
+        {
+            f"GET {root}/machines": (200, []),
+            f"DELETE {root}/machines/machine-one": (200, {}),
+            f"GET {root}/volumes": (200, []),
+        }
+    )
+    async with client:
+        await FlyRuntimeProvider(client=client).destroy_workspace(binding)
+    assert f"DELETE {root}" not in [key for key, _ in calls]
 
 
 @pytest.mark.asyncio

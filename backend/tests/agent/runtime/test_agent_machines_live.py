@@ -16,12 +16,17 @@ from src.config import settings
 from src.platform.access.grant_repository import AccessRepository, GrantRepository
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
+from src.platform.sandbox.errors import WorkspaceUnavailable
+from src.platform.sandbox.providers.fly.naming import workspace_app
+from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
+from src.platform.sandbox.providers.fly.transport import acquire_transport
 from tests.agent.runtime.test_access_lifecycle import issue as issue_registered
 from tests.agent.runtime.test_access_lifecycle import setup_access
 from tests.agent.runtime.test_hosted_ssh_live import (  # noqa: F401
     PROVIDER,
     agent_machines,
     connect,
+    issue,
     live,
     until_released,
 )
@@ -84,6 +89,14 @@ async def until_state(live, identity, state, timeout=240):  # noqa: F811
             await asyncio.sleep(1)
 
 
+async def until_app_absent(live, resource):  # noqa: F811
+    from tests.agent.workbench_acceptance.accept_fly import app_absent
+
+    async with asyncio.timeout(60):
+        while not await app_absent(live.owner.runtime, resource):
+            await asyncio.sleep(1)
+
+
 async def put_to_sleep(live, identity):  # noqa: F811
     """What maintenance does to an idle machine; its own loop may get there first."""
     await asyncio.to_thread(
@@ -118,15 +131,10 @@ async def test_an_agent_comes_back_to_its_work_after_sleep_and_after_reclaim(pre
         read = await shell(live, context, "cat agent.md")
         assert read.stdout == b"kept\n", read.stderr
 
-        slept = await put_to_sleep(live, machine["id"])
-        await asyncio.to_thread(
-            live.db.sql,
-            f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
-            maintenance_after=now()-interval '1 second' WHERE id='{machine["id"]}'""",
-        )
-        await live.workspace.lifecycle.reap()
-        retired = await until_state(live, machine["id"], "retired")
-        if PROVIDER == "fly":
+        retired = await reclaim(live, machine["id"])
+        if PROVIDER == "fly" and settings.CLOUD_AGENT_FLY_ORG:
+            await until_app_absent(live, first["resource"])
+        elif PROVIDER == "fly":
             machines = await live.owner.runtime._request(first["resource"], "GET", "/machines")
             assert first["resource"]["resource_id"] not in {item["id"] for item in machines}
 
@@ -135,6 +143,48 @@ async def test_an_agent_comes_back_to_its_work_after_sleep_and_after_reclaim(pre
         assert rebuilt["generation"] != first["generation"]
         assert rebuilt["resource"]["resource_id"] != first["resource"]["resource_id"]
         assert rebuilt["target_ref"] == first["target_ref"]
+        assert rebuilt["resource"].get("app") == first["resource"].get("app")
+        read = await shell(live, context, "cat agent.md seed.md")
+        assert read.stdout == b"kept\nseed", read.stderr
+
+
+async def reclaim(live, identity):  # noqa: F811
+    """Sleep past retention, then let maintenance destroy a machine whose work is saved.
+
+    One sweep takes the 20 oldest rows, so this row goes first of those left by other tests.
+    """
+    await put_to_sleep(live, identity)
+    await asyncio.to_thread(
+        live.db.sql,
+        f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
+        maintenance_after=now()-interval '10 years' WHERE id='{identity}'""",
+    )
+    await live.workspace.lifecycle.reap()
+    return await until_state(live, identity, "retired")
+
+
+@pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_a_machine_on_the_shared_app_moves_to_its_own_network_when_rebuilt(
+    prepared,
+    live,  # noqa: F811
+    monkeypatch,
+):
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        with monkeypatch.context() as shared:
+            shared.setattr(settings, "CLOUD_AGENT_FLY_ORG", "")
+            first = await start(live, machine)
+        assert first["resource"]["app"] == settings.CLOUD_AGENT_FLY_APP
+        wrote = await shell(live, context, "printf 'kept\\n' > agent.md")
+        assert wrote.exit_status == 0, wrote.stderr
+
+        retired = await reclaim(live, machine["id"])
+        rebuilt = await start(live, retired)
+        assert rebuilt["resource"]["app"] == workspace_app(machine["id"])
         read = await shell(live, context, "cat agent.md seed.md")
         assert read.stdout == b"kept\nseed", read.stderr
 
@@ -160,6 +210,12 @@ seen["nft_flush"] = run("sh", "-c", "nft flush ruleset").returncode
 seen["sudo"] = run("sh", "-c", "sudo -n true").returncode
 print(json.dumps(seen))
 """
+
+ROOT_PUBLIC = """python3 -c 'import socket
+socket.create_connection(("1.1.1.1",443),6);print("OPEN")'"""
+
+PUBLIC_NAME = """python3 -c 'import socket
+socket.create_connection(("example.com",443),8);print("OPEN")'"""
 
 ROOT_REACH = """python3 -c 'import socket,sys
 c=socket.socket(socket.AF_INET6);c.settimeout(6);c.connect((sys.argv[1],22));print("OPEN",c.recv(16))' """
@@ -188,6 +244,78 @@ async def as_root(resource, command):
     return stdout.decode(errors="replace")
 
 
+async def same_network_machine(provider, row):
+    """A control target that proves ``ROOT_REACH`` can succeed."""
+    resource = row["resource"]
+    created = await provider._request(
+        resource,
+        "POST",
+        "/machines",
+        json={
+            "region": settings.CLOUD_AGENT_FLY_REGION,
+            "config": {
+                "image": resource["image_id"],
+                "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 256},
+                "init": {"exec": ["sleep", "infinity"]},
+                "restart": {"policy": "no"},
+            },
+        },
+    )
+    await provider._request(
+        resource,
+        "GET",
+        f"/machines/{created['id']}/wait",
+        params={"state": "started", "timeout": 60},
+    )
+    return created["private_ip"]
+
+
+async def reach_until_open(resource, address):
+    answer = ""
+    for _ in range(6):
+        answer = await as_root(resource, ROOT_REACH + address)
+        if "OPEN" in answer:
+            break
+        await asyncio.sleep(5)
+    return answer
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CLOUD_AGENT_TEST_FLY_CONNECTION_TOKEN"),
+    reason="needs the connection token that api and ssh_gateway hold",
+)
+async def test_the_connection_token_reaches_a_machine_but_cannot_change_it(live):  # noqa: F811
+    token = os.environ["CLOUD_AGENT_TEST_FLY_CONNECTION_TOKEN"]
+    provider, resource = live.owner.runtime, live.row["resource"]
+    path = f"/machines/{resource['resource_id']}"
+    row = await provider._request(resource, "GET", path, token=token)
+
+    transport = await acquire_transport(
+        settings.CLOUD_AGENT_FLY_APP, token, settings.CLOUD_AGENT_FLY_CLI
+    )
+    pool = FlySSHConnections(
+        settings.CLOUD_AGENT_FLY_APP, token, transport.cli, transport.env, idle_seconds=1
+    )
+    try:
+        lease = await pool.open(resource, row["private_ip"], "printf connected")
+        try:
+            assert await lease.process.stdout.read() == b"connected"
+        finally:
+            lease.release()
+    finally:
+        await pool.close()
+        transport.release()
+
+    for method, suffix, body in (
+        ("POST", "/machines", {"config": {"image": resource["image_id"]}}),
+        ("POST", path + "/stop", {}),
+        ("DELETE", path, None),
+        ("POST", "/volumes", {"name": "nope", "region": "sin", "size_gb": 1}),
+    ):
+        with pytest.raises(WorkspaceUnavailable):
+            await provider._request(resource, method, suffix, token=token, json=body)
+
+
 @pytest.mark.skipif(PROVIDER != "fly", reason="the boundary under test is a VM provider's network")
 async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # noqa: F811
     from tests.agent.workbench_acceptance.accept_fly import firewall_hits
@@ -212,9 +340,16 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
 
         peer, internal = await private_address(theirs), await private_address(owner)
 
-        # The route exists, so the only thing stopping the Agent is the rule below.
-        control = await as_root(mine["resource"], ROOT_REACH + peer)
-        assert "OPEN" in control, control
+        if settings.CLOUD_AGENT_FLY_ORG:
+            # Root owns the firewall, so only the private network can stop it here.
+            blocked = await as_root(mine["resource"], ROOT_REACH + peer)
+            assert "OPEN" not in blocked, blocked
+            neighbor = await same_network_machine(provider, mine)
+            assert "OPEN" in await reach_until_open(mine["resource"], neighbor)
+        else:
+            # The route exists, so the only thing stopping the Agent is the rule below.
+            control = await as_root(mine["resource"], ROOT_REACH + peer)
+            assert "OPEN" in control, control
 
         before = await firewall_hits(mine["resource"])
         targets = [
@@ -237,8 +372,61 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
         for name, *_ in targets:
             assert seen[name] != "OPEN", (name, seen)
         assert await firewall_hits(mine["resource"]) >= before + len(targets)
+        # Root leaves the machine, so the rule is what stopped the Agent.
+        assert "OPEN" in await as_root(mine["resource"], ROOT_PUBLIC)
 
         marked = await shell(live, second, "printf theirs > only-theirs.txt")
         assert marked.exit_status == 0, marked.stderr
         looked = await shell(live, first, "test ! -e only-theirs.txt")
         assert looked.exit_status == 0
+
+
+@pytest.mark.skipif(PROVIDER != "fly", reason="the boundary under test is a VM provider's network")
+@pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")
+async def test_the_internal_workspace_reaches_the_internet_but_no_private_address(live):  # noqa: F811
+    from tests.agent.workbench_acceptance.accept_fly import firewall_hits
+
+    authorities(live)
+    _, machine = await enroll(live)
+    async with agent_machines(live):
+        agent = await start(live, machine)
+        detail = await live.owner.runtime._request(
+            agent["resource"], "GET", f"/machines/{agent['resource']['resource_id']}"
+        )
+        private = [
+            ("agent_machine", 10, detail["private_ip"], 22),
+            ("fly_dns", 10, "fdaa::3", 53),
+            ("fly_machines_api", 10, "fdaa::3", 4280),
+            ("unique_local", 10, "fd00::1", 80),
+            ("ten", 2, "10.0.0.1", 80),
+            ("one_seven_two", 2, "172.16.0.1", 80),
+            ("one_nine_two", 2, "192.168.0.1", 80),
+            ("link_local", 2, "169.254.169.254", 80),
+            ("shared_address", 2, "100.64.0.1", 80),
+        ]
+        public = [
+            ("public_v4", 2, "1.1.1.1", 443),
+            ("public_v6", 10, "2606:4700:4700::1111", 443),
+        ]
+        owner = await asyncio.to_thread(live.workspace.repository.get, live.row["id"])
+        assert owner["internet_access"] is True
+        before = await firewall_hits(owner["resource"])
+        script = shlex.quote(REACH)
+        arguments = shlex.quote(json.dumps(private + public))
+        grant = await issue(live)
+        # A grant admits one session, so everything runs in this one.
+        async with await connect(live, grant) as conn:
+            reached = await conn.run(
+                f"python3 -c {script} {arguments} example.com && {PUBLIC_NAME}", check=False
+            )
+        assert reached.exit_status == 0, reached.stderr
+        report, named = reached.stdout.splitlines()
+        seen = json.loads(report)
+        print("INTERNAL_NETWORK_BOUNDARY " + json.dumps(seen), flush=True)
+        assert seen["uid"] == 1000
+        for name, *_ in public:
+            assert seen[name] == "OPEN", (name, seen)
+        assert named == b"OPEN"
+        for name, *_ in private:
+            assert seen[name] in {"EACCES", "EHOSTUNREACH"}, (name, seen)
+        assert await firewall_hits(owner["resource"]) >= before + len(private)

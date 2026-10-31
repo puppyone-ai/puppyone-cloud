@@ -22,6 +22,13 @@ class WorkbenchChannel(ControlChannel):
     def __init__(self, row, *, purpose="lifecycle", store=None):
         resource = row["resource"] or {}
         binding = row["binding"]
+        # Read by the provider while initializing; a persisted binding then wins.
+        self.dedicated_workspace = (
+            str(UUID(row["id"]))
+            if row.get("is_default") or row.get("agent_registration_id")
+            else None
+        )
+        self.internet_access = row.get("internet_access") is True
         super().__init__(
             str(UUID(row["generation"])),
             row["project_id"],
