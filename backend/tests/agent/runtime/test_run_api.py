@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from src.config import settings
 from src.exceptions import NotFoundException, PermissionException
 from src.infra.supabase.instrumentation import DatabaseTrace, database_trace
-from src.platform.access.adapters.agent.dependencies import get_agent_service
-from src.platform.access.adapters.agent.router import router
-from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
+from src.platform.agent.dependencies import get_agent_service
+from src.platform.agent.router import router
+from src.platform.agent.runtime.control.models import SubmitRun
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.project.write_lease import ProjectWriteLease

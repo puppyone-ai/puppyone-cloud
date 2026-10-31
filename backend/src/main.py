@@ -67,13 +67,13 @@ from src.tool.router import router as tool_router
 tool_router_duration = time.time() - tool_router_start
 
 mcp_v3_router_start = time.time()
-from src.platform.access.adapters.agent.mcp.router import router as mcp_v3_router
+from src.platform.agent.mcp.router import router as mcp_v3_router
 
 mcp_v3_router_duration = time.time() - mcp_v3_router_start
 
 agent_router_start = time.time()
-from src.platform.access.adapters.agent.config.router import router as agent_config_router
-from src.platform.access.adapters.agent.router import router as agent_router
+from src.platform.agent.config.router import router as agent_config_router
+from src.platform.agent.router import router as agent_router
 
 agent_router_duration = time.time() - agent_router_start
 
@@ -562,7 +562,7 @@ def create_app() -> FastAPI:
     from src.utils.middleware import RequestContextMiddleware
 
     app.add_middleware(RequestContextMiddleware)
-    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
+    from src.platform.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     app.add_middleware(AgentDatabaseTelemetry)
 
@@ -585,7 +585,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_v3_router, prefix="/api/v1", tags=["mcp"])
     app.include_router(agent_router, prefix="/api/v1", tags=["agents"])
     app.include_router(agent_config_router, prefix="/api/v1", tags=["agent-config"])
-    from src.platform.access.adapters.agent.chat.router import router as chat_router
+    from src.platform.agent.chat.router import router as chat_router
 
     app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
     app.include_router(context_publish_router, prefix="/api/v1", tags=["publishes"])

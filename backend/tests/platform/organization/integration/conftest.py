@@ -109,8 +109,8 @@ async def team(prepared, services, postgres, monkeypatch):
         return InviteEmailResult(sent=True)
 
     monkeypatch.setattr(org_service, "send_invite_email", deliver)
-    from src.platform.access.adapters.agent.dependencies import get_agent_service
-    from src.platform.access.adapters.agent.router import router as agent_router
+    from src.platform.agent.dependencies import get_agent_service
+    from src.platform.agent.router import router as agent_router
     from src.platform.organization.router import router as org_router
     from src.platform.project.router import router as project_router
     from src.platform.access.adapters.api.read import read_router

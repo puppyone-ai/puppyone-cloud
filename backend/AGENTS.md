@@ -94,7 +94,7 @@ derived projection jobs.**
 
 `version_engine`、`infra`、`provider`、`shared_types` 不能 import FastAPI 或 Starlette。
 
-业务层内部也按 `pyproject.toml` 里的 “Business modules point downward” 分层，从上到下依次是：访问入口、数据进出、
+业务层内部也按 `pyproject.toml` 里的 “Business modules point downward” 分层，从上到下依次是：Agent、访问入口、数据进出、
 内容能力、项目核心、计费、身份与组织。它的 `ignore_imports` 是待清理的存量：修一处删一条，不要新增。
 
 其他规则不允许用 `ignore_imports` 豁免任何 import。下层确实需要上层能力时，在下层定义端口，由上层实现并在启动时安装，
@@ -131,7 +131,8 @@ backend/
 │   │   ├── upload/            # 上传业务、旧 ingest 上传 URL 的实现
 │   │   ├── imports/           # 一次性导入，含数据库保存
 │   │   ├── synchronize/       # 持续绑定/SyncRun；github/ 在这里
-│   │   ├── access/            # AccessSurface、共用凭证、filesystem；Web/CLI/Git/Agent/MCP adapters
+│   │   ├── agent/             # 平台运行的 Agent：配置、对话、运行、MCP 工具绑定
+│   │   ├── access/            # AccessSurface、共用凭证、filesystem；Web/CLI/Git/MCP/SSH adapters
 │   │   ├── repository_target/ # Project-root/Scope 类型与路径范围管理
 │   │   ├── auth/              # JWT 认证
 │   │   ├── organization/      # 组织管理
@@ -236,9 +237,9 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 | `/api/v1/projects` | platform/project | 项目管理 |
 | `/api/v1/organizations` | platform/organization | 组织管理 |
 | `/api/v1/tools` | tool | 工具注册 |
-| `/api/v1/agents` | platform/access/adapters/agent | Agent SSE 聊天 |
-| `/api/v1/agent-config` | platform/access/adapters/agent/config | Agent CRUD |
-| `/api/v1/mcp` | platform/access/adapters/agent/mcp | MCP v3 工具绑定 |
+| `/api/v1/agents` | platform/agent | Agent SSE 聊天 |
+| `/api/v1/agent-config` | platform/agent/config | Agent CRUD |
+| `/api/v1/mcp` | platform/agent/mcp | MCP v3 工具绑定 |
 | `/api/v1/synchronize` | platform/synchronize/public_router | SynchronizeBinding / SynchronizeRun canonical API |
 | `/api/v1/integrations` | 已退役资源 URL | 最终源码不挂载；客户端不得 fallback，不能将源码退役冒充目标环境发布 |
 | `/api/v1/access/surfaces` | platform/access/public_router | AccessSurface canonical API；kind / Repository Contract v2 |

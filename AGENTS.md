@@ -146,7 +146,8 @@ backend/
 │   ├── provider/              # External-source adapters, OAuth, database capabilities
 │   │
 │   ├── platform/              # Platform services
-│   │   ├── access/            #   Git/Web/CLI/MCP/Agent adapters, credentials, shared FS
+│   │   ├── agent/             #   Platform-run Agent: config, chat, runtime, MCP tool bindings
+│   │   ├── access/            #   Git/Web/CLI/MCP/SSH adapters, credentials, shared FS
 │   │   ├── repository_target/ #   Project-root/Scope models and geometry management
 │   │   ├── auth/              #   JWT auth (Supabase Auth)
 │   │   ├── organization/      #   Org management & member invitations
@@ -203,8 +204,8 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `synchronize_bindings` / `synchronize_runs` | `platform/synchronize/repository.py`, `platform/synchronize/run_repository.py` | Durable bindings and executions; run parent is `synchronize_binding_id` |
 | `import_database_sources` | `platform/imports/database/repository.py` | Encrypted reusable one-time Import configuration; never inferred from provider or equal IDs |
 | `synchronize_github_bindings` / `synchronize_github_logs` | `platform/synchronize/github/repository.py` | Dedicated GitHub bindings/history, canonical parent, watermarks and inbound/outbound direction |
-| `access_permissions` | `platform/access/adapters/agent/config/repository.py` | Access surface ↔ content node permissions |
-| `access_tools` | `platform/access/adapters/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
+| `access_permissions` | `platform/agent/config/repository.py` | Access surface ↔ content node permissions |
+| `access_tools` | `platform/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
 | `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
 | `access_surface_credentials` | `platform/access/credential_repository.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
@@ -215,7 +216,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `oauth_connections` | `provider/oauth/repository.py` | OAuth integrations |
 | `chat_sessions` | `agent/chat/repository.py` | Agent chat sessions |
 | `chat_messages` | `agent/chat/repository.py` | Agent chat messages |
-| `agent_execution_logs` | `agent/config/repository.py`, `platform/access/adapters/agent/schedule.py` | Scheduled agent execution logs |
+| `agent_execution_logs` | `agent/config/repository.py`, `platform/agent/schedule.py` | Scheduled agent execution logs |
 | `file_versions` | _(deprecated — no longer used in code)_ | Legacy file version history |
 | `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
@@ -234,9 +235,9 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Versioned content tree, write, history, diff, rollback |
 | `/api/v1/tables` | table | Data tables & JSON Pointer operations |
 | `/api/v1/tools` | tool | Tool registration (Search Tools retired: stored rows are read/delete only) |
-| `/api/v1/agents` | platform/access/adapters/agent | Agent SSE streaming chat |
-| `/api/v1/agent-config` | platform/access/adapters/agent/config | Agent CRUD & access permissions |
-| `/api/v1/mcp` | platform/access/adapters/agent/mcp | MCP v3 tool binding & proxy |
+| `/api/v1/agents` | platform/agent | Agent SSE streaming chat |
+| `/api/v1/agent-config` | platform/agent/config | Agent CRUD & access permissions |
+| `/api/v1/mcp` | platform/agent/mcp | MCP v3 tool binding & proxy |
 | `/api/v1/mcp-endpoints` | platform/access/adapters/mcp_endpoint | MCP endpoint CRUD & API key |
 | `/api/v1/sandbox-endpoints` | platform/access/adapters/sandbox_endpoint | Sandbox endpoint CRUD & exec |
 | `/api/v1/access/surfaces` | platform/access/public_router | Access surface management (`kind`, contract v2) |

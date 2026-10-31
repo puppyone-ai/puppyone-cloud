@@ -13,7 +13,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 
-from src.platform.access.adapters.agent.schedule import execute_agent_task
+from src.platform.agent.schedule import execute_agent_task
 from tests.authorization_fakes import authorization_for
 
 

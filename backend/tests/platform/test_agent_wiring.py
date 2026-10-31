@@ -12,7 +12,7 @@ import pytest
 
 from src.platform.access import surface_kinds
 from src.platform.access import router as access_router
-from src.platform.access.adapters.agent.config import surface, tool_bindings
+from src.platform.agent.config import surface, tool_bindings
 from src.tool import service as tool_service
 from src.tool import surface_bindings
 

@@ -54,7 +54,7 @@ def test_authorization_failure_logs_do_not_emit_raw_principal_or_project_ids():
     files = {
         "authenticator.py": SRC / "platform" / "access" / "authenticator.py",
         "router.py": SRC / "internal" / "router.py",
-        "schedule.py": SRC / "platform" / "access" / "adapters" / "agent" / "schedule.py",
+        "schedule.py": SRC / "platform" / "agent" / "schedule.py",
     }
     for name, path in files.items():
         text = path.read_text()

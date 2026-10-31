@@ -19,7 +19,7 @@ case "${SERVICE_ROLE:-api}" in
     exec uvicorn mcp_service.server:app --host 0.0.0.0 --port "${PORT:?PORT must be set for the HTTP role}" --no-access-log
     ;;
   agent_worker)
-    exec python -m src.platform.access.adapters.agent.runtime.worker
+    exec python -m src.platform.agent.runtime.worker
     ;;
   upload_worker)
     exec arq src.platform.upload.worker.WorkerSettings

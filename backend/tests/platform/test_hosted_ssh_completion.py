@@ -239,7 +239,7 @@ async def test_refused_session_explains_itself_on_the_terminal():
 
 def test_sandbox_module_owns_connection_reclamation_and_project_cleanup(monkeypatch):
     from src.config import settings
-    from src.platform.access.adapters.agent.runtime import worker
+    from src.platform.agent.runtime import worker
 
     monkeypatch.setattr(settings, "PROJECT_DELETION_CLEANUP_ENABLED", True)
     names = [name for name, _ in worker.sandbox_passes(Mock(), Mock(), "default")]

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.platform.access.adapters.agent.router import router
+from src.platform.agent.router import router
 
 
 def test_legacy_execution_route_is_retired(monkeypatch):

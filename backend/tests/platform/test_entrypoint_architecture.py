@@ -93,7 +93,7 @@ def test_repository_api_dependencies_remain_one_way():
         ("platform/access/filesystem", ("src.platform.access.adapters",)),
         ("platform/access/adapters/cli", ("src.platform.access.adapters.mcp_endpoint",)),
         ("platform/access/adapters/mcp_endpoint", ("src.platform.access.adapters.cli",)),
-        ("platform/access/adapters/git", ("src.platform.access.adapters.agent",)),
+        ("platform/access/adapters/git", ("src.platform.agent",)),
         ("file_operations", ("src.platform.access.adapters",)),
         ("version_engine/read", ("src.file_operations",)),
         ("version_engine/write_engine", ("src.file_operations",)),

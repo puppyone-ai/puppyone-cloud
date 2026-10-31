@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parents[3] / "src/platform/access/adapters/agent"
+BASE = Path(__file__).resolve().parents[3] / "src/platform/agent"
 
 
 def test_application_and_heartbeat_cannot_bypass_named_ports():
@@ -70,7 +70,7 @@ def test_model_and_tool_boundaries_use_atomic_commands():
 
 
 def test_control_depends_on_capability_contracts_only():
-    prefix = "src.platform.access.adapters.agent.runtime."
+    prefix = "src.platform.agent.runtime."
     for path in BASE.joinpath("runtime/control").rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.ImportFrom):

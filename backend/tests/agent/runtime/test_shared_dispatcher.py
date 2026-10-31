@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime import worker
+from src.platform.agent.runtime import worker
 
 
 @pytest.mark.asyncio

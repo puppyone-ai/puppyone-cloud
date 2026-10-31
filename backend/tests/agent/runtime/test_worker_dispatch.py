@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime import dispatch, worker
-from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.agent.runtime import dispatch, worker
+from src.platform.agent.runtime.control.runner import RunSupervisor
 from src.platform.sandbox import WorkspaceUnavailable, bindings
 
 

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
+from src.platform.agent.runtime.control.workspace import SessionWorkspace
 from src.platform.sandbox.providers.fly import provider as fly_provider
 from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider

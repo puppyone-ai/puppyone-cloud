@@ -16,8 +16,8 @@ import httpx
 import uvicorn
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime import worker as dispatcher
-from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
+from src.platform.agent.runtime import worker as dispatcher
+from src.platform.agent.runtime.control.models import TERMINAL
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.access.composition import build_workbench_service
 from tests.agent.runtime.test_supervisor import BashModel

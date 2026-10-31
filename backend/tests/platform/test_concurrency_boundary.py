@@ -54,7 +54,7 @@ _ENTRY_POINTS = {
     "infra/queue_cutover.py",
     "platform/workspace/execution/preflight.py",
     "platform/access/adapters/ssh/gateway.py",
-    "platform/access/adapters/agent/runtime/worker.py",
+    "platform/agent/runtime/worker.py",
 }
 _LOOP_CALLS = {
     "run",  # asyncio.run

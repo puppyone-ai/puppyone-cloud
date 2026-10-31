@@ -24,7 +24,7 @@ OWNED_KEY = "projects/project-1/file.txt"
 # Every deployed process that can reach storage, and where it installs admission.
 INSTALLED_IN = {
     "src.main": None,
-    "src.platform.access.adapters.agent.runtime.worker": "main",
+    "src.platform.agent.runtime.worker": "main",
     "src.platform.access.adapters.ssh.gateway": "main",
     "src.platform.imports.worker": "startup",
     "src.platform.synchronize.worker": "startup",

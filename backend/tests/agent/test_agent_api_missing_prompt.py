@@ -1,12 +1,12 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.platform.access.adapters.agent.router import router as agent_router
-from src.platform.access.adapters.agent.dependencies import get_agent_service
-from src.platform.access.adapters.agent.chat.dependencies import get_chat_service
+from src.platform.agent.router import router as agent_router
+from src.platform.agent.dependencies import get_agent_service
+from src.platform.agent.chat.dependencies import get_chat_service
 from src.tool.dependencies import get_tool_service
 from src.infra.s3.dependencies import get_s3_service
-from src.platform.access.adapters.agent.config.dependencies import get_agent_config_service
+from src.platform.agent.config.dependencies import get_agent_config_service
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 

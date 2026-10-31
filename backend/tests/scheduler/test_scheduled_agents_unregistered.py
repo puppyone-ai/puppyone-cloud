@@ -8,8 +8,8 @@ from fastapi import HTTPException
 
 import src.infra.scheduler.service as scheduler_module
 from src.composition.scheduled_jobs import scheduled_jobs
-from src.platform.access.adapters.agent import schedule as agent_schedule
-from src.platform.access.adapters.agent.config import router
+from src.platform.agent import schedule as agent_schedule
+from src.platform.agent.config import router
 from src.platform.synchronize import schedule as sync_schedule
 
 

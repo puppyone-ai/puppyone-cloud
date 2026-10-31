@@ -2,7 +2,7 @@
 from unittest.mock import MagicMock
 
 
-from src.platform.access.adapters.agent.config.repository import _row_to_tool
+from src.platform.agent.config.repository import _row_to_tool
 from src.platform.project.dashboard_router import _fetch_uploads
 from src.platform.synchronize.github.repository import _to_api_row
 

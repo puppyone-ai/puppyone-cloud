@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.admission import digest
-from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
+from src.platform.agent.runtime.control.admission import digest
+from src.platform.agent.runtime.control.models import SubmitRun
 from tests.agent.runtime.test_workbench_ownership import create
 
 
@@ -122,7 +122,7 @@ def test_unready_composition_root_cannot_enqueue_or_fall_back():
 
     from fastapi import HTTPException
 
-    from src.platform.access.adapters.agent.service import AgentService
+    from src.platform.agent.service import AgentService
 
     repository, admission = Mock(), Mock()
     admission.load.return_value = SimpleNamespace(receipt=None, policy={})
@@ -139,7 +139,7 @@ def test_unready_composition_root_cannot_enqueue_or_fall_back():
 
 @pytest.mark.parametrize("explicit_null", [False, True])
 def test_old_request_digest_stays_byte_for_byte_compatible(explicit_null):
-    from src.platform.access.adapters.agent.service import submission_digest
+    from src.platform.agent.service import submission_digest
 
     wire = {
         "project_id": "fixture",

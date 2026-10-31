@@ -17,9 +17,9 @@ from fastapi import FastAPI
 
 from src.config import settings
 from src.infra.supabase.instrumentation import DatabaseTrace
-from src.platform.access.adapters.agent.dependencies import get_agent_service
-from src.platform.access.adapters.agent.router import router
-from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
+from src.platform.agent.dependencies import get_agent_service
+from src.platform.agent.router import router
+from src.platform.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.auth.service import AuthService
 from src.platform.project.write_lease import ProjectWriteLease
@@ -74,8 +74,8 @@ async def test_desktop_renders_real_worker_file_answers_and_restores_session(
     )
     application = FastAPI()
     application.include_router(router, prefix="/api/v1")
-    from src.platform.access.adapters.agent.chat import dependencies as chat_dependencies
-    from src.platform.access.adapters.agent.chat.router import router as chat_router
+    from src.platform.agent.chat import dependencies as chat_dependencies
+    from src.platform.agent.chat.router import router as chat_router
 
     monkeypatch.setattr(chat_dependencies, "_chat_service", None)
     application.include_router(chat_router, prefix="/api/v1")

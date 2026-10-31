@@ -32,7 +32,7 @@ def literal(value):
 
 def claimant(name, *, pool="default"):
     """The worker identity a dispatcher of ``pool`` claims with, named for the test."""
-    from src.platform.access.adapters.agent.runtime.dispatch import WorkerIdentity
+    from src.platform.agent.runtime.dispatch import WorkerIdentity
 
     return WorkerIdentity(
         id=name,

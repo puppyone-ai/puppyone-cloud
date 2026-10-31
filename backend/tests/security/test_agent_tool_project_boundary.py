@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.access.adapters.agent.config.models import Agent
-from src.platform.access.adapters.agent.mcp.service import McpV3Service
+from src.platform.agent.config.models import Agent
+from src.platform.agent.mcp.service import McpV3Service
 from src.exceptions import NotFoundException
 from src.tool.models import Tool
 

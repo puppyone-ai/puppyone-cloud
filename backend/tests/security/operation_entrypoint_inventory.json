@@ -40,11 +40,11 @@
       "main.py": {
         "app_lifespan::build_version_engine_container": 1
       },
-      "platform/access/adapters/agent/runtime/worker.py": {
-        "serve::build_worker_version_engine_container": 1
-      },
       "platform/access/composition.py": {
         "build_workbench_service::build_worker_version_engine_container": 1
+      },
+      "platform/agent/runtime/worker.py": {
+        "serve::build_worker_version_engine_container": 1
       },
       "platform/auth/initialization.py": {
         "UserInitializationService._seed_demo_project::build_worker_version_engine_container": 1
@@ -96,9 +96,6 @@
       },
       "infra/data_migrations/release/backup.py": {
         "create_backup::destination.stat": 1
-      },
-      "platform/access/adapters/agent/config/metadata.py": {
-        "read_path_metadata::read.stat": 1
       },
       "platform/access/adapters/api/read.py": {
         "download.chunks::read.read_file": 1,
@@ -173,6 +170,9 @@
       },
       "platform/access/identity_router.py": {
         "get_access_point::ops.get_head_commit_id": 1
+      },
+      "platform/agent/config/metadata.py": {
+        "read_path_metadata::read.stat": 1
       },
       "platform/project/dashboard_router.py": {
         "_compute_node_counts::ops.get_head_commit_id": 1,

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
-from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.agent.runtime.control.shared_recovery import SharedRecovery
+from src.platform.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 
 

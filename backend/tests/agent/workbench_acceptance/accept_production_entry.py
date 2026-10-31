@@ -16,7 +16,7 @@ import pytest
 
 from src.config import settings
 from src.main import create_app
-from src.platform.access.adapters.agent import dependencies as agent_dependencies
+from src.platform.agent import dependencies as agent_dependencies
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.project.write_lease import ProjectWriteLease
 from tests.agent.runtime.conftest import (

@@ -68,7 +68,7 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     commands = [
-        ["-m", "src.platform.access.adapters.agent.runtime.worker"],
+        ["-m", "src.platform.agent.runtime.worker"],
         [
             "-m",
             "uvicorn",

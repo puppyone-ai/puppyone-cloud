@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.platform.access.adapters.agent.config.surface import AgentSurface
-from src.platform.access.adapters.agent.config.tool_bindings import AgentToolBindings
+from src.platform.agent.config.surface import AgentSurface
+from src.platform.agent.config.tool_bindings import AgentToolBindings
 from src.platform.access.surface_kinds import register_surface_kind
 from src.tool.surface_bindings import install_tool_surface_bindings
 

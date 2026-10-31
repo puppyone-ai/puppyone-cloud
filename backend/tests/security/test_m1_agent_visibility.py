@@ -5,8 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from src.platform.access.adapters.agent.config.repository import AgentRepository
-from src.platform.access.adapters.agent.config.service import AgentConfigService
+from src.platform.agent.config.repository import AgentRepository
+from src.platform.agent.config.service import AgentConfigService
 
 
 def _build_repo_with_rows(agent_rows: list[dict]):
