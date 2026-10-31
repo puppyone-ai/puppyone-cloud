@@ -3,14 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "save-session": "node lib/save-session.mjs",
-    "test": "node run.mjs",
-    "test:one": "node run.mjs --scenario"
-  },
   "dependencies": {
-    "@browserbasehq/stagehand": "^3.1.0",
-    "@playwright/test": "^1.58.2",
-    "dotenv": "^17.3.1"
+    "@playwright/test": "^1.58.2"
   }
 }
