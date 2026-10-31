@@ -439,6 +439,8 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
+    # Set to give each internal and external Agent Workspace its own app and private network.
+    CLOUD_AGENT_FLY_ORG: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""

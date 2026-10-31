@@ -11,9 +11,11 @@ import json
 import os
 from uuid import UUID
 
+import httpx
 import pytest
 
 from src.config import settings
+from src.platform.sandbox.providers.fly.naming import dedicated
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
@@ -89,6 +91,16 @@ async def firewall_hits(resource):
             await process.wait()
 
 
+async def app_absent(provider, resource):
+    try:
+        await provider._request(resource, "GET", "")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return True
+        raise
+    return False
+
+
 async def cleanup_owned(case, provider, receipt):
     """Delete only resources identified by this new test Project/generations.
 
@@ -106,10 +118,16 @@ async def cleanup_owned(case, provider, receipt):
     rows = [row for row in rows if row["resource"]]
     # A Project holds several machines, and the wait below is for all of them.
     for row in rows:
+        if dedicated(row["resource"]):
+            await provider.destroy_workspace(row["resource"])
+            continue
         for resolved in await provider.resolve(row["resource"]):
             await provider.cleanup(resolved)
     for row in rows:
         resource = row["resource"]
+        if dedicated(resource):
+            await eventually(lambda resource=resource: app_absent(provider, resource), bool)
+            continue
         await eventually(
             lambda resource=resource: provider._request(resource, "GET", "/machines"),
             lambda machines: (
