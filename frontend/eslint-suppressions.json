@@ -7,9 +7,6 @@
   "frontend/app/(main)/projects/[projectId]/_components/ProjectAccessPanel.tsx": {
     "complexity": {
       "count": 1
-    },
-    "no-nested-ternary": {
-      "count": 3
     }
   },
   "frontend/app/(main)/projects/[projectId]/access/page.tsx": {
@@ -50,9 +47,6 @@
     }
   },
   "frontend/app/(main)/projects/[projectId]/toolkit/page.tsx": {
-    "complexity": {
-      "count": 1
-    },
     "no-nested-ternary": {
       "count": 2
     }
