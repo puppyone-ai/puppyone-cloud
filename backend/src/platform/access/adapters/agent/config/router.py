@@ -5,15 +5,12 @@ REST API for Agent configuration.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.file_operations.operation_adapter import ProductOperationAdapter
 
 from src.platform.access.adapters.agent.config.service import AgentConfigService
-from src.infra.scheduler.service import get_scheduler_service
-from src.infra.scheduler.config import scheduler_settings
-from src.utils.logger import log_info, log_error
 from src.platform.access.adapters.agent.config.dependencies import (
     get_agent_config_service,
     get_verified_agent,
@@ -172,33 +169,13 @@ def get_agent(
     )
 
 
-def _sync_scheduler_add(agent_id: str, agent_type: str, trigger_type: str, trigger_config: dict, agent_name: str):
-    """Background task to add agent to scheduler."""
-    if not scheduler_settings.enabled:
-        return
-    if agent_type != "schedule" or trigger_type != "cron":
-        return
-
-    try:
-        # APScheduler registration is in-memory and thread-safe (it wakes the
-        # scheduler through call_soon_threadsafe); no event loop is needed.
-        get_scheduler_service().add_agent_job(agent_id, trigger_config or {}, agent_name)
-        log_info(f"✅ Scheduler synced: added job for agent {agent_id}")
-    except Exception as e:
-        log_error(f"❌ Failed to sync scheduler for agent {agent_id}: {e}")
-
-
-def _sync_scheduler_remove(agent_id: str):
-    """Background task to remove agent from scheduler."""
-    if not scheduler_settings.enabled:
-        return
-
-    try:
-        scheduler = get_scheduler_service()
-        scheduler.remove_agent_job(agent_id)
-        log_info(f"✅ Scheduler synced: removed job for agent {agent_id}")
-    except Exception as e:
-        log_error(f"❌ Failed to remove scheduler job for agent {agent_id}: {e}")
+def _refuse_scheduled(agent_type: str | None, trigger_type: str | None) -> None:
+    """Automation is not offered: a scheduled Agent would be saved and never run."""
+    if agent_type == "schedule" or trigger_type == "cron":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "scheduled_agents_unavailable"},
+        )
 
 
 @router.post(
@@ -210,7 +187,6 @@ def _sync_scheduler_remove(agent_id: str):
 )
 def create_agent(
     payload: AgentCreate,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -226,6 +202,7 @@ def create_agent(
     require_agent_manage_body(
         payload.project_id, current_user, authorization,
     )
+    _refuse_scheduled(payload.type, payload.trigger_type)
 
     agent = service.create_agent(
         project_id=payload.project_id,
@@ -243,16 +220,6 @@ def create_agent(
         owner_user_id=current_user.user_id,
     )
 
-    # Sync with scheduler if this is a schedule agent
-    background_tasks.add_task(
-        _sync_scheduler_add,
-        agent.id,
-        payload.type,
-        payload.trigger_type or "manual",
-        payload.trigger_config or {},
-        payload.name,
-    )
-
     return ApiResponse.success(
         data=_to_agent_out(agent),
         message="Agent created successfully",
@@ -267,11 +234,15 @@ def create_agent(
 )
 def update_agent(
     payload: AgentUpdate,
-    background_tasks: BackgroundTasks,
     agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
 ):
+    # An Agent saved as scheduled stays editable; nothing newly becomes scheduled.
+    _refuse_scheduled(
+        payload.type if payload.type != agent.type else None,
+        payload.trigger_type if payload.trigger_type != agent.trigger_type else None,
+    )
     updated = service.update_agent(
         agent_id=agent.id,
         user_id=current_user.user_id,
@@ -293,25 +264,6 @@ def update_agent(
             detail="Failed to update agent",
         )
 
-    # Sync with scheduler
-    new_type = payload.type or agent.type
-    new_trigger_type = payload.trigger_type or agent.trigger_type or "manual"
-    new_trigger_config = payload.trigger_config if payload.trigger_config is not None else (agent.trigger_config or {})
-
-    if new_type == "schedule" and new_trigger_type == "cron":
-        # Add/update job
-        background_tasks.add_task(
-            _sync_scheduler_add,
-            agent.id,
-            new_type,
-            new_trigger_type,
-            new_trigger_config,
-            payload.name or agent.name,
-        )
-    else:
-        # Remove job if agent is no longer a schedule agent
-        background_tasks.add_task(_sync_scheduler_remove, agent.id)
-
     return ApiResponse.success(
         data=_to_agent_out(updated),
         message="Agent updated successfully",
@@ -325,7 +277,6 @@ def update_agent(
     description="Delete an Agent and all its access permissions",
 )
 def delete_agent(
-    background_tasks: BackgroundTasks,
     agent: Agent = Depends(get_writable_agent),
     current_user: CurrentUser = Depends(get_current_user),
     service: AgentConfigService = Depends(get_agent_config_service),
@@ -337,9 +288,6 @@ def delete_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete agent",
         )
-
-    # Remove from scheduler
-    background_tasks.add_task(_sync_scheduler_remove, agent_id)
 
     return ApiResponse.success(message="Agent deleted successfully")
 

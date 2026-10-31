@@ -76,8 +76,8 @@ class SchedulerService:
 
     Responsibilities:
     - Start/stop the scheduler
-    - Add/remove/update agent jobs dynamically
-    - Load all schedule agents from database on startup
+    - Run maintenance and synchronization jobs
+    - Keep the agent job path, which nothing registers while Automation is off
     """
 
     _instance: Optional["SchedulerService"] = None
@@ -130,8 +130,7 @@ class SchedulerService:
         self.scheduler.start()
         self._started = True
 
-        # Load existing schedule agents from database
-        await self._load_scheduled_agents()
+        # Automation is not offered, so scheduled Agents are never registered.
         await self._load_scheduled_syncs()
 
         if settings.VERSION_OUTBOX_ENABLED:
