@@ -7,7 +7,6 @@ from src.platform.access.adapters.agent.runtime.control.workspace import (
     require_full_project,
     workspace_state,
 )
-from src.platform.access.adapters.git.workspace_transport import RunPublication
 from src.platform.project.write_lease import ProjectWriteLease
 from src.platform.workspace.filesystem.port import FilesystemPort
 from src.version_engine.read.ref_metadata import GitBranchBase
@@ -84,7 +83,7 @@ class Publication:
         candidate = value["workspace"].get("tip")
         if run["state"] != "publishing" or run["policy"]["readonly"] or not candidate:
             raise PermissionError("Run has no publication capability")
-        binding = RunPublication(run["id"], GitBranchBase.parse(value["base"]), candidate)
+        binding = self.transport.publication(run["id"], value["base"], candidate)
         if frame["method"] == "GET":
             return await self.transport.exchange(
                 run["project_id"], grant, frame, base=value["base"], publication=binding

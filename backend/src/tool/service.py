@@ -11,7 +11,7 @@ from src.exceptions import (
     NotFoundException,
     PermissionException,
 )
-from src.platform.access.adapters.mcp_cache import invalidate_mcp_surface_cache
+from src.infra.mcp_cache import invalidate_mcp_surface_cache
 from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.tool.models import Tool

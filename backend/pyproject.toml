@@ -177,7 +177,6 @@ ignore_imports = [
     "src.platform.repository_context.service -> src.platform.access.credential_repository",
     "src.platform.repository_target.scope_router -> src.platform.access.model_repository",
     "src.tool.service -> src.platform.access.adapters.agent.config.repository",
-    "src.tool.service -> src.platform.access.adapters.mcp_cache",
 ]
 
 [tool.pytest.ini_options]

@@ -178,7 +178,7 @@ def isolate_worker(monkeypatch, repository, supervisor):
         "RunRepository": lambda: repository,
         "Admission": lambda _: object(),
         "Publication": lambda transport, filesystem: object(),
-        "RunGitTransport": lambda _: object(),
+        "build_git_transport": lambda _: object(),
         "build_worker_version_engine_container": lambda **_: SimpleNamespace(repo_manager=None),
         "get_billing_gateway": lambda: None,
         "get_provider_registry": lambda: None,

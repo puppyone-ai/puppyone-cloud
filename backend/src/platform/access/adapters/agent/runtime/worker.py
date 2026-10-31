@@ -38,7 +38,7 @@ from src.platform.access.adapters.agent.runtime.execution.sandbox import Sandbox
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
 from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
 from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
-from src.platform.access.adapters.git.workspace_transport import RunGitTransport
+from src.platform.access.composition import build_git_transport
 from src.platform.billing.gateway import get_billing_gateway
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.dependencies import get_inference_service, get_provider_registry
@@ -159,7 +159,7 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
 
     admission = Admission(repository)
     filesystem = SandboxFilesystem()
-    publication = Publication(RunGitTransport(engine.repo_manager), filesystem)
+    publication = Publication(build_git_transport(engine), filesystem)
     inference = get_inference_service(get_billing_gateway(), get_provider_registry())
     billing = get_runtime_metering_service()
     claim_as = identity.claim()

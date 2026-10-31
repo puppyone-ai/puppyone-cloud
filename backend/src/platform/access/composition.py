@@ -14,13 +14,18 @@ def get_workbench_service(request: Request, engine=Depends(get_version_engine_co
     return service
 
 
-def build_workbench_service(*, engine=None):
+def build_git_transport(engine):
     from src.platform.access.adapters.git.workspace_transport import RunGitTransport
+
+    return RunGitTransport(engine.repo_manager)
+
+
+def build_workbench_service(*, engine=None):
     from src.platform.billing.runtime import get_runtime_metering_service
     from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
     from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
     engine = engine or build_worker_version_engine_container()
     return WorkbenchService(
-        RunGitTransport(engine.repo_manager), SandboxFilesystem(), get_runtime_metering_service()
+        build_git_transport(engine), SandboxFilesystem(), get_runtime_metering_service()
     )
