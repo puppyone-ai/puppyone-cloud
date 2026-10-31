@@ -8,7 +8,7 @@ import time
 from fastapi import HTTPException
 
 from src.platform.access.model_repository import AccessModelRepository
-from src.platform.repository_target.auth_context import repository_target_from_auth
+from src.version_engine.admission.auth_context import repository_target_from_auth
 from src.shared_types.repository_target import repository_target_scope_id
 from src.utils.logger import log_error, log_warning
 

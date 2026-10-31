@@ -44,7 +44,7 @@ from src.version_engine.admission.permission import (
     ensure_repo_writable,
 )
 from src.version_engine.admission.repo_facade import RepoFacade
-from src.version_engine.admission.target import admit_target
+from src.platform.access.target_admission import admit_target
 from src.version_engine.domain.intents import (
     ConflictResolutionIntent,
     ProjectWriteState,
@@ -533,7 +533,7 @@ async def scenario_e_product_write_then_read(tmp_dir: Path):
 
 def scenario_f_auth_revoked():
     _section("F. Auth: revoked access key refused")
-    from src.version_engine.admission import identity
+    from src.platform.access import authenticator as identity
     from unittest.mock import patch
 
     with patch.object(identity, "find_scope_by_access_key",
@@ -551,7 +551,7 @@ def scenario_f_auth_revoked():
 
 def scenario_g_channel_pause():
     _section("G. Channel pause: paused connector blocks request")
-    from src.version_engine.admission import channel_pause
+    from src.platform.access import channel_pause
     channel_pause._channel_pause_cache.clear()
 
     class PausedConn:
@@ -600,7 +600,7 @@ def scenario_h_permission_readonly():
 
 def scenario_i_target_admission_factory():
     _section("I. TargetAdmission factory bundles L3 checks")
-    from src.version_engine.admission import channel_pause
+    from src.platform.access import channel_pause
     import unittest.mock
 
     with unittest.mock.patch.object(channel_pause, "_KNOWN_CHANNELS", frozenset()):

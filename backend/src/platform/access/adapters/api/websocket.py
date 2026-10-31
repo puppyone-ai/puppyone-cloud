@@ -20,8 +20,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from starlette.websockets import WebSocketState
 
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.admission.identity import PuppyOneAuthenticator
-from src.platform.repository_target.auth_context import repository_view_from_auth
+from src.platform.access.authenticator import PuppyOneAuthenticator
+from src.version_engine.admission.auth_context import repository_view_from_auth
 from src.version_engine.derived.notifications import NotificationManager
 from src.utils.logger import log_debug, log_error
 

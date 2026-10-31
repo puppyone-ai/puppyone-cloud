@@ -13,14 +13,14 @@ from src.platform.access.adapters.git.locator import validate_git_locator_id
 from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.credentials import resolve_access_point
 from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.auth_context import repository_view_from_auth
+from src.version_engine.admission.auth_context import repository_view_from_auth
 from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
 )
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
-from src.version_engine.admission.channel_pause import enforce_channel_pause
+from src.platform.access.channel_pause import enforce_channel_pause
 from src.version_engine.write_engine.path_utils import normalize_path
 
 

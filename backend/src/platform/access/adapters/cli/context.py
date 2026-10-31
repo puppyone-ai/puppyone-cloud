@@ -12,10 +12,10 @@ from src.infra.execution.runner import run_blocking
 from src.platform.access.credentials import resolve_access_point
 from src.platform.access.filesystem.context import ScopedFsContext
 from src.platform.access.filesystem.errors import ScopedFsError
-from src.platform.repository_target.auth_context import repository_view_from_auth
+from src.version_engine.admission.auth_context import repository_view_from_auth
 from src.shared_types.repository_target import repository_target_scope_id
-from src.version_engine.admission.channel_pause import enforce_channel_pause
-from src.version_engine.admission.connector_policy import admit_cli_fs_command
+from src.platform.access.channel_pause import enforce_channel_pause
+from src.platform.access.connector_policy import admit_cli_fs_command
 from src.version_engine.admission.permission import (
     ensure_mode_writable,
     ensure_repo_readable,

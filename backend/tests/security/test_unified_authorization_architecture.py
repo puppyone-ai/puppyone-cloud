@@ -47,12 +47,12 @@ def test_git_credential_revocation_is_an_owner_operation_not_project_read():
 
 def test_authorization_failure_logs_do_not_emit_raw_principal_or_project_ids():
     sensitive_fragments = {
-        "identity.py": ("user={user_id}", "project={project_id}"),
+        "authenticator.py": ("user={user_id}", "project={project_id}"),
         "router.py": ("user={acting_user}", "acting_user={acting_user}"),
         "schedule.py": ("user={user_id}", "project={project_id}"),
     }
     files = {
-        "identity.py": SRC / "version_engine" / "admission" / "identity.py",
+        "authenticator.py": SRC / "platform" / "access" / "authenticator.py",
         "router.py": SRC / "internal" / "router.py",
         "schedule.py": SRC / "platform" / "access" / "adapters" / "agent" / "schedule.py",
     }

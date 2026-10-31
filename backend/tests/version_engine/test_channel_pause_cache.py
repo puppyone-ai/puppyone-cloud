@@ -12,7 +12,7 @@ from src.shared_types.repository_target import (
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.version_engine.admission import channel_pause
+from src.platform.access import channel_pause
 
 
 def _auth(project_id="project-1", scope_id=None):

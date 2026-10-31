@@ -9,7 +9,8 @@ The package layout mirrors the write architecture:
 
   domain/          Shared intents, conflict records, and errors.
   entrypoints/     L1 protocol surfaces: HTTP and Git smart HTTP.
-  admission/       L2 identity plus L3 permission/target admission.
+  admission/       L3 permission checks and path validation. Identity, channel
+                   pause and connector policy live in platform/access.
   adapters/        L4 request-to-intent adapters for product, Git, and batch.
   write_engine/    L5 write authority and Git object/tree/merge primitives.
   derived/         L5 follow-up/repair: hooks, outbox, projections, indexes, GC.

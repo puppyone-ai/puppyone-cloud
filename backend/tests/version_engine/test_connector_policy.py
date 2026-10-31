@@ -9,7 +9,7 @@ from src.shared_types.repository_target import (
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.version_engine.admission import connector_policy
+from src.platform.access import connector_policy
 
 
 def _auth(scope_id: str | None = "scope-1", project_id: str = "project-1") -> dict:

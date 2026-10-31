@@ -37,7 +37,7 @@ def _kind_default_name(kind: str) -> str:
 def _clear_connector_policy_cache(scope_id: str | None, kind: str) -> None:
     """Best-effort cache invalidation for hot-path admission checks."""
     try:
-        from src.version_engine.admission.connector_policy import (
+        from src.platform.access.connector_policy import (
             clear_connector_policy_cache,
         )
         clear_connector_policy_cache(scope_id=scope_id, provider=kind)
@@ -51,7 +51,7 @@ def _clear_connector_admission_cache(scope_id: str | None, kind: str) -> None:
     """Best-effort cache invalidation for all connector admission gates."""
     _clear_connector_policy_cache(scope_id, kind)
     try:
-        from src.version_engine.admission.channel_pause import (
+        from src.platform.access.channel_pause import (
             clear_channel_pause_cache,
         )
         clear_channel_pause_cache(scope_id=scope_id, channel=kind)

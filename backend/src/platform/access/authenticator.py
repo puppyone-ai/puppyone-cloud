@@ -30,7 +30,7 @@ from src.shared_types.repository_target import (
 )
 from src.platform.access.models import ResolvedScopeCredential
 from src.utils.logger import log_error, log_warning
-from src.version_engine.admission.channel_pause import enforce_channel_pause
+from src.platform.access.channel_pause import enforce_channel_pause
 from src.platform.access.credentials import (
     resolve_scope_access_credential,
 )

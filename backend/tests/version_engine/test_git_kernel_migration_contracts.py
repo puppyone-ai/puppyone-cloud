@@ -835,7 +835,7 @@ def test_core_no_longer_imports_removed_protocol_normalize_path() -> None:
 def test_access_point_auth_uses_repo_scopes_without_legacy_fallback() -> None:
     checked = (
         BACKEND_ROOT / "src/platform/access/credentials.py",
-        BACKEND_ROOT / "src/version_engine/admission/identity.py",
+        BACKEND_ROOT / "src/platform/access/authenticator.py",
     )
 
     offenders = [

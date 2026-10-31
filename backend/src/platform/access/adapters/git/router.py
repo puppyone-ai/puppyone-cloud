@@ -36,7 +36,7 @@ from src.platform.access.adapters.git.execution import (
 )
 from src.platform.access.adapters.git.native import select_native_git_endpoint
 from src.platform.access.credentials import resolve_access_point
-from src.platform.repository_target.auth_context import repository_target_from_auth
+from src.version_engine.admission.auth_context import repository_target_from_auth
 from src.shared_types.repository_target import repository_target_scope_id
 from src.utils.logger import log_info
 from src.version_engine.admission.repo_facade import (

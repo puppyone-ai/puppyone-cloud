@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.platform.repository_target.auth_context import (
+from src.version_engine.admission.auth_context import (
     repository_mode_from_auth,
     repository_view_from_auth,
 )
