@@ -104,6 +104,9 @@ backend/
 │   ├── main.py                # 应用入口 & 生命周期
 │   ├── config.py              # 全局配置 (Pydantic Settings)
 │   │
+│   ├── composition/           # 组装层：唯一可以认识所有模块的地方
+│   ├── shared_types/          # 纯类型，不 import 任何 src 代码
+│   │
 │   ├── version_engine/        # Git-native 版本引擎 (核心读写通道)
 │   │   ├── write_engine/      # 原生 operation、ref transaction、Git 格式
 │   │   ├── read/              # 固定 ref 快照的 tree/history reader

@@ -127,6 +127,9 @@ backend/
 │   ├── main.py                # App entrypoint & lifespan
 │   ├── config.py              # Global config (Pydantic Settings)
 │   │
+│   ├── composition/           # Composition root: the only code that may know every module
+│   ├── shared_types/          # Plain types; imports nothing from src
+│   │
 │   ├── version_engine/        # Git-native Version Engine (core write funnel)
 │   │   ├── write_engine/      #   native operations, ref transactions, Git formats
 │   │   ├── read/              #   pinned native tree/history readers
