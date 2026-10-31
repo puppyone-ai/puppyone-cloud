@@ -194,7 +194,7 @@ def oauth_authorize(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     # Delegate to existing OAuth service
-    from src.provider.oauth.router import _get_oauth_service
+    from src.platform.provider_accounts.oauth_router import _get_oauth_service
     try:
         oauth_svc = _get_oauth_service(provider)
         auth_url = oauth_svc.get_authorize_url(current_user.user_id)
@@ -216,7 +216,7 @@ def oauth_callback(
     svc: GatewayService = Depends(_get_service),
 ):
     # Exchange code for tokens via existing OAuth service
-    from src.provider.oauth.router import _get_oauth_service
+    from src.platform.provider_accounts.oauth_router import _get_oauth_service
     try:
         oauth_svc = _get_oauth_service(provider)
         token_data = oauth_svc.handle_callback(body.get("code", ""), current_user.user_id)

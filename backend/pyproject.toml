@@ -111,8 +111,6 @@ layers = [
 # tests/platform/test_import_layers.py pins the count.
 ignore_imports = [
     "src.config -> src.version_engine.domain.git_pack_limits",
-    "src.infra.file_processing.rules.dependencies -> src.platform.auth.dependencies",
-    "src.infra.file_processing.rules.dependencies -> src.platform.auth.models",
     "src.infra.s3.service -> src.platform.project.write_lease",
     "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.dependencies",
     "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.runtime.control.models",
@@ -137,12 +135,6 @@ ignore_imports = [
     "src.infra.scheduler.service -> src.platform.access.surface_repository",
     "src.infra.search.text_indexer -> src.version_engine.infrastructure.supabase.text_index_repository",
     "src.infra.search.text_indexer -> src.version_engine.write_engine.git_object_format",
-    "src.infra.self_hosted_bootstrap -> src.platform.project.storage_inventory",
-    "src.provider.accounts.router -> src.platform.auth.dependencies",
-    "src.provider.accounts.router -> src.platform.auth.models",
-    "src.provider.accounts.router -> src.platform.organization.dependencies",
-    "src.provider.oauth.dependencies -> src.platform.auth.dependencies",
-    "src.provider.oauth.router -> src.platform.auth.dependencies",
     "src.version_engine.admission.channel_pause -> src.platform.access.model_repository",
     "src.version_engine.admission.channel_pause -> src.platform.repository_target.auth_context",
     "src.version_engine.admission.channel_pause -> src.platform.repository_target.models",

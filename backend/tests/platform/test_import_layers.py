@@ -10,7 +10,7 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # Lower this when an entry leaves ignore_imports. It only ever goes down.
-KNOWN_VIOLATIONS = 58
+KNOWN_VIOLATIONS = 50
 
 
 def _ignored_imports() -> list[str]:

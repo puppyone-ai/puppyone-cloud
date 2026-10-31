@@ -155,7 +155,7 @@ services:
       S3_REGION: us-east-1
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-minioadmin}
-    command: ["uv", "run", "--frozen", "python", "-m", "src.infra.self_hosted_bootstrap"]
+    command: ["uv", "run", "--frozen", "python", "-m", "src.platform.project.self_hosted_bootstrap"]
     depends_on:
       migrate:
         condition: service_completed_successfully

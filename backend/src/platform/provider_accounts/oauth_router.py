@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.common_schemas import ApiResponse
-from src.provider.oauth.dependencies import (
+from src.platform.provider_accounts.oauth_dependencies import (
     get_notion_service,
     get_github_service,
     get_google_sheets_service,

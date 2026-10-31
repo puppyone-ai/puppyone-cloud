@@ -249,7 +249,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/projects/{project_id}/dashboard/resources`, `/api/v1/activity/items` | project/resource_dashboard, activity/public_router | Domain-qualified read-only aggregates; no legacy DTO fallback |
 | `/api/v1/db-connector`, old GitHub/dashboard/activity URLs | retired resource routes | Not mounted; target-environment release/configuration evidence remains separate |
 | `/api/v1/publishes` | context_publish | Public JSON short links |
-| `/api/v1/oauth` | provider/oauth | OAuth authorization (9+ platforms) |
+| `/api/v1/oauth` | platform/provider_accounts | OAuth authorization (9+ platforms) |
 | `/api/v1/auth` | auth | Authentication (login/refresh) |
 | `/api/v1/analytics` | analytics | Usage statistics |
 | `/api/v1/profile` | profile | User profile & onboarding |

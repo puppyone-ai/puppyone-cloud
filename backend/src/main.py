@@ -98,7 +98,7 @@ project_router_duration = time.time() - project_router_start
 from src.platform.organization.router import router as organization_router
 
 oauth_router_start = time.time()
-from src.provider.oauth.router import router as oauth_router
+from src.platform.provider_accounts.oauth_router import router as oauth_router
 
 oauth_router_duration = time.time() - oauth_router_start
 
@@ -685,7 +685,7 @@ def create_app() -> FastAPI:
 
     app.include_router(public_access_router, prefix="/api/v1")
     app.include_router(public_project_access_router, prefix="/api/v1")
-    from src.provider.accounts.router import router as gateway_router
+    from src.platform.provider_accounts.accounts_router import router as gateway_router
 
     app.include_router(gateway_router, prefix="/api/v1", tags=["gateways"])
 
