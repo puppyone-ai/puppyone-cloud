@@ -81,7 +81,6 @@ ACTIVE_RUNTIME_SCAN_ROOTS = (
     "frontend/app/(main)/projects/[projectId]",
     "frontend/components",
     "scripts",
-    "tests/e2e",
 )
 
 ALLOWED_DEFERRED_DB_NAME_FILES = {

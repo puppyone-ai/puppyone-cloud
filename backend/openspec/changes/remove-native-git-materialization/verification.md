@@ -100,7 +100,7 @@ explicit contract delta for the already-merged Cloud Agent API; 904 skips,
 34 xfails and 110 deselections remain separate from passed acceptance.
 
 The runtime, dependencies, migrations and runner are identical between those
-two tested commits. [Integration evidence and performance baseline](../../../../artifacts/tests/native-git-qubits/README.md)
+two tested commits. [Integration evidence and performance baseline](https://github.com/puppyone-ai/puppyone-cloud/blob/bb7362358fec230ce9e1f5a3e4eea09b86ba1119/artifacts/tests/native-git-qubits/README.md)
 record exact Git identities, results, resources and the bounded 1/2/4/8-client
 load profile. This is local development acceptance; no remote push or hosted
 load was performed. The original implementation receipts above remain intact.

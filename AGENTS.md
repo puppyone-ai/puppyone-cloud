@@ -102,11 +102,10 @@ It aggregates information scattered across various sources into a unified Contex
 - **`backend/`** — Python (FastAPI) backend service
 - **`frontend/`** — Next.js frontend application
 - **`cli/`** — Node.js command-line tool (Commander.js)
-- **`sandbox/`** — Docker sandbox environment (JSON editing / code execution)
 
 ## Deprecated Directories (do not modify)
 
-- `PuppyEngine`, `PuppyFlow`, `PuppyStorage`, `tools`
+- `archived/` (`PuppyEngine`, `PuppyFlow`, `PuppyStorage`)
 
 ---
 
@@ -457,16 +456,7 @@ See `docs/architecture/03-cli.md` for full reference.
 
 ## Sandbox
 
-Lightweight Docker sandbox environment for securely executing CLI commands (e.g. `jq` for JSON editing) in isolated containers.
-
-```
-sandbox/
-├── README.md          # Usage docs
-├── Dockerfile         # Alpine + jq/bash/coreutils
-└── test-data.json     # Sample test data
-```
-
-Both the frontend (`app/api/sandbox/route.ts`) and backend (`src/platform/sandbox/`) integrate with sandboxes; the backend provider layer supports Fly, E2B and local Docker.
+The backend provider layer in `backend/src/platform/sandbox/` supports Fly, E2B and local Docker. The sandbox image is built from `backend/agent-worker`.
 
 ---
 

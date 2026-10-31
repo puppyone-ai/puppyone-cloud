@@ -914,15 +914,5 @@
     "no-nested-ternary": {
       "count": 1
     }
-  },
-  "packages/editor-ui/src/PuppyoneEditorHost.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/editor-ui/src/conflictMarkers.ts": {
-    "no-nested-ternary": {
-      "count": 1
-    }
   }
 }

@@ -10,7 +10,7 @@ const config = [
   {
     ignores: [
       '**/node_modules/**', '**/.next*/**', '**/out/**', '**/dist/**',
-      '**/coverage/**', '**/next-env.d.ts', 'artifacts/**',
+      '**/coverage/**', '**/next-env.d.ts',
     ],
   },
   ...compat.extends('next/core-web-vitals'),
