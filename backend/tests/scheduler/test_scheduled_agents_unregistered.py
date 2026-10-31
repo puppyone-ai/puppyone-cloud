@@ -1,4 +1,4 @@
-"""Automation is not offered: nothing registers a scheduled Agent."""
+"""Automation and Synchronize are not offered: nothing registers their jobs."""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -11,7 +11,7 @@ from src.platform.access.adapters.agent.config import router
 
 
 @pytest.mark.asyncio
-async def test_starting_the_scheduler_loads_no_scheduled_agent(monkeypatch):
+async def test_starting_the_scheduler_loads_no_agent_or_sync_job(monkeypatch):
     jobs = []
 
     class FakeScheduler:
@@ -25,20 +25,18 @@ async def test_starting_the_scheduler_loads_no_scheduled_agent(monkeypatch):
             jobs.append(func)
             return SimpleNamespace(next_run_time=None)
 
-    async def loaded(_self):
-        return None
-
     async def forbidden(_self):
-        raise AssertionError("scheduled Agents must not be registered")
+        raise AssertionError("scheduled Agents and syncs must not be registered")
 
     monkeypatch.setattr(scheduler_module, "AsyncIOScheduler", FakeScheduler)
     monkeypatch.setattr(scheduler_module.SchedulerService, "_load_scheduled_agents", forbidden)
-    monkeypatch.setattr(scheduler_module.SchedulerService, "_load_scheduled_syncs", loaded)
+    monkeypatch.setattr(scheduler_module.SchedulerService, "_load_scheduled_syncs", forbidden)
     monkeypatch.setattr(scheduler_module.scheduler_settings, "enabled", True)
 
     await scheduler_module.SchedulerService().start()
 
     assert scheduler_module.execute_agent_task not in jobs
+    assert scheduler_module.execute_sync_pull not in jobs
 
 
 def update(service, agent, **fields):

@@ -1,0 +1,20 @@
+{
+  "paths": {
+    "added": {
+      "/api/v1/projects/{project_id}/workbench/publish": "7c92f0522ce0a704fc8ee6217a8c4e99929723df3c2ee410e64861dcfb10d7e5",
+      "/api/v1/projects/{project_id}/workbench/sync": "f3f05ec13275caf2290830f8c4be02a1df286cb811d3985497dc8c683b06fb31",
+      "/api/v1/projects/{project_id}/workbench/sync/abort": "22452ac92c466903333fb3a1fd696d2351ff03be72e23c51d51e4306abeb16f4",
+      "/api/v1/projects/{project_id}/workbench/sync/finish": "1e46fd668e1b471c76def25f00c7e27d238029c4485c0e66d05a759069e7f188"
+    },
+    "changed": {},
+    "removed": {}
+  },
+  "schemas": {
+    "added": {
+      "WorkspaceGitRequest": "ab27057afa139fe5fc65f42f74cdf53fa551adfcabc421f3463046018f58da62",
+      "WorkspaceSyncRequest": "09adc954532fedd90cfb009a8490fc46d8e0c0e6b9c957df933caf79461f41da"
+    },
+    "changed": {},
+    "removed": {}
+  }
+}

@@ -76,8 +76,8 @@ class SchedulerService:
 
     Responsibilities:
     - Start/stop the scheduler
-    - Run maintenance and synchronization jobs
-    - Keep the agent job path, which nothing registers while Automation is off
+    - Run maintenance jobs
+    - Keep the agent and sync job paths, which nothing registers while they are off
     """
 
     _instance: Optional["SchedulerService"] = None
@@ -130,8 +130,7 @@ class SchedulerService:
         self.scheduler.start()
         self._started = True
 
-        # Automation is not offered, so scheduled Agents are never registered.
-        await self._load_scheduled_syncs()
+        # Automation and Synchronize are not offered, so neither registers a job.
 
         if settings.VERSION_OUTBOX_ENABLED:
             self.scheduler.add_job(

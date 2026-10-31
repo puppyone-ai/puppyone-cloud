@@ -452,7 +452,39 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, change in search[category]["changed"].items():
             assert expected["contract"][category][name] == change["before"]
             expected["contract"][category][name] = change["after"]
+    # External sources are not offered: agents reach a Project through MCP, CLI,
+    # SSH and Git. The delta names every route and schema that left with them.
+    synchronize = json.loads(
+        Path(__file__).with_name("synchronize_retirement_contract_delta.json").read_text()
+    )
+    assert all("/synchronize" in name for name in synchronize["paths"]["removed"])
+    assert not any(
+        category[kind]
+        for category in (synchronize["paths"], synchronize["schemas"])
+        for kind in ("added", "changed")
+    )
+    for category in ("paths", "schemas"):
+        for name, digest in synchronize[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
+    handoff = json.loads(
+        Path(__file__).with_name("workspace_branch_handoff_contract_delta.json").read_text()
+    )
+    assert set(handoff["paths"]["added"]) == {
+        f"/api/v1/projects/{{project_id}}/workbench/{action}"
+        for action in ("publish", "sync", "sync/abort", "sync/finish")
+    }
+    assert set(handoff["schemas"]["added"]) == {"WorkspaceGitRequest", "WorkspaceSyncRequest"}
+    for category in ("paths", "schemas"):
+        for name, digest in handoff[category]["added"].items():
+            assert name not in expected["contract"][category]
+            expected["contract"][category][name] = digest
     assert contract(app.openapi()) == expected["contract"]
+
+
+def test_external_synchronization_is_not_registered():
+    from src.main import app
+
+    assert not [route.path for route in app.routes if "/synchronize" in route.path]
 
 
 def test_access_domain_kind_and_target_are_serialized_without_legacy_provider():

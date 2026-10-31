@@ -640,17 +640,6 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
-    from src.platform.synchronize.public_router import router as synchronize_public_router
-
-    app.include_router(synchronize_public_router, prefix="/api/v1")
-    # Final resource release: only canonical binding/pull/push/webhook contracts.
-    from src.platform.synchronize.github.public_router import router as synchronize_github_router
-    from src.platform.synchronize.github.public_router import (
-        webhook_router as synchronize_github_webhook_router,
-    )
-
-    app.include_router(synchronize_github_router)
-    app.include_router(synchronize_github_webhook_router)
     from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
 
     app.include_router(hosted_ssh_router)
