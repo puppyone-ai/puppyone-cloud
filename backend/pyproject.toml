@@ -94,6 +94,94 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.importlinter]
+root_package = "src"
+
+[[tool.importlinter.contracts]]
+name = "Dependencies only point downward"
+type = "layers"
+layers = [
+    "src.main",
+    "src.internal : src.platform : src.content : src.tool : src.context_publish : src.file_operations : src.ingest",
+    "src.version_engine",
+    "src.infra : src.provider",
+    "src.exception_handler : src.exceptions : src.config : src.utils : src.schemas : src.common_schemas",
+]
+# Existing violations. Remove an entry when its import is fixed; never add one.
+# tests/platform/test_import_layers.py pins the count.
+ignore_imports = [
+    "src.config -> src.version_engine.domain.git_pack_limits",
+    "src.infra.file_processing.rules.dependencies -> src.platform.auth.dependencies",
+    "src.infra.file_processing.rules.dependencies -> src.platform.auth.models",
+    "src.infra.s3.service -> src.platform.project.write_lease",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.dependencies",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.runtime.control.models",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.access.surface_repository",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.factory",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.models",
+    "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.service",
+    "src.infra.scheduler.jobs.import_job_reaper -> src.platform.imports.config",
+    "src.infra.scheduler.jobs.import_job_reaper -> src.platform.imports.repository",
+    "src.infra.scheduler.jobs.native_projection_job -> src.version_engine.bootstrap.dependencies",
+    "src.infra.scheduler.jobs.native_projection_job -> src.version_engine.derived.native_events",
+    "src.infra.scheduler.jobs.native_projection_job -> src.version_engine.derived.notifications",
+    "src.infra.scheduler.jobs.object_gc_job -> src.version_engine.derived.object_gc_worker",
+    "src.infra.scheduler.jobs.object_integrity_job -> src.version_engine.derived.object_integrity_worker",
+    "src.infra.scheduler.jobs.project_deletion_cleanup_job -> src.platform.project.deletion_cleanup",
+    "src.infra.scheduler.jobs.project_initialization_reconciler_job -> src.platform.project.initialization_reconciler",
+    "src.infra.scheduler.jobs.sync_job -> src.platform.synchronize.arq_client",
+    "src.infra.scheduler.jobs.sync_job -> src.platform.synchronize.repository",
+    "src.infra.scheduler.jobs.sync_job -> src.platform.synchronize.run_repository",
+    "src.infra.scheduler.jobs.sync_run_reaper -> src.platform.synchronize.run_repository",
+    "src.infra.scheduler.jobs.upload_job_reaper -> src.platform.upload.repository",
+    "src.infra.scheduler.service -> src.platform.access.surface_repository",
+    "src.infra.search.text_indexer -> src.version_engine.infrastructure.supabase.text_index_repository",
+    "src.infra.search.text_indexer -> src.version_engine.write_engine.git_object_format",
+    "src.infra.self_hosted_bootstrap -> src.platform.project.storage_inventory",
+    "src.infra.supabase -> src.content.table.supabase_repo",
+    "src.infra.supabase -> src.content.table.supabase_schemas",
+    "src.infra.supabase -> src.platform.project.supabase_repo",
+    "src.infra.supabase -> src.platform.project.supabase_schemas",
+    "src.infra.supabase.repository -> src.content.table.supabase_repo",
+    "src.infra.supabase.repository -> src.content.table.supabase_schemas",
+    "src.infra.supabase.repository -> src.context_publish.supabase_repo",
+    "src.infra.supabase.repository -> src.context_publish.supabase_schemas",
+    "src.infra.supabase.repository -> src.platform.project.supabase_repo",
+    "src.infra.supabase.repository -> src.platform.project.supabase_schemas",
+    "src.infra.supabase.repository -> src.tool.supabase_repo",
+    "src.infra.supabase.repository -> src.tool.supabase_schemas",
+    "src.provider.accounts.router -> src.platform.auth.dependencies",
+    "src.provider.accounts.router -> src.platform.auth.models",
+    "src.provider.accounts.router -> src.platform.organization.dependencies",
+    "src.provider.oauth.dependencies -> src.platform.auth.dependencies",
+    "src.provider.oauth.router -> src.platform.auth.dependencies",
+    "src.version_engine.admission.channel_pause -> src.platform.access.model_repository",
+    "src.version_engine.admission.channel_pause -> src.platform.repository_target.auth_context",
+    "src.version_engine.admission.channel_pause -> src.platform.repository_target.models",
+    "src.version_engine.admission.connector_policy -> src.platform.access.model_repository",
+    "src.version_engine.admission.connector_policy -> src.platform.repository_target.auth_context",
+    "src.version_engine.admission.connector_policy -> src.platform.repository_target.models",
+    "src.version_engine.admission.identity -> src.platform.access.credentials",
+    "src.version_engine.admission.identity -> src.platform.access.models",
+    "src.version_engine.admission.identity -> src.platform.auth.dependencies",
+    "src.version_engine.admission.identity -> src.platform.auth.service",
+    "src.version_engine.admission.identity -> src.platform.authorization.factory",
+    "src.version_engine.admission.identity -> src.platform.authorization.models",
+    "src.version_engine.admission.identity -> src.platform.authorization.service",
+    "src.version_engine.admission.identity -> src.platform.repository_target.models",
+    "src.version_engine.admission.repo_facade -> src.platform.repository_target.auth_context",
+    "src.version_engine.admission.repo_facade -> src.platform.repository_target.models",
+    "src.version_engine.bootstrap.container -> src.file_operations.commands",
+    "src.version_engine.bootstrap.container -> src.file_operations.operation_adapter",
+    "src.version_engine.bootstrap.dependencies -> src.file_operations.commands",
+    "src.version_engine.bootstrap.dependencies -> src.file_operations.operation_adapter",
+    "src.version_engine.infrastructure.supabase.billing_repository -> src.platform.billing.storage",
+    "src.version_engine.infrastructure.supabase.repo_manager -> src.platform.project.write_lease",
+    "src.version_engine.infrastructure.supabase.usage_reconciliation -> src.platform.billing.storage",
+    "src.version_engine.write_engine.ref_transaction -> src.platform.authorization.models",
+    "src.version_engine.write_engine.ref_transaction -> src.platform.repository_target.models",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
@@ -103,4 +191,9 @@ markers = [
     "e2e: end-to-end tests that may call real external services",
     "integration: integration tests that call live third-party APIs or require explicit operator opt-in",
     "network: tests that require public internet access and should run only in non-blocking smoke jobs",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
 ]

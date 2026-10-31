@@ -80,6 +80,19 @@ derived projection jobs.**
   Git URL、Scope key 与本地路径都不是 authority。新增 Project-scoped route 必须
   登记在 `src/platform/authorization/manifest.py`。
 
+## 依赖方向
+
+依赖只能从上往下。`uv run lint-imports` 负责检查，CI 通过
+`tests/platform/test_import_layers.py` 执行：
+
+1. 入口与组装：`src.main`
+2. 业务层：`platform`、`content`、`tool`、`context_publish`、`file_operations`、`ingest`、`internal`
+3. 核心层：`version_engine`
+4. 基础层：`infra`、`provider`
+5. 通用层：`config`、`exceptions`、`utils`、`schemas`、`common_schemas`、`exception_handler`
+
+`pyproject.toml` 的 `ignore_imports` 是待清理的存量违规：修一处删一条，不要新增。
+
 ## 项目结构
 
 ```
