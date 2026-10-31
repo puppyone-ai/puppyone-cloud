@@ -14,7 +14,7 @@ from src.platform.access.adapters.agent.config.models import Agent
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction, ProjectGrant
+from src.shared_types.grants import ProjectAction, ProjectGrant
 from src.platform.authorization.service import AuthorizationService
 
 

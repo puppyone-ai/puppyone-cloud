@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass
 
-from src.platform.authorization.models import ProjectGrant
+from src.shared_types.grants import ProjectGrant
 
 
 @dataclass(frozen=True, slots=True)

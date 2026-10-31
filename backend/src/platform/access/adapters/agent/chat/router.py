@@ -21,7 +21,7 @@ from src.common_schemas import ApiResponse
 from src.platform.access.adapters.agent.config.dependencies import get_agent_config_service
 from src.platform.access.adapters.agent.config.service import AgentConfigService
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.readiness import ProjectReadinessService
 

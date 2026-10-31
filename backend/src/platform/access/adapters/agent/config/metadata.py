@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.platform.authorization.models import ProjectGrant
+from src.shared_types.grants import ProjectGrant
 
 
 def read_path_metadata(

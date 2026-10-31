@@ -18,7 +18,7 @@ from src.infra.execution.runner import run_owned
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.synchronize.arq_client import SyncArqClient
 from src.platform.synchronize.config_contract import (
@@ -352,7 +352,7 @@ async def create_connection(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
 
     _ensure_project_access(
         authorization,
@@ -773,7 +773,7 @@ async def bootstrap(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
 
     _ensure_project_access(
         authorization,
@@ -924,7 +924,7 @@ async def trigger_push(
 ):
     import json as _json
 
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
     from src.version_engine.read.tree_reader import detect_type
 
     grant = await run_owned(

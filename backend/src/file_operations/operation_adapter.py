@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from src.file_operations.queries import ProductQueries, open_query_session
 from src.infra.execution.runner import run_blocking
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.read.native_tree_reader import open_tree_read
 from src.version_engine.write_engine.errors import NativeRevisionConflictError

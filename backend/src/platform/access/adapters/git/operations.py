@@ -19,7 +19,7 @@ from src.platform.access.repository_schemas import (
     NativeOperationStatusEnvelope,
     NativeRepositoryMetadataEnvelope,
 )
-from src.platform.authorization.models import RuntimeGrant
+from src.shared_types.grants import RuntimeGrant
 from src.version_engine.bootstrap.dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 

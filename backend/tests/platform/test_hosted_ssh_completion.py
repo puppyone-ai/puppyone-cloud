@@ -13,7 +13,7 @@ from postgrest.exceptions import APIError
 from src.platform.access.adapters.ssh import gateway
 from src.platform.access.adapters.ssh.hosted import HostedSshAccess, public_key
 from src.platform.access.sessions import AccessSessions
-from src.platform.authorization.models import AccessCapability
+from src.shared_types.grants import AccessCapability
 from src.platform.authorization.service import validate_access_shape
 from src.platform.workspace.connections import ConnectionRepository, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError

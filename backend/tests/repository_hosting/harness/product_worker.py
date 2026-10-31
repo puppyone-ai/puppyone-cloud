@@ -18,9 +18,9 @@ from botocore.config import Config
 from supabase import ClientOptions, create_client
 
 from src.infra.s3.service import S3Service
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.write_engine.tree_patch import splice_batch
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter

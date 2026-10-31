@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 
 from src.platform.activity.repository import ACTIVITY_KINDS, ActivityRepository
 from src.platform.activity.schemas import ActivityItemResponse
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 
 

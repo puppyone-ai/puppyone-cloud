@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import redacted_project_ref
 
 logger = logging.getLogger(__name__)

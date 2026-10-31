@@ -22,7 +22,7 @@ from src.infra.s3.service import S3Service
 from src.platform.access.adapters.mcp_endpoint.schemas import McpAccessItem
 from src.platform.access.adapters.mcp_endpoint.service import McpEndpointService
 from src.platform.access.credential_repository import AccessCredentialRepository
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.service import EntitlementService
 from src.platform.landing import tickets

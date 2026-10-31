@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.imports.database import public_router as public
 from src.platform.imports.database import service as services
 from src.platform.imports.database.dependencies import get_database_import_service

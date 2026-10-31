@@ -15,7 +15,7 @@ from src.config import settings
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.scope_service import ScopeService
 from src.platform.repository_target.scope_service import get_scope_service

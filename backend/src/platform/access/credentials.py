@@ -12,14 +12,14 @@ from fastapi import HTTPException
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
 from src.platform.access.models import ResolvedScopeCredential
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import ResolvedRepositoryView
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import ResolvedRepositoryView
 
 
 def resolve_access_point(access_key: str, *, channel: str = "git") -> tuple[str, dict]:
     from src.infra.supabase.client import SupabaseClient
     from src.platform.access.credential_repository import AccessCredentialRepository
-    from src.platform.repository_target.models import ProjectRootTarget
+    from src.shared_types.repository_target import ProjectRootTarget
 
     try:
         resolved = AccessCredentialRepository(

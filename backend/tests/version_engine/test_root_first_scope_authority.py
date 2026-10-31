@@ -8,8 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import ResolvedRepositoryView, ScopeTarget
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
 

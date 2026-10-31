@@ -14,7 +14,7 @@ from src.platform.access.adapters.agent.config.router import router as agent_con
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
 
 

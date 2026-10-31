@@ -8,7 +8,7 @@ from pathlib import Path
 # Executed from an owned bare repository, outside the application import path.
 # Import only the dependency-free contract; never Settings or storage services.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from src.version_engine.domain.git_pack_limits import (
+from src.shared_types.git_pack_limits import (
     MAX_OBJECT_BYTES,
     MAX_OBJECTS,
     MAX_SECONDS,

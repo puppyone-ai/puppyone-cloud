@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     GrantSource,
     ProjectCapability,
     ProjectGrant,
@@ -82,7 +82,7 @@ async def test_native_operation_status_http_is_current_read_and_sanitizes_failur
     from fastapi import HTTPException, Response
     from httpx import ConnectError
 
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
     from src.platform.access.adapters.api.operations import read_operation_status
 
     main_thread = threading.get_ident()
@@ -112,8 +112,8 @@ async def test_native_operation_status_http_is_current_read_and_sanitizes_failur
 
 
 def runtime_grant(*, scoped=False):
-    from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-    from src.platform.repository_target.models import (
+    from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+    from src.shared_types.repository_target import (
         ProjectRootTarget,
         ResolvedRepositoryView,
         ScopeTarget,

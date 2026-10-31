@@ -511,7 +511,7 @@ def test_access_domain_kind_and_target_are_serialized_without_legacy_provider():
 
     from src.platform.access.models import AccessSurface
     from src.platform.access.public_router import list_project_access_surfaces
-    from src.platform.repository_target.models import ProjectRootTarget
+    from src.shared_types.repository_target import ProjectRootTarget
 
     surface = AccessSurface(
         id="surface-1",

@@ -6,7 +6,7 @@ import pytest
 
 from src.file_operations.commands import VersionWriteCommandService
 from src.file_operations.native_commands import compile_native_command
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.storage.object_store import ObjectStore
 from src.version_engine.write_engine.git_object_format import encode_object
 from src.version_engine.write_engine.native_operation_writer import NativeWriteBase

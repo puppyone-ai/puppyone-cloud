@@ -23,8 +23,8 @@ from src.platform.access.adapters.cli import (
     write as cli_write,
 )
 from src.platform.access.adapters.cli.context import _filter_entries
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import (
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,

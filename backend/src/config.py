@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.version_engine.domain.git_pack_limits import (
+from src.shared_types.git_pack_limits import (
     DEFAULT_PACK_SCRATCH_BYTES,
     DEFAULT_STORED_PACK_BYTES,
     MAX_RECEIVE_PACK_BYTES,
@@ -388,7 +388,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_git_transport_caps(self):
-        from src.version_engine.domain.git_pack_limits import PackLimits
+        from src.shared_types.git_pack_limits import PackLimits
 
         PackLimits(
             receive_bytes=self.GIT_MAX_RECEIVE_PACK_BYTES,

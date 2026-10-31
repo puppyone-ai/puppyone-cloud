@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.exceptions import NotFoundException
 from src.platform.auth.dependencies import get_current_user
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.version_engine.bootstrap.dependencies import get_version_admin_service
 from src.platform.access.adapters.api.history import get_project_head, history_router
 from src.version_engine.read.history_facts import read_commit_parent_ids

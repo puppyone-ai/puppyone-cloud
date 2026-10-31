@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import ResolvedRepositoryView, ScopeTarget
 from src.platform.upload.jobs import stage_blob_from_s3
 from src.version_engine.admission.repo_facade import repo_facade_from_auth
 from src.version_engine.domain.errors import ObjectNotFoundError

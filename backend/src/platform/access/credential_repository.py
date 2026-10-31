@@ -267,7 +267,7 @@ class AccessCredentialRepository:
             if str(surface["project_id"]) != str(credential["project_id"]):
                 return None
 
-            from src.platform.authorization.models import ProjectAction
+            from src.shared_types.grants import ProjectAction
             from src.platform.authorization.repository import AuthorizationRepository
             from src.platform.authorization.service import AuthorizationService
 

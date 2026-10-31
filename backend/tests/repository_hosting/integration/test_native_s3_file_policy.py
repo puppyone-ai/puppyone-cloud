@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode
+from src.shared_types.grants import RuntimeGrant, RuntimeMode
 from src.platform.project.write_lease import ProjectWriteLease, ProjectWriteLeaseRepository
 from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling

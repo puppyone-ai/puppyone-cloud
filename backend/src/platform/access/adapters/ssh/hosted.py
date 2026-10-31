@@ -15,7 +15,7 @@ from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
-from src.platform.authorization.models import AccessCapability, ProjectAction
+from src.shared_types.grants import AccessCapability, ProjectAction
 from src.platform.workspace.connections import RESUMABLE_STATES, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 

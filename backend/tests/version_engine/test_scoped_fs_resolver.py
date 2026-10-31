@@ -262,7 +262,7 @@ def _root_endpoint(**overrides):
 
 
 def _grant(role: str):
-    from src.platform.authorization.models import ROLE_CAPABILITIES, ProjectRole
+    from src.shared_types.grants import ROLE_CAPABILITIES, ProjectRole
 
     capabilities = ROLE_CAPABILITIES[ProjectRole(role)]
     return SimpleNamespace(allows=lambda action: action in capabilities)
@@ -343,7 +343,7 @@ def test_scope_bound_endpoints_still_wait_for_native_scope_views(monkeypatch):
 def test_the_runtime_grant_binds_reads_and_publication_to_the_endpoint(
     monkeypatch, role, policy, mode
 ):
-    from src.platform.repository_target.models import ProjectRootTarget
+    from src.shared_types.repository_target import ProjectRootTarget
 
     _wire(monkeypatch, _root_endpoint(), policy, _grant(role))
     grant = resolver.resolve_mcp_runtime("mcp_key").grant

@@ -21,7 +21,7 @@ from src.platform.access.adapters.agent.config.dependencies import (
 )
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.service import AuthorizationService
-from src.platform.authorization.models import ProjectGrant
+from src.shared_types.grants import ProjectGrant
 from src.platform.access.adapters.agent.config.metadata import read_path_metadata
 from src.platform.access.adapters.agent.config.models import Agent
 from src.platform.access.adapters.agent.config.schemas import (

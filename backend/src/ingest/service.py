@@ -24,7 +24,7 @@ from src.ingest.shared.task.normalizers import (
 from src.platform.imports.provider import detect_import_provider
 from src.platform.imports.repository import ImportJobRepository
 from src.platform.imports.schemas import ImportJobStatus
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 
 logger = logging.getLogger(__name__)

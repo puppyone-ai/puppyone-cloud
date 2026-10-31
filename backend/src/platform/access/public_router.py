@@ -31,7 +31,7 @@ from src.platform.authorization.dependencies import (
     get_authorization_service,
     require_project_action,
 )
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.platform.authorization.models import ProjectAction, ProjectGrant, RuntimeGrant
-from src.platform.repository_target.models import (
+from src.shared_types.grants import ProjectAction, ProjectGrant, RuntimeGrant
+from src.shared_types.repository_target import (
     RepositoryTarget,
     ResolvedRepositoryView,
 )

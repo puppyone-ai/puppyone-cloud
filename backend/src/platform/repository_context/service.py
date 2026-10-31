@@ -17,7 +17,7 @@ from src.exceptions import (
     PermissionException,
     ServiceUnavailableException,
 )
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.idempotency import canonical_payload_hash, raise_idempotency_outcome
 from src.platform.project.repository import ProjectRepositoryBase
@@ -27,7 +27,7 @@ from src.platform.repository_context.models import (
     RepositoryProjectContext,
 )
 from src.platform.repository_context.repository import RepositoryContextRepository
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     RepositoryTarget,
     ScopeTarget,

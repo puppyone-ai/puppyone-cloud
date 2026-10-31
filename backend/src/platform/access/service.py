@@ -15,7 +15,7 @@ from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.model_repository import AccessModelRepository
 from src.platform.access.models import ACCESS_KINDS, AccessSurface
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     RepositoryTarget,
     ScopeTarget,

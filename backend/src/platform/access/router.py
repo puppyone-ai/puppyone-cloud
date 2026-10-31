@@ -21,12 +21,12 @@ from src.platform.access import public_schemas as contracts
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.dependencies import resolve_org_ids
-from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.shared_types.repository_target import ProjectRootTarget, ScopeTarget
 from src.platform.repository_target.schemas import repository_target_schema
 from src.platform.access.credential_repository import AccessCredentialRepository
 

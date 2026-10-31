@@ -14,7 +14,7 @@ from src.config import settings
 from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
 
 from .errors import access_failure

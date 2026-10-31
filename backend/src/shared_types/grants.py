@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     RepositoryTarget,
     ResolvedRepositoryView,
 )

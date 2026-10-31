@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 
 class AuthorizationPlane(StrEnum):

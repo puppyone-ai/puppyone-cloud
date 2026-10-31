@@ -10,7 +10,7 @@ from src.platform.access.adapters.agent.runtime.control.admission import Admissi
 from src.platform.access.adapters.agent.runtime.control.models import public_run
 from src.platform.access.adapters.agent.runtime.control.ports import RunStore
 from src.platform.access.adapters.agent.runtime.dispatch import run_dispatch
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 
 def submission_digest(request):

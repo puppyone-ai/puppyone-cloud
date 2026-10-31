@@ -12,7 +12,7 @@ from src.exceptions import (
     PermissionException,
 )
 from src.platform.access.adapters.mcp_cache import invalidate_mcp_surface_cache
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.tool.models import Tool
 from src.tool.repository import ToolRepositoryBase

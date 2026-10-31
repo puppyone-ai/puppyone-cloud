@@ -14,7 +14,7 @@ from typing import Optional
 from postgrest.exceptions import APIError
 
 from src.exceptions import AppException, ErrorCode, NotFoundException
-from src.platform.repository_target.models import RepositoryScope
+from src.shared_types.repository_target import RepositoryScope
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
 
 

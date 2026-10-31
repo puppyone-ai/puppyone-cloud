@@ -159,7 +159,7 @@ def current_authorization_consumers(stack: LocalStack, status: dict) -> None:
     """Current production authorization against the complete current schema."""
     from src.infra.supabase import SupabaseClient
     from src.exceptions import NotFoundException
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
     from src.platform.authorization.repository import AuthorizationRepository
     from src.platform.authorization.service import AuthorizationService
 

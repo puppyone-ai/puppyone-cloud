@@ -90,6 +90,7 @@ derived projection jobs.**
 3. 核心层：`version_engine`
 4. 基础层：`infra`、`provider`
 5. 通用层：`config`、`exceptions`、`utils`、`schemas`、`common_schemas`、`exception_handler`
+6. 纯类型：`shared_types`（授权工牌、仓库目标等，不 import 任何 `src` 代码）
 
 `pyproject.toml` 的 `ignore_imports` 是待清理的存量违规：修一处删一条，不要新增。
 

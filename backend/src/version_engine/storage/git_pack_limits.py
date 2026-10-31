@@ -1,6 +1,6 @@
 """Application binding for the pure Git pack resource contract."""
 
-from src.version_engine.domain.git_pack_limits import (
+from src.shared_types.git_pack_limits import (
     MAX_METADATA_BYTES,
     MAX_OBJECT_BYTES,
     MAX_OBJECTS,

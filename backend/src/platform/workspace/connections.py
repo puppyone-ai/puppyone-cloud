@@ -9,7 +9,7 @@ from uuid import UUID
 from postgrest.exceptions import APIError
 
 from src.infra.execution.runner import run_blocking
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 from .errors import WorkspaceError
 from .execution.shell import WorkspaceShell

@@ -21,7 +21,7 @@ from supabase import ClientOptions, create_client
 from src.infra.data_migrations.catalog import DataMigrationCatalog
 from src.infra.data_migrations.database import PsqlClient
 from src.infra.data_migrations.runner import DataMigrationRunner
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     GrantSource,
     ProjectCapability,
     ProjectGrant,

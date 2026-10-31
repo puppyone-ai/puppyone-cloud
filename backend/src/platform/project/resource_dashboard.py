@@ -19,7 +19,7 @@ from src.platform.access.public_schemas import AccessKind
 from src.platform.access.router import _redact_config
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.project.dashboard_router import (
     DashboardNodeCounts,
     DashboardProject,

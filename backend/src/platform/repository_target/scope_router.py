@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from src.common_schemas import ApiResponse
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.platform.authorization.models import ProjectAction
-from src.platform.repository_target.models import RepositoryScope
+from src.shared_types.grants import ProjectAction
+from src.shared_types.repository_target import RepositoryScope
 from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.schemas import (
     ScopeAutoSuggestOut,

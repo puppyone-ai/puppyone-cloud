@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, PermissionException
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.landing import tickets
 from src.platform.landing.schemas import ClaimRequest
 from src.platform.landing.service import LandingService, _landing_mcp_api_key

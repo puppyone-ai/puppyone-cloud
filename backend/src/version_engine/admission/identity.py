@@ -23,7 +23,7 @@ from src.exceptions import ErrorCode
 from src.infra.supabase.client import SupabaseClient
 from src.platform.auth.dependencies import security
 from src.platform.authorization.service import redacted_project_ref
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
@@ -138,7 +138,7 @@ class PuppyOneAuthenticator:
             ) from error
         if resolved_credential:
             scope = resolved_credential.scope
-            from src.platform.authorization.models import (
+            from src.shared_types.grants import (
                 RuntimeGrant,
                 RuntimeMode,
                 RuntimePrincipal,

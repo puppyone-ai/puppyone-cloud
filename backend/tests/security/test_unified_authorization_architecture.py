@@ -5,7 +5,7 @@ from src.platform.authorization.manifest import (
     PROJECT_ROUTE_AUTHORIZATION,
     AuthorizationPlane,
 )
-from src.platform.authorization.models import ACTION_CAPABILITY, ProjectAction
+from src.shared_types.grants import ACTION_CAPABILITY, ProjectAction
 
 BACKEND = Path(__file__).resolve().parents[2]
 SRC = BACKEND / "src"

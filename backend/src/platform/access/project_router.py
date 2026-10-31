@@ -13,7 +13,7 @@ from src.platform.access.service import AccessService
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.repository_target.schemas import (
     repository_target_domain,
     repository_target_schema,

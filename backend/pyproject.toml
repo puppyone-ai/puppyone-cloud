@@ -106,17 +106,16 @@ layers = [
     "src.version_engine",
     "src.infra : src.provider",
     "src.exception_handler : src.exceptions : src.config : src.utils : src.schemas : src.common_schemas",
+    "src.shared_types",
 ]
 # Existing violations. Remove an entry when its import is fixed; never add one.
 # tests/platform/test_import_layers.py pins the count.
 ignore_imports = [
-    "src.config -> src.version_engine.domain.git_pack_limits",
     "src.infra.s3.service -> src.platform.project.write_lease",
     "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.dependencies",
     "src.infra.scheduler.jobs.agent_job -> src.platform.access.adapters.agent.runtime.control.models",
     "src.infra.scheduler.jobs.agent_job -> src.platform.access.surface_repository",
     "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.factory",
-    "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.models",
     "src.infra.scheduler.jobs.agent_job -> src.platform.authorization.service",
     "src.infra.scheduler.jobs.import_job_reaper -> src.platform.imports.config",
     "src.infra.scheduler.jobs.import_job_reaper -> src.platform.imports.repository",
@@ -137,29 +136,20 @@ ignore_imports = [
     "src.infra.search.text_indexer -> src.version_engine.write_engine.git_object_format",
     "src.version_engine.admission.channel_pause -> src.platform.access.model_repository",
     "src.version_engine.admission.channel_pause -> src.platform.repository_target.auth_context",
-    "src.version_engine.admission.channel_pause -> src.platform.repository_target.models",
     "src.version_engine.admission.connector_policy -> src.platform.access.model_repository",
     "src.version_engine.admission.connector_policy -> src.platform.repository_target.auth_context",
-    "src.version_engine.admission.connector_policy -> src.platform.repository_target.models",
     "src.version_engine.admission.identity -> src.platform.access.credentials",
     "src.version_engine.admission.identity -> src.platform.access.models",
     "src.version_engine.admission.identity -> src.platform.auth.dependencies",
     "src.version_engine.admission.identity -> src.platform.auth.service",
     "src.version_engine.admission.identity -> src.platform.authorization.factory",
-    "src.version_engine.admission.identity -> src.platform.authorization.models",
     "src.version_engine.admission.identity -> src.platform.authorization.service",
-    "src.version_engine.admission.identity -> src.platform.repository_target.models",
     "src.version_engine.admission.repo_facade -> src.platform.repository_target.auth_context",
-    "src.version_engine.admission.repo_facade -> src.platform.repository_target.models",
     "src.version_engine.bootstrap.container -> src.file_operations.commands",
     "src.version_engine.bootstrap.container -> src.file_operations.operation_adapter",
     "src.version_engine.bootstrap.dependencies -> src.file_operations.commands",
     "src.version_engine.bootstrap.dependencies -> src.file_operations.operation_adapter",
-    "src.version_engine.infrastructure.supabase.billing_repository -> src.platform.billing.storage",
     "src.version_engine.infrastructure.supabase.repo_manager -> src.platform.project.write_lease",
-    "src.version_engine.infrastructure.supabase.usage_reconciliation -> src.platform.billing.storage",
-    "src.version_engine.write_engine.ref_transaction -> src.platform.authorization.models",
-    "src.version_engine.write_engine.ref_transaction -> src.platform.repository_target.models",
 ]
 
 [tool.pytest.ini_options]

@@ -12,9 +12,9 @@ from src.infra.supabase.client import SupabaseClient
 from src.platform.access.adapters.git.locator import validate_git_locator_id
 from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.credentials import resolve_access_point
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.repository_target.auth_context import repository_view_from_auth
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,

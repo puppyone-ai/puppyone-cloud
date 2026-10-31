@@ -3,7 +3,7 @@
 
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.factory import build_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 from .credential_repository import access_token_hash, access_token_hash_candidates
 from .grant_repository import GrantRepository

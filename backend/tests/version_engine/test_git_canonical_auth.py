@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     RuntimeGrant,
     RuntimeMode,
     RuntimePrincipal,
 )
-from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.shared_types.repository_target import ResolvedRepositoryView, ScopeTarget
 from src.platform.access.adapters.git import auth as git_auth
 from src.platform.access.adapters.git import router as git_router
 from src.platform.access.adapters.git.locator import (

@@ -10,7 +10,7 @@ from src.config import settings
 from src.platform.access.adapters.agent.runtime.control.context import RunContext
 from src.platform.access.adapters.agent.runtime.control.ports import RunStore
 from src.platform.authorization.factory import build_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 
 def digest(value):

@@ -12,7 +12,7 @@ from src.exceptions import (
     NotFoundException,
     PermissionException,
 )
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ROLE_CAPABILITIES,
     GrantSource,
     ProjectGrant,
@@ -25,7 +25,7 @@ from src.platform.repository_context.schemas import (
     RepositoryContextResolveRequest,
 )
 from src.platform.repository_context.service import RepositoryContextService
-from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.shared_types.repository_target import ProjectRootTarget, ScopeTarget
 
 OPERATION_KEY = "123e4567-e89b-42d3-a456-426614174000"
 RAW_CREDENTIAL = "pwg_" + "A" * 43
