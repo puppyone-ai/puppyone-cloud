@@ -10,7 +10,7 @@ if (process.argv.length !== 4 || process.getuid() !== 0) throw new Error('Invali
 process.umask(0o002);
 const control = channel();
 let pending = Promise.resolve();
-const WORKSPACE_GIT = new Set(['save', 'sync', 'sync-finish', 'sync-abort', 'publish']);
+const WORKSPACE_GIT = new Set(['save', 'snapshot', 'push-snapshot', 'sync', 'sync-finish', 'sync-abort', 'publish']);
 
 // Platform-owned Workspace Git. The relay exists only for this one command, so
 // nothing a task or terminal starts can reach the Git service through it.
@@ -28,7 +28,7 @@ control.dispatch(frame => {
   pending = pending.then(async () => {
     try {
       let result;
-      if (frame.action === 'capabilities') result = { workbench_lifecycle: 1, workspace_git: 1, runtime: runtimeManifest };
+      if (frame.action === 'capabilities') result = { workbench_lifecycle: 1, workspace_git: 2, runtime: runtimeManifest };
       else if (frame.action === 'ready') { await requireWorkspace({workbench, generation}); result = {}; }
       else if (frame.action === 'initialize')
         result = await initializeWorkbench({ workbench, generation }, frame.value, control.request);
