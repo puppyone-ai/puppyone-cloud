@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please email security@puppyone.ai with details and steps to reproduce. Do not open a public issue for a vulnerability that could put users or credentials at risk.
+Please email guanqun.real@puppyone.ai with details and steps to reproduce. Do not open a public issue for a vulnerability that could put users or credentials at risk.
 
 ## Secrets and environment variables
 
