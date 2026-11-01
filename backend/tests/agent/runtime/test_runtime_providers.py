@@ -17,6 +17,7 @@ from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from src.platform.sandbox.registry import runtime_provider
 from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.shell import WorkspaceShell
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 from src.platform.workspace.service import WorkbenchAdmission
@@ -268,11 +269,40 @@ def test_every_workspace_gets_its_own_app(monkeypatch, fields):
     assert WorkbenchChannel(row).resource["app"] == workspace_app(row["id"])
 
 
-def test_without_an_org_no_workspace_is_placed_at_all(monkeypatch):
+@pytest.mark.asyncio
+async def test_without_an_org_no_workspace_is_placed_at_all(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_APP", "shared")
     monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "")
-    with pytest.raises(WorkspaceUnavailable, match="workbench_network_not_isolated"):
-        WorkbenchChannel(workspace_row(is_default=True))
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "backend-only")
+    channel = WorkbenchChannel(workspace_row(is_default=True))
+    assert "app" not in channel.resource  # Never the shared app, not even as a default.
+    client, calls = fly_api({})
+    host = SimpleNamespace(
+        resource=channel.resource, artifact="registry/app@sha256:" + "a" * 64, restore_point=None
+    )
+    async with client:
+        with pytest.raises(WorkspaceUnavailable, match="workbench_network_not_isolated"):
+            await FlyRuntimeProvider(client=client).allocate(host)
+    assert calls == []
+
+
+def test_a_channel_that_only_connects_is_built_for_a_persisted_workspace(monkeypatch):
+    # Regression from Fly acceptance: an SSH shell places nothing, so it has no
+    # Workspace of its own to name. Refusing it here would refuse every session.
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_ORG", "org")
+    execution = str(uuid4())
+    binding = {**resource(), "task_execution_id": execution, "task_uid": 20000}
+    connection = {
+        "id": execution,
+        "workbench_id": binding["workbench_id"],
+        "generation": binding["workbench_generation"],
+        "project_id": "project",
+        "resource": binding,
+        "binding": {"provider": "fly", "artifact": binding["image_id"]},
+        "compute_epoch": 1,
+        "task_uid": 20000,
+    }
+    assert WorkspaceShell(connection).resource["app"] == binding["app"]
 
 
 def test_fly_will_not_validate_without_an_org(monkeypatch):

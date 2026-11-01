@@ -32,7 +32,7 @@ from src.platform.sandbox.port import (
 )
 from src.platform.sandbox.timing import workspace_stage
 
-from .naming import NOT_ISOLATED, dedicated, require_dedicated, workspace_app
+from .naming import dedicated, require_dedicated, workspace_app
 from .transport import acquire_transport, close_transports
 
 # A deleted app frees its name asynchronously, and two owners can race to create it.
@@ -73,10 +73,12 @@ class FlyRuntimeProvider:
         return settings.CLOUD_AGENT_FLY_IMAGE
 
     def initialize(self, host):
+        # Runs for every channel, most of which only connect to a persisted resource.
+        # Without a Workspace of its own there is no app at all, never a shared one,
+        # so allocation and connection both refuse it.
         workspace = getattr(host, "dedicated_workspace", None)
-        if not workspace or not settings.CLOUD_AGENT_FLY_ORG:
-            raise WorkspaceUnavailable(NOT_ISOLATED)
-        host.resource["app"] = workspace_app(workspace)
+        if workspace and settings.CLOUD_AGENT_FLY_ORG:
+            host.resource["app"] = workspace_app(workspace)
         host.resource["image_id"] = host.artifact
 
     def bind_recovery(self, host):
