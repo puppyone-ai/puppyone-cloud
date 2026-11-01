@@ -162,7 +162,9 @@ def environment(monkeypatch):
     monkeypatch.setattr(dashboard, "compute_node_counts", lambda *_: DashboardNodeCounts())
     monkeypatch.setattr(dashboard, "fetch_tools", lambda *_: [])
     monkeypatch.setattr(dashboard, "fetch_uploads", lambda *_: [])
-    app.dependency_overrides[get_product_operation_adapter] = lambda: object()
+    app.dependency_overrides[get_product_operation_adapter] = lambda: SimpleNamespace(
+        for_grant=lambda _grant: object()
+    )
     app.dependency_overrides[get_project_repository] = lambda: SimpleNamespace(
         get_by_id=lambda project_id: SimpleNamespace(
             id=project_id, name="Project", description=None
@@ -172,6 +174,31 @@ def environment(monkeypatch):
         user_id="user-1", role="authenticated"
     )
     return (app,)
+
+
+def test_node_counts_read_the_tree_with_the_callers_grant(environment, monkeypatch):
+    (app,) = environment
+    bound, grants, read_with = object(), [], []
+
+    def for_grant(grant):
+        grants.append(grant)
+        return bound
+
+    def count(ops, _project_id):
+        read_with.append(ops)
+        return DashboardNodeCounts()
+
+    monkeypatch.setattr(dashboard, "compute_node_counts", count)
+    app.dependency_overrides[get_product_operation_adapter] = lambda: SimpleNamespace(
+        for_grant=for_grant
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/projects/project-1/dashboard/resources")
+
+    assert response.status_code == 200, response.text
+    assert read_with == [bound]
+    assert [grant.project_id for grant in grants] == ["project-1"]
 
 
 def test_canonical_dashboard_http_policy_selectors_and_response(environment):

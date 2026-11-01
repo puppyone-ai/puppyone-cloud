@@ -32,7 +32,7 @@ async def get_resource_dashboard(
     project_id = str(project.id)
     sb = SupabaseClient().client
     counts, resources, tools, uploads = await asyncio.gather(
-        run_blocking(compute_node_counts, ops, project_id),
+        run_blocking(compute_node_counts, ops.for_grant(authorized.grant), project_id),
         run_blocking(fetch_dashboard_resources, sb, project_id),
         run_blocking(fetch_tools, sb, project_id),
         run_blocking(fetch_uploads, sb, project_id),

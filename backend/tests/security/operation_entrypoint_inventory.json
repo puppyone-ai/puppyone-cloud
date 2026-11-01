@@ -4,7 +4,7 @@
     {
       "path": "platform/dashboard/sections.py",
       "function": "compute_node_counts",
-      "reason": "Mounted resource dashboard passes unbound ops; head and tree also use separate snapshots."
+      "reason": "Head and tree use separate snapshots."
     },
     {
       "path": "platform/access/identity_router.py",
