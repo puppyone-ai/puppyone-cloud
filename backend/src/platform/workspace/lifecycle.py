@@ -24,6 +24,9 @@ from .opening import awaiting_files
 
 logger = logging.getLogger(__name__)
 
+# How often maintenance proves from outside that a running machine is alone on its network.
+NETWORK_AUDIT_SECONDS = 600
+
 
 def meter_id(row):
     return f"cloud-workbench:{row['id']}:{row['generation']}:{row['compute_epoch']}"
@@ -68,6 +71,7 @@ class WorkbenchLifecycle:
         self.channel_factory, self.providers = service.channel_factory, service.providers
         self.channels, self.check = service.channels, service.check
         self.checked_until = {}
+        self.network_audited = {}
         self.preflight_lock = asyncio.Lock()
         self.active = {}
         # Last poll of this pool's open queue: (pending requests, oldest age in seconds).
@@ -92,6 +96,11 @@ class WorkbenchLifecycle:
         try:
             if not provider.capabilities.shared_workspace or not provider.capabilities.native_files:
                 raise ValueError("Workspace capabilities required")
+            if (
+                settings.APP_ENV in {"staging", "production"}
+                and not provider.capabilities.dedicated_network
+            ):
+                raise ValueError("Hosted Workspaces require a dedicated private network")
             provider.validate(binding["artifact"], (row or {}).get("resource"))
             async with self.preflight_lock:
                 # Existing resources are authenticated and checked by inspect /
@@ -508,6 +517,24 @@ class WorkbenchLifecycle:
         paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
         await run_blocking(self.repository.progress, paused, "paused")
 
+    async def _audit_network(self, host, row):
+        """A running machine that cannot prove its network stops being served.
+
+        The refusal is a PermissionError, so maintenance pauses the machine: its
+        disk is kept, and it cannot be connected to again until it is rebuilt.
+        """
+        if not host.runtime.capabilities.dedicated_network:
+            return
+        now = time.monotonic()
+        if now < self.network_audited.get(row["id"], 0):
+            return
+        try:
+            await host.runtime.verify_isolation(row["resource"])
+        except PermissionError:
+            logger.error("workspace_network_violation", extra={"workbench_id": row["id"]})
+            raise
+        self.network_audited[row["id"]] = now + NETWORK_AUDIT_SECONDS
+
     async def reap(self):
         for name in workspace_providers(self.providers(None).name):
             try:
@@ -560,6 +587,7 @@ class WorkbenchLifecycle:
                         host = self.channel_factory(row)
                         connection = await self.service.connection(row)
                         try:
+                            await self._audit_network(host, row)
                             await host.runtime.connect_task(host, host.resource, connection)
                             await host.runtime.renew(host)
                         finally:

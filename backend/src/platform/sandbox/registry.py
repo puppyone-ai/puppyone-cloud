@@ -16,10 +16,8 @@ PROVIDERS = {
 
 def default_provider() -> str:
     selected = settings.CLOUD_AGENT_SANDBOX_PROVIDER
-    if selected == "auto":
-        selected = settings.SANDBOX_TYPE
-    if selected == "auto":
-        selected = "e2b" if settings.E2B_API_KEY else "docker"
+    if not selected:
+        raise ValueError("CLOUD_AGENT_SANDBOX_PROVIDER is required; there is no default provider")
     if selected not in PROVIDERS:
         raise ValueError(f"Unsupported Agent sandbox provider: {selected}")
     return selected

@@ -46,8 +46,9 @@ class Settings(BaseSettings):
 
     # Service configuration
     APP_NAME: str = "ContextBase"
+    # Required, with no default: every hosted safety check below depends on it, so
+    # a process that does not know where it runs must not start.
     APP_ENV: Literal["development", "test", "staging", "production"] = Field(
-        default="development",
         validation_alias=AliasChoices("APP_ENV", "ENVIRONMENT"),
     )
     DEBUG: bool | None = None
@@ -349,39 +350,41 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_hosted_sandbox_safety(self):
-        """Hosted deployments may never fall back to a shared-kernel Docker sandbox."""
+        """A hosted Workspace needs proven isolation, or the process does not start.
+
+        Only Fly gives each Workspace its own VM and private network. Nothing here
+        falls back: a missing value refuses to start rather than running with less.
+        """
         if self.APP_ENV in {"staging", "production"}:
             existing = {
                 name.strip()
                 for name in self.CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS.split(",")
                 if name.strip()
             }
-            if not existing <= {"fly", "e2b", "sprites"}:
-                raise ValueError("Hosted existing sandbox providers must be Fly, E2B or Sprites")
+            if not existing <= {"fly"}:
+                raise ValueError("Hosted existing sandbox providers must be Fly")
             if self.CLOUD_AGENT_SANDBOX_PROVIDER == "docker":
-                raise ValueError(
-                    "Hosted Cloud Agent requires E2B, Fly or Sprites (no Docker fallback)"
-                )
+                raise ValueError("Hosted deployments never use the shared-kernel Docker sandbox")
             if self.SANDBOX_TYPE != "e2b":
                 raise ValueError("Hosted SANDBOX_TYPE must be 'e2b' (no Docker fallback)")
             if self.SERVICE_ROLE not in WORKSPACE_ROLES:
                 # Upload, import, synchronize and the MCP transport never operate a
                 # workspace: they neither hold nor validate its provider credentials.
                 pass
-            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "fly":
+            elif self.CLOUD_AGENT_SANDBOX_PROVIDER != "fly":
+                raise ValueError("Hosted Workspaces require CLOUD_AGENT_SANDBOX_PROVIDER=fly")
+            else:
                 if not self.CLOUD_AGENT_FLY_APP or not self.CLOUD_AGENT_FLY_TOKEN:
                     raise ValueError(
                         "Fly Cloud Agent requires CLOUD_AGENT_FLY_APP and CLOUD_AGENT_FLY_TOKEN"
                     )
+                if not self.CLOUD_AGENT_FLY_ORG:
+                    raise ValueError(
+                        "Fly Cloud Agent requires CLOUD_AGENT_FLY_ORG: each Workspace needs "
+                        "its own private network"
+                    )
                 if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", self.CLOUD_AGENT_FLY_IMAGE):
                     raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
-            elif self.CLOUD_AGENT_SANDBOX_PROVIDER == "sprites":
-                if not self.CLOUD_AGENT_SPRITES_TOKEN or not self.CLOUD_AGENT_SPRITES_BUNDLE:
-                    raise ValueError("Sprites requires CLOUD_AGENT_SPRITES_TOKEN and worker bundle")
-                if not re.fullmatch(r"[a-f0-9]{64}", self.CLOUD_AGENT_SPRITES_SHA256):
-                    raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
-            elif not self.E2B_API_KEY:
-                raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
             if not self.SANDBOX_REAPER_ENABLED:
                 raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
         return self
@@ -431,15 +434,16 @@ class Settings(BaseSettings):
     # Process role chosen by scripts/start-service.sh. Only roles that operate
     # Agent workspaces hold and validate the workspace provider's credentials.
     SERVICE_ROLE: str = "api"
-    # Only new Agent workspaces use this default. Existing bindings remain pinned.
-    CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
-    # Existing bindings remain on their provider; new workspaces use the default above.
-    CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
+    # Required for any process that operates a Workspace; there is no default provider.
+    # It applies to new Workspaces only. Existing bindings remain pinned.
+    CLOUD_AGENT_SANDBOX_PROVIDER: str = ""
+    # Providers kept for existing bindings, named explicitly; never a fallback for new ones.
+    CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = ""
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
-    # Set to give each internal and external Agent Workspace its own app and private network.
+    # Required for Fly: every Workspace gets its own app and private network in this org.
     CLOUD_AGENT_FLY_ORG: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
