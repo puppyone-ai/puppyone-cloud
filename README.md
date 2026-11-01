@@ -14,17 +14,11 @@
   </p>
 </div>
 
-[puppyone](https://github.com/puppyone-ai/puppyone) is the folder your agents
-live in. It runs on your computer and needs no account. Cloud is the optional
-part: put a folder on Cloud and you get a cloud project that stays online after
-you close your laptop, where your team and agents can work together.
+[puppyone](https://github.com/puppyone-ai/puppyone) is the folder your agents live in. It runs on your computer and needs no account. Cloud is the optional part: put a folder on Cloud and you get a cloud project that stays online after you close your laptop, where your team and agents can work together.
 
-Every cloud project is a real Git repository, so each change is recorded and can
-be rolled back. People and agents reach it through the web app, Git, MCP, the CLI
-or the REST API.
+Every cloud project is a real Git repository, so each change is recorded and can be rolled back. People and agents reach it through the web app, Git, MCP, the CLI or the REST API.
 
-This repository contains that infrastructure: the API, the Cloud web app, the
-version engine and the database migrations.
+This repository contains that infrastructure: the API, the Cloud web app, the version engine and the database migrations.
 
 | You want to | Go to |
 | --- | --- |
@@ -43,8 +37,7 @@ version engine and the database migrations.
 - **Works for teams.** Organizations, Project roles, invitations and audit logs.
 - **Runs agents in the cloud.** Hosted workspaces keep working when your laptop is closed. Early Access.
 
-> Credentials are limited to one Project today. Limiting an agent to part of a
-> Project is being rebuilt for the native version engine and is not available yet.
+> Credentials are limited to one Project today. Limiting an agent to part of a Project is being rebuilt for the native version engine and is not available yet.
 
 ## How it works
 
@@ -56,10 +49,7 @@ CLI ─────┤    who may      the only way   └──> S3           im
 REST ────┘    do what      to publish
 ```
 
-Git owns the version facts. puppyone owns the collaboration rules around them.
-PostgreSQL refs and immutable Git objects in S3 are the only record of what a
-Project contains, so no entry point can drift from the others. Read the
-[Version Engine architecture](docs/architecture/01-version-engine.md).
+Git owns the version facts. puppyone owns the collaboration rules around them. PostgreSQL refs and immutable Git objects in S3 are the only record of what a Project contains, so no entry point can drift from the others. Read the [Version Engine architecture](docs/architecture/01-version-engine.md).
 
 | Path | Contents |
 | --- | --- |
@@ -70,8 +60,7 @@ Project contains, so no entry point can drift from the others. Read the
 | [`docs/`](docs/README.md) | Architecture and operations |
 | [`e2e/`](e2e/README.md) | Tests that need several parts running together |
 
-The CLI is developed separately and published to npm as
-[`puppyone`](https://www.npmjs.com/package/puppyone).
+The CLI is developed separately and published to npm as [`puppyone`](https://www.npmjs.com/package/puppyone).
 
 ## Self-host
 
@@ -84,12 +73,9 @@ cp .env.example .env
 docker compose up --build -d --wait
 ```
 
-The first build takes several minutes. Then open <http://localhost:3000>. If
-startup fails, run `docker compose ps -a` and
-`docker compose logs migrate storage-init api`.
+The first build takes several minutes. Then open <http://localhost:3000>. If startup fails, run `docker compose ps -a` and `docker compose logs migrate storage-init api`.
 
-This stack runs the API and the web app with their data services. The features
-that need another backend process are not part of it yet:
+This stack runs the API and the web app with their data services. The features that need another backend process are not part of it yet:
 
 | Feature | In `docker compose up` | What it needs |
 | --- | --- | --- |
@@ -100,12 +86,9 @@ that need another backend process are not part of it yet:
 | Agent runs and hosted workspaces | No | `agent_worker`, Managed AI, a workspace provider |
 
 > [!WARNING]
-> This stack is for local use. It ships with default secrets, and the API
-> container can reach the host Docker daemon.
+> This stack is for local use. It ships with default secrets, and the API container can reach the host Docker daemon.
 
-Existing PostgreSQL 15 volumes need an explicit upgrade. Read
-[installation and upgrade validation](docs/architecture/14-self-hosted-installation.md)
-before you change the image or delete a volume.
+Existing PostgreSQL 15 volumes need an explicit upgrade. Read [installation and upgrade validation](docs/architecture/14-self-hosted-installation.md) before you change the image or delete a volume.
 
 ## Contributing
 
@@ -118,9 +101,6 @@ Open an issue for larger changes. Pull requests target the `qubits` branch.
 
 ## License
 
-Code is licensed under the [Apache License 2.0](LICENSE). See [`NOTICE`](NOTICE)
-for third-party components.
+Code is licensed under the [Apache License 2.0](LICENSE). See [`NOTICE`](NOTICE) for third-party components.
 
-The puppyone name and logo are trademarks and are not licensed under Apache 2.0.
-If you redistribute a fork, use your own name and logo. The hosted service at
-[puppyone.ai](https://www.puppyone.ai) has its own Terms of Service.
+The puppyone name and logo are trademarks and are not licensed under Apache 2.0. If you redistribute a fork, use your own name and logo. The hosted service at [puppyone.ai](https://www.puppyone.ai) has its own Terms of Service.
