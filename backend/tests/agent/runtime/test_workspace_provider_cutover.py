@@ -41,9 +41,18 @@ def cutover(monkeypatch):
     return owner, row, sprite, fly
 
 
-def test_sprites_is_the_source_default_and_fly_is_retained_for_existing_bindings():
-    assert Settings.model_fields["CLOUD_AGENT_SANDBOX_PROVIDER"].default == "sprites"
-    assert Settings.model_fields["CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS"].default == "fly"
+def test_no_provider_is_assumed_for_new_or_existing_workspaces():
+    assert Settings.model_fields["CLOUD_AGENT_SANDBOX_PROVIDER"].default == ""
+    assert Settings.model_fields["CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS"].default == ""
+
+
+def test_an_unset_provider_is_refused_rather_than_chosen(monkeypatch):
+    from src.config import settings
+    from src.platform.sandbox.registry import default_provider
+
+    monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PROVIDER", "")
+    with pytest.raises(ValueError, match="CLOUD_AGENT_SANDBOX_PROVIDER is required"):
+        default_provider()
 
 
 @pytest.mark.asyncio
