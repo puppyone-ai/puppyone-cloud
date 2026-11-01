@@ -600,6 +600,9 @@ def create_app() -> FastAPI:
     app.include_router(office_router, prefix="/api/v1", tags=["managed-office"])
 
     app.include_router(project_router, prefix="/api/v1", tags=["projects"])
+    from src.platform.access.adapters.git.project_view import router as git_project_view_router
+
+    app.include_router(git_project_view_router, prefix="/api/v1", tags=["projects"])
     app.include_router(template_registry_router, prefix="/api/v1", tags=["templates"])
     from src.platform.repository_context.router import router as repository_context_router
 

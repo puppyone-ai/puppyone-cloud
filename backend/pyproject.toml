@@ -158,7 +158,6 @@ ignore_imports = [
     "src.platform.project.deletion_cleanup -> src.platform.upload.dependencies",
     "src.platform.project.deletion_cleanup -> src.platform.upload.tasks.repository",
     "src.platform.project.deletion_cleanup -> src.platform.workspace.project_cleanup",
-    "src.platform.project.git_view -> src.platform.access.adapters.git.native",
     "src.platform.project.resource_dashboard -> src.platform.access.public_schemas",
     "src.platform.project.resource_dashboard -> src.platform.access.router",
     "src.platform.project.resource_dashboard -> src.platform.access.surface_repository",

@@ -27,7 +27,6 @@ from src.platform.organization.dependencies import resolve_org_ids
 from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
 from src.platform.project.dependencies import get_project_service
-from src.platform.project.git_view import ProjectGitViewService
 from src.platform.project.orchestration import create_project_with_tree
 from src.platform.project.presenters import project_to_out
 from src.platform.project.readiness import ProjectReadinessService
@@ -54,8 +53,7 @@ from src.platform.template_registry.exceptions import TemplateRegistryError
 from src.platform.template_registry.http_errors import registry_http_exception
 from src.platform.template_registry.schemas import TemplateDetail, TemplateSummary
 from src.platform.template_registry.service import TemplateRegistryService
-from src.file_operations.engine_dependencies import get_repo_manager, get_version_write_engine
-from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
+from src.file_operations.engine_dependencies import get_version_write_engine
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 router = APIRouter(
@@ -70,12 +68,6 @@ router = APIRouter(
 
 def get_project_readiness_service() -> ProjectReadinessService:
     return ProjectReadinessService()
-
-
-def get_project_git_view_service(
-    repo_manager: VersionRepoManager = Depends(get_repo_manager),
-) -> ProjectGitViewService:
-    return ProjectGitViewService(repo_manager)
 
 
 def _count_user_access_points(project_ids: list[str]) -> dict[str, int]:
@@ -600,48 +592,3 @@ def get_project_readiness(
     _repository_contract: int = Depends(require_repository_target_contract),
 ):
     return ApiResponse.success(data=readiness.resolve(authorized.project.id).as_dict())
-
-
-@router.get(
-    "/{project_id}/git-view/health",
-    response_model=ApiResponse[dict],
-    summary="Get Project repository Git view health through the control plane",
-)
-def get_project_git_view_health(
-    authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_READ)),
-    git_view: ProjectGitViewService = Depends(get_project_git_view_service),
-    _repository_contract: int = Depends(require_repository_target_contract),
-):
-    """Return derived Git health using Human Project authorization.
-
-    The smart-HTTP ``/git/.../health`` route intentionally remains a machine
-    RuntimeGrant endpoint; a human JWT is never forwarded to that data plane.
-    """
-
-    return ApiResponse.success(
-        data=git_view.health(
-            str(authorized.project.id),
-            grant=authorized.grant,
-            content_write_allowed=authorized.grant.allows(ProjectAction.CONTENT_WRITE),
-            cache_rebuild_allowed=authorized.grant.allows(ProjectAction.PROJECT_MANAGE),
-        ),
-        message="Project Git view health loaded",
-    )
-
-
-@router.post(
-    "/{project_id}/git-view/rebuild-cache",
-    response_model=ApiResponse[dict],
-    summary="Rebuild Project repository Git view cache through the control plane",
-)
-def rebuild_project_git_view_cache(
-    authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_MANAGE)),
-    git_view: ProjectGitViewService = Depends(get_project_git_view_service),
-    _repository_contract: int = Depends(require_repository_target_contract),
-):
-    """Rebuild both derived root-view cache variants from canonical facts."""
-
-    return ApiResponse.success(
-        data=git_view.rebuild(str(authorized.project.id), grant=authorized.grant),
-        message="Project Git view caches rebuilt from canonical facts",
-    )
