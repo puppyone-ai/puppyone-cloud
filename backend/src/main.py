@@ -665,6 +665,9 @@ def create_app() -> FastAPI:
     from src.platform.auth.router import router as auth_router
 
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
+    from src.platform.onboarding.router import router as onboarding_router
+
+    app.include_router(onboarding_router, prefix="/api/v1", tags=["auth"])
     app.include_router(analytics_router, tags=["analytics"])
     app.include_router(profile_router, tags=["profile"])
     app.include_router(imports_router, prefix="/api/v1", tags=["imports"])

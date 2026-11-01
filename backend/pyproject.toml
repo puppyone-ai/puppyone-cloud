@@ -121,7 +121,7 @@ forbidden_modules = ["fastapi", "starlette"]
 name = "Business modules point downward"
 type = "layers"
 layers = [
-    "src.platform.dashboard",
+    "src.platform.dashboard : src.platform.onboarding",
     "src.platform.agent",
     "src.platform.access : src.internal",
     "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.sandbox : src.platform.landing",
@@ -134,14 +134,7 @@ layers = [
 # Existing violations. Remove an entry when its import is fixed; never add one.
 # tests/platform/test_import_layers.py pins the count.
 ignore_imports = [
-    "src.platform.auth.dependencies -> src.platform.project.control_plane_dependencies",
-    "src.platform.auth.dependencies -> src.platform.project.dependencies",
     "src.platform.auth.initialization -> src.platform.billing.provisioning",
-    "src.platform.auth.initialization -> src.platform.project.control_plane",
-    "src.platform.auth.initialization -> src.platform.project.orchestration",
-    "src.platform.auth.initialization -> src.platform.project.service",
-    "src.platform.auth.initialization -> src.platform.project.templates",
-    "src.platform.auth.router -> src.platform.billing.provisioning",
     "src.platform.authorization.dependencies -> src.platform.project.dependencies",
     "src.platform.authorization.dependencies -> src.platform.project.models",
     "src.platform.authorization.dependencies -> src.platform.project.repository",

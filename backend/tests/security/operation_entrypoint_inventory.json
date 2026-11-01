@@ -46,11 +46,11 @@
       "platform/agent/runtime/worker.py": {
         "serve::build_worker_version_engine_container": 1
       },
-      "platform/auth/initialization.py": {
-        "UserInitializationService._seed_demo_project::build_worker_version_engine_container": 1
-      },
       "platform/landing/service.py": {
         "LandingService.claim::build_worker_version_engine_container": 1
+      },
+      "platform/onboarding/service.py": {
+        "OnboardingService._seed_demo_project::build_worker_version_engine_container": 1
       },
       "platform/project/initialization_reconciler.py": {
         "process_project_initialization_reconciliation::build_worker_version_engine_container": 1

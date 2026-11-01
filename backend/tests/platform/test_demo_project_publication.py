@@ -6,10 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from src.platform.auth.initialization import (
-    UserInitializationService,
-    _demo_project_operation_key,
-)
+from src.platform.onboarding.service import OnboardingService, _demo_project_operation_key
 from src.platform.project.control_plane import IdempotentProjectResult
 from src.platform.project.models import Project
 
@@ -33,6 +30,11 @@ def test_demo_operation_identity_is_stable_canonical_uuid4() -> None:
     assert str(UUID(first)) == first
 
 
+def test_demo_operation_identity_never_changes_for_an_existing_user() -> None:
+    # A different value would give a retrying user a second demo Project.
+    assert _demo_project_operation_key("user-1", "org-1") == "cb490e98-af61-419b-b32e-78bd28ed293b"
+
+
 @pytest.mark.asyncio
 async def test_demo_creation_uses_empty_l5_publication_with_stable_identity(
     monkeypatch,
@@ -49,15 +51,15 @@ async def test_demo_creation_uses_empty_l5_publication_with_stable_identity(
         return {"files": ["README.md"]}
 
     monkeypatch.setattr(
-        "src.platform.project.orchestration.create_project_with_tree",
+        "src.platform.onboarding.service.create_project_with_tree",
         publish,
     )
     monkeypatch.setattr(
-        "src.platform.project.templates.seed_template_content",
+        "src.platform.onboarding.service.seed_template_content",
         seed,
     )
     monkeypatch.setattr(
-        "src.version_engine.bootstrap.dependencies.build_worker_version_engine_container",
+        "src.platform.onboarding.service.build_worker_version_engine_container",
         lambda: SimpleNamespace(write_engine=lambda: SimpleNamespace()),
     )
     monkeypatch.setattr(
@@ -65,7 +67,7 @@ async def test_demo_creation_uses_empty_l5_publication_with_stable_identity(
         lambda _self, _org, _key: 5,
     )
 
-    service = object.__new__(UserInitializationService)
+    service = object.__new__(OnboardingService)
     service._project_control_plane = SimpleNamespace()
     result = await service._seed_demo_project(user_id="user-1", org_id="org-1")
 
