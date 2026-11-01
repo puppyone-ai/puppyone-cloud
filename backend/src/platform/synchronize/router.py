@@ -21,6 +21,7 @@ from src.platform.authorization.dependencies import get_authorization_service
 from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.synchronize.arq_client import SyncArqClient
+from src.platform.synchronize.classification import ensure_classified_binding
 from src.platform.synchronize.config_contract import (
     validate_bootstrap_config,
     validate_structured_config,
@@ -95,28 +96,6 @@ def _ensure_project_access(
     )
 
 
-def _ensure_classified_binding(connection) -> None:
-    # Final storage ownership is authoritative. Only an explicitly retained,
-    # disabled historical binding may carry a retired provider classification.
-    # Corrupt/unmigrated input still fails closed; no provider-based filtering.
-    reason = getattr(connection, "legacy_read_only_reason", None)
-    if isinstance(reason, str) and reason.strip() and connection.status == "disabled":
-        return
-    config = getattr(connection, "config", None) or {}
-    if (
-        getattr(connection, "provider", None) == "database"
-        or "db_config" in config
-        or (getattr(connection, "trigger", None) or {}).get("type") == "import_once"
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "SOURCE_CLASSIFICATION_REQUIRED",
-                "message": "Classify and migrate legacy source records before Synchronize management. Import source IDs must not be reused as binding IDs.",
-            },
-        )
-
-
 def _get_connection_with_access(
     *,
     connection_id: str,
@@ -132,7 +111,7 @@ def _get_connection_with_access(
             detail=f"Integration connection #{connection_id} not found",
         )
     _ensure_project_access(authorization, current_user, connection.project_id, action)
-    _ensure_classified_binding(connection)
+    ensure_classified_binding(connection)
     if action is not None and getattr(connection, "legacy_read_only_reason", None):
         raise HTTPException(
             409,
@@ -263,7 +242,7 @@ def get_project_sync_status(
     _ensure_project_access(authorization, current_user, project_id)
     connections = service.repository.list_by_project(project_id)
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     items = [
         SynchronizeStatusItem(
             id=c.id,
@@ -458,7 +437,7 @@ def list_connections(
     else:
         connections = service.repository.list_by_project(project_id)
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     return ApiResponse.success(data=[_sync_resp(c) for c in connections])
 
 
@@ -661,7 +640,7 @@ def list_failed_runs(
     if not connections:
         return ApiResponse.success(data=[])
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     by_id = {c.id: c for c in connections}
     runs = _get_run_repo().list_failed_for_connections(list(by_id), limit=limit)
     items = []
@@ -883,7 +862,7 @@ async def trigger_pull(
         )
         # Validate the whole batch before enqueueing any work.
         for connection in connections:
-            _ensure_classified_binding(connection)
+            ensure_classified_binding(connection)
         results = []
         for connection in connections:
             if connection.direction not in _PULL_DIRECTIONS:

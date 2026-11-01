@@ -6,8 +6,9 @@ from fastapi import Depends, HTTPException, Query
 
 from src.common_schemas import ApiResponse
 from src.exceptions import AppException
+from src.platform.access.config_redaction import contains_secret_config_key, redact_config
 from src.platform.access.models import AccessSurface
-from src.platform.access.router import _contains_secret_config_key, _redact_config, _require_access_identity
+from src.platform.access.router import _require_access_identity
 from src.platform.access import public_schemas as contracts
 from src.platform.access.service import AccessService
 from src.platform.auth.dependencies import get_current_user
@@ -24,7 +25,7 @@ def get_access_service() -> AccessService:
 
 
 def _reject_credential_metadata(*values) -> None:
-    if any(_contains_secret_config_key(value) for value in values):
+    if any(contains_secret_config_key(value) for value in values):
         raise HTTPException(400, "Credentials cannot be written through Access metadata; use explicit credential issuance.")
 
 
@@ -37,10 +38,10 @@ def _to_out(c: AccessSurface) -> contracts.AccessSurface:
         kind=c.kind,
         name=c.name,
         direction=c.direction,                    # type: ignore[arg-type]
-        config=_redact_config(c.config),
-        policy=_redact_config(c.policy),
+        config=redact_config(c.config),
+        policy=redact_config(c.policy),
         oauth_connection_id=c.oauth_connection_id,
-        trigger=_redact_config(c.trigger),
+        trigger=redact_config(c.trigger),
         status=c.status,
         last_activity_at=c.last_run_at,
         error_message=c.error_message,

@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 
 from src.common_schemas import ApiResponse
 from src.infra.supabase.client import SupabaseClient
+from src.platform.access.config_redaction import redact_config
 from src.platform.access.public_schemas import AccessKind
-from src.platform.access.router import _redact_config
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
 from src.shared_types.grants import ProjectAction
@@ -31,8 +31,8 @@ from src.platform.project.dashboard_router import (
 )
 from src.platform.query_contract import strict_query
 from src.platform.repository_target.schemas import RepositoryTargetSchema
+from src.platform.synchronize.classification import ensure_classified_binding
 from src.platform.synchronize.repository import SynchronizeRepository
-from src.platform.synchronize.router import _ensure_classified_binding
 from src.platform.synchronize.run_repository import NEW_TABLE as SYNCHRONIZE_RUNS_TABLE
 from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.file_operations.dependencies import get_product_operation_adapter
@@ -112,7 +112,7 @@ def _usage(
 def fetch_dashboard_resources(sb, project_id: str) -> list[DashboardResource]:
     bindings = SynchronizeRepository(SimpleNamespace(client=sb)).list_by_project(project_id)
     for binding in bindings:
-        _ensure_classified_binding(binding)
+        ensure_classified_binding(binding)
     access_repo = AccessSurfaceRepository(sb)
     surfaces = [
         row
@@ -149,7 +149,7 @@ def fetch_dashboard_resources(sb, project_id: str) -> list[DashboardResource]:
                 path=binding.path,
                 direction=binding.direction,
                 status=binding.status,
-                trigger=_redact_config(binding.trigger),
+                trigger=redact_config(binding.trigger),
                 last_activity_at=binding.last_synced_at,
                 error_message=binding.error_message,
                 created_at=binding.created_at,
@@ -181,7 +181,7 @@ def fetch_dashboard_resources(sb, project_id: str) -> list[DashboardResource]:
                 path=scope["path"] if scope else "",
                 status=row.get("status") or "active",
                 direction=config.get("direction"),
-                trigger=_redact_config(config.get("trigger")),
+                trigger=redact_config(config.get("trigger")),
                 last_activity_at=config.get("last_seen_at") or config.get("last_run_at"),
                 error_message=config.get("error_message"),
                 created_at=row.get("created_at"),

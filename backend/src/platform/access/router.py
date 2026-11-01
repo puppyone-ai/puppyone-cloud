@@ -15,6 +15,7 @@ from src.common_schemas import ApiResponse
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, NotFoundException
 from src.infra.supabase.client import SupabaseClient
+from src.platform.access.config_redaction import redact_config
 from src.platform.access.surface_kinds import surface_kind
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.models import ACCESS_KINDS
@@ -47,86 +48,6 @@ def _normalize_scope_path(path: str | None) -> str:
     while "//" in value:
         value = value.replace("//", "/")
     return value
-
-
-# Config keys that hold machine credentials / secrets. These must never be
-# returned by ordinary list/detail/mutation responses. Raw values are only
-# meaningful in the one-time create/regenerate issuance responses.
-_SECRET_CONFIG_KEYS = {
-    "access_key",
-    "mcp_api_key",
-    "api_key",
-    "secret",
-    "client_secret",
-    "token",
-    "bearer_token",
-    "refresh_token",
-    "access_token",
-    "password",
-    "private_key",
-    "credential",
-    "credentials",
-}
-
-_SECRET_CONFIG_KEY_SUFFIXES = (
-    "_access_key",
-    "_api_key",
-    "_secret",
-    "_password",
-    "_private_key",
-    "_bearer_token",
-    "_access_token",
-    "_refresh_token",
-    "_credential",
-    "_credentials",
-)
-
-
-def _normalise_config_key(key: Any) -> str:
-    """Return a conservative snake-case-ish representation for secret checks."""
-    import re
-
-    value = re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower()
-    return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
-
-
-def _is_secret_config_key(key: Any) -> bool:
-    normalised = _normalise_config_key(key)
-    return normalised in _SECRET_CONFIG_KEYS or normalised.endswith(_SECRET_CONFIG_KEY_SUFFIXES)
-
-
-def _redact_config(value: Any) -> Any:
-    """Recursively remove credential-bearing fields from response config.
-
-    Access surface config is intentionally provider-extensible, so a shallow
-    blacklist is unsafe: a provider can nest credentials under OAuth/session
-    metadata and ordinary read or mutation responses would echo them. Keep the
-    non-secret shape for existing clients, but fail closed for known credential
-    names at every depth (including camelCase variants and provider prefixes).
-    """
-    if isinstance(value, dict):
-        return {
-            key: _redact_config(child)
-            for key, child in value.items()
-            if not _is_secret_config_key(key)
-        }
-    if isinstance(value, list):
-        return [_redact_config(child) for child in value]
-    if isinstance(value, tuple):
-        return tuple(_redact_config(child) for child in value)
-    return value
-
-
-def _contains_secret_config_key(value: Any) -> bool:
-    """Reject attempts to smuggle credentials through the metadata endpoint."""
-    if isinstance(value, dict):
-        return any(
-            _is_secret_config_key(key) or _contains_secret_config_key(child)
-            for key, child in value.items()
-        )
-    if isinstance(value, list | tuple):
-        return any(_contains_secret_config_key(child) for child in value)
-    return False
 
 
 def _created_or_updated(value: Any) -> str | None:
@@ -232,13 +153,13 @@ def _enrich(rows: list[dict], sb_client) -> list[contracts.AccessSurface]:
                 status=r.get("status", "active"),
                 has_key=has_key,
                 key_last4=key_last4,
-                policy=_redact_config(cfg.get("policy") or {}),
-                trigger=_redact_config(cfg.get("trigger")),
+                policy=redact_config(cfg.get("policy") or {}),
+                trigger=redact_config(cfg.get("trigger")),
                 last_activity_at=_created_or_updated(
                     cfg.get("last_seen_at") or cfg.get("last_run_at")
                 ),
                 error_message=cfg.get("error_message"),
-                config=_redact_config(e["cfg"]),
+                config=redact_config(e["cfg"]),
                 created_at=_created_or_updated(r.get("created_at")),
                 updated_at=_created_or_updated(r.get("updated_at")),
             )
