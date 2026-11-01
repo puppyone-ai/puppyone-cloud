@@ -164,7 +164,6 @@ ignore_imports = [
     "src.platform.project.resource_dashboard -> src.platform.synchronize.repository",
     "src.platform.project.resource_dashboard -> src.platform.synchronize.router",
     "src.platform.project.resource_dashboard -> src.platform.synchronize.run_repository",
-    "src.platform.project.router -> src.platform.access.surface_repository",
     "src.platform.project.router -> src.platform.template_registry.dependencies",
     "src.platform.project.router -> src.platform.template_registry.exceptions",
     "src.platform.project.router -> src.platform.template_registry.http_errors",

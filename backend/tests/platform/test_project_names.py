@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
-from src.platform.project import router as project_router
+from src.platform.access import entry_points as access_entry_points
+from src.platform.project.entry_points import count_entry_points
+from src.platform.synchronize import entry_points as synchronize_entry_points
 
 
 class _FakeQuery:
@@ -43,8 +45,11 @@ def test_project_access_point_count_reads_target_tables(monkeypatch):
             {"project_id": "p2", "kind": "agent"},
         ],
     })
-    monkeypatch.setattr(project_router, "get_supabase_client", lambda: sb)
+    monkeypatch.setattr(access_entry_points, "get_supabase_client", lambda: sb)
+    monkeypatch.setattr(
+        synchronize_entry_points, "SupabaseClient", lambda: SimpleNamespace(client=sb)
+    )
 
-    counts = project_router._count_user_access_points(["p1", "p2"])
+    counts = count_entry_points(["p1", "p2"])
 
     assert counts == {"p1": 3, "p2": 1}

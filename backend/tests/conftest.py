@@ -48,7 +48,9 @@ if not _configured_git_cache:
 def _project_write_admission():
     """Production processes install this at startup; see test_write_admission_wiring."""
     from src.composition.agent import install_agent
+    from src.composition.project import install_project_entry_points
     from src.platform.project.write_lease import install_storage_write_admission
 
     install_storage_write_admission()
     install_agent()
+    install_project_entry_points()

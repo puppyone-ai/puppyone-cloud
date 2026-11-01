@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from src.common_schemas import ApiResponse
 from src.infra.execution.runner import run_blocking
-from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import (
@@ -27,6 +26,7 @@ from src.platform.organization.dependencies import resolve_org_ids
 from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
 from src.platform.project.dependencies import get_project_service
+from src.platform.project.entry_points import count_entry_points
 from src.platform.project.orchestration import create_project_with_tree
 from src.platform.project.presenters import project_to_out
 from src.platform.project.readiness import ProjectReadinessService
@@ -68,32 +68,6 @@ router = APIRouter(
 
 def get_project_readiness_service() -> ProjectReadinessService:
     return ProjectReadinessService()
-
-
-def _count_user_access_points(project_ids: list[str]) -> dict[str, int]:
-    """Count user-created entry points, excluding built-in connection methods."""
-
-    if not project_ids:
-        return {}
-    sb = get_supabase_client()
-    connection_rows = (
-        sb.table("synchronize_bindings")
-        .select("project_id")
-        .in_("project_id", project_ids)
-        .execute()
-    ).data or []
-    from src.platform.access.surface_repository import AccessSurfaceRepository
-
-    access_counts = AccessSurfaceRepository(sb).count_by_projects_and_kinds(
-        project_ids, ["mcp", "sandbox"]
-    )
-    counts: dict[str, int] = {}
-    for row in connection_rows:
-        pid = row["project_id"]
-        counts[pid] = counts.get(pid, 0) + 1
-    for pid, count in access_counts.items():
-        counts[pid] = counts.get(pid, 0) + count
-    return counts
 
 
 def _legacy_template_summary(template: TemplateSummary) -> dict[str, object]:
@@ -145,7 +119,7 @@ def list_projects(
     # Batch-fetch entry-point counts only for authorized Projects. Count user-created
     # integrations; CLI / Agent / Filesystem / Git Remote are built-in methods.
     project_ids = [str(project.id) for project, _grant in accessible]
-    conn_counts = _count_user_access_points(project_ids) if include_access_counts else {}
+    conn_counts = count_entry_points(project_ids) if include_access_counts else {}
 
     result = []
     for p, grant in accessible:
@@ -215,7 +189,7 @@ def get_project(
     authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_READ)),
 ):
     project = authorized.project
-    conn_count = _count_user_access_points([str(project.id)]).get(str(project.id), 0)
+    conn_count = count_entry_points([str(project.id)]).get(str(project.id), 0)
     return ApiResponse.success(
         data=project_to_out(project, authorized.grant, access_point_count=conn_count),
         message="Project retrieved successfully",
@@ -296,7 +270,7 @@ async def create_project(
             current_user.user_id,
             ProjectAction.PROJECT_READ,
         ),
-        run_blocking(_count_user_access_points, [str(project.id)]),
+        run_blocking(count_entry_points, [str(project.id)]),
     )
     response.status_code = status.HTTP_200_OK if result.replayed else status.HTTP_201_CREATED
     mark_idempotency_replay(response, replayed=result.replayed)
