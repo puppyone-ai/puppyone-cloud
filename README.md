@@ -75,6 +75,10 @@ docker compose up --build -d --wait
 
 The first build takes several minutes. Then open <http://localhost:3000>. If startup fails, run `docker compose ps -a` and `docker compose logs migrate storage-init api`.
 
+Create your first account from the sign-up page with any email address. This stack confirms accounts automatically, so it needs no mail server. The API listens on <http://localhost:9090>.
+
+To stop the stack, run `docker compose down`. Your data stays in Docker volumes.
+
 This stack runs the API and the web app with their data services. The features that need another backend process are not part of it yet:
 
 | Feature | In `docker compose up` | What it needs |
