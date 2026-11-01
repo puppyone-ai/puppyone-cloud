@@ -1,6 +1,6 @@
 # Getting Started (Developers & Contributors)
 
-This guide is for people who clone the repo to **run PuppyOne locally** or **open a pull request**. For product onboarding (CLI, first project, connectors), see the [README](../README.md).
+This guide is for people who clone the repo to **run PuppyOne locally** or **open a pull request**. For product onboarding (CLI, first project, connectors), see the [documentation](https://www.puppyone.ai/doc).
 
 ## Prerequisites
 
@@ -15,9 +15,9 @@ Fastest way to run everything without wiring cloud services manually:
 
 ```bash
 git clone https://github.com/puppyone-ai/puppyone-cloud.git
-cd puppyone/docker
+cd puppyone-cloud/docker
 cp .env.example .env
-docker compose up -d
+docker compose up --build -d --wait
 ```
 
 | Service | URL |
@@ -26,7 +26,7 @@ docker compose up -d
 | Backend API | http://localhost:9090 |
 | Supabase API | http://localhost:8000 |
 
-First startup can take 1–2 minutes. Optional: add `ANTHROPIC_API_KEY` and OAuth provider keys to `docker/.env` for agent chat and SaaS connectors (see [README](../README.md#3-optional-enable-more-features)).
+The first build takes several minutes. This stack runs the API and the web app with their data services. Features that need another backend process are listed under [Self-host](../README.md#self-host).
 
 ## Option B: Native backend + frontend
 
@@ -99,7 +99,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#testing) for unit / integration / contr
 | Architecture & module map | [AGENTS.md](../AGENTS.md) |
 | Branch model, PR target, CI | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | MUT / Access Point / CLI design | [docs/README.md](README.md) |
-| End-user product flow | [README](../README.md) |
+| End-user product flow | [Documentation](https://www.puppyone.ai/doc) |
 
 ## Opening your first PR
 
