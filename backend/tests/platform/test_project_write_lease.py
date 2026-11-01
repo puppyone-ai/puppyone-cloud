@@ -308,6 +308,41 @@ async def test_git_mutations_still_reject_read_only_runtime_grants(
 
 
 @pytest.mark.asyncio
+async def test_git_read_without_a_runtime_grant_is_refused_before_any_lease(monkeypatch) -> None:
+    lease_entered = False
+
+    async def resolve(_project_id, _request):
+        return {}
+
+    class Lease:
+        def __init__(self, _project_id: str, _operation: str):
+            pass
+
+        async def __aenter__(self):
+            nonlocal lease_entered
+            lease_entered = True
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "src.platform.access.adapters.git.auth.resolve_git_project_auth",
+        resolve,
+    )
+    monkeypatch.setattr("src.platform.project.write_lease.ProjectWriteLease", Lease)
+
+    dependency = git_project_write_lease(
+        _git_request("/git/project-1.git/git-upload-pack", method="POST")
+    )
+    with pytest.raises(AppException) as caught:
+        await anext(dependency)
+
+    assert caught.value.status_code == 403
+    assert lease_entered is False
+
+
+@pytest.mark.asyncio
 async def test_access_key_git_read_is_resolved_then_leased(monkeypatch) -> None:
     events: list[tuple[str, str]] = []
 

@@ -123,6 +123,22 @@ def test_ambiguous_mixed_storage_fails_closed_without_disclosing_source_config()
     assert error.value.status_code == 409 and "private-import-key" not in str(error.value)
 
 
+def test_secrets_in_either_domains_trigger_never_reach_the_dashboard():
+    data = facts()
+    trigger = {"schedule": "daily", "auth": {"api_key": "must-not-leak"}}
+    data["synchronize_bindings"][0].update(trigger_type="scheduled", trigger_config=trigger)
+    data["access_surfaces"][1]["config"]["trigger"] = {"type": "scheduled", **trigger}
+
+    rows = dashboard.fetch_dashboard_resources(FakeSB(data), "project-1")
+
+    triggers = {row.resource_kind: row.trigger for row in rows if row.trigger}
+    assert triggers == {
+        "synchronize": {"type": "scheduled", "schedule": "daily", "auth": {}},
+        "access": {"type": "scheduled", "schedule": "daily", "auth": {}},
+    }
+    assert all("must-not-leak" not in row.model_dump_json() for row in rows)
+
+
 def test_failed_usage_read_is_not_reported_as_zero_successful_activity():
     class BrokenTable(FakeTable):
         def execute(self):
