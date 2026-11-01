@@ -9,11 +9,11 @@ import pytest
 from src.exceptions import AppException
 from src.infra.execution.runner import run_blocking
 from src.infra.s3.service import S3Service
+from src.platform.access.adapters.git.request_lease import git_project_write_lease
 from src.platform.project.write_lease import (
     PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
     ProjectWriteLease,
     active_project_write_lease,
-    git_project_write_lease,
 )
 
 

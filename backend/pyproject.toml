@@ -171,8 +171,6 @@ ignore_imports = [
     "src.platform.project.router -> src.platform.template_registry.http_errors",
     "src.platform.project.router -> src.platform.template_registry.schemas",
     "src.platform.project.router -> src.platform.template_registry.service",
-    "src.platform.project.write_lease -> src.platform.access.adapters.git.auth",
-    "src.platform.project.write_lease -> src.platform.access.adapters.git.router",
     "src.platform.repository_context.repository -> src.platform.access.credential_repository",
     "src.platform.repository_context.router -> src.platform.access.adapters.git.locator",
     "src.platform.repository_context.service -> src.platform.access.credential_repository",

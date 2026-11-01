@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar, Token
 from types import TracebackType
 from typing import Any, Protocol
 from uuid import uuid4
 
-from fastapi import Depends, Request
+from fastapi import Depends
 
 from src.exceptions import AppException, ErrorCode
 from src.infra.execution.context import Execution, current_execution
@@ -466,61 +465,3 @@ def get_leased_version_write_command_service(
         write_commands(container),
         write_lease_factory=write_lease_factory,
     )
-
-
-async def git_project_write_lease(request: Request) -> AsyncIterator[None]:
-    """Authorize, then fence every Git request for its full response lifetime.
-
-    Clone/fetch requests are product reads, but they also materialize the
-    Project-owned Git transport cache on the host.  They therefore participate
-    in the same lifecycle drain as canonical mutations.  Read-only credentials
-    remain valid for those requests; only receive-pack and explicit cache
-    rebuild operations require a write-capable runtime grant.
-    """
-
-    path = request.url.path
-    is_mutation = path.endswith("/git-receive-pack") or path.endswith("/rebuild-cache")
-    if path.endswith("/info/refs"):
-        is_mutation = str(request.query_params.get("service") or "") == "git-receive-pack"
-
-    project_id = str(request.path_params.get("project_id") or "")
-    auth: dict[str, Any] | None = None
-    if not project_id:
-        access_key = str(request.path_params.get("access_key") or "")
-        if access_key:
-            from src.platform.access.adapters.git.router import (
-                resolve_git_access_point,
-            )
-
-            project_id, auth = await resolve_git_access_point(access_key, request)
-    else:
-        from src.platform.access.adapters.git.auth import (
-            resolve_git_project_auth,
-            resolve_git_scope_auth,
-        )
-
-        scope_id = str(request.path_params.get("scope_id") or "")
-        auth = (
-            await resolve_git_scope_auth(project_id, scope_id, request)
-            if scope_id
-            else await resolve_git_project_auth(project_id, request)
-        )
-    if not project_id:
-        yield
-        return
-    runtime_grant = (auth or {}).get("_runtime_grant")
-    if runtime_grant is None:
-        raise AppException(
-            code=ErrorCode.FORBIDDEN,
-            status_code=403,
-            message="Git credential does not allow repository access",
-        )
-    if is_mutation and not bool(getattr(runtime_grant, "can_write", False)):
-        raise AppException(
-            code=ErrorCode.FORBIDDEN,
-            status_code=403,
-            message="Git credential does not allow writes",
-        )
-
-    async with ProjectWriteLease(project_id, f"git.{request.method.lower()}"):
-        yield

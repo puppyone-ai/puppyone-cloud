@@ -568,10 +568,7 @@ def create_app() -> FastAPI:
 
     # Keep lifecycle admission outside Version Engine internals while making
     # every FastAPI Product command hold a renewable Project write lease.
-    from src.platform.project.write_lease import (
-        get_leased_version_write_command_service,
-        git_project_write_lease,
-    )
+    from src.platform.project.write_lease import get_leased_version_write_command_service
     from src.file_operations.dependencies import get_version_write_command_service
 
     app.dependency_overrides[get_version_write_command_service] = (
@@ -624,6 +621,7 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.api.audit import router as audit_router
 
     app.include_router(audit_router, prefix="/api/v1", tags=["audit-logs"])
+    from src.platform.access.adapters.git.request_lease import git_project_write_lease
     from src.platform.access.adapters.git.router import router as git_protocol_router
 
     app.include_router(
