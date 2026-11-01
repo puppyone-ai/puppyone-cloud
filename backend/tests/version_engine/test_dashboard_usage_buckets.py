@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.project.dashboard_router import _fetch_uploads
-from src.platform.project.resource_dashboard import _usage, fetch_dashboard_resources
+from src.platform.dashboard.resources import _usage, fetch_dashboard_resources
+from src.platform.dashboard.sections import fetch_uploads
 
 
 class FakeTable:
@@ -98,7 +98,7 @@ def test_usage_read_failure_does_not_become_partial_success():
     with pytest.raises(RuntimeError, match="unavailable"):
         _usage(Broken(), "synchronize_runs", "synchronize_binding_id", ["binding"], project_id="p1")
     with pytest.raises(RuntimeError, match="unavailable"):
-        _fetch_uploads(Broken(), "p1")
+        fetch_uploads(Broken(), "p1")
 
 
 def test_empty_domain_id_set_does_not_query_another_log_store():

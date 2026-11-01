@@ -2,8 +2,8 @@
   "_contract": "Exact source reference review inventory, not a runtime network budget or security proof. New files/aliases/references/counts require review; remove stale entries. See openspec/changes/refactor-operation-lifetimes/entrypoint-audit.md.",
   "known_gaps": [
     {
-      "path": "platform/project/dashboard_router.py",
-      "function": "_compute_node_counts",
+      "path": "platform/dashboard/sections.py",
+      "function": "compute_node_counts",
       "reason": "Mounted resource dashboard passes unbound ops; head and tree also use separate snapshots."
     },
     {
@@ -174,9 +174,9 @@
       "platform/agent/config/metadata.py": {
         "read_path_metadata::read.stat": 1
       },
-      "platform/project/dashboard_router.py": {
-        "_compute_node_counts::ops.get_head_commit_id": 1,
-        "_compute_node_counts::ops.list_tree": 1
+      "platform/dashboard/sections.py": {
+        "compute_node_counts::ops.get_head_commit_id": 1,
+        "compute_node_counts::ops.list_tree": 1
       },
       "platform/repository_target/scope_router.py": {
         "auto_suggest_scopes::ops.list_dir": 1

@@ -1,82 +1,25 @@
-"""Read-only Dashboard projection with domain-qualified identities and usage.
+"""Dashboard resources, with domain-qualified identities and usage.
 
 The legacy dashboard remains a bounded installed-client contract. This boundary
 never joins Access and Synchronize by ID/path, and never turns a failed read into
 an apparently empty inventory. Physical relation cutover belongs to ISSUE-049.
 """
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import HTTPException
 
-from src.common_schemas import ApiResponse
-from src.infra.supabase.client import SupabaseClient
 from src.platform.access.config_redaction import redact_config
-from src.platform.access.public_schemas import AccessKind
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.shared_types.grants import ProjectAction
-from src.platform.project.dashboard_router import (
-    DashboardNodeCounts,
-    DashboardProject,
-    DashboardTool,
-    DashboardUpload,
-    _compute_node_counts,
-    _fetch_tools,
-    _fetch_uploads,
+from src.platform.dashboard.schemas import (
+    DashboardAccessSurface,
+    DashboardResource,
+    DashboardSynchronizeBinding,
 )
-from src.platform.query_contract import strict_query
-from src.platform.repository_target.schemas import RepositoryTargetSchema
 from src.platform.synchronize.classification import ensure_classified_binding
 from src.platform.synchronize.repository import SynchronizeRepository
 from src.platform.synchronize.run_repository import NEW_TABLE as SYNCHRONIZE_RUNS_TABLE
-from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.file_operations.dependencies import get_product_operation_adapter
-from src.infra.execution.runner import run_blocking
-
-
-class DashboardResourceSummary(BaseModel):
-    resource_id: str
-    project_id: str
-    name: str | None = None
-    path: str | None = None
-    direction: str | None = None
-    status: str
-    trigger: dict | None = None
-    last_activity_at: str | None = None
-    error_message: str | None = None
-    created_at: str | None = None
-    usage_buckets: list[int] = Field(default_factory=list)
-
-
-class DashboardSynchronizeBinding(DashboardResourceSummary):
-    resource_kind: Literal["synchronize"] = "synchronize"
-    provider: str
-    path: str
-
-
-class DashboardAccessSurface(DashboardResourceSummary):
-    resource_kind: Literal["access"] = "access"
-    kind: AccessKind
-    target: RepositoryTargetSchema
-    scope_mode: Literal["r", "rw"] | None = None
-
-
-DashboardResource = Annotated[
-    DashboardSynchronizeBinding | DashboardAccessSurface, Field(discriminator="resource_kind")
-]
-
-
-class ResourceDashboard(BaseModel):
-    project: DashboardProject
-    nodes: DashboardNodeCounts
-    resources: list[DashboardResource]
-    tools: list[DashboardTool]
-    uploads: list[DashboardUpload]
 
 
 def _usage(
@@ -192,37 +135,3 @@ def fetch_dashboard_resources(sb, project_id: str) -> list[DashboardResource]:
             )
         )
     return result
-
-
-router = APIRouter(prefix="/projects", tags=["projects"])
-
-
-@router.get(
-    "/{project_id}/dashboard/resources",
-    response_model=ApiResponse[ResourceDashboard],
-    dependencies=[strict_query()],
-)
-async def get_resource_dashboard(
-    authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_READ)),
-    ops: ProductOperationAdapter = Depends(get_product_operation_adapter),
-):
-    project = authorized.project
-    project_id = str(project.id)
-    sb = SupabaseClient().client
-    counts, resources, tools, uploads = await asyncio.gather(
-        run_blocking(_compute_node_counts, ops, project_id),
-        run_blocking(fetch_dashboard_resources, sb, project_id),
-        run_blocking(_fetch_tools, sb, project_id),
-        run_blocking(_fetch_uploads, sb, project_id),
-    )
-    return ApiResponse.success(
-        ResourceDashboard(
-            project=DashboardProject(
-                id=project_id, name=project.name, description=project.description
-            ),
-            nodes=counts,
-            resources=resources,
-            tools=tools,
-            uploads=uploads,
-        )
-    )

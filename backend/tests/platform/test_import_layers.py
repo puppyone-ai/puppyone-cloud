@@ -11,7 +11,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 BUSINESS_CONTRACT = "Business modules point downward"
 
 # Lower this when an entry leaves ignore_imports. It only ever goes down.
-KNOWN_BUSINESS_VIOLATIONS = 40
+KNOWN_BUSINESS_VIOLATIONS = 34
 
 
 def _contracts() -> list[dict]:

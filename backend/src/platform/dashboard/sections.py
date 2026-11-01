@@ -1,45 +1,17 @@
-"""Non-resource Dashboard sections; resource_dashboard alone owns HTTP routing.
+"""Non-resource Dashboard sections.
 
-Resource identities and usage are domain-qualified in resource_dashboard, never
-joined through a mixed Connection DTO or unqualified ID set.
+Resource identities and usage are domain-qualified in resources, never joined
+through a mixed Connection DTO or unqualified ID set.
 """
 
-from pydantic import BaseModel
-
 from src.file_operations.operation_adapter import ProductOperationAdapter
-
-
-class DashboardProject(BaseModel):
-    id: str
-    name: str
-    description: str | None = None
-
-
-class DashboardNodeCounts(BaseModel):
-    total: int = 0
-    folders: int = 0
-    files: int = 0
-
-
-class DashboardTool(BaseModel):
-    id: str
-    name: str
-    type: str | None = None
-
-
-class DashboardUpload(BaseModel):
-    id: str
-    status: str
-    type: str
-    progress: int = 0
-    message: str | None = None
-
+from src.platform.dashboard.schemas import DashboardNodeCounts, DashboardTool, DashboardUpload
 
 _NODE_COUNT_CACHE: dict[tuple[str, str], DashboardNodeCounts] = {}
 _NODE_COUNT_CACHE_MAX = 1024
 
 
-def _compute_node_counts(ops: ProductOperationAdapter, project_id: str) -> DashboardNodeCounts:
+def compute_node_counts(ops: ProductOperationAdapter, project_id: str) -> DashboardNodeCounts:
     """Cache complete Git tree counts by Project and head, never by path/name."""
     try:
         head_commit = ops.get_head_commit_id(project_id)
@@ -64,7 +36,7 @@ def _compute_node_counts(ops: ProductOperationAdapter, project_id: str) -> Dashb
     return counts
 
 
-def _fetch_tools(sb, project_id: str) -> list[DashboardTool]:
+def fetch_tools(sb, project_id: str) -> list[DashboardTool]:
     tool_rows = (
         sb.table("tools")
         .select("id, name, type")
@@ -77,7 +49,7 @@ def _fetch_tools(sb, project_id: str) -> list[DashboardTool]:
     ]
 
 
-def _fetch_uploads(sb, project_id: str) -> list[DashboardUpload]:
+def fetch_uploads(sb, project_id: str) -> list[DashboardUpload]:
     # Dependency/schema failures must fail the inventory, never look like no jobs.
     upload_rows = (
         sb.table("uploads")

@@ -685,7 +685,7 @@ def create_app() -> FastAPI:
     from src.platform.landing.router import router as landing_router
 
     app.include_router(landing_router, prefix="/api/v1", tags=["landing"])
-    from src.platform.project.resource_dashboard import router as resource_dashboard_router
+    from src.platform.dashboard.router import router as resource_dashboard_router
 
     app.include_router(resource_dashboard_router, prefix="/api/v1", tags=["projects"])
     from src.platform.access.public_router import project_router as public_project_access_router

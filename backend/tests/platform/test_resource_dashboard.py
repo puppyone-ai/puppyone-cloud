@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project import resource_dashboard as dashboard
+from src.platform.dashboard import router as dashboard
+from src.platform.dashboard.schemas import DashboardNodeCounts
 from src.platform.project.dependencies import get_project_repository
 from src.file_operations.dependencies import get_product_operation_adapter
 from tests.authorization_fakes import authorization_for, install_authorization
@@ -142,11 +143,9 @@ def environment(monkeypatch):
     install_authorization(app, authorization_for("project-1", role="viewer"))
     storage = FakeSB(facts())
     monkeypatch.setattr(dashboard, "SupabaseClient", lambda: SimpleNamespace(client=storage))
-    monkeypatch.setattr(
-        dashboard, "_compute_node_counts", lambda *_: dashboard.DashboardNodeCounts()
-    )
-    monkeypatch.setattr(dashboard, "_fetch_tools", lambda *_: [])
-    monkeypatch.setattr(dashboard, "_fetch_uploads", lambda *_: [])
+    monkeypatch.setattr(dashboard, "compute_node_counts", lambda *_: DashboardNodeCounts())
+    monkeypatch.setattr(dashboard, "fetch_tools", lambda *_: [])
+    monkeypatch.setattr(dashboard, "fetch_uploads", lambda *_: [])
     app.dependency_overrides[get_product_operation_adapter] = lambda: object()
     app.dependency_overrides[get_project_repository] = lambda: SimpleNamespace(
         get_by_id=lambda project_id: SimpleNamespace(
