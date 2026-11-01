@@ -164,6 +164,18 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Project knows none of its entry points"
+type = "forbidden"
+source_modules = ["src.platform.project"]
+forbidden_modules = ["src.platform.access", "src.platform.agent"]
+
+[[tool.importlinter.contracts]]
+name = "Auth knows no Project"
+type = "forbidden"
+source_modules = ["src.platform.auth"]
+forbidden_modules = ["src.platform.project"]
+
+[[tool.importlinter.contracts]]
 name = "Sandbox knows none of its callers"
 type = "forbidden"
 source_modules = ["src.platform.sandbox"]

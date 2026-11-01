@@ -40,6 +40,15 @@ def test_known_business_violations_only_shrink():
     assert len(contract["ignore_imports"]) == KNOWN_BUSINESS_VIOLATIONS
 
 
+def test_every_platform_module_has_a_business_layer():
+    contract = next(item for item in _contracts() if item["name"] == BUSINESS_CONTRACT)
+    layered = {name.strip() for layer in contract["layers"] for name in layer.split(":")}
+    source = BACKEND_ROOT / "src" / "platform"
+    modules = {path.stem for path in source.glob("*.py") if path.stem != "__init__"}
+    packages = {path.parent.name for path in source.glob("*/__init__.py")}
+    assert {f"src.platform.{name}" for name in modules | packages} <= layered
+
+
 def test_every_top_level_module_has_a_layer():
     layers = _contracts()[0]["layers"]
     layered = {name.strip() for layer in layers for name in layer.split(":")}

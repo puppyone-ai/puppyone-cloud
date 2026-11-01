@@ -146,12 +146,14 @@ backend/
 │   ├── provider/              # External-source adapters, OAuth, database capabilities
 │   │
 │   ├── platform/              # Platform services
+│   │   ├── dashboard/         #   Project dashboard: read-only view across modules
+│   │   ├── onboarding/        #   First sign-in: account, entitlements, demo Project
 │   │   ├── agent/             #   Platform-run Agent: config, chat, runtime, MCP tool bindings
 │   │   ├── access/            #   Git/Web/CLI/MCP/SSH adapters, credentials, shared FS
 │   │   ├── repository_target/ #   Project-root/Scope models and geometry management
 │   │   ├── auth/              #   JWT auth (Supabase Auth)
 │   │   ├── organization/      #   Org management & member invitations
-│   │   ├── project/           #   Project CRUD & members & dashboard
+│   │   ├── project/           #   Project CRUD & members
 │   │   ├── profile/           #   User profile & onboarding status
 │   │   ├── sandbox/           #   Pluggable compute providers (Fly/E2B/Docker) behind RuntimeProvider
 │   │   ├── workspace/         #   Workspace management
@@ -222,7 +224,7 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
 | `audit_logs` | `version_engine/infrastructure/supabase/audit_repository.py` | Audit trail |
 | `search_index_tasks` | _(retired with Search Tools; no runtime reader)_ | Legacy search indexing tasks |
-| `ingest_tasks` | `project/dashboard_router.py` | Ingestion tasks |
+| `ingest_tasks` | _(no runtime reader)_ | Ingestion tasks |
 | `agent_logs` | `analytics/service.py` | Agent usage analytics |
 | `access_logs` | `analytics/service.py`, `analytics/router.py` | API access analytics |
 
@@ -231,7 +233,8 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | Route Prefix | Module | Description |
 |-------------|--------|-------------|
 | `/api/v1/organizations` | organization | Org CRUD & members & invitations |
-| `/api/v1/projects` | project | Project CRUD & members & dashboard |
+| `/api/v1/projects` | project | Project CRUD & members |
+| `/api/v1/projects/{project_id}/git-view` | platform/access/adapters/git/project_view | Human Git view health and cache rebuild |
 | `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Versioned content tree, write, history, diff, rollback |
 | `/api/v1/tables` | table | Data tables & JSON Pointer operations |
 | `/api/v1/tools` | tool | Tool registration (Search Tools retired: stored rows are read/delete only) |
@@ -250,11 +253,12 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/git/ap/{access_key}.git` | platform/access/adapters/git/router | Bounded, instrumented legacy compatibility only; never construct for new clients |
 | `/api/v1/imports/database/sources` | platform/imports/database/public_router | One-time database sources; never Synchronize or Access identities |
 | `/api/v1/projects/{project_id}/synchronize/github` | platform/synchronize/github/public_router | GitHub binding, pull/push and logs; webhook at `/api/v1/synchronize/github/webhook` |
-| `/api/v1/projects/{project_id}/dashboard/resources`, `/api/v1/activity/items` | project/resource_dashboard, activity/public_router | Domain-qualified read-only aggregates; no legacy DTO fallback |
+| `/api/v1/projects/{project_id}/dashboard/resources`, `/api/v1/activity/items` | dashboard/router, activity/public_router | Domain-qualified read-only aggregates; no legacy DTO fallback |
 | `/api/v1/db-connector`, old GitHub/dashboard/activity URLs | retired resource routes | Not mounted; target-environment release/configuration evidence remains separate |
 | `/api/v1/publishes` | context_publish | Public JSON short links |
 | `/api/v1/oauth` | platform/provider_accounts | OAuth authorization (9+ platforms) |
 | `/api/v1/auth` | auth | Authentication (login/refresh) |
+| `/api/v1/auth/initialize` | onboarding | First sign-in: account, entitlements, demo Project |
 | `/api/v1/analytics` | analytics | Usage statistics |
 | `/api/v1/profile` | profile | User profile & onboarding |
 | `/api/v1/s3` | s3 | File upload/download/presigned URLs |

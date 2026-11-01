@@ -94,11 +94,16 @@ derived projection jobs.**
 
 `version_engine`、`infra`、`provider`、`shared_types` 不能 import FastAPI 或 Starlette。
 
-业务层内部也按 `pyproject.toml` 里的 “Business modules point downward” 分层，从上到下依次是：Agent、访问入口、数据进出、
-内容能力、项目核心、计费、身份与组织。它的 `ignore_imports` 是待清理的存量：修一处删一条，不要新增。
+业务层内部也按 `pyproject.toml` 里的 “Business modules point downward” 分层，从上到下依次是：跨模块用例、Agent、访问入口、
+数据进出、内容能力、项目核心、计费、身份与组织。它的 `ignore_imports` 是待清理的存量：修一处删一条，不要新增。`src/platform`
+下每个模块都必须属于其中一层。
+
+把多个模块拼成一个页面或一个用例时，放进顶层模块（如 `platform/dashboard`、`platform/onboarding`），不要放回被它拼接的模块里。
+
+`project` 不能依赖 `access`、`agent`，`auth` 不能依赖 `project`，间接依赖也不行。
 
 其他规则不允许用 `ignore_imports` 豁免任何 import。下层确实需要上层能力时，在下层定义端口，由上层实现并在启动时安装，
-例如 `src/infra/write_admission.py`。新增会写存储的进程必须在启动时调用
+例如 `src/infra/write_admission.py`、`src/platform/project/entry_points.py`。新增会写存储的进程必须在启动时调用
 `install_storage_write_admission()`。
 
 ## 项目结构
@@ -131,6 +136,8 @@ backend/
 │   │   ├── upload/            # 上传业务、旧 ingest 上传 URL 的实现
 │   │   ├── imports/           # 一次性导入，含数据库保存
 │   │   ├── synchronize/       # 持续绑定/SyncRun；github/ 在这里
+│   │   ├── dashboard/         # Project Dashboard：只读聚合多个模块
+│   │   ├── onboarding/        # 首次登录：账号、权益、示例 Project，/auth/initialize 在这里
 │   │   ├── agent/             # 平台运行的 Agent：配置、对话、运行、MCP 工具绑定
 │   │   ├── access/            # AccessSurface、共用凭证、filesystem；Web/CLI/Git/MCP/SSH adapters
 │   │   ├── repository_target/ # Project-root/Scope 类型与路径范围管理
@@ -235,6 +242,7 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 | `/git/ap/{access_key}.git` | platform/access/adapters/git/router | Instrumented legacy compatibility only; no new URL construction |
 | `/api/v1/tables` | content/table | 数据表 JSON Pointer 操作 |
 | `/api/v1/projects` | platform/project | 项目管理 |
+| `/api/v1/projects/{project_id}/git-view` | platform/access/adapters/git/project_view | 人工查看 Git 视图健康状态、重建缓存 |
 | `/api/v1/organizations` | platform/organization | 组织管理 |
 | `/api/v1/tools` | tool | 工具注册 |
 | `/api/v1/agents` | platform/agent | Agent SSE 聊天 |
@@ -248,7 +256,7 @@ FastAPI / worker 的构造入口位于 `src/version_engine/bootstrap/`。
 | `/api/v1/imports/database/sources` | platform/imports/database/public_router | ImportDatabaseSource；单次保存、不创建持续绑定 |
 | `/api/v1/projects/{project_id}/synchronize/github` | platform/synchronize/github/public_router | GitHub 专属 binding/pull/push/logs；独立于 generic binding ID |
 | `/api/v1/synchronize/github/webhook` | platform/synchronize/github/public_router | 原始 body HMAC 与去重；canonical binding 引用 |
-| `/api/v1/projects/{project_id}/dashboard/resources` | platform/project/resource_dashboard | resource_kind/resource_id 聚合；分域 usage，不按裸 ID 合并 |
+| `/api/v1/projects/{project_id}/dashboard/resources` | platform/dashboard/router | resource_kind/resource_id 聚合；分域 usage，不按裸 ID 合并 |
 | `/api/v1/activity/items` | platform/activity/public_router | 只读 typed activity；synchronize_run，原历史文字不改写 |
 | `/api/v1/oauth` | oauth | OAuth 授权 |
 | `/internal` | internal | 内部 API |
