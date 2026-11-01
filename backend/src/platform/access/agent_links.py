@@ -80,8 +80,9 @@ Run `ssh.install_known_hosts` once. Then use `ssh.command`, adding what to run:
     SSH_COMMAND 'pwd && ls'
 
 Each command starts in your own copy of the project, on a machine only you use.
-Your files are saved to your own branch when the machine goes to sleep, and your
-person decides when they join the project. Your first connection can take a few
+This machine stays on one branch, so commit there; `git switch`, `git rebase` and
+`git worktree add` are refused. Your files are saved to that branch when the machine
+goes to sleep, and your person decides when they join the project. Your first connection can take a few
 minutes while the machine is prepared; after that, waking takes up to a minute.
 """
 
