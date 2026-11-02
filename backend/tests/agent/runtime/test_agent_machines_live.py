@@ -84,6 +84,20 @@ async def until_state(live, identity, state, timeout=240):  # noqa: F811
             await asyncio.sleep(1)
 
 
+async def until_reclaimed(live, identity, timeout=240):  # noqa: F811
+    """Maintenance takes the oldest due machines a batch at a time, repeatedly.
+
+    Other machines can fill one batch, so a single pass proves nothing here.
+    """
+    async with asyncio.timeout(timeout):
+        while True:
+            await live.workspace.lifecycle.reap()
+            row = await asyncio.to_thread(live.workspace.repository.get, identity)
+            if row["state"] == "retired":
+                return row
+            await asyncio.sleep(1)
+
+
 async def put_to_sleep(live, identity):  # noqa: F811
     """What maintenance does to an idle machine; its own loop may get there first."""
     await asyncio.to_thread(
@@ -124,8 +138,7 @@ async def test_an_agent_comes_back_to_its_work_after_sleep_and_after_reclaim(pre
             f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
             maintenance_after=now()-interval '1 second' WHERE id='{machine["id"]}'""",
         )
-        await live.workspace.lifecycle.reap()
-        retired = await until_state(live, machine["id"], "retired")
+        retired = await until_reclaimed(live, machine["id"])
         if PROVIDER == "fly":
             machines = await live.owner.runtime._request(first["resource"], "GET", "/machines")
             assert first["resource"]["resource_id"] not in {item["id"] for item in machines}
