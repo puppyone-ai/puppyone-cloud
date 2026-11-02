@@ -81,31 +81,8 @@ class OpenAIProvider(Provider):
         if model_name.startswith(("gpt-", "ft:gpt-")):
             capabilities |= ModelCapability.LLM
             print(f"Model {model_name} supports LLM")
-            
-        # 嵌入模型支持嵌入能力
-        if model_name.startswith(("text-embedding-", "ft:text-embedding-")):
-            capabilities |= ModelCapability.EMBEDDING
-            print(f"Model {model_name} supports EMBEDDING")
-            
+
         return capabilities
-    
-    def embed(self, model_name: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """生成嵌入向量"""
-        if not HAS_OPENAI or not self.client:
-            raise RuntimeError("openai library is not installed or client setup failed")
-            
-        # 嵌入模型调用
-        try:
-            response = self.client.embeddings.create(
-                model=model_name,
-                input=texts,
-                encoding_format=kwargs.get("encoding_format", "float")
-            )
-            
-            # 提取嵌入向量
-            return [data.embedding for data in response.data]
-        except Exception as e:
-            raise RuntimeError(f"OpenAI embedding failed: {e}")
     
     def generate(self, model_name: str, prompt: str, **kwargs) -> str:
         """生成文本"""

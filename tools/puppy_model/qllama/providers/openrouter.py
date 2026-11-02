@@ -132,8 +132,3 @@ class OpenRouterProvider(Provider):
         except requests.RequestException as e:
             raise Exception(f"OpenRouter 请求失败: {e}")
     
-    def embed(self, model_id: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """
-        目前 OpenRouter 不支持嵌入功能，抛出异常
-        """
-        raise NotImplementedError("OpenRouter 不支持嵌入功能") 

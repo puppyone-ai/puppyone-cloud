@@ -188,30 +188,6 @@ class ModelManager:
         model_cap = self.get_capabilities(model)
         return bool(model_cap & capability)
     
-    def embed(self, model: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """
-        使用指定模型生成文本嵌入向量
-        
-        Args:
-            model: 模型标识符
-            texts: 文本列表
-            **kwargs: 其他参数传递给提供商
-            
-        Returns:
-            嵌入向量列表
-            
-        Raises:
-            ValueError: 如果模型不支持嵌入能力
-        """
-        provider, model_id = self.resolve_model(model)
-        
-        # 检查模型能力
-        if not self.has_capability(model, ModelCapability.EMBEDDING):
-            raise ValueError(f"模型不支持嵌入能力: {model}")
-        
-        # 调用提供商的嵌入方法
-        return provider.embed(model_id, texts, **kwargs)
-    
     def generate(self, model: str, prompt: str, **kwargs) -> str:
         """
         使用指定模型生成文本
@@ -252,10 +228,6 @@ def list_models(provider_id: Optional[str] = None, capability: Optional[ModelCap
     """列出所有模型"""
     return _manager.list_models(provider_id, capability)
 
-def embed(model: str, texts: List[str], **kwargs) -> List[List[float]]:
-    """生成嵌入向量"""
-    return _manager.embed(model, texts, **kwargs)
-
 def generate(model: str, prompt: str, **kwargs) -> str:
     """生成文本"""
     return _manager.generate(model, prompt, **kwargs)
@@ -264,10 +236,6 @@ def generate(model: str, prompt: str, **kwargs) -> str:
 def list_llm_models(provider_id: Optional[str] = None) -> Dict[str, List[str]]:
     """列出所有LLM模型"""
     return _manager.list_models(provider_id, ModelCapability.LLM)
-
-def list_embedding_models(provider_id: Optional[str] = None) -> Dict[str, List[str]]:
-    """列出所有嵌入模型"""
-    return _manager.list_models(provider_id, ModelCapability.EMBEDDING)
 
 # 如果直接运行此模块，则打印所有可用模型
 if __name__ == "__main__":
@@ -282,6 +250,3 @@ if __name__ == "__main__":
     for provider, models in list_llm_models().items():
         print(f"  {provider}: {', '.join(models)}")
     
-    print("\n嵌入模型:")
-    for provider, models in list_embedding_models().items():
-        print(f"  {provider}: {', '.join(models)}") 

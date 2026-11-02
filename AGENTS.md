@@ -158,7 +158,7 @@ backend/
 │   ├── infra/                 # Infrastructure services
 │   │   ├── supabase/          #   Supabase client & repository facade
 │   │   ├── s3/                #   S3 storage service
-│   │   ├── llm/               #   LLM service (generation + embedding)
+│   │   ├── llm/               #   LLM service (text generation)
 │   │   ├── search/            #   Self-hosted text index built from commits
 │   │   ├── security/          #   Security module (AES-256-GCM)
 │   │   ├── scheduler/         #   Scheduled tasks (APScheduler)

@@ -80,7 +80,6 @@
                 <select id="model-type">
                     <option value="all">所有模型</option>
                     <option value="llm">LLM模型</option>
-                    <option value="embedding">嵌入模型</option>
                 </select>
             </div>
             <button id="load-models">加载模型</button>
@@ -115,25 +114,6 @@
             </div>
             <button id="generate-text">生成文本</button>
             <div id="generate-result" class="result">点击按钮生成文本...</div>
-        </div>
-        
-        <div class="card">
-            <h2>文本嵌入</h2>
-            <div class="form-group">
-                <label for="embed-provider">提供商</label>
-                <select id="embed-provider"></select>
-            </div>
-            <div class="form-group">
-                <label for="embed-model">模型</label>
-                <select id="embed-model"></select>
-            </div>
-            <div class="form-group">
-                <label for="embed-texts">文本（每行一个）</label>
-                <textarea id="embed-texts" rows="4" placeholder="输入文本...">Hello, world!
-测试嵌入功能</textarea>
-            </div>
-            <button id="generate-embeddings">生成嵌入</button>
-            <div id="embed-result" class="result">点击按钮生成嵌入...</div>
         </div>
     </div>
 
@@ -174,19 +154,15 @@
                     
                     // 更新提供商下拉列表
                     const llmProviderSelect = document.getElementById('llm-provider');
-                    const embedProviderSelect = document.getElementById('embed-provider');
                     
                     llmProviderSelect.innerHTML = '';
-                    embedProviderSelect.innerHTML = '';
                     
                     data.providers.forEach(provider => {
                         llmProviderSelect.innerHTML += `<option value="${provider}">${provider}</option>`;
-                        embedProviderSelect.innerHTML += `<option value="${provider}">${provider}</option>`;
                     });
                     
                     // 触发模型加载
                     llmProviderSelect.dispatchEvent(new Event('change'));
-                    embedProviderSelect.dispatchEvent(new Event('change'));
                 } else {
                     showError('providers-result', data.error || '加载提供商失败');
                 }
@@ -205,8 +181,6 @@
                 let url = `${API_BASE_URL}/models`;
                 if (modelType === 'llm') {
                     url = `${API_BASE_URL}/models/llm`;
-                } else if (modelType === 'embedding') {
-                    url = `${API_BASE_URL}/models/embedding`;
                 }
                 
                 const response = await fetch(url);
@@ -215,8 +189,6 @@
                 if (data.success) {
                     if (modelType === 'llm') {
                         showResult('models-result', data.llm_models);
-                    } else if (modelType === 'embedding') {
-                        showResult('models-result', data.embedding_models);
                     } else {
                         showResult('models-result', data.models);
                     }
@@ -272,51 +244,6 @@
             }
         });
         
-        // 生成嵌入
-        document.getElementById('generate-embeddings').addEventListener('click', async () => {
-            try {
-                const provider = document.getElementById('embed-provider').value;
-                const model = document.getElementById('embed-model').value;
-                const textsRaw = document.getElementById('embed-texts').value;
-                const texts = textsRaw.split('\n').filter(t => t.trim());
-                
-                if (!model || texts.length === 0) {
-                    showError('embed-result', '请选择模型并输入至少一行文本');
-                    return;
-                }
-                
-                showLoading('embed-result');
-                
-                const response = await fetch(`${API_BASE_URL}/embedding/generate`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        provider,
-                        model,
-                        texts
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    // 简化显示，只显示维度和前5个数值
-                    const result = {
-                        count: data.embeddings.length,
-                        dimensions: data.embeddings[0].length,
-                        sample: data.embeddings[0].slice(0, 5) + '...'
-                    };
-                    showResult('embed-result', result);
-                } else {
-                    showError('embed-result', data.error || '生成嵌入失败');
-                }
-            } catch (error) {
-                showError('embed-result', error.message);
-            }
-        });
-        
         // 提供商变化时加载对应的模型
         document.getElementById('llm-provider').addEventListener('change', async () => {
             try {
@@ -340,31 +267,6 @@
                 }
             } catch (error) {
                 console.error('加载LLM模型失败:', error);
-            }
-        });
-        
-        document.getElementById('embed-provider').addEventListener('change', async () => {
-            try {
-                const provider = document.getElementById('embed-provider').value;
-                if (!provider) return;
-                
-                const response = await fetch(`${API_BASE_URL}/models/embedding`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    const embedModelSelect = document.getElementById('embed-model');
-                    embedModelSelect.innerHTML = '';
-                    
-                    if (data.embedding_models[provider] && data.embedding_models[provider].length > 0) {
-                        data.embedding_models[provider].forEach(model => {
-                            embedModelSelect.innerHTML += `<option value="${model}">${model}</option>`;
-                        });
-                    } else {
-                        embedModelSelect.innerHTML = '<option value="">该提供商没有嵌入模型</option>';
-                    }
-                }
-            } catch (error) {
-                console.error('加载嵌入模型失败:', error);
             }
         });
         

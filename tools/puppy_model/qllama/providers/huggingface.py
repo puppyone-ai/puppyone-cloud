@@ -8,7 +8,7 @@ from qllama.providers.base import Provider
 # 尝试导入transformers库，没有安装则忽略
 try:
     import torch
-    from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
+    from transformers import AutoTokenizer, AutoModelForCausalLM
     from transformers import pipeline
     import numpy as np
     HAS_TRANSFORMERS = True
@@ -65,20 +65,6 @@ class HuggingFaceProvider(Provider):
             
         capabilities = ModelCapability.NONE
         
-        # 尝试作为嵌入模型加载
-        try:
-            model = AutoModel.from_pretrained(model_name, cache_dir=self.cache_dir)
-            tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=self.cache_dir)
-            if hasattr(model, "get_input_embeddings"):
-                capabilities |= ModelCapability.EMBEDDING
-                print(f"Model {model_name} supports EMBEDDING")
-                
-            # 清理以释放内存
-            del model
-            del tokenizer
-        except Exception as e:
-            print(f"EMBEDDING capability check failed for {model_name}: {e}")
-        
         # 尝试作为LLM模型加载
         try:
             model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir=self.cache_dir)
@@ -100,12 +86,7 @@ class HuggingFaceProvider(Provider):
         cache_key = f"{model_name}_{capability.name}"
         
         if cache_key not in self._loaded_models:
-            if capability == ModelCapability.EMBEDDING:
-                # 加载嵌入模型
-                model = AutoModel.from_pretrained(model_name, cache_dir=self.cache_dir)
-                tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=self.cache_dir)
-                self._loaded_models[cache_key] = (model, tokenizer)
-            elif capability == ModelCapability.LLM:
+            if capability == ModelCapability.LLM:
                 # 加载语言模型
                 model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir=self.cache_dir)
                 tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=self.cache_dir)
@@ -114,34 +95,6 @@ class HuggingFaceProvider(Provider):
                 raise ValueError(f"Unsupported capability: {capability}")
         
         return self._loaded_models[cache_key]
-    
-    def embed(self, model_name: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """生成嵌入向量"""
-        if not HAS_TRANSFORMERS:
-            raise RuntimeError("transformers library is not installed")
-            
-        # 获取或加载模型
-        model, tokenizer = self._get_model(model_name, ModelCapability.EMBEDDING)
-        
-        device = kwargs.get("device", "cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
-        
-        results = []
-        for text in texts:
-            # 对文本进行编码
-            inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            
-            # 生成嵌入向量
-            with torch.no_grad():
-                outputs = model(**inputs)
-                
-            # 使用最后一层隐藏状态的平均值作为嵌入向量
-            embeddings = outputs.last_hidden_state.mean(dim=1)
-            embedding = embeddings[0].cpu().numpy().tolist()
-            results.append(embedding)
-            
-        return results
     
     def generate(self, model_name: str, prompt: str, **kwargs) -> str:
         """生成文本"""

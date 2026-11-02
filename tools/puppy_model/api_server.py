@@ -12,7 +12,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import qllama
-from qllama import ModelCapability, LLM, Embedder
+from qllama import ModelCapability, LLM
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
@@ -44,15 +44,6 @@ def get_llm_models():
     return jsonify({
         "success": True,
         "llm_models": models
-    })
-
-@app.route('/api/models/embedding', methods=['GET'])
-def get_embedding_models():
-    """获取支持嵌入的模型"""
-    models = qllama.list_embedding_models()
-    return jsonify({
-        "success": True,
-        "embedding_models": models
     })
 
 @app.route('/api/llm/generate', methods=['POST'])
@@ -93,41 +84,6 @@ def generate_text():
         return jsonify({
             "success": True,
             "text": response
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-@app.route('/api/embedding/generate', methods=['POST'])
-def generate_embeddings():
-    """生成嵌入向量"""
-    try:
-        data = request.json
-        if not data:
-            return jsonify({
-                "success": False,
-                "error": "没有提供请求数据"
-            }), 400
-        
-        model = data.get('model')
-        texts = data.get('texts')
-        provider = data.get('provider')
-        
-        if not model or not texts:
-            return jsonify({
-                "success": False,
-                "error": "缺少必要参数：model或texts"
-            }), 400
-        
-        # 创建Embedder并生成嵌入
-        embedder = Embedder(model, provider_name=provider)
-        embeddings = embedder.embed(texts)
-        
-        return jsonify({
-            "success": True,
-            "embeddings": embeddings
         })
     except Exception as e:
         return jsonify({

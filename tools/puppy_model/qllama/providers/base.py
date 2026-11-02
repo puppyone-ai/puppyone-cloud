@@ -29,20 +29,6 @@ class Provider(ABC):
         """
         pass
     
-    def embed(self, model_name: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """
-        生成嵌入向量
-        
-        Args:
-            model_name: 模型名称或ID
-            texts: 要嵌入的文本列表
-            **kwargs: 其他参数
-            
-        Returns:
-            嵌入向量列表
-        """
-        raise NotImplementedError(f"Provider {self.__class__.__name__} does not implement embed")
-    
     def generate(self, model_name: str, prompt: str, **kwargs) -> str:
         """
         生成文本

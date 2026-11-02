@@ -52,38 +52,7 @@ class OllamaProvider(Provider):
         except Exception as e:
             print(f"LLM capability check failed for {model_name}: {e}")
         
-        # 检测嵌入能力 - 增加超时时间
-        try:
-            response = requests.post(
-                f"{self.endpoint}/api/embed",
-                json={"model": model_name, "input": "hello"},
-                timeout=10  # 增加超时时间
-            )
-            if response.status_code == 200:
-                capabilities |= ModelCapability.EMBEDDING
-                print(f"Model {model_name} supports EMBEDDING")
-        except Exception as e:
-            print(f"EMBEDDING capability check failed for {model_name}: {e}")
-        
         return capabilities
-    
-    def embed(self, model_name: str, texts: List[str], **kwargs) -> List[List[float]]:
-        """生成嵌入向量"""
-        results = []
-        for text in texts:
-            response = requests.post(
-                f"{self.endpoint}/api/embed",
-                json={"model": model_name, "input": text},
-                timeout=kwargs.get("timeout", 30)
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"Ollama embedding failed: {response.text}")
-            
-            data = response.json()
-            results.append(data["embeddings"])
-        
-        return results
     
     def generate(self, model_name: str, prompt: str, **kwargs) -> str:
         """生成文本"""
