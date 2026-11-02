@@ -16,12 +16,18 @@ from src.config import settings
 from src.platform.access.grant_repository import AccessRepository, GrantRepository
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
+from src.platform.sandbox.errors import WorkspaceUnavailable
+from src.platform.sandbox.providers.fly.naming import workspace_app
+from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
+from src.platform.sandbox.providers.fly.transport import acquire_transport
+from src.platform.workspace import lifecycle as lifecycle_module
 from tests.agent.runtime.test_access_lifecycle import issue as issue_registered
 from tests.agent.runtime.test_access_lifecycle import setup_access
 from tests.agent.runtime.test_hosted_ssh_live import (  # noqa: F401
     PROVIDER,
     agent_machines,
     connect,
+    issue,
     live,
     until_released,
 )
@@ -84,6 +90,14 @@ async def until_state(live, identity, state, timeout=240):  # noqa: F811
             await asyncio.sleep(1)
 
 
+async def until_app_absent(live, resource):  # noqa: F811
+    from tests.agent.workbench_acceptance.accept_fly import app_absent
+
+    async with asyncio.timeout(60):
+        while not await app_absent(live.owner.runtime, resource):
+            await asyncio.sleep(1)
+
+
 async def put_to_sleep(live, identity):  # noqa: F811
     """What maintenance does to an idle machine; its own loop may get there first."""
     await asyncio.to_thread(
@@ -118,15 +132,10 @@ async def test_an_agent_comes_back_to_its_work_after_sleep_and_after_reclaim(pre
         read = await shell(live, context, "cat agent.md")
         assert read.stdout == b"kept\n", read.stderr
 
-        slept = await put_to_sleep(live, machine["id"])
-        await asyncio.to_thread(
-            live.db.sql,
-            f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
-            maintenance_after=now()-interval '1 second' WHERE id='{machine["id"]}'""",
-        )
-        await live.workspace.lifecycle.reap()
-        retired = await until_state(live, machine["id"], "retired")
-        if PROVIDER == "fly":
+        retired = await reclaim(live, machine["id"])
+        if PROVIDER == "fly" and settings.CLOUD_AGENT_FLY_ORG:
+            await until_app_absent(live, first["resource"])
+        elif PROVIDER == "fly":
             machines = await live.owner.runtime._request(first["resource"], "GET", "/machines")
             assert first["resource"]["resource_id"] not in {item["id"] for item in machines}
 
@@ -135,8 +144,193 @@ async def test_an_agent_comes_back_to_its_work_after_sleep_and_after_reclaim(pre
         assert rebuilt["generation"] != first["generation"]
         assert rebuilt["resource"]["resource_id"] != first["resource"]["resource_id"]
         assert rebuilt["target_ref"] == first["target_ref"]
+        assert rebuilt["resource"].get("app") == first["resource"].get("app")
         read = await shell(live, context, "cat agent.md seed.md")
         assert read.stdout == b"kept\nseed", read.stderr
+
+
+async def reclaim(live, identity):  # noqa: F811
+    """Sleep past retention, then let maintenance destroy a machine whose work is saved.
+
+    One sweep takes the 20 oldest rows, so this row goes first of those left by other tests.
+    """
+    await put_to_sleep(live, identity)
+    await asyncio.to_thread(
+        live.db.sql,
+        f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
+        maintenance_after=now()-interval '10 years' WHERE id='{identity}'""",
+    )
+    await live.workspace.lifecycle.reap()
+    return await until_state(live, identity, "retired")
+
+
+def fresh_tip(case, ref):
+    grant = case.admission.authorization.resolve_project_grant(case.project, case.user)
+    return case.publication.transport.describe(case.project, grant, target_ref=ref)["expected_oid"]
+
+
+async def sleep_until_settled(live, identity):
+    """A pause always ends, whatever the Agent left behind."""
+    await asyncio.to_thread(
+        live.db.sql,
+        f"UPDATE cloud_workbenches SET last_activity_at=now()-interval '1 day' WHERE id='{identity}'",
+    )
+    repository = live.workspace.repository
+    claimed = await asyncio.to_thread(
+        repository.idle, await asyncio.to_thread(repository.get, identity)
+    )
+    assert claimed["acquired"], claimed
+    await live.workspace.lifecycle.pause(claimed["workbench"])
+    return await asyncio.to_thread(repository.get, identity)
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git switch -c feature",
+        "git checkout -b feature",
+        "git checkout --detach",
+        "git checkout HEAD~0",
+        "git rebase HEAD",
+        "git worktree add ../elsewhere",
+    ],
+)
+async def test_a_refused_command_changes_nothing_and_the_machine_still_sleeps(
+    prepared,
+    live,  # noqa: F811
+    command,
+):
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        wrote = await shell(live, context, "printf 'work\\n' > agent.md")
+        assert wrote.exit_status == 0, wrote.stderr
+        before = await shell(live, context, "cat .git/HEAD; git status --porcelain")
+        refused = await shell(live, context, command)
+        assert refused.exit_status != 0
+        assert b"stays on one branch" in refused.stderr, refused.stderr
+        after = await shell(live, context, "cat .git/HEAD; git status --porcelain")
+        assert after.stdout == before.stdout
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "saved"
+        assert slept["unpublished_changes"] is False
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_the_task_user_cannot_unlock_or_rewrite_head(prepared, live):  # noqa: F811
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        for command in (
+            "printf 'ref: refs/heads/x\\n' > .git/HEAD",
+            "rm -f .git/HEAD",
+            "mv .git/HEAD .git/moved",
+            "chattr -i .git/HEAD",
+        ):
+            attempt = await shell(live, context, command)
+            assert attempt.exit_status != 0, command
+        head = await shell(live, context, "cat .git/HEAD")
+        assert head.stdout.strip().decode() == "ref: " + machine["target_ref"]
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Past the gate: the lock stops HEAD, and whatever is left must not stop the machine.
+        "printf 'two\\n' > agent.md && : > .git/index.lock",
+        "printf 'two\\n' > agent.md && /usr/bin/git switch -c feature",
+    ],
+)
+async def test_a_damaged_checkout_is_still_saved(prepared, live, command):  # noqa: F811
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        await shell(live, context, command)
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "saved", slept["save_error"]
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_a_save_that_cannot_run_lets_the_machine_sleep_and_the_agent_return(
+    prepared,
+    live,  # noqa: F811
+    monkeypatch,
+):
+    monkeypatch.setattr(lifecycle_module, "SAVE_RETRY_SECONDS", 0)
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        first = await start(live, machine)
+        moved = await shell(live, context, "printf 'kept\\n' > agent.md && mv .git .git-moved")
+        assert moved.exit_status == 0, moved.stderr
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "failed"
+        assert slept["unpublished_changes"] is True
+
+        woken = await start(live, slept)
+        assert woken["generation"] == first["generation"]
+        read = await shell(live, context, "cat agent.md")
+        assert read.stdout == b"kept\n", read.stderr
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_rewritten_history_still_reaches_the_branch_as_a_fast_forward(
+    prepared,
+    live,  # noqa: F811
+):
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    identity = "-c user.name=a -c user.email=a@a.invalid"
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        wrote = await shell(
+            live,
+            context,
+            f"printf 'one\\n' > agent.md && git add -A && git {identity} commit -qm first",
+        )
+        assert wrote.exit_status == 0, wrote.stderr
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["save_status"] == "saved", slept["save_error"]
+        first = await asyncio.to_thread(fresh_tip, case, slept["target_ref"])
+
+        await start(live, slept)
+        amended = await shell(
+            live,
+            context,
+            f"printf 'two\\n' > agent.md && git add -A && git {identity} commit -q --amend -m re",
+        )
+        assert amended.exit_status == 0, amended.stderr
+        local = await shell(live, context, "git rev-parse HEAD; git status --porcelain")
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["save_status"] == "saved", slept["save_error"]
+        second = await asyncio.to_thread(fresh_tip, case, slept["target_ref"])
+        assert second != first
+
+        # The Agent finds its own repository exactly as it left it.
+        await start(live, slept)
+        back = await shell(live, context, "git rev-parse HEAD; git status --porcelain")
+        assert back.stdout == local.stdout
 
 
 REACH = """
@@ -155,37 +349,124 @@ try:
     seen["internal_dns"] = socket.getaddrinfo(sys.argv[2], 22)[0][4][0]
 except OSError as error:
     seen["internal_dns"] = "unresolved"
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    try:
+        connection.connect("/.fly/api")
+        seen["fly_api"] = "OPEN"
+    except OSError as error:
+        seen["fly_api"] = errno.errorcode.get(error.errno, "timeout")
 run = lambda *command: subprocess.run(command, capture_output=True, text=True)
 seen["nft_flush"] = run("sh", "-c", "nft flush ruleset").returncode
 seen["sudo"] = run("sh", "-c", "sudo -n true").returncode
 print(json.dumps(seen))
 """
 
+ROOT_PUBLIC = """python3 -c 'import socket
+socket.create_connection(("1.1.1.1",443),6);print("OPEN")'"""
+
+PUBLIC_NAME = """python3 -c 'import socket
+socket.create_connection(("example.com",443),8);print("OPEN")'"""
+
 ROOT_REACH = """python3 -c 'import socket,sys
 c=socket.socket(socket.AF_INET6);c.settimeout(6);c.connect((sys.argv[1],22));print("OPEN",c.recv(16))' """
 
 
 async def as_root(resource, command):
-    process = await asyncio.create_subprocess_exec(
-        settings.CLOUD_AGENT_FLY_CLI,
-        "ssh",
-        "console",
-        "--quiet",
-        "--app",
-        resource["app"],
-        "--machine",
-        resource["resource_id"],
-        "--user",
-        "root",
-        "--command",
-        command,
-        env={**os.environ, "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN},
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    async with asyncio.timeout(90):
-        stdout, _ = await process.communicate()
+    from tests.agent.workbench_acceptance.accept_fly import fly_cli_environment
+
+    async with fly_cli_environment() as env:
+        process = await asyncio.create_subprocess_exec(
+            settings.CLOUD_AGENT_FLY_CLI,
+            "ssh",
+            "console",
+            "--quiet",
+            "--app",
+            resource["app"],
+            "--machine",
+            resource["resource_id"],
+            "--user",
+            "root",
+            "--command",
+            command,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        async with asyncio.timeout(90):
+            stdout, _ = await process.communicate()
     return stdout.decode(errors="replace")
+
+
+async def same_network_machine(provider, row):
+    """A control target that proves ``ROOT_REACH`` can succeed."""
+    resource = row["resource"]
+    created = await provider._request(
+        resource,
+        "POST",
+        "/machines",
+        json={
+            "region": settings.CLOUD_AGENT_FLY_REGION,
+            "config": {
+                "image": resource["image_id"],
+                "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 256},
+                "init": {"exec": ["sleep", "infinity"]},
+                "restart": {"policy": "no"},
+            },
+        },
+    )
+    await provider._request(
+        resource,
+        "GET",
+        f"/machines/{created['id']}/wait",
+        params={"state": "started", "timeout": 60},
+    )
+    return created["private_ip"]
+
+
+async def reach_until_open(resource, address):
+    answer = ""
+    for _ in range(6):
+        answer = await as_root(resource, ROOT_REACH + address)
+        if "OPEN" in answer:
+            break
+        await asyncio.sleep(5)
+    return answer
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CLOUD_AGENT_TEST_FLY_CONNECTION_TOKEN"),
+    reason="needs the connection token that api and ssh_gateway hold",
+)
+async def test_the_connection_token_reaches_a_machine_but_cannot_change_it(live):  # noqa: F811
+    token = os.environ["CLOUD_AGENT_TEST_FLY_CONNECTION_TOKEN"]
+    provider, resource = live.owner.runtime, live.row["resource"]
+    path = f"/machines/{resource['resource_id']}"
+    row = await provider._request(resource, "GET", path, token=token)
+
+    transport = await acquire_transport(
+        settings.CLOUD_AGENT_FLY_APP, token, settings.CLOUD_AGENT_FLY_CLI
+    )
+    pool = FlySSHConnections(
+        settings.CLOUD_AGENT_FLY_APP, token, transport.cli, transport.env, idle_seconds=1
+    )
+    try:
+        lease = await pool.open(resource, row["private_ip"], "printf connected")
+        try:
+            assert await lease.process.stdout.read() == b"connected"
+        finally:
+            lease.release()
+    finally:
+        await pool.close()
+        transport.release()
+
+    for method, suffix, body in (
+        ("POST", "/machines", {"config": {"image": resource["image_id"]}}),
+        ("POST", path + "/stop", {}),
+        ("DELETE", path, None),
+        ("POST", "/volumes", {"name": "nope", "region": "sin", "size_gb": 1}),
+    ):
+        with pytest.raises(WorkspaceUnavailable):
+            await provider._request(resource, method, suffix, token=token, json=body)
 
 
 @pytest.mark.skipif(PROVIDER != "fly", reason="the boundary under test is a VM provider's network")
@@ -212,9 +493,12 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
 
         peer, internal = await private_address(theirs), await private_address(owner)
 
-        # The route exists, so the only thing stopping the Agent is the rule below.
-        control = await as_root(mine["resource"], ROOT_REACH + peer)
-        assert "OPEN" in control, control
+        # Root owns the firewall, so only the private network can stop it here.
+        assert settings.CLOUD_AGENT_FLY_ORG, "Fly acceptance never runs on a shared network"
+        blocked = await as_root(mine["resource"], ROOT_REACH + peer)
+        assert "OPEN" not in blocked, blocked
+        neighbor = await same_network_machine(provider, mine)
+        assert "OPEN" in await reach_until_open(mine["resource"], neighbor)
 
         before = await firewall_hits(mine["resource"])
         targets = [
@@ -232,13 +516,66 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
         seen = json.loads(reached.stdout)
         print("AGENT_NETWORK_BOUNDARY " + json.dumps(seen), flush=True)
         assert seen["uid"] == 1000
+        assert seen["fly_api"] != "OPEN"
         assert seen["nft_flush"] != 0
         assert seen["sudo"] != 0
         for name, *_ in targets:
             assert seen[name] != "OPEN", (name, seen)
         assert await firewall_hits(mine["resource"]) >= before + len(targets)
+        # Root leaves the machine, so the rule is what stopped the Agent.
+        assert "OPEN" in await as_root(mine["resource"], ROOT_PUBLIC)
 
         marked = await shell(live, second, "printf theirs > only-theirs.txt")
         assert marked.exit_status == 0, marked.stderr
         looked = await shell(live, first, "test ! -e only-theirs.txt")
         assert looked.exit_status == 0
+
+
+@pytest.mark.skipif(PROVIDER != "fly", reason="the boundary under test is a VM provider's network")
+async def test_the_internal_workspace_reaches_the_internet_but_no_private_address(live):  # noqa: F811
+    from tests.agent.workbench_acceptance.accept_fly import firewall_hits
+
+    authorities(live)
+    _, machine = await enroll(live)
+    async with agent_machines(live):
+        agent = await start(live, machine)
+        detail = await live.owner.runtime._request(
+            agent["resource"], "GET", f"/machines/{agent['resource']['resource_id']}"
+        )
+        private = [
+            ("agent_machine", 10, detail["private_ip"], 22),
+            ("fly_dns", 10, "fdaa::3", 53),
+            ("fly_machines_api", 10, "fdaa::3", 4280),
+            ("unique_local", 10, "fd00::1", 80),
+            ("ten", 2, "10.0.0.1", 80),
+            ("one_seven_two", 2, "172.16.0.1", 80),
+            ("one_nine_two", 2, "192.168.0.1", 80),
+            ("link_local", 2, "169.254.169.254", 80),
+            ("shared_address", 2, "100.64.0.1", 80),
+        ]
+        public = [
+            ("public_v4", 2, "1.1.1.1", 443),
+            ("public_v6", 10, "2606:4700:4700::1111", 443),
+        ]
+        owner = await asyncio.to_thread(live.workspace.repository.get, live.row["id"])
+        assert owner["internet_access"] is True
+        before = await firewall_hits(owner["resource"])
+        script = shlex.quote(REACH)
+        arguments = shlex.quote(json.dumps(private + public))
+        grant = await issue(live)
+        # A grant admits one session, so everything runs in this one.
+        async with await connect(live, grant) as conn:
+            reached = await conn.run(
+                f"python3 -c {script} {arguments} example.com && {PUBLIC_NAME}", check=False
+            )
+        assert reached.exit_status == 0, reached.stderr
+        report, named = reached.stdout.splitlines()
+        seen = json.loads(report)
+        print("INTERNAL_NETWORK_BOUNDARY " + json.dumps(seen), flush=True)
+        assert seen["uid"] == 1000
+        for name, *_ in public:
+            assert seen[name] == "OPEN", (name, seen)
+        assert named == b"OPEN"
+        for name, *_ in private:
+            assert seen[name] in {"EACCES", "EHOSTUNREACH"}, (name, seen)
+        assert await firewall_hits(owner["resource"]) >= before + len(private)

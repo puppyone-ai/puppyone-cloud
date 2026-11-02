@@ -6,8 +6,9 @@ Workspaces only ever exchange Git branches. Two operations cover every direction
   a Workspace current; an Agent branch is how its work is reviewed.
 - ``publish`` moves the Workspace's work onto the Project's branch.
 
-``save`` commits the working files and pushes them to the Workspace's own branch,
-which is all an external Agent's Workspace ever publishes. Merging runs in the
+``save`` commits the working files and pushes them to the Workspace's own branch.
+``snapshot`` does the same for an external Agent without using its Git state, which
+is all that Workspace ever publishes. Merging runs in the
 sandbox as stock Git, so a conflict is left as marked files in the Workspace. Every
 write goes through the same Git admission, ref CAS and receipts as a Run.
 """
@@ -23,6 +24,8 @@ from .errors import WorkspaceError
 
 SAVE_MESSAGE = "Save workspace changes"
 SYNC_MESSAGE = "Bring in {source}"
+# The sandbox artifact that can save without using a task's HEAD and index.
+SNAPSHOT_PROTOCOL = 2
 
 
 class WorkspaceGit:
@@ -70,7 +73,7 @@ class WorkspaceGit:
 
         return exchange
 
-    async def _operate(self, row, base, action, value, exchange):
+    async def _operate(self, row, base, action, value, exchange, *, protocol=1):
         host = self.service.channel_factory(row)
         host.git_handler = exchange
         try:
@@ -79,7 +82,7 @@ class WorkspaceGit:
                 await self.service.connection(row, states=("running", "pausing"))
             )
             capability = await host.control("capabilities")
-            if capability.get("workspace_git") != 1:
+            if (capability.get("workspace_git") or 0) < protocol:
                 raise WorkspaceError(409, {"code": "workspace_capability_missing"})
             config = {
                 "project_id": row["project_id"],
@@ -98,14 +101,15 @@ class WorkspaceGit:
         if await run_blocking(self.service.repository.has_active_runs, row):
             raise WorkspaceError(409, {"code": "workspace_busy"})
 
-    async def _push(self, row, grant, base, candidate):
+    async def _push(self, row, grant, base, candidate, *, action="publish", value=None, protocol=1):
         binding = self.transport.publication(str(uuid4()), base, candidate)
         pushed = await self._operate(
             row,
             base,
-            "publish",
-            {"destination_ref": base["target_ref"]},
+            action,
+            value or {"destination_ref": base["target_ref"]},
             self._writer(row, base, binding),
+            protocol=protocol,
         )
         if pushed["status"] != "pushed":
             return pushed["status"]
@@ -130,6 +134,35 @@ class WorkspaceGit:
             return {"status": "saved", "tip": tip}
         status = await self._push(row, grant, base, tip)
         return {"status": "saved" if status == "pushed" else status, "tip": tip}
+
+    async def snapshot(self, row):
+        """Save the working files to the Workspace's branch, whatever its Git state."""
+        grant = await self._grant(row)
+        base = await self._describe(row, grant, row["target_ref"])
+        tip = base["expected_oid"]
+        made = await self._operate(
+            row,
+            base,
+            "snapshot",
+            {"message": SAVE_MESSAGE, "tip": tip},
+            self._reader(row, base),
+            protocol=SNAPSHOT_PROTOCOL,
+        )
+        if made["status"] == "merging":
+            return {"status": "merging", "tip": None}
+        candidate = made["candidate"]
+        if candidate is None or candidate == tip:
+            return {"status": "saved", "tip": candidate}
+        status = await self._push(
+            row,
+            grant,
+            base,
+            candidate,
+            action="push-snapshot",
+            value={"candidate": candidate},
+            protocol=SNAPSHOT_PROTOCOL,
+        )
+        return {"status": "saved" if status == "pushed" else status, "tip": candidate}
 
     async def sync(self, row, source_ref=None):
         """Bring a branch into the Workspace; the default is the Project's branch."""

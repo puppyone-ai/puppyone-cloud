@@ -32,7 +32,12 @@ from src.platform.sandbox.port import (
 )
 from src.platform.sandbox.timing import workspace_stage
 
+from .naming import dedicated, require_dedicated, workspace_app
 from .transport import acquire_transport, close_transports
+
+# A deleted app frees its name asynchronously, and two owners can race to create it.
+APP_CREATE_ATTEMPTS = 15
+APP_CREATE_RETRY_SECONDS = 2
 
 
 class FlyRuntimeProvider:
@@ -42,6 +47,7 @@ class FlyRuntimeProvider:
         file_retention="volume",
         preserves_processes=False,
         connection_preparation=True,
+        dedicated_network=True,
     )
 
     def __init__(self, *, client=None):
@@ -54,6 +60,8 @@ class FlyRuntimeProvider:
         self._path(resource or {"app": settings.CLOUD_AGENT_FLY_APP})
         if not settings.CLOUD_AGENT_FLY_TOKEN or not shutil.which(settings.CLOUD_AGENT_FLY_CLI):
             raise ValueError("Fly requires its backend API token and flyctl SSH transport")
+        if not settings.CLOUD_AGENT_FLY_ORG:
+            raise ValueError("Fly requires CLOUD_AGENT_FLY_ORG for per-Workspace private networks")
         if not re.fullmatch(r"[^\s]+@sha256:[a-f0-9]{64}", artifact or ""):
             raise ValueError("Fly worker image must be pinned by digest")
 
@@ -65,7 +73,12 @@ class FlyRuntimeProvider:
         return settings.CLOUD_AGENT_FLY_IMAGE
 
     def initialize(self, host):
-        host.resource["app"] = settings.CLOUD_AGENT_FLY_APP
+        # Runs for every channel, most of which only connect to a persisted resource.
+        # Without a Workspace of its own there is no app at all, never a shared one,
+        # so allocation and connection both refuse it.
+        workspace = getattr(host, "dedicated_workspace", None)
+        if workspace and settings.CLOUD_AGENT_FLY_ORG:
+            host.resource["app"] = workspace_app(workspace)
         host.resource["image_id"] = host.artifact
 
     def bind_recovery(self, host):
@@ -83,6 +96,9 @@ class FlyRuntimeProvider:
         return f"/v1/apps/{app}{suffix}"
 
     async def _request(self, resource, method, suffix, *, token=None, **kwargs):
+        return await self._send(method, self._path(resource, suffix), token=token, **kwargs)
+
+    async def _send(self, method, path, *, token=None, **kwargs):
         # ``token`` selects another provider account; it is never persisted.
         if token is None:
             if not settings.CLOUD_AGENT_FLY_TOKEN:
@@ -94,7 +110,6 @@ class FlyRuntimeProvider:
             "headers": {"Authorization": f"Bearer {token}"},
             **kwargs,
         }
-        path = self._path(resource, suffix)
         attempts = 3 if method == "GET" else 1
         for attempt in range(attempts):
             try:
@@ -138,8 +153,48 @@ class FlyRuntimeProvider:
             if exc.response.status_code != 404:  # already gone
                 raise
 
+    async def verify_isolation(self, resource):
+        """Prove from outside the machine that it sits alone on its own network."""
+        if not dedicated(resource):
+            raise PermissionError("Fly Workspace is not on its own private network")
+        row = await self._request(resource, "GET", "")
+        if row.get("network") != resource["app"]:
+            raise PermissionError("Fly Workspace app is on another private network")
+
+    async def _ensure_app(self, resource):
+        require_dedicated(resource)
+        app = resource["app"]
+        for _ in range(APP_CREATE_ATTEMPTS):
+            try:
+                row = await self._request(resource, "GET", "")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+            else:
+                if row.get("network") != app:
+                    raise PermissionError("Fly Workspace app is on another private network")
+                return
+            try:
+                await self._send(
+                    "POST",
+                    "/v1/apps",
+                    json={
+                        "app_name": app,
+                        "org_slug": settings.CLOUD_AGENT_FLY_ORG,
+                        "network": app,
+                    },
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in {409, 422}:
+                    raise
+                await asyncio.sleep(APP_CREATE_RETRY_SECONDS)
+            # Created or not, the next pass reads the network back before use.
+        raise WorkerDisconnected("Fly Workspace app is not available yet; retry")
+
     async def _create_machine(self, host, volume):
         resource = host.resource
+        require_dedicated(resource)
+        internet = getattr(host, "internet_access", False)
         machine = await self._request(
             resource,
             "POST",
@@ -156,6 +211,7 @@ class FlyRuntimeProvider:
                     "auto_destroy": False,
                     "restart": {"policy": "no"},
                     "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
+                    "env": {"PUPPYONE_TASK_INTERNET": "open"} if internet else {},
                 },
             },
         )
@@ -210,12 +266,18 @@ class FlyRuntimeProvider:
         if not resource.get("allocation_pending"):
             return [resource]
         metadata = self._metadata(resource)
-        rows = await self._request(
-            resource,
-            "GET",
-            "/machines",
-            params={"metadata." + key: value for key, value in metadata.items()},
-        )
+        try:
+            rows = await self._request(
+                resource,
+                "GET",
+                "/machines",
+                params={"metadata." + key: value for key, value in metadata.items()},
+            )
+        except httpx.HTTPStatusError as exc:
+            # The intent is persisted first, so a crash can precede the app.
+            if exc.response.status_code == 404 and dedicated(resource):
+                return []
+            raise
         matching = [
             row
             for row in rows
@@ -245,6 +307,7 @@ class FlyRuntimeProvider:
             raise ValueError("Fly requires an independently owned persistent workbench")
         if not host.artifact or "@sha256:" not in host.artifact:
             raise ValueError("CLOUD_AGENT_FLY_IMAGE must be pinned by digest")
+        await self._ensure_app(resource)
         existing = await self.resolve(resource)
         if len(existing) > 1:
             raise WorkerDisconnected(
@@ -288,6 +351,7 @@ class FlyRuntimeProvider:
         create reply is adopted by exact generation metadata, never duplicated.
         """
         resource = host.resource
+        require_dedicated(resource)
         if not resource.get("allocation_pending"):
             raise ValueError("Recreating compute requires a persisted allocation intent")
         existing = await self.resolve(resource)
@@ -306,6 +370,10 @@ class FlyRuntimeProvider:
 
     async def destroy_workspace(self, resource):
         """Destroy all compute and the disk of one generation whose owner was deleted."""
+        if dedicated(resource):
+            # A rebuild recreates the app; keeping it empty would strand it.
+            await self._delete(resource, "", params={"force": "true"})
+            return
         metadata = self._metadata(resource)
         rows = await self._request(
             resource,
@@ -372,6 +440,7 @@ class FlyRuntimeProvider:
         return row
 
     async def resume(self, host):
+        require_dedicated(host.resource)
         row = await self.inspect(host.resource)
         if row["state"] in {"stopped", "suspended"}:
             await self._request(host.resource, "POST", self._machine(host.resource) + "/start")
@@ -431,8 +500,11 @@ class FlyRuntimeProvider:
             await self.close_channel(host)
             host.connection = connection
         with workspace_stage("connection.agent_acquire"):
+            # One agent carries the tunnel of every Workspace network.
             self._transport = await acquire_transport(
-                host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
+                settings.CLOUD_AGENT_FLY_APP,
+                settings.CLOUD_AGENT_FLY_TOKEN,
+                settings.CLOUD_AGENT_FLY_CLI,
             )
         try:
             self._ssh_lease = await self._transport.ssh_connections().open(
@@ -517,7 +589,9 @@ class FlyRuntimeProvider:
         if row["state"] not in {"stopped", "suspended", "starting", "started"}:
             raise WorkerDisconnected("Fly workbench transition is not ready for preparation")
         transport = await acquire_transport(
-            host.resource["app"], settings.CLOUD_AGENT_FLY_TOKEN, settings.CLOUD_AGENT_FLY_CLI
+            settings.CLOUD_AGENT_FLY_APP,
+            settings.CLOUD_AGENT_FLY_TOKEN,
+            settings.CLOUD_AGENT_FLY_CLI,
         )
         try:
             await transport.ssh_connections().prepare(host.resource, row.get("private_ip"))

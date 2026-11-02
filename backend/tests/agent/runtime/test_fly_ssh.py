@@ -4,13 +4,15 @@ import asyncio
 import json
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import asyncssh
 import pytest
 from cryptography.hazmat.primitives.serialization import SSHCertificateBuilder, SSHCertificateType
 
 from src.platform.sandbox.providers.fly.certificate import import_user_certificate
+from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
@@ -71,7 +73,7 @@ async def test_route_preparation_overlaps_credentials_without_opening_ssh():
     pool = FlySSHConnections("owned", "token", "fly", {})
     credential_started, route_started = asyncio.Event(), asyncio.Event()
 
-    async def credentials():
+    async def credentials(_app):
         credential_started.set()
         await route_started.wait()
 
@@ -82,7 +84,7 @@ async def test_route_preparation_overlaps_credentials_without_opening_ssh():
     pool.credentials, pool._proxy = credentials, proxy
     pool._connect = AsyncMock()
     try:
-        await asyncio.wait_for(pool.prepare({"app": "owned"}, "fdaa::1"), 1)
+        await asyncio.wait_for(pool.prepare(OWNED, "fdaa::1"), 1)
         pool._connect.assert_not_awaited()
         entry = next(iter(pool.entries.values()))
         assert entry.users == 0 and entry.ssh is None
@@ -102,7 +104,7 @@ async def test_canceled_preparation_releases_capacity_and_partial_proxy():
         await asyncio.Event().wait()
 
     pool._proxy, pool.credentials = route, AsyncMock()
-    task = asyncio.create_task(pool.prepare({"app": "owned"}, "fdaa::1"))
+    task = asyncio.create_task(pool.prepare(OWNED, "fdaa::1"))
     try:
         await started.wait()
         task.cancel()
@@ -128,7 +130,7 @@ async def test_concurrent_channels_share_one_ssh_connection_and_idle_eviction(mo
         opened.append(entry.ssh)
 
     monkeypatch.setattr(pool, "_connect", connect)
-    resource = {"app": "owned", "resource_id": "first"}
+    resource = {**OWNED, "resource_id": "first"}
     try:
         leases = await asyncio.gather(
             *(pool.open(resource, "fdaa::1", "file-client") for _ in range(8))
@@ -149,10 +151,22 @@ async def test_concurrent_channels_share_one_ssh_connection_and_idle_eviction(mo
         await pool.close()
 
 
+WORKSPACE = "6c9f3f4e-2a51-4c7e-9f5a-0d3b8b6a1e11"
+OWNED = {"app": workspace_app(WORKSPACE), "workbench_id": WORKSPACE}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "resource,address",
-    [({"app": "other"}, "fdaa::1"), ({"app": "owned"}, "8.8.8.8"), ({"app": "owned"}, None)],
+    [
+        # The app every Workspace used to share is refused like any other.
+        ({"app": "owned"}, "fdaa::1"),
+        ({"app": "other"}, "fdaa::1"),
+        # A Workspace reaches only the app derived from its own id.
+        ({"app": "other", "workbench_id": WORKSPACE}, "fdaa::1"),
+        (OWNED, "8.8.8.8"),
+        (OWNED, None),
+    ],
 )
 async def test_wrong_app_and_non_private_target_never_connect(resource, address):
     pool = FlySSHConnections("owned", "token", "fly", {})
@@ -163,6 +177,55 @@ async def test_wrong_app_and_non_private_target_never_connect(resource, address)
         pool._connect.assert_not_awaited()
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_each_dedicated_workspace_keeps_its_own_app_and_certificate():
+    first = {"app": workspace_app(WORKSPACE), "workbench_id": WORKSPACE, "resource_id": "a"}
+    other = str(uuid4())
+    second = {"app": workspace_app(other), "workbench_id": other, "resource_id": "b"}
+    pool = FlySSHConnections("shared", "token", "fly", {})
+    apps = []
+
+    async def graphql(query, variables):
+        if "issueCertificate" in query:
+            apps.append(variables["input"]["appNames"])
+            return {"issueCertificate": {"certificate": "signed"}}
+        return {"app": {"organization": {"id": "org"}}}
+
+    pool._graphql = graphql
+    with patch(
+        "src.platform.sandbox.providers.fly.ssh.import_user_certificate",
+        side_effect=lambda value, key, app: app,
+    ) as verify:
+        try:
+            await asyncio.gather(
+                pool.credentials(first["app"]),
+                pool.credentials(first["app"]),
+                pool.credentials(second["app"]),
+            )
+            await pool.credentials(first["app"])
+        finally:
+            await pool.close()
+    assert apps == [[first["app"]], [second["app"]]]
+    assert [call.args[2] for call in verify.call_args_list] == [first["app"], second["app"]]
+
+
+@pytest.mark.asyncio
+async def test_private_route_targets_the_app_of_its_connection(monkeypatch, tmp_path):
+    resource = {"app": workspace_app(WORKSPACE), "workbench_id": WORKSPACE, "resource_id": "a"}
+    pool = FlySSHConnections("shared", "token", "fly", {})
+    pool._connect = AsyncMock()
+    pool.credentials = AsyncMock()
+    launched = AsyncMock(side_effect=RuntimeError("stop after launch"))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launched)
+    try:
+        with pytest.raises(ExceptionGroup):
+            await pool.prepare(resource, "fdaa::1")
+    finally:
+        await pool.close()
+    arguments = launched.call_args.args
+    assert arguments[arguments.index("--app") + 1] == resource["app"]
 
 
 @pytest.mark.asyncio
@@ -177,7 +240,7 @@ async def test_cancelled_connection_closes_partial_transport_and_releases_capaci
         await asyncio.Event().wait()
 
     pool._connect = connect
-    task = asyncio.create_task(pool.open({"app": "owned"}, "fdaa::1", "command"))
+    task = asyncio.create_task(pool.open(OWNED, "fdaa::1", "command"))
     try:
         await connected.wait()
         task.cancel()
@@ -204,7 +267,7 @@ async def test_new_compute_epoch_reconnects_ssh_without_discarding_private_route
         connections.append(entry.ssh)
 
     pool._connect = connect
-    resource = {"app": "owned"}
+    resource = dict(OWNED)
     try:
         first = await pool.open(resource, "fdaa::1", "files", epoch=1)
         first.release()

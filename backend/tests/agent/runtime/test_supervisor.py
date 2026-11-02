@@ -923,9 +923,10 @@ async def test_native_rewritten_history_cannot_replace_existing_cloud_history(pr
     case = prepared
     await native_write(case, "notes.md", b"human history")
     model = BashModel(
-        "git checkout --orphan unrelated\nprintf rewritten > notes.md\n"
-        "git add -A\ngit commit -m 'unrelated root'\n"
-        "git branch -f main HEAD\ngit checkout main"
+        # Past the one-branch gate on purpose: the Git host refuses this on its own.
+        "/usr/bin/git checkout --orphan unrelated\nprintf rewritten > notes.md\n"
+        "/usr/bin/git add -A\n/usr/bin/git commit -m 'unrelated root'\n"
+        "/usr/bin/git branch -f main HEAD\n/usr/bin/git checkout main"
     )
     result = await approve_to_completion(
         case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))

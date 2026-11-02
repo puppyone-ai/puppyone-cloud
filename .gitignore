@@ -156,6 +156,7 @@ todo/
 .pycache/
 
 # Isolated repository-hosting acceptance artifacts
+backend/.agent-test-results/
 backend/.hosting-test-results/
 backend/.organization-test-results/
 backend/.native-migration-test-results/

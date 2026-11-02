@@ -70,6 +70,7 @@ class DockerRuntimeProvider:
             "--cap-add=CHOWN",
             "--cap-add=DAC_OVERRIDE",
             "--cap-add=FOWNER",
+            "--cap-add=LINUX_IMMUTABLE",
             "--security-opt=no-new-privileges",
             "--pids-limit=128",
             "--memory=768m",
