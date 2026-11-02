@@ -63,27 +63,3 @@ class InvalidResponseError(LLMError):
         super().__init__(message)
         self.expected_format = expected_format
         self.actual_response = actual_response
-
-
-class InvalidInputError(LLMError):
-    """Exception raised when input is invalid (e.g., empty text)."""
-
-    def __init__(self, message: str, index: int | None = None):
-        detail = message
-        if index is not None:
-            detail = f"[index={index}] {detail}"
-        super().__init__(detail)
-        self.index = index
-
-
-class TextTooLongError(LLMError):
-    """Exception raised when input text exceeds model limits."""
-
-    def __init__(self, actual_length: int, limit_length: int, index: int | None = None):
-        message = f"Text too long: actual_length={actual_length}, limit_length={limit_length}."
-        if index is not None:
-            message = f"[index={index}] {message}"
-        super().__init__(message)
-        self.actual_length = actual_length
-        self.limit_length = limit_length
-        self.index = index

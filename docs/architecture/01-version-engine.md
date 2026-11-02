@@ -381,8 +381,8 @@ for checks, replacement test coverage and release limits.
 
 The process composition root supplies `VersionEngineContainer`. Search, Tool,
 Table and request routes inject this container; a request-scoped service never
-caches another request's grant. Embedding/vector clients reuse their existing
-process providers. Worker composition injects those resources explicitly.
+caches another request's grant. Worker composition injects those resources
+explicitly.
 
 ```text
 process clients / VersionEngineContainer

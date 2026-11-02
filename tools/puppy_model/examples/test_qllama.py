@@ -8,7 +8,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import qllama
-from qllama import Embedder, LLM, ModelCapability
+from qllama import LLM, ModelCapability
 
 def test_basic_import():
     """测试基本包引入"""
@@ -42,15 +42,7 @@ def test_model_manager():
         if len(models) > 3:
             print(f"    - ... 及其他 {len(models)-3} 个模型")
     
-    # 列出支持嵌入的模型
-    embed_models = qllama.list_embedding_models()
-    print(f"\n支持嵌入的模型:")
-    for provider, models in embed_models.items():
-        print(f"  - {provider}: {len(models)} 个模型")
-        if models:
-            print(f"    - 示例: {models[0]}")
-    
-    # 列出支持LLM的模型
+# 列出支持LLM的模型
     llm_models = qllama.list_llm_models()
     print(f"\n支持LLM的模型:")
     for provider, models in llm_models.items():
@@ -82,10 +74,6 @@ def test_provider_capabilities():
             capabilities = provider.get_capabilities(model)
             print(f"  - 模型能力: {capabilities}")
             
-            if capabilities & ModelCapability.EMBEDDING:
-                print(f"    ✅ 支持嵌入")
-            else:
-                print(f"    ❌ 不支持嵌入")
                 
             if capabilities & ModelCapability.LLM:
                 print(f"    ✅ 支持LLM")
@@ -93,40 +81,6 @@ def test_provider_capabilities():
                 print(f"    ❌ 不支持LLM")
         except Exception as e:
             print(f"  - 测试{provider_name}能力时出错: {e}")
-
-def test_embedder_class():
-    """测试Embedder类"""
-    print("\n=== 测试Embedder类 ===")
-    
-    # 获取支持嵌入的模型
-    embed_models = qllama.list_embedding_models()
-    
-    if not any(models for models in embed_models.values()):
-        print("未找到支持嵌入的模型")
-        return
-    
-    # 找到第一个可用的嵌入模型
-    provider = next((p for p, models in embed_models.items() if models), None)
-    if not provider:
-        return
-    
-    model = embed_models[provider][0]
-    print(f"使用模型: {model} (提供商: {provider})")
-    
-    try:
-        # 创建嵌入器
-        embedder = Embedder(model, provider_name=provider)
-        
-        # 生成嵌入
-        texts = ["Hello, world!", "Testing embeddings"]
-        embeddings = embedder.embed(texts)
-        
-        print(f"✅ 生成嵌入向量成功:")
-        print(f"  - 文本数量: {len(texts)}")
-        print(f"  - 嵌入维度: {len(embeddings[0])}")
-        print(f"  - 前5个维度: {embeddings[0][:5]}")
-    except Exception as e:
-        print(f"❌ 嵌入测试失败: {e}")
 
 def test_llm_class():
     """测试LLM类"""
@@ -176,8 +130,6 @@ def test_convenience_functions():
         llm_models = qllama.list_llm_models()
         print(f"✅ list_llm_models(): {len(llm_models)} 个提供商")
         
-        embed_models = qllama.list_embedding_models()
-        print(f"✅ list_embedding_models(): {len(embed_models)} 个提供商")
         
     except Exception as e:
         print(f"❌ 便捷函数测试失败: {e}")
@@ -195,7 +147,6 @@ def run_all_tests():
     test_model_manager()
     test_provider_capabilities()
     test_convenience_functions()
-    test_embedder_class()
     test_llm_class()
     
     print("\n🎉 测试完成！")
