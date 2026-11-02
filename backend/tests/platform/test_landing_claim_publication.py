@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, PermissionException
+from src.platform.access.adapters.mcp_endpoint.service import McpEndpointService
 from src.platform.authorization.models import ProjectAction
 from src.platform.landing import tickets
 from src.platform.landing.schemas import ClaimRequest
@@ -58,6 +59,7 @@ def _metadata(ticket_id: UUID) -> dict[str, object]:
         "repo": "Guide",
         "endpoint_name": "pdf-mcp",
         "credential_derivation_version": 1,
+        "mcp_target": "project_root",
     }
 
 
@@ -68,10 +70,12 @@ class _ControlPlane:
         *,
         replays: list[ProjectCreationReplay | None] | None = None,
         error: Exception | None = None,
+        privacy_error: Exception | None = None,
     ) -> None:
         self.events = events
         self.replays = list(replays or [None])
         self.error = error
+        self.privacy_error = privacy_error
         self.calls: list[dict] = []
 
     def preflight_project_creation(self, **kwargs):
@@ -80,6 +84,15 @@ class _ControlPlane:
         if self.error is not None:
             raise self.error
         return self.replays.pop(0)
+
+    def make_initializing_project_private(self, **kwargs):
+        assert kwargs["project_id"] == "project-1"
+        assert kwargs["org_id"] == "org-1"
+        assert kwargs["actor_user_id"] == "user-1"
+        assert kwargs["operation_key"]
+        self.events.append("private")
+        if self.privacy_error is not None:
+            raise self.privacy_error
 
 
 class _S3:
@@ -214,23 +227,29 @@ async def test_new_claim_preflights_before_source_and_persists_stable_replay_fac
     class Scope:
         def create(self, **kwargs):
             scope_calls.append(kwargs)
-            return SimpleNamespace(id="scope-1")
+            raise AssertionError("native landing imports must not create a Scope")
 
-    monkeypatch.setattr("src.platform.landing.service.ScopeService", Scope)
+    monkeypatch.setattr("src.platform.repository_target.scope_service.ScopeService", Scope)
 
     endpoint_secrets: list[str] = []
+    endpoint_calls: list[dict] = []
 
-    class Mcp:
-        def create_endpoint(self, **kwargs):
+    class Endpoints:
+        def create(self, **kwargs):
+            endpoint_calls.append(kwargs)
             endpoint_secrets.append(kwargs["api_key"])
             return {
                 "id": "endpoint-1",
                 "project_id": "project-1",
-                "path": "Guide",
+                "scope_id": None,
+                "path": "",
                 "api_key": kwargs["api_key"],
             }
 
-    monkeypatch.setattr("src.platform.landing.service.McpEndpointService", Mcp)
+    # Exercise the real service signature and policy serialization rather than
+    # accepting arbitrary keyword arguments at the endpoint-service boundary.
+    endpoint_service = McpEndpointService(repository=Endpoints())
+    monkeypatch.setattr("src.platform.landing.service.McpEndpointService", lambda: endpoint_service)
 
     publication_calls: list[dict] = []
 
@@ -255,6 +274,7 @@ async def test_new_claim_preflights_before_source_and_persists_stable_replay_fac
         "download",
         "capacity",
         "create",
+        "private",
         "write",
         "authorize",
     ]
@@ -278,7 +298,10 @@ async def test_new_claim_preflights_before_source_and_persists_stable_replay_fac
         "source_key": "landing/ticket/parsed/guide.md",
         "content_sha256": hashlib.sha256(b"# Guide").hexdigest(),
     }
-    assert len(scope_calls) == 1
+    assert scope_calls == []
+    assert endpoint_calls[0]["path"] is None
+    assert endpoint_calls[0]["project_id"] == "project-1"
+    assert endpoint_calls[0]["accesses"] == [{"path": "", "json_path": "", "readonly": True}]
     assert len(writes.calls) == 1
 
 
@@ -313,7 +336,10 @@ async def test_expired_completed_claim_replays_without_preview_object(monkeypatc
             return {
                 "id": endpoint_id,
                 "project_id": "project-1",
-                "path": "Guide",
+                "scope_id": None,
+                "path": "",
+                "status": "active",
+                "accesses": [{"path": "", "readonly": True}],
             }
 
     monkeypatch.setattr("src.platform.landing.service.AccessCredentialRepository", Credentials)
@@ -431,3 +457,300 @@ async def test_completed_replay_rechecks_current_project_access_before_secret(
         await service.claim(ticket=ticket, org_id="org-1", user_id="user-1")
 
     assert events == ["preflight", "authorize"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_claim_metadata_cannot_be_replayed_as_a_project_root_key(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "landing-test-secret")
+    ticket, ticket_id = _ticket(expires_at=int(time.time()) - 60)
+    metadata = _metadata(ticket_id)
+    metadata.pop("mcp_target")
+    events: list[str] = []
+
+    class Credentials:
+        def get_active_by_token(self, _token):
+            raise AssertionError("legacy target metadata must fail before credential lookup")
+
+    monkeypatch.setattr("src.platform.landing.service.AccessCredentialRepository", Credentials)
+    service = _service(events, control_plane=_ControlPlane(events, replays=[
+        ProjectCreationReplay(project=_project(), result_metadata=metadata)
+    ]))
+
+    with pytest.raises(AppException) as caught:
+        await service.claim(ticket=ticket, org_id="org-1", user_id="user-1")
+
+    assert caught.value.status_code == 409
+    assert caught.value.details["code"] == "landing_claim_target_unavailable"
+    assert events == ["preflight", "authorize"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [
+    {"project_id": "another-project"},
+    {"scope_id": "legacy-scope"},
+    {"path": "Guide"},
+    {"accesses": [{"path": "", "readonly": False}]},
+    {"accesses": "invalid-policy"},
+    {"status": "disabled"},
+])
+async def test_replay_rejects_changed_project_root_target_or_writable_policy(monkeypatch, changed):
+    monkeypatch.setattr(settings, "JWT_SECRET", "landing-test-secret")
+    ticket, ticket_id = _ticket(expires_at=int(time.time()) - 60)
+    events: list[str] = []
+
+    class Credentials:
+        def get_active_by_token(self, _token):
+            return {"access_surface_id": "endpoint-1", "project_id": "project-1", "org_id": "org-1"}
+
+    class Mcp:
+        def get_endpoint(self, _endpoint_id):
+            return {
+                "id": "endpoint-1", "project_id": "project-1", "scope_id": None,
+                "path": "", "status": "active", "accesses": [{"path": "", "readonly": True}], **changed,
+            }
+
+    monkeypatch.setattr("src.platform.landing.service.AccessCredentialRepository", Credentials)
+    monkeypatch.setattr("src.platform.landing.service.McpEndpointService", Mcp)
+    service = _service(events, control_plane=_ControlPlane(events, replays=[
+        ProjectCreationReplay(project=_project(), result_metadata=_metadata(ticket_id))
+    ]))
+
+    with pytest.raises(AppException) as caught:
+        await service.claim(ticket=ticket, org_id="org-1", user_id="user-1")
+
+    assert caught.value.status_code == 409
+    assert "api_key" not in caught.value.details
+
+
+@pytest.mark.asyncio
+async def test_replay_does_not_reissue_a_revoked_or_rotated_credential(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "landing-test-secret")
+    ticket, ticket_id = _ticket(expires_at=int(time.time()) - 60)
+    events: list[str] = []
+
+    class Credentials:
+        def get_active_by_token(self, _token):
+            return None
+
+    monkeypatch.setattr("src.platform.landing.service.AccessCredentialRepository", Credentials)
+    service = _service(events, control_plane=_ControlPlane(events, replays=[
+        ProjectCreationReplay(project=_project(), result_metadata=_metadata(ticket_id))
+    ]))
+
+    with pytest.raises(AppException) as caught:
+        await service.claim(ticket=ticket, org_id="org-1", user_id="user-1")
+
+    assert caught.value.status_code == 409
+    assert caught.value.details["code"] == "landing_claim_credential_rotated"
+
+
+@pytest.mark.asyncio
+async def test_private_visibility_must_be_confirmed_before_content_and_endpoint_creation(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", "landing-test-secret")
+    ticket, _ = _ticket(expires_at=int(time.time()) + 600)
+    events: list[str] = []
+
+    async def publish(**kwargs):
+        await kwargs["initialize"](_project())
+        return IdempotentProjectResult(project=_project(), replayed=False, ready=True)
+
+    monkeypatch.setattr("src.platform.landing.service.resolve_org_id", lambda org, _user: org)
+    monkeypatch.setattr("src.platform.landing.service.create_project_with_tree", publish)
+    writes = _Writes(events)
+    monkeypatch.setattr(
+        "src.version_engine.bootstrap.dependencies.build_worker_version_engine_container",
+        lambda: SimpleNamespace(write_commands=lambda: writes),
+    )
+
+    class Mcp:
+        def create_endpoint(self, **_kwargs):
+            return {"id": "endpoint-1"}
+
+    monkeypatch.setattr("src.platform.landing.service.McpEndpointService", Mcp)
+    service = _service(events, control_plane=_ControlPlane(events, privacy_error=RuntimeError("private initialization failed")))
+
+    with pytest.raises(RuntimeError, match="private"):
+        await service.claim(ticket=ticket, org_id="org-1", user_id="user-1")
+    assert writes.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_format", ["pdf", "markdown", "mdx", "xlsx", "csv", "tsv", "openapi-json", "openapi-yaml"])
+async def test_preview_claim_and_readonly_mcp_read_use_the_same_private_project(monkeypatch, source_format):
+    """Local flow acceptance with real PDF parsing, policies and MCP handlers.
+
+    Only persistence/publication boundaries are in memory; no production
+    credentials, hosted writes or external MCP client are involved.
+    """
+    import re
+    from contextlib import nullcontext
+
+    import fitz
+    from fastapi import HTTPException
+
+    from src.file_operations.queries import ProductQueries
+    from src.platform.access.adapters.mcp_endpoint import resolver, runtime
+    from src.platform.authorization.models import ROLE_CAPABILITIES, ProjectRole
+    from src.version_engine.read.tree_reader import VersionEntry
+
+    monkeypatch.setattr(settings, "JWT_SECRET", "landing-local-flow-unit-test-secret")
+    monkeypatch.setattr(settings, "PUBLIC_URL", "https://cloud.example")
+    reference = source_format.upper() + "-MCP-CHECK-20261029"
+    with fitz.open() as document:
+        document.new_page().insert_text(
+            (72, 72), "Public PDF to MCP acceptance fixture.\nReference code: " + reference
+        )
+        source = document.tobytes()
+
+    kind, filename, content_type, folder = "pdf", "资料.pdf", "application/pdf", "doc"
+    if source_format in {"markdown", "mdx"}:
+        kind, folder = "markdown", "doc"
+        filename, content_type = "资料." + ("mdx" if source_format == "mdx" else "md"), "text/markdown"
+        source = ("# Public document\n" + reference + "\n<Example />\n").encode()
+    elif source_format in {"xlsx", "csv", "tsv"}:
+        kind, folder, filename = "excel", "data", "资料." + source_format
+        if source_format == "xlsx":
+            from io import BytesIO
+            from openpyxl import Workbook
+
+            workbook = Workbook()
+            workbook.active.append(["reference", "value"])
+            workbook.active.append([reference, 42])
+            output = BytesIO()
+            workbook.save(output)
+            workbook.close()
+            source = output.getvalue()
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            delimiter = "," if source_format == "csv" else "\t"
+            source = f"reference{delimiter}value\n{reference}{delimiter}42\n".encode()
+            content_type = "text/csv" if source_format == "csv" else "text/tab-separated-values"
+    elif source_format.startswith("openapi-"):
+        import json
+        import yaml
+
+        kind, folder = "openapi", "api"
+        spec = {"openapi": "3.0.3", "info": {"title": "Public fixture", "version": "1.0.0", "description": reference},
+                "paths": {"/reference": {"get": {"summary": "Read public reference"}}}}
+        is_json = source_format.endswith("json")
+        source = (json.dumps(spec) if is_json else yaml.safe_dump(spec)).encode()
+        filename, content_type = ("资料.json", "application/json") if is_json else ("资料.yaml", "application/yaml")
+    imported_path = folder + "/资料.md"
+
+    class Storage:
+        objects: dict[str, bytes] = {}
+
+        def upload_file(self, key, content, _content_type):
+            assert re.fullmatch(r"[A-Za-z0-9/_.-]+", key)
+            self.objects[key] = content
+
+        def download_file(self, key):
+            return self.objects[key]
+
+    files: dict[str, bytes] = {}
+    endpoint: dict = {}
+    class Writes:
+        async def bulk_write(self, project_id, entries, **_kwargs):
+            assert project_id == "project-1"
+            assert "private" in events
+            files.update(entries)
+
+    class Endpoints:
+        def create(self, **kwargs):
+            assert kwargs["path"] is None
+            endpoint.update(kwargs, id="endpoint-1", kind="mcp", scope_id=None, status="active")
+            return endpoint
+
+    async def publish(**kwargs):
+        assert kwargs["org_id"] == "org-1"
+        assert kwargs["publication_mode"] == "deferred"
+        await kwargs["initialize"](_project())
+        return IdempotentProjectResult(project=_project(), replayed=False, ready=True)
+
+    monkeypatch.setattr(
+        "src.version_engine.bootstrap.dependencies.build_worker_version_engine_container",
+        lambda: SimpleNamespace(write_commands=lambda: Writes()),
+    )
+    monkeypatch.setattr("src.platform.landing.service.resolve_org_id", lambda org, _user: org)
+    monkeypatch.setattr("src.platform.landing.service.create_project_with_tree", publish)
+    endpoints = McpEndpointService(repository=Endpoints())
+    monkeypatch.setattr("src.platform.landing.service.McpEndpointService", lambda: endpoints)
+    events: list[str] = []
+    service = _service(events, control_plane=_ControlPlane(events), s3=Storage())
+
+    preview = await service.preview(
+        tool_kind=kind, filename=filename, content=source, content_type=content_type
+    )
+    assert preview["preview"]["filename"] == filename
+    assert reference in preview["preview"]["excerpt"]
+    claimed = await service.claim(ticket=preview["ticket"], org_id="org-1", user_id="user-1")
+    assert claimed["project_id"] == "project-1"
+    assert list(files) == [imported_path]
+
+    def resolve_surface(key):
+        if key != claimed["mcp"]["api_key"]:
+            raise HTTPException(404, detail="MCP access surface not found")
+        return endpoint, {"fs_policy": {"accesses": endpoint["accesses"]}}, {"id": "credential-1"}
+
+    monkeypatch.setattr(resolver, "_resolve_surface", resolve_surface)
+    monkeypatch.setattr(resolver, "_owner_grant", lambda project, owner: SimpleNamespace(
+        allows=lambda action: action in ROLE_CAPABILITIES[ProjectRole("admin")]
+    ) if (project, owner) == ("project-1", "user-1") else None)
+    principal = resolver.resolve_mcp_runtime(claimed["mcp"]["api_key"])
+    assert principal.grant.project_id == "project-1"
+    assert principal.grant.mode.value == "r"
+
+    class Reads(ProductQueries):
+        def for_grant(self, grant):
+            assert grant.project_id == "project-1" and grant.mode.value == "r"
+            return self
+
+        def read_session(self, project_id):
+            assert project_id == "project-1"
+            return nullcontext(self)
+
+        def _read(self, method, project_id, *args, **_kwargs):
+            assert project_id == "project-1"
+            if method == "get_head_commit_id":
+                return "import-head"
+            path = args[0]
+            if method == "stat":
+                if path == folder:
+                    return VersionEntry(name=folder, path=folder, type="folder")
+                if path in files:
+                    return VersionEntry(name="资料.md", path=path, type="markdown")
+                return None
+            if method == "list_dir":
+                assert path == folder
+                return [VersionEntry(name="资料.md", path=imported_path, type="markdown")]
+            if method == "read_file":
+                return files[path]
+            raise AssertionError("unexpected storage operation: " + method)
+
+    key = claimed["mcp"]["api_key"]
+    tools = runtime.list_runtime_tools(runtime.RuntimeToolsRequest(api_key=key))
+    names = {tool["name"] for tool in tools["tools"]}
+    assert {"fs_ls", "fs_cat"} <= names
+    assert not {"fs_write", "fs_rm", "fs_mv"} & names
+    reads = Reads()
+    commands = SimpleNamespace(ops=reads)
+    listing = await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
+        api_key=key, name="fs_ls", arguments={"path": folder}
+    ), ops=reads, commands=commands)
+    assert listing["structuredContent"]["entries"][0]["path"] == imported_path
+    result = await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
+        api_key=key, name="fs_cat", arguments={"path": imported_path}
+    ), ops=reads, commands=commands)
+    assert reference in result["structuredContent"]["content_text"]
+    with pytest.raises(HTTPException) as denied:
+        await runtime.call_runtime_tool(runtime.RuntimeCallRequest(
+            api_key=key, name="fs_write", arguments={"path": imported_path, "content": "changed"}
+        ), ops=reads, commands=commands)
+    assert denied.value.status_code == 403
+    with pytest.raises(HTTPException) as unknown:
+        runtime.list_runtime_tools(runtime.RuntimeToolsRequest(api_key="mcp_wrong_key"))
+    assert unknown.value.status_code == 404
+    monkeypatch.setattr(resolver, "_owner_grant", lambda _project, _owner: None)
+    with pytest.raises(HTTPException) as revoked:
+        runtime.list_runtime_tools(runtime.RuntimeToolsRequest(api_key=key))
+    assert revoked.value.status_code == 403

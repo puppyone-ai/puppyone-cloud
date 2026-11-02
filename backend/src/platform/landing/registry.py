@@ -18,10 +18,10 @@ class ToolSpec:
     # How preview turns bytes into repo content:
     #   "ocr_parse"   — OCR the document into markdown (PDF, images, docx...)
     #   "passthrough" — already text; store as-is (markdown, txt, ...)
-    #   (future) "openapi", "url" — handled by their own branches in service._parse
+    #   "openapi" / "excel" — convert API summaries / tables into Markdown
     parser: str
-    # Leaf scope/folder the content lands in. Kept a single leaf scope so writes
-    # always target the narrowest scope (avoids sub-scope graft shadowing).
+    # Normal Git folder for imported content. The read-only MCP targets its
+    # dedicated private Project root; this is not a native Scope.
     scope_path: str = "doc"
     # MCP exposure default for anonymous-origin artifacts.
     readonly: bool = True
@@ -67,9 +67,11 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         kind="excel",
         accept=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
+            "text/csv",
+            "text/tab-separated-values",
             ".xlsx",
-            ".xls",
+            ".csv",
+            ".tsv",
         ),
         parser="excel",
         scope_path="data",
