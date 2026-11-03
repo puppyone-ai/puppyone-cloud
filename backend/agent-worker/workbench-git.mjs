@@ -1,6 +1,7 @@
 /** All filesystem access to the user-mutable .git runs WITHOUT root privilege. */
 import { sharedGit } from './shared-git.mjs';
-if (process.getuid() !== 1000 && (process.getuid() < 20000 || process.getuid() > 59999))
+import { validTaskUid } from './workbench-state.mjs';
+if (process.getuid() !== 1000 && !validTaskUid(process.getuid()))
   throw new Error('Invalid workbench Git file identity');
 process.umask(0o002);
 let input = '';

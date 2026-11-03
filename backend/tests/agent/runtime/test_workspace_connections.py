@@ -218,3 +218,22 @@ def test_concurrent_admissions_cannot_pass_the_workspace_bound_together(postgres
     for connection in admitted:
         update(postgres, connection, "stop")
         update(postgres, connection, "release")
+
+
+def test_a_machine_has_identities_for_two_billion_commands(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    postgres.sql(
+        "ALTER TABLE cloud_workbenches DISABLE TRIGGER USER;"
+        f"UPDATE cloud_workbenches SET next_task_uid=59999 WHERE id='{row['id']}';"
+        "ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;"
+    )
+    last_of_first = reserve(postgres, args, row)
+    first_of_second = reserve(postgres, args, row)
+    # Past the first range it skips every group the image has, and never goes back.
+    assert (last_of_first["task_uid"], first_of_second["task_uid"]) == (59999, 100000)
+    assert reserve(postgres, args, row)["task_uid"] == 100001
+    for connection in (last_of_first, first_of_second):
+        update(postgres, connection, "stop")
+        update(postgres, connection, "release")
+    assert reserve(postgres, args, row)["task_uid"] == 100002

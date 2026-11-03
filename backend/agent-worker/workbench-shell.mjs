@@ -4,12 +4,13 @@ import { createInterface } from 'node:readline';
 import { writeFile } from 'node:fs/promises';
 import { channel } from './protocol.mjs';
 import { ROOT, exists } from './git.mjs';
-import { STATE, taskBinding, initializeTask, signalTask, withTaskControlLock } from './workbench-task.mjs';
+import { STATE, taskBinding, initializeTask, signalTask, withTaskControlLock, forgetTask } from './workbench-task.mjs';
 
 const task = taskBinding(process.argv.slice(2));
 const home = await initializeTask(task);
 const flag = name => `${STATE}/task-${task.uid}.${name}`;
-let child, closed = false, stopping, operations = Promise.resolve();
+// Stopped stays true once the stop's records are forgotten, so a start can never follow.
+let child, closed = false, stopped = false, stopping, operations = Promise.resolve();
 let leaseUntil = Date.now() + 30000;
 const control = channel(process.stdin, process.stdout, {
   maxFrame: 128 * 1024, maxBuffered: 1024 * 1024, onError: () => close(),
@@ -19,9 +20,12 @@ setInterval(() => { if (Date.now() >= leaseUntil) close(); }, 1000).unref();
 
 async function stop() {
   return withTaskControlLock(task, async () => {
+    stopped = true;
     await writeFile(flag('revoked'), '', { mode: 0o600 });
     await signalTask(task, 'SIGSTOP');
     await signalTask(task, 'SIGKILL');
+    // Only after every process is gone; ``stopped`` refuses any later start here.
+    await forgetTask(task, home);
   });
 }
 function close() {
@@ -32,7 +36,7 @@ function close() {
 function send(frame) { try { control.send(frame); } catch { close(); } }
 async function start(value) {
   return withTaskControlLock(task, async () => {
-    if (closed || child || await exists(flag('started')) || await exists(flag('revoked')))
+    if (closed || stopped || child || await exists(flag('started')) || await exists(flag('revoked')))
       throw new Error('Shell execution is not startable');
     if (typeof value?.command !== 'string' || value.command.length > 32768 ||
         typeof value.term !== 'string' || !/^[a-zA-Z0-9_.+-]{0,64}$/.test(value.term) ||
@@ -74,7 +78,7 @@ control.dispatch(frame => {
       else if (frame.action === 'stop') { await stop(); }
       else if (frame.action === 'start') { await start(frame.value); }
       else if (['input', 'resize', 'eof', 'signal'].includes(frame.action)) {
-        if (closed || !child || await exists(flag('revoked'))) throw new Error('Shell is unavailable');
+        if (closed || stopped || !child || await exists(flag('revoked'))) throw new Error('Shell is unavailable');
         if (frame.action === 'input' && (typeof frame.value?.data !== 'string' || frame.value.data.length > 65536)) throw new Error('Input too large');
         if (child.stdin.writableLength > 1024 * 1024) throw new Error('Shell input backlog exceeded');
         child.stdin.write(JSON.stringify({ action: frame.action, ...frame.value }) + '\n');

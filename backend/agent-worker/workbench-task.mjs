@@ -1,14 +1,14 @@
 /** Trusted per-execution identity. No task owns VM pause, snapshot or deletion. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, chmod, chown, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 const exec = promisify(execFile);
-import { CONTROL_ROOT, STATE, UUID, requireWorkspace } from './workbench-state.mjs';
+import { CONTROL_ROOT, STATE, UUID, requireWorkspace, validTaskUid } from './workbench-state.mjs';
 export { CONTROL_ROOT, STATE } from './workbench-state.mjs';
 
 export function taskBinding(args) {
   const [uid, workbench, generation, execution] = args;
-  if (args.length !== 4 || !/^\d+$/.test(uid) || Number(uid) < 20000 || Number(uid) > 59999 ||
+  if (args.length !== 4 || !/^\d+$/.test(uid) || !validTaskUid(Number(uid)) ||
       ![workbench, generation, execution].every(value => UUID.test(value)))
     throw new Error('Invalid admitted workbench task');
   return { uid: Number(uid), workbench, generation, execution };
@@ -27,6 +27,25 @@ export async function initializeTask(task) {
     if (await readFile(name, 'utf8') !== JSON.stringify(task)) throw new Error('Task identity is already owned');
   }
   return home;
+}
+
+/**
+ * After a confirmed stop: no process of this identity runs, and the database never
+ * hands it out again, so what it left goes; a machine that lives long would fill up.
+ * The file user empties the home, so root never walks a tree that another command
+ * of that user could be rearranging; root then removes only what root owns. Best
+ * effort: the stop has already succeeded and must still be acknowledged.
+ */
+export async function forgetTask(task, home) {
+  const asFileUser = (command, args) => new Promise(resolve => execFile(command, args, {
+    uid: 1000, gid: task.uid, timeout: 60000, env: { PATH: '/usr/bin:/bin' },
+  }, () => resolve()));
+  await asFileUser('chmod', ['-R', 'u+rwX', '--', home]);
+  await asFileUser('find', [home, '-mindepth', '1', '-delete']);
+  await rmdir(home).catch(() => undefined);
+  for (const name of [`task-${task.uid}.json`, `task-${task.uid}.started`, `task-${task.uid}.revoked`,
+    `stop-${task.uid}.lock`])
+    await rm(`${STATE}/${name}`, { force: true }).catch(() => undefined);
 }
 
 export function withWorkbenchGitLock(operation) {
