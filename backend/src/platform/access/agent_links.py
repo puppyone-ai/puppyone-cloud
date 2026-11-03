@@ -26,6 +26,13 @@ from .grant_repository import AccessRepository
 AGENT_USER_PREFIX = "agent-"
 SSH_KEY_PATH = "~/.ssh/puppyone_agent"
 KNOWN_HOSTS_PATH = "~/.ssh/puppyone_known_hosts"
+# One connection, kept open, carries every command: OpenSSH signs in once and
+# runs each later command as a channel on it. The gateway's idle limit matches,
+# and keepalives keep proxies from dropping it while a command is quiet.
+CONNECTION_OPTIONS = (
+    "-o ControlMaster=auto -o ControlPath=~/.ssh/puppyone-%C -o ControlPersist=30m "
+    "-o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+)
 POLL_INTERVAL_SECONDS = 3
 INVITATION_PATTERN = re.compile(r"pai_[A-Za-z0-9_-]{43,128}")
 
@@ -80,10 +87,19 @@ Run `ssh.install_known_hosts` once. Then use `ssh.command`, adding what to run:
 
     SSH_COMMAND 'pwd && ls'
 
+Keep using `ssh.command` exactly as given. The first command signs in and keeps
+one connection open in the background for 30 minutes, so every later command
+starts at once over it without signing in again. If it closes, the next command
+opens a new one by itself.
+
+If this computer reaches the internet only through an HTTP proxy, add
+`-o ProxyCommand='nc -X connect -x PROXY_HOST:PROXY_PORT %h %p'` to the command.
+
 Each command starts in your own copy of the project, on a machine only you use.
 Your files are saved to your own branch when the machine goes to sleep, and your
 person decides when they join the project. Your first connection can take a few
-minutes while the machine is prepared; after that, waking takes up to a minute.
+minutes while the machine is prepared, and says so while it waits; after that,
+waking takes up to a minute.
 """
 
 
@@ -108,7 +124,7 @@ def ssh_access(connection, endpoint):
         "install_known_hosts": f"printf '%s\\n' '{endpoint['known_hosts']}' > {KNOWN_HOSTS_PATH}",
         "command": (
             f"ssh -i {SSH_KEY_PATH} -o IdentitiesOnly=yes -o UserKnownHostsFile={KNOWN_HOSTS_PATH} "
-            f"-p {endpoint['port']} {user}@{endpoint['host']}"
+            f"{CONNECTION_OPTIONS} -p {endpoint['port']} {user}@{endpoint['host']}"
         ),
     }
 

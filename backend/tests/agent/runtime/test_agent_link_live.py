@@ -117,6 +117,8 @@ def ssh_line(access, home, known):
     command = home(access["command"]).replace(
         home("~/.ssh/puppyone_known_hosts"), str(known)
     )
+    # A Unix socket path has about 100 bytes; a test directory can be longer than a home.
+    command = command.replace(home("~/.ssh/puppyone-%C"), f"/tmp/pk-{known.parent.name[:12]}-%C")
     return command + " -o BatchMode=yes"
 
 

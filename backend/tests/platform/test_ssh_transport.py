@@ -3,9 +3,13 @@
 import asyncio
 import base64
 import json
+import os
+import shutil
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import asyncssh
 import pytest
@@ -16,6 +20,7 @@ from src.platform.access.adapters.ssh.gateway import (
     session_ending,
     start_gateway,
 )
+from src.platform.access.agent_links import CONNECTION_OPTIONS
 from src.platform.workspace.errors import WorkspaceError
 
 HELPER = Path(__file__).parents[2] / "agent-worker/workbench-shell.py"
@@ -60,6 +65,7 @@ class NativeShell:
 class NativeAccess:
     def __init__(self, key, directory):
         self.key, self.directory, self.used, self.closed = key, directory, False, False
+        self.admitted, self.opened, self.renewed, self.finished = 0, 0, 0, []
 
     async def authenticate(self, identity, key):
         return (
@@ -68,25 +74,40 @@ class NativeAccess:
             and not self.used
         )
 
-    @asynccontextmanager
-    async def open(self, identity, notify=None):
+    async def admit(self, identity, notify=None):
+        # A credential admits one connection; its commands reuse the admission.
         if self.used:
             raise PermissionError("Used")
         self.used = True
+        self.admitted += 1
+        return {"id": identity}
+
+    @asynccontextmanager
+    async def open(self, session, notify=None):
+        self.opened += 1
         if getattr(self, "resume_notice", None):
             await notify(self.resume_notice)
         shell = NativeShell(self.directory)
         try:
-            yield {"id": identity}, shell
+            yield {"id": session["id"]}, shell
         finally:
             await shell.close()
             self.closed = True
 
     renewal_error = None
+    session_error = None
 
     async def renew(self, *args):
         if self.renewal_error:
             raise self.renewal_error
+
+    async def renew_session(self, session):
+        self.renewed += 1
+        if self.session_error:
+            raise self.session_error
+
+    async def finish(self, session):
+        self.finished.append(session["id"])
 
 
 @pytest.fixture
@@ -224,3 +245,123 @@ def test_session_endings_are_classified_through_task_groups():
         False,
     )
     assert session_ending(RuntimeError()) == (None, False)
+
+
+async def test_commands_over_one_connection_sign_in_once(transport):
+    connection, service = transport
+    async with asyncio.timeout(15):
+        for number in range(3):
+            result = await connection.run(f"printf {number}", encoding=None)
+            assert result.stdout == str(number).encode()
+        together = await asyncio.gather(
+            *(connection.run(f"printf {number}", encoding=None) for number in range(3, 6))
+        )
+    assert [result.stdout for result in together] == [b"3", b"4", b"5"]
+    # One admission for the connection; each command is its own shell.
+    assert service.admitted == 1
+    assert service.opened == 6
+
+
+async def test_the_server_ends_a_connection_whose_access_ended(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    await connection.run("true", encoding=None)
+    service.session_error = WorkspaceError(403, {"code": "access_denied"})
+    async with asyncio.timeout(15):
+        await connection.wait_closed()
+        while not service.finished:
+            await asyncio.sleep(0.05)
+    assert service.finished == ["fixture"]
+
+
+async def test_a_connection_left_idle_is_closed_and_its_session_finished(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(ssh_gateway, "IDLE_CONNECTION_SECONDS", 0.2)
+    await connection.run("true", encoding=None)
+    async with asyncio.timeout(15):
+        await connection.wait_closed()
+        while not service.finished:
+            await asyncio.sleep(0.05)
+    assert service.renewed >= 1
+
+
+async def test_an_infrastructure_blip_does_not_end_the_connection(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    await connection.run("true", encoding=None)
+    service.session_error = RuntimeError("database unavailable")
+    await asyncio.sleep(0.08)  # One failed renewal, fewer than the connection survives.
+    service.session_error = None
+    result = await connection.run("printf still-here", encoding=None)
+    assert result.stdout == b"still-here"
+    assert service.admitted == 1
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
+async def test_the_command_agents_are_given_signs_in_once_for_every_command(tmp_path):
+    host = asyncssh.generate_private_key("ssh-ed25519")
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    service = NativeAccess(key, tmp_path)
+
+    class Counted(set):
+        made = 0
+
+        def add(self, item):
+            Counted.made += 1
+            super().add(item)
+
+    gateway = await start_gateway(service, host, host="127.0.0.1", port=0, connections=Counted())
+    port = gateway.get_port()
+    identity = tmp_path / "id"
+    key.write_private_key(str(identity))
+    os.chmod(identity, 0o600)
+    known = tmp_path / "known_hosts"
+    known.write_text(f"[127.0.0.1]:{port} " + host.export_public_key().decode())
+    # The agent's options exactly, with a socket path short enough for any test directory.
+    options = CONNECTION_OPTIONS.replace(
+        "~/.ssh/puppyone-%C", f"/tmp/pk-{uuid4().hex[:8]}-%C"
+    ).split()
+    ssh = [
+        "ssh",
+        "-F",
+        "/dev/null",
+        "-i",
+        str(identity),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"UserKnownHostsFile={known}",
+        "-o",
+        "BatchMode=yes",
+        *options,
+        "-p",
+        str(port),
+    ]
+
+    async def run(*arguments):
+        process = await asyncio.create_subprocess_exec(
+            *ssh, *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        async with asyncio.timeout(20):
+            out, err = await process.communicate()
+        return process.returncode, out, err
+
+    try:
+        timings = []
+        for number in range(4):
+            started = time.monotonic()
+            code, out, err = await run("fixture@127.0.0.1", f"printf {number}")
+            timings.append(time.monotonic() - started)
+            assert code == 0, err
+            assert out == str(number).encode()
+        # One TCP connection and one admission carried every command; a second
+        # sign-in would have been refused by this credential.
+        assert Counted.made == 1
+        assert service.admitted == 1
+        assert service.opened == 4
+        assert max(timings[1:]) < 2
+    finally:
+        await run("-O", "exit", "fixture@127.0.0.1")
+        gateway.close()
+        await gateway.wait_closed()

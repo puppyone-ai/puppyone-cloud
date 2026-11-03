@@ -1,6 +1,7 @@
 """Hosted SSH completion: resume through the sandbox module, pool-scoped reclamation,
 bounded admission and a configurable host identity."""
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -31,6 +32,14 @@ class Opened:
 
     async def __aexit__(self, *exc):
         return False
+
+
+@asynccontextmanager
+async def opened(access, identity, notify=None):
+    """One command over a freshly admitted connection, as the gateway runs it."""
+    session = await access.admit(identity, notify=notify)
+    async with access.open(session, notify=notify) as connection:
+        yield connection
 
 
 def service(*, state="paused", generation="g", delegated=None, resumed=None):
@@ -88,8 +97,8 @@ async def test_owner_session_resumes_through_the_sandbox_module_before_connectin
     async def notify(message):
         notices.append(message)
 
-    async with access.open(grant["id"], notify=notify) as opened:
-        assert opened == ({"id": "connection"}, "shell")
+    async with opened(access, grant["id"], notify=notify) as connection:
+        assert connection == ({"id": "connection"}, "shell")
     workspace.ensure_running.assert_awaited_once()
     assert workspace.ensure_running.call_args.args[0] == {"user_id": "owner", "project_id": "p"}
     assert notices and "Resuming" in notices[0]
@@ -98,7 +107,7 @@ async def test_owner_session_resumes_through_the_sandbox_module_before_connectin
 
 async def test_running_workspace_connects_without_an_open_request():
     access, _, grant, workspace, _ = service(state="running")
-    async with access.open(grant["id"]):
+    async with opened(access, grant["id"]):
         pass
     workspace.ensure_running.assert_not_called()
 
@@ -109,12 +118,12 @@ async def test_running_workspace_connects_without_an_open_request():
 async def test_shared_session_resumes_only_with_the_wake_capability(capabilities, resumes):
     access, _, grant, workspace, connections = service(delegated=capabilities)
     if resumes:
-        async with access.open(grant["id"]):
+        async with opened(access, grant["id"]):
             pass
         workspace.ensure_running.assert_awaited_once()
     else:
         with pytest.raises(WorkspaceError, match="workbench_not_running"):
-            async with access.open(grant["id"]):
+            async with opened(access, grant["id"]):
                 pass
         workspace.ensure_running.assert_not_called()
         connections.open.assert_not_called()
@@ -133,7 +142,7 @@ async def test_replaced_or_retired_workspace_never_admits_an_old_credential(
 ):
     access, _, grant, _, connections = service(state=state, generation=generation, resumed=resumed)
     with pytest.raises(WorkspaceError):
-        async with access.open(grant["id"]):
+        async with opened(access, grant["id"]):
             pass
     connections.open.assert_not_called()
 
@@ -229,10 +238,11 @@ async def test_refused_session_explains_itself_on_the_terminal():
     )
 
     class Refusing:
-        def open(self, identity, notify=None):
+        async def admit(self, identity, notify=None):
             raise WorkspaceError(409, {"code": "workbench_not_running"})
 
-    await gateway.serve_shell(process, Refusing())
+    refusing = Refusing()
+    await gateway.serve_shell(process, refusing, gateway.ConnectionAdmission(refusing, Mock()))
     process.exit.assert_called_once_with(1)
     assert b"cannot resume" in b"".join(written)
 
