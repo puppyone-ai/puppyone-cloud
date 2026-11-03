@@ -1,92 +1,48 @@
-# E2E Visual Testing (Stagehand)
+# End-to-end tests
 
-AI-driven end-to-end visual testing for PuppyOne. Uses [Stagehand](https://github.com/browserbase/stagehand) — Playwright + LLM — so scenarios tolerate UI changes without brittle selectors.
+Each suite here needs several parts of the product running together. A test that
+covers only the backend, frontend or database belongs in `backend/tests/`,
+`frontend/tests/` or `supabase/tests/`.
 
-## Quick Start
+| Suite | What it proves | Runs in CI on |
+|---|---|---|
+| [`desktop-login/`](desktop-login/README.md) | Desktop signs in with email through the Cloud `/login` page | Cloud PRs and pushes to `qubits` or `main`, and Desktop PRs |
+| `install/` | A self-hosted install signs in, handles files and survives a restart | PRs and pushes to `main` |
+| `organization/` | Organization roles and invitations hold in a real browser | PRs and pushes to `main` |
+
+## Setup
+
+`install/` and `organization/` share this directory's dependencies:
 
 ```bash
 cd e2e
-
-# 1. Install
-npm install
+npm ci
 npx playwright install chromium
-
-# 2. Configure
-cp .env.example .env
-# Fill in OPENAI_API_KEY (and OPENAI_BASE_URL if using a proxy)
-
-# 3. Save session (one-time — logs in via browser)
-npm run save-session
-
-# 4. Run all scenarios
-npm test
-
-# 5. Run one scenario
-npm run test:one -- connect-gmail
-
-# 6. Review screenshots
-# Results are written under e2e/results/<timestamp>/
 ```
 
-## Directory Structure
+`desktop-login/` has its own dependencies and setup in
+[its README](desktop-login/README.md).
 
-```
-e2e/
-├── lib/
-│   ├── browser.mjs          # Stagehand init + session loading
-│   └── save-session.mjs     # OAuth session saver
-├── scenarios/                # Test scenarios
-│   ├── connect-gmail.mjs
-│   ├── create-gmail-access-point.mjs
-│   ├── data-browser.mjs
-│   └── tools-and-server.mjs
-├── auth/                     # Saved session (gitignored)
-├── results/                  # Screenshot output (gitignored)
-├── run.mjs                   # Scenario runner
-├── .env                      # Config (gitignored)
-├── .env.example              # Template
-└── package.json
+## Run a suite
+
+### `install/`
+
+Needs Docker. Run from the repository root:
+
+```bash
+python3 scripts/test_self_hosted_install.py --variant default --artifacts /tmp/install-results
 ```
 
-## Writing Scenarios
+The variants are `default`, `custom`, `upgrade`, `legacy` and `release`.
+`release` also needs `--upgrade-base <commit>`.
 
-Each scenario exports a default object with `description` and `steps`:
+### `organization/`
 
-```js
-import { BASE_URL } from '../lib/browser.mjs';
+Needs PostgreSQL 17, Docker and a production frontend build. The exact
+preparation is in
+[`organization-workspace-acceptance.yml`](../.github/workflows/organization-workspace-acceptance.yml).
+Then run from `backend/`:
 
-export default {
-  description: 'What this scenario tests',
-  steps: [
-    {
-      name: 'step-name',   // used as screenshot filename
-      waitAfter: 2000,     // optional — ms to wait before screenshotting
-      action: async ({ stagehand, page }) => {
-        // Deterministic: use Playwright's `page`
-        await page.goto(`${BASE_URL}/home`);
-
-        // Flexible: use Stagehand's AI
-        await stagehand.act('click the first project card');
-      },
-    },
-  ],
-};
+```bash
+PUPPYONE_TEST_ORG_BROWSER=1 uv run pytest tests/platform/organization/integration/test_browser_acceptance.py
 ```
-
-### When to use `page` vs `stagehand.act()`
-
-| Use case | Use |
-|----------|-----|
-| Navigate to a known URL | `page.goto(url)` |
-| Wait for network/DOM | `page.waitForLoadState()` |
-| Click something with dynamic text/layout | `stagehand.act('...')` |
-| Fill a form field by label | `stagehand.act('...')` |
-| Assert something exists visually | `stagehand.act('scroll to ...')` |
-
-## CI
-
-See `.github/workflows/e2e.yml`. The workflow:
-1. Starts frontend + backend
-2. Restores session from `E2E_SESSION_JSON` secret
-3. Runs all scenarios
-4. Uploads screenshots as artifact

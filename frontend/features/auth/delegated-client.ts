@@ -1,5 +1,8 @@
+import type { DelegatedClient } from './delegated-client-type';
 import { desktopCallbackUrl } from './supabase/desktop-callback';
 import { websiteCallbackUrl } from './supabase/website-callback';
+
+export type { DelegatedClient };
 
 /**
  * Clients that reuse this login page but own their PKCE verifier and session.
@@ -7,8 +10,6 @@ import { websiteCallbackUrl } from './supabase/website-callback';
  * receives it on its own allowlisted origin. Neither reads or writes the Cloud
  * Web cookie session.
  */
-export type DelegatedClient = 'desktop' | 'website';
-
 export const DELEGATED_CLIENTS: readonly DelegatedClient[] = ['desktop', 'website'];
 
 export function isDelegatedClient(value: string | null): value is DelegatedClient {

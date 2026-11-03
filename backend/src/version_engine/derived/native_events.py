@@ -1,6 +1,6 @@
 """Rebuild derived indexes from native ref events, with fenced retries.
 
-Synchronous steps; the scheduler job (infra/scheduler/jobs/native_projection_job)
+Synchronous steps; the async scheduler job (platform/project/native_projection_job)
 orchestrates them and broadcasts the WebSocket notification.
 
 Only the maintenance worker uses the internal read-pin capability. API readers
@@ -14,7 +14,7 @@ import json
 import uuid
 
 from src.config import settings
-from src.infra.search.text_indexer import _chunk_text, _decode_for_index
+from src.version_engine.derived.text_indexer import _chunk_text, _decode_for_index
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     RefAuthorityRepository,
 )

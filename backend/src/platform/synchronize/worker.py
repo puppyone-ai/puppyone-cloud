@@ -16,6 +16,7 @@ from src.platform.synchronize.providers import get_synchronize_provider_registry
 from src.platform.synchronize.run_repository import SyncRunRepository  # noqa: E402
 from src.infra.execution.process import start_process_concurrency  # noqa: E402
 from src.infra.supabase.client import SupabaseClient  # noqa: E402
+from src.platform.project.write_lease import install_storage_write_admission
 from src.platform.synchronize.config import synchronize_config  # noqa: E402
 from src.platform.synchronize.engine import SynchronizeEngine  # noqa: E402
 from src.platform.synchronize.jobs import execute_synchronize_run  # noqa: E402
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 async def startup(ctx: dict) -> None:
+    install_storage_write_admission()
     ctx["process_concurrency"] = start_process_concurrency()
     registry = get_synchronize_provider_registry()
     supabase = SupabaseClient()

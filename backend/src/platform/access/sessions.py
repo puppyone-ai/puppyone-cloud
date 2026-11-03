@@ -16,6 +16,18 @@ class AccessSessions:
             self.repository.call, "access_session_command", action="finish_unallocated", id=identity
         )
 
+    async def renew(self, identity):
+        """A connection's heartbeat: holds its session while no command is running."""
+        await run_blocking(
+            self.repository.call, "access_session_command", action="renew", id=identity
+        )
+
+    async def finish(self, identity):
+        """The connection ended; the session closes once none of its commands holds the Workspace."""
+        await run_blocking(
+            self.repository.call, "access_session_command", action="finish", id=identity
+        )
+
     async def ready(self):
         await run_blocking(self.repository.call, "access_session_command", action="ready")
 

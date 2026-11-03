@@ -17,13 +17,13 @@ from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.filesystem.context import ScopedFsContext
 from src.platform.access.filesystem.policy import resolve_mcp_fs_allowed_tools
 from src.platform.access.surface_repository import AccessSurfaceRepository
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ProjectAction,
     RuntimeGrant,
     RuntimeMode,
     RuntimePrincipal,
 )
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.platform.repository_target.scope_repository import RepositoryScopeRepository
 
 

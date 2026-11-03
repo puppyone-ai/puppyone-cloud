@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
-from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
+from src.platform.agent.runtime.control.recovery import Recovery
+from src.platform.agent.runtime.control.shared_recovery import SharedRecovery
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
-from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
-from src.platform.access.adapters.agent.runtime.loop.port import LoopProtocolError
+from src.platform.agent.runtime.loop.pi import PiLoop
+from src.platform.agent.runtime.loop.port import LoopProtocolError
 from src.platform.workspace.execution.pi_worker import PiWorker
 from src.platform.sandbox.store import InMemoryExecutionSessionStore
 

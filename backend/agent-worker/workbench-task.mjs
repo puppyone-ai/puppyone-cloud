@@ -1,25 +1,29 @@
 /** Trusted per-execution identity. No task owns VM pause, snapshot or deletion. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, chmod, chown, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, chmod, chown, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 const exec = promisify(execFile);
-import { CONTROL_ROOT, STATE, UUID, requireWorkspace } from './workbench-state.mjs';
+import { CONTROL_ROOT, STATE, UUID, requireWorkspace, validTaskUid } from './workbench-state.mjs';
 export { CONTROL_ROOT, STATE } from './workbench-state.mjs';
 
 export function taskBinding(args) {
   const [uid, workbench, generation, execution] = args;
-  if (args.length !== 4 || !/^\d+$/.test(uid) || Number(uid) < 20000 || Number(uid) > 59999 ||
+  if (args.length !== 4 || !/^\d+$/.test(uid) || !validTaskUid(Number(uid)) ||
       ![workbench, generation, execution].every(value => UUID.test(value)))
     throw new Error('Invalid admitted workbench task');
   return { uid: Number(uid), workbench, generation, execution };
 }
 
-export async function initializeTask(task) {
+/** Where every SSH command on a machine lives: one person or Agent, one home. */
+export const SHELL_HOME = `${CONTROL_ROOT}/homes/shell`;
+
+export async function initializeTask(task, { sharedHome = false } = {}) {
   // Tasks cannot initialize the workspace or its platform control roots.
   await requireWorkspace(task);
-  const homes = `${CONTROL_ROOT}/homes`, home = `${homes}/${task.uid}`;
+  const homes = `${CONTROL_ROOT}/homes`, home = sharedHome ? SHELL_HOME : `${homes}/${task.uid}`;
   await mkdir(homes, { recursive: true }); await chmod(homes, 0o711);
-  await mkdir(home, { recursive: true }); await chown(home, 1000, task.uid); await chmod(home, 0o700);
+  // A shared home belongs to the file user, not to the command that made it first.
+  await mkdir(home, { recursive: true }); await chown(home, 1000, sharedHome ? 1000 : task.uid); await chmod(home, 0o700);
   const name = `${STATE}/task-${task.uid}.json`;
   try { await writeFile(name, JSON.stringify(task), { flag: 'wx', mode: 0o600 }); }
   catch (error) {
@@ -27,6 +31,28 @@ export async function initializeTask(task) {
     if (await readFile(name, 'utf8') !== JSON.stringify(task)) throw new Error('Task identity is already owned');
   }
   return home;
+}
+
+/**
+ * After a confirmed stop: no process of this identity runs, and the database never
+ * hands it out again, so what it left goes; a machine that lives long would fill up.
+ * The file user empties the home, so root never walks a tree that another command
+ * of that user could be rearranging; root then removes only what root owns. Best
+ * effort: the stop has already succeeded and must still be acknowledged.
+ */
+export async function forgetTask(task, home = null) {
+  const asFileUser = (command, args) => new Promise(resolve => execFile(command, args, {
+    uid: 1000, gid: task.uid, timeout: 60000, env: { PATH: '/usr/bin:/bin' },
+  }, () => resolve()));
+  // A shared home outlives each command, so only a home of its own goes with it.
+  if (home) {
+    await asFileUser('chmod', ['-R', 'u+rwX', '--', home]);
+    await asFileUser('find', [home, '-mindepth', '1', '-delete']);
+    await rmdir(home).catch(() => undefined);
+  }
+  for (const name of [`task-${task.uid}.json`, `task-${task.uid}.started`, `task-${task.uid}.revoked`,
+    `stop-${task.uid}.lock`])
+    await rm(`${STATE}/${name}`, { force: true }).catch(() => undefined);
 }
 
 export function withWorkbenchGitLock(operation) {

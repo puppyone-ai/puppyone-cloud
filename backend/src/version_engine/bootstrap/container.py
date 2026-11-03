@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.file_operations.commands import VersionWriteCommandService
-from src.file_operations.operation_adapter import ProductOperationAdapter
 from src.infra.s3.service import S3Service
 from src.infra.supabase.client import SupabaseClient
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
@@ -32,12 +30,6 @@ class VersionEngineContainer:
 
     def history_graph(self) -> HistoryGraphService:
         return self.history_graph_service
-
-    def product_operations(self) -> ProductOperationAdapter:
-        return ProductOperationAdapter(self.repo_manager)
-
-    def write_commands(self) -> VersionWriteCommandService:
-        return VersionWriteCommandService(self.product_operations())
 
     def write_engine(self) -> VersionWriteEngine:
         return VersionWriteEngine(self.repo_manager)

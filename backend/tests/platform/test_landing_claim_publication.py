@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, PermissionException
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.landing import tickets
 from src.platform.landing.schemas import ClaimRequest
 from src.platform.landing.service import LandingService, _landing_mcp_api_key
@@ -186,10 +186,12 @@ async def test_new_claim_preflights_before_source_and_persists_stable_replay_fac
     events: list[str] = []
     control_plane = _ControlPlane(events)
     writes = _Writes(events)
-    container = SimpleNamespace(write_commands=lambda: writes)
     monkeypatch.setattr(
         "src.version_engine.bootstrap.dependencies.build_worker_version_engine_container",
-        lambda: container,
+        SimpleNamespace,
+    )
+    monkeypatch.setattr(
+        "src.file_operations.dependencies.write_commands", lambda _container: writes
     )
     monkeypatch.setattr(
         "src.platform.landing.service.get_tool_spec",

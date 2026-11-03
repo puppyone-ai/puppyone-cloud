@@ -7,6 +7,10 @@ from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.executors.pool import ThreadPoolExecutor
 
 import src.infra.scheduler.service as scheduler_module
+from src.composition.scheduled_jobs import scheduled_jobs
+from src.config import settings
+from src.platform.agent import schedule as agent_schedule
+from src.platform.synchronize import schedule as sync_schedule
 
 
 class FakeJob:
@@ -38,35 +42,24 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
         fake_schedulers.append(scheduler)
         return scheduler
 
-    async def noop_loader(self):
-        return None
-
     monkeypatch.setattr(
         scheduler_module,
         "AsyncIOScheduler",
         fake_scheduler_factory,
     )
-    monkeypatch.setattr(
-        scheduler_module.SchedulerService,
-        "_load_scheduled_agents",
-        noop_loader,
-    )
-    monkeypatch.setattr(
-        scheduler_module.SchedulerService,
-        "_load_scheduled_syncs",
-        noop_loader,
-    )
     monkeypatch.setattr(scheduler_module.scheduler_settings, "enabled", True)
-    monkeypatch.setattr(scheduler_module.settings, "VERSION_OUTBOX_ENABLED", True)
-    monkeypatch.setattr(scheduler_module.settings, "VERSION_OBJECT_GC_ENABLED", True)
-    monkeypatch.setattr(scheduler_module.settings, "VERSION_INTEGRITY_SCAN_ENABLED", True)
-    monkeypatch.setattr(scheduler_module.settings, "SHADOW_SNAPSHOT_REAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "VERSION_OUTBOX_ENABLED", True)
+    monkeypatch.setattr(settings, "VERSION_OBJECT_GC_ENABLED", True)
+    monkeypatch.setattr(settings, "VERSION_INTEGRITY_SCAN_ENABLED", True)
+    monkeypatch.setattr(settings, "SHADOW_SNAPSHOT_REAPER_ENABLED", True)
     for flag in ("SYNC_RUN_REAPER_ENABLED", "IMPORT_JOB_REAPER_ENABLED", "UPLOAD_JOB_REAPER_ENABLED"):
-        monkeypatch.setattr(scheduler_module.settings, flag, True)
+        monkeypatch.setattr(settings, flag, True)
 
     service = scheduler_module.SchedulerService()
-    await service.start()
-    service.add_agent_job(
+    monkeypatch.setattr(agent_schedule, "get_scheduler_service", lambda: service)
+    monkeypatch.setattr(sync_schedule, "get_scheduler_service", lambda: service)
+    await service.start(scheduled_jobs())
+    agent_schedule.add_agent_job(
         agent_id="agent-1",
         trigger_config={
             "date": "2026-06-04",
@@ -75,7 +68,7 @@ async def test_scheduler_routes_async_jobs_to_asyncio_default(monkeypatch):
         },
         agent_name="Daily Agent",
     )
-    service.sync_trigger(
+    sync_schedule.sync_trigger(
         connection_id="conn-1",
         provider="github",
         trigger_config={
@@ -130,21 +123,23 @@ async def test_startup_loaders_read_database_off_the_event_loop(monkeypatch):
         reads.append(("syncs", threading.get_ident()))
         return [{"id": "sync-1", "provider": "github", "trigger": {"type": "scheduled"}}]
 
-    def add_agent_job(self, agent_id, trigger_config, agent_name=""):
+    def add_agent_job(agent_id, trigger_config, agent_name=""):
         registered.append(("agent", agent_id))
 
-    def sync_trigger(self, connection_id, provider, trigger_config):
+    def sync_trigger(connection_id, provider, trigger_config):
         registered.append(("sync", connection_id))
 
-    monkeypatch.setattr(scheduler_module, "_scheduled_agent_rows", agent_rows)
-    monkeypatch.setattr(scheduler_module, "_scheduled_sync_rows", sync_rows)
-    monkeypatch.setattr(scheduler_module.SchedulerService, "add_agent_job", add_agent_job)
-    monkeypatch.setattr(scheduler_module.SchedulerService, "sync_trigger", sync_trigger)
+    monkeypatch.setattr(agent_schedule, "_scheduled_agent_rows", agent_rows)
+    monkeypatch.setattr(sync_schedule, "_scheduled_sync_rows", sync_rows)
+    monkeypatch.setattr(agent_schedule, "add_agent_job", add_agent_job)
+    monkeypatch.setattr(sync_schedule, "sync_trigger", sync_trigger)
 
     service = scheduler_module.SchedulerService()
     service.scheduler = FakeScheduler()
-    await service._load_scheduled_agents()
-    await service._load_scheduled_syncs()
+    monkeypatch.setattr(agent_schedule, "get_scheduler_service", lambda: service)
+    monkeypatch.setattr(sync_schedule, "get_scheduler_service", lambda: service)
+    await agent_schedule.load_scheduled_agents()
+    await sync_schedule.load_scheduled_syncs()
 
     assert [name for name, _thread in reads] == ["agents", "syncs"]
     assert loop_thread not in {thread for _name, thread in reads}

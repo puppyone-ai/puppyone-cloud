@@ -3,6 +3,16 @@ import { mkdir, lstat, chmod, readFile } from 'node:fs/promises';
 export const CONTROL_ROOT = '/run/puppyone-workbench';
 export const STATE = `${CONTROL_ROOT}/control`;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * The identity a Workspace gives the processes of one command or Agent run: the
+ * GID they run under and are stopped by. 20000-59999 first, then 100000 onward,
+ * so no command ever shares a group the image already has (nogroup is 65534).
+ * Two billion lasts a machine decades at a command a second.
+ */
+export const TASK_UID_RANGES = [[20000, 59999], [100000, 2000000000]];
+export function validTaskUid(value) {
+  return Number.isSafeInteger(value) && TASK_UID_RANGES.some(([low, high]) => value >= low && value <= high);
+}
 
 export async function initializeControlState() {
   if (process.getuid() !== 0) throw new Error('Workspace lifecycle requires platform control');

@@ -1,8 +1,8 @@
 """Bounded SSH sessions over the official Fly private-network proxy.
 
 flyctl owns WireGuard and its protocol. AsyncSSH owns authenticated SSH
-connections and channels. Keys/certificates stay in memory, scoped to one app
-and backend token. No workstation SSH config, agent or public network listener.
+connections and channels. Keys/certificates stay in memory, each restricted to
+one app. No workstation SSH config, agent or public network listener.
 """
 
 import asyncio
@@ -23,10 +23,12 @@ from src.platform.sandbox.port import resource_identity
 from src.platform.sandbox.timing import workspace_stage
 
 from .certificate import import_user_certificate
+from .naming import dedicated
 
 
 @dataclass
 class _Connection:
+    app: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     ssh: object = None
     proxy: object = None
@@ -79,8 +81,8 @@ class FlySSHConnections:
     def __init__(self, app, token, cli, env, *, limit=128, idle_seconds=300):
         self.app, self.cli, self.env = app, cli, env
         self.limit, self.idle_seconds = limit, idle_seconds
-        self.entries, self.lock, self.credential_lock = {}, asyncio.Lock(), asyncio.Lock()
-        self.credential, self.expires = None, 0
+        self.entries, self.lock = {}, asyncio.Lock()
+        self.issued, self.credential_locks = {}, {}
         self.client = httpx.AsyncClient(
             headers={"Authorization": f"Bearer {token}"},
             timeout=20,
@@ -99,33 +101,33 @@ class FlySSHConnections:
             raise WorkerDisconnected("Fly SSH credential could not be issued")
         return value["data"]
 
-    async def credentials(self):
-        async with self.credential_lock:
-            if self.credential and time.monotonic() < self.expires:
-                return self.credential
+    async def credentials(self, app):
+        async with self.credential_locks.setdefault(app, asyncio.Lock()):
+            credential, expires = self.issued.get(app, (None, 0))
+            if credential and time.monotonic() < expires:
+                return credential
             with workspace_stage("connection.ssh_credential"):
-                app = await self._graphql(
-                    "query($name:String!){app(name:$name){organization{id}}}", {"name": self.app}
+                owner = await self._graphql(
+                    "query($name:String!){app(name:$name){organization{id}}}", {"name": app}
                 )
                 key = asyncssh.generate_private_key("ssh-ed25519")
                 issued = await self._graphql(
                     "mutation($input:IssueCertificateInput!){issueCertificate(input:$input){certificate}}",
                     {
                         "input": {
-                            "organizationId": app["app"]["organization"]["id"],
+                            "organizationId": owner["app"]["organization"]["id"],
                             "principals": ["root", "fly"],
-                            "appNames": [self.app],
+                            "appNames": [app],
                             "validHours": 1,
                             "publicKey": key.export_public_key().decode().strip(),
                         }
                     },
                 )
                 certificate = import_user_certificate(
-                    issued["issueCertificate"]["certificate"], key, self.app
+                    issued["issueCertificate"]["certificate"], key, app
                 )
-                self.credential = (key, certificate)
-                self.expires = time.monotonic() + 3300
-                return self.credential
+                self.issued[app] = ((key, certificate), time.monotonic() + 3300)
+                return key, certificate
 
     async def _proxy(self, entry, address):
         if entry.proxy and entry.proxy.returncode is None:
@@ -141,7 +143,7 @@ class FlySSHConnections:
                 str(socket_path) + ":22",
                 address,
                 "--app",
-                self.app,
+                entry.app,
                 "--quiet",
                 "--watch-stdin",
                 env=self.env,
@@ -171,7 +173,7 @@ class FlySSHConnections:
     async def _connect(self, entry, address):
         # Independent credential issuance and private tunnel preparation overlap.
         async with asyncio.TaskGroup() as group:
-            credentials = group.create_task(self.credentials())
+            credentials = group.create_task(self.credentials(entry.app))
             proxy = group.create_task(self._proxy(entry, address))
         import socket
 
@@ -204,7 +206,7 @@ class FlySSHConnections:
             raise
 
     async def _reserve(self, resource, address):
-        if resource.get("app") != self.app:
+        if resource.get("app") != self.app and not dedicated(resource):
             raise PermissionError("Fly SSH application mismatch")
         try:
             valid = ipaddress.ip_address(address) in ipaddress.ip_network("fdaa::/16")
@@ -222,7 +224,7 @@ class FlySSHConnections:
                     old_key, old = min(idle, key=lambda pair: pair[1].used)
                     self.entries.pop(old_key)
                     await old.close()
-                self.entries[key] = _Connection()
+                self.entries[key] = _Connection(app=resource["app"])
             entry = self.entries[key]
             entry.users += 1
             if self.sweeper is None:
@@ -238,7 +240,7 @@ class FlySSHConnections:
                     await entry.close()
                 try:
                     async with asyncio.TaskGroup() as group:
-                        group.create_task(self.credentials())
+                        group.create_task(self.credentials(entry.app))
                         group.create_task(self._proxy(entry, address))
                 except BaseException:
                     await entry.close()
@@ -281,6 +283,11 @@ class FlySSHConnections:
                     if not entry.users and time.monotonic() - entry.used >= self.idle_seconds:
                         self.entries.pop(key)
                         await entry.close()
+                # Every borrower holds an entry, so this frees only unused apps.
+                used = {entry.app for entry in self.entries.values()}
+                for app in set(self.credential_locks) - used:
+                    self.credential_locks.pop(app)
+                    self.issued.pop(app, None)
 
     async def close(self):
         if self.sweeper:
@@ -288,5 +295,6 @@ class FlySSHConnections:
             await asyncio.gather(self.sweeper, return_exceptions=True)
         await asyncio.gather(*(entry.close() for entry in self.entries.values()))
         self.entries.clear()
-        self.credential = None
+        self.issued.clear()
+        self.credential_locks.clear()
         await self.client.aclose()

@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.project import resource_dashboard as dashboard
+from src.platform.dashboard import router as dashboard
+from src.platform.dashboard.schemas import DashboardNodeCounts
 from src.platform.project.dependencies import get_project_repository
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from tests.authorization_fakes import authorization_for, install_authorization
 from tests.version_engine.test_dashboard_usage_buckets import FakeSB, FakeTable
 
@@ -122,6 +123,22 @@ def test_ambiguous_mixed_storage_fails_closed_without_disclosing_source_config()
     assert error.value.status_code == 409 and "private-import-key" not in str(error.value)
 
 
+def test_secrets_in_either_domains_trigger_never_reach_the_dashboard():
+    data = facts()
+    trigger = {"schedule": "daily", "auth": {"api_key": "must-not-leak"}}
+    data["synchronize_bindings"][0].update(trigger_type="scheduled", trigger_config=trigger)
+    data["access_surfaces"][1]["config"]["trigger"] = {"type": "scheduled", **trigger}
+
+    rows = dashboard.fetch_dashboard_resources(FakeSB(data), "project-1")
+
+    triggers = {row.resource_kind: row.trigger for row in rows if row.trigger}
+    assert triggers == {
+        "synchronize": {"type": "scheduled", "schedule": "daily", "auth": {}},
+        "access": {"type": "scheduled", "schedule": "daily", "auth": {}},
+    }
+    assert all("must-not-leak" not in row.model_dump_json() for row in rows)
+
+
 def test_failed_usage_read_is_not_reported_as_zero_successful_activity():
     class BrokenTable(FakeTable):
         def execute(self):
@@ -142,12 +159,12 @@ def environment(monkeypatch):
     install_authorization(app, authorization_for("project-1", role="viewer"))
     storage = FakeSB(facts())
     monkeypatch.setattr(dashboard, "SupabaseClient", lambda: SimpleNamespace(client=storage))
-    monkeypatch.setattr(
-        dashboard, "_compute_node_counts", lambda *_: dashboard.DashboardNodeCounts()
+    monkeypatch.setattr(dashboard, "compute_node_counts", lambda *_: DashboardNodeCounts())
+    monkeypatch.setattr(dashboard, "fetch_tools", lambda *_: [])
+    monkeypatch.setattr(dashboard, "fetch_uploads", lambda *_: [])
+    app.dependency_overrides[get_product_operation_adapter] = lambda: SimpleNamespace(
+        for_grant=lambda _grant: object()
     )
-    monkeypatch.setattr(dashboard, "_fetch_tools", lambda *_: [])
-    monkeypatch.setattr(dashboard, "_fetch_uploads", lambda *_: [])
-    app.dependency_overrides[get_product_operation_adapter] = lambda: object()
     app.dependency_overrides[get_project_repository] = lambda: SimpleNamespace(
         get_by_id=lambda project_id: SimpleNamespace(
             id=project_id, name="Project", description=None
@@ -157,6 +174,31 @@ def environment(monkeypatch):
         user_id="user-1", role="authenticated"
     )
     return (app,)
+
+
+def test_node_counts_read_the_tree_with_the_callers_grant(environment, monkeypatch):
+    (app,) = environment
+    bound, grants, read_with = object(), [], []
+
+    def for_grant(grant):
+        grants.append(grant)
+        return bound
+
+    def count(ops, _project_id):
+        read_with.append(ops)
+        return DashboardNodeCounts()
+
+    monkeypatch.setattr(dashboard, "compute_node_counts", count)
+    app.dependency_overrides[get_product_operation_adapter] = lambda: SimpleNamespace(
+        for_grant=for_grant
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/projects/project-1/dashboard/resources")
+
+    assert response.status_code == 200, response.text
+    assert read_with == [bound]
+    assert [grant.project_id for grant in grants] == ["project-1"]
 
 
 def test_canonical_dashboard_http_policy_selectors_and_response(environment):

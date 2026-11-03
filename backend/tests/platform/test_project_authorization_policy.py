@@ -8,7 +8,7 @@ from src.exceptions import (
     PermissionException,
     ServiceUnavailableException,
 )
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ROLE_CAPABILITIES,
     GrantSource,
     ProjectAction,

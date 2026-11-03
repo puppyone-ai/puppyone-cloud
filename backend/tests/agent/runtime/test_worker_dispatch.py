@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime import dispatch, worker
-from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
+from src.platform.agent.runtime import dispatch, worker
+from src.platform.agent.runtime.control.runner import RunSupervisor
 from src.platform.sandbox import WorkspaceUnavailable, bindings
 
 
@@ -178,7 +178,7 @@ def isolate_worker(monkeypatch, repository, supervisor):
         "RunRepository": lambda: repository,
         "Admission": lambda _: object(),
         "Publication": lambda transport, filesystem: object(),
-        "RunGitTransport": lambda _: object(),
+        "build_git_transport": lambda _: object(),
         "build_worker_version_engine_container": lambda **_: SimpleNamespace(repo_manager=None),
         "get_billing_gateway": lambda: None,
         "get_provider_registry": lambda: None,

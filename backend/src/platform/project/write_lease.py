@@ -10,21 +10,22 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar, Token
 from types import TracebackType
 from typing import Any, Protocol
 from uuid import uuid4
 
-from fastapi import Depends, Request
+from fastapi import Depends
 
 from src.exceptions import AppException, ErrorCode
 from src.infra.execution.context import Execution, current_execution
 from src.infra.execution.runner import run_blocking
 from src.infra.supabase.client import SupabaseClient
+from src.infra.write_admission import install_project_write_admission
+from src.platform.project.storage_keys import project_id_from_owned_s3_key
 from src.version_engine.bootstrap.container import VersionEngineContainer
-from src.version_engine.bootstrap.dependencies import get_version_engine_container
+from src.file_operations.engine_dependencies import get_version_engine_container
 
 MAX_PROJECT_WRITE_LEASE_TTL_SECONDS = 7200
 PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS = 7200
@@ -336,6 +337,45 @@ class ProjectWriteLease:
         return False
 
 
+class ProjectLeaseAdmission:
+    """Implements storage's write-admission port with the Project write lease."""
+
+    def active_lease(self, project_id: str) -> ProjectWriteLease | None:
+        return active_project_write_lease(project_id)
+
+    def requires_lease(self, key: str) -> bool:
+        return project_id_from_owned_s3_key(key) is not None
+
+    @contextmanager
+    def object_write(self, key: str, operation: str):
+        project_id = project_id_from_owned_s3_key(key)
+        if project_id is None:
+            yield
+            return
+        # Physical storage admission is intentionally independent from the
+        # logical Product lease. A ContextVar is copied into background tasks,
+        # and boto3 threads outlive asyncio cancellation; reusing only the
+        # outer project id would therefore permit a late PUT after the outer
+        # lease was released. The child claim lives through the real boto
+        # future and inherits initializer proof only from a currently-live
+        # outer lease.
+        parent = active_project_write_lease(project_id)
+        proof = parent.initialization_proof() if parent is not None else {}
+        with ProjectWriteLease(
+            project_id,
+            f"s3.{operation}",
+            ttl_seconds=PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
+            reuse_active=False,
+            **proof,
+        ):
+            yield
+
+
+def install_storage_write_admission() -> None:
+    """Call once at process startup, before anything writes Project storage."""
+    install_project_write_admission(ProjectLeaseAdmission())
+
+
 _WRITE_METHODS = {
     "write_file",
     "write_bytes",
@@ -398,12 +438,13 @@ def build_leased_worker_write_commands(
     operation_key: str | None = None,
 ) -> LeasedVersionWriteCommandService:
     from src.file_operations.commands import VersionWriteCommandService
+    from src.file_operations.dependencies import product_operations
     from src.version_engine.bootstrap.dependencies import (
         build_worker_version_engine_container,
     )
 
     container = build_worker_version_engine_container()
-    ops = container.product_operations()
+    ops = product_operations(container)
     if project_id is not None or user_id is not None:
         if not project_id or not user_id:
             raise PermissionError("producer requires its Project and initiating user")
@@ -418,65 +459,9 @@ def get_leased_version_write_command_service(
     container: VersionEngineContainer = Depends(get_version_engine_container),
     write_lease_factory: ProjectWriteLeaseFactory = Depends(get_project_write_lease_factory),
 ) -> LeasedVersionWriteCommandService:
+    from src.file_operations.dependencies import write_commands
+
     return lease_write_commands(
-        container.write_commands(),
+        write_commands(container),
         write_lease_factory=write_lease_factory,
     )
-
-
-async def git_project_write_lease(request: Request) -> AsyncIterator[None]:
-    """Authorize, then fence every Git request for its full response lifetime.
-
-    Clone/fetch requests are product reads, but they also materialize the
-    Project-owned Git transport cache on the host.  They therefore participate
-    in the same lifecycle drain as canonical mutations.  Read-only credentials
-    remain valid for those requests; only receive-pack and explicit cache
-    rebuild operations require a write-capable runtime grant.
-    """
-
-    path = request.url.path
-    is_mutation = path.endswith("/git-receive-pack") or path.endswith("/rebuild-cache")
-    if path.endswith("/info/refs"):
-        is_mutation = str(request.query_params.get("service") or "") == "git-receive-pack"
-
-    project_id = str(request.path_params.get("project_id") or "")
-    auth: dict[str, Any] | None = None
-    if not project_id:
-        access_key = str(request.path_params.get("access_key") or "")
-        if access_key:
-            from src.platform.access.adapters.git.router import (
-                resolve_git_access_point,
-            )
-
-            project_id, auth = await resolve_git_access_point(access_key, request)
-    else:
-        from src.platform.access.adapters.git.auth import (
-            resolve_git_project_auth,
-            resolve_git_scope_auth,
-        )
-
-        scope_id = str(request.path_params.get("scope_id") or "")
-        auth = (
-            await resolve_git_scope_auth(project_id, scope_id, request)
-            if scope_id
-            else await resolve_git_project_auth(project_id, request)
-        )
-    if not project_id:
-        yield
-        return
-    runtime_grant = (auth or {}).get("_runtime_grant")
-    if runtime_grant is None:
-        raise AppException(
-            code=ErrorCode.FORBIDDEN,
-            status_code=403,
-            message="Git credential does not allow repository access",
-        )
-    if is_mutation and not bool(getattr(runtime_grant, "can_write", False)):
-        raise AppException(
-            code=ErrorCode.FORBIDDEN,
-            status_code=403,
-            message="Git credential does not allow writes",
-        )
-
-    async with ProjectWriteLease(project_id, f"git.{request.method.lower()}"):
-        yield

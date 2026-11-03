@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from src.common_schemas import ApiResponse
 from src.infra.execution.runner import run_blocking
-from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import (
@@ -18,7 +17,7 @@ from src.platform.authorization.dependencies import (
     get_authorization_service,
     require_project_action,
 )
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
@@ -27,7 +26,7 @@ from src.platform.organization.dependencies import resolve_org_ids
 from src.platform.project.control_plane import ProjectControlPlaneService
 from src.platform.project.control_plane_dependencies import get_project_control_plane_service
 from src.platform.project.dependencies import get_project_service
-from src.platform.project.git_view import ProjectGitViewService
+from src.platform.project.entry_points import count_entry_points
 from src.platform.project.orchestration import create_project_with_tree
 from src.platform.project.presenters import project_to_out
 from src.platform.project.readiness import ProjectReadinessService
@@ -54,11 +53,7 @@ from src.platform.template_registry.exceptions import TemplateRegistryError
 from src.platform.template_registry.http_errors import registry_http_exception
 from src.platform.template_registry.schemas import TemplateDetail, TemplateSummary
 from src.platform.template_registry.service import TemplateRegistryService
-from src.version_engine.bootstrap.dependencies import (
-    get_repo_manager,
-    get_version_write_engine,
-)
-from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
+from src.file_operations.engine_dependencies import get_version_write_engine
 from src.version_engine.write_engine.engine import VersionWriteEngine
 
 router = APIRouter(
@@ -73,38 +68,6 @@ router = APIRouter(
 
 def get_project_readiness_service() -> ProjectReadinessService:
     return ProjectReadinessService()
-
-
-def get_project_git_view_service(
-    repo_manager: VersionRepoManager = Depends(get_repo_manager),
-) -> ProjectGitViewService:
-    return ProjectGitViewService(repo_manager)
-
-
-def _count_user_access_points(project_ids: list[str]) -> dict[str, int]:
-    """Count user-created entry points, excluding built-in connection methods."""
-
-    if not project_ids:
-        return {}
-    sb = get_supabase_client()
-    connection_rows = (
-        sb.table("synchronize_bindings")
-        .select("project_id")
-        .in_("project_id", project_ids)
-        .execute()
-    ).data or []
-    from src.platform.access.surface_repository import AccessSurfaceRepository
-
-    access_counts = AccessSurfaceRepository(sb).count_by_projects_and_kinds(
-        project_ids, ["mcp", "sandbox"]
-    )
-    counts: dict[str, int] = {}
-    for row in connection_rows:
-        pid = row["project_id"]
-        counts[pid] = counts.get(pid, 0) + 1
-    for pid, count in access_counts.items():
-        counts[pid] = counts.get(pid, 0) + count
-    return counts
 
 
 def _legacy_template_summary(template: TemplateSummary) -> dict[str, object]:
@@ -156,7 +119,7 @@ def list_projects(
     # Batch-fetch entry-point counts only for authorized Projects. Count user-created
     # integrations; CLI / Agent / Filesystem / Git Remote are built-in methods.
     project_ids = [str(project.id) for project, _grant in accessible]
-    conn_counts = _count_user_access_points(project_ids) if include_access_counts else {}
+    conn_counts = count_entry_points(project_ids) if include_access_counts else {}
 
     result = []
     for p, grant in accessible:
@@ -226,7 +189,7 @@ def get_project(
     authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_READ)),
 ):
     project = authorized.project
-    conn_count = _count_user_access_points([str(project.id)]).get(str(project.id), 0)
+    conn_count = count_entry_points([str(project.id)]).get(str(project.id), 0)
     return ApiResponse.success(
         data=project_to_out(project, authorized.grant, access_point_count=conn_count),
         message="Project retrieved successfully",
@@ -307,7 +270,7 @@ async def create_project(
             current_user.user_id,
             ProjectAction.PROJECT_READ,
         ),
-        run_blocking(_count_user_access_points, [str(project.id)]),
+        run_blocking(count_entry_points, [str(project.id)]),
     )
     response.status_code = status.HTTP_200_OK if result.replayed else status.HTTP_201_CREATED
     mark_idempotency_replay(response, replayed=result.replayed)
@@ -603,48 +566,3 @@ def get_project_readiness(
     _repository_contract: int = Depends(require_repository_target_contract),
 ):
     return ApiResponse.success(data=readiness.resolve(authorized.project.id).as_dict())
-
-
-@router.get(
-    "/{project_id}/git-view/health",
-    response_model=ApiResponse[dict],
-    summary="Get Project repository Git view health through the control plane",
-)
-def get_project_git_view_health(
-    authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_READ)),
-    git_view: ProjectGitViewService = Depends(get_project_git_view_service),
-    _repository_contract: int = Depends(require_repository_target_contract),
-):
-    """Return derived Git health using Human Project authorization.
-
-    The smart-HTTP ``/git/.../health`` route intentionally remains a machine
-    RuntimeGrant endpoint; a human JWT is never forwarded to that data plane.
-    """
-
-    return ApiResponse.success(
-        data=git_view.health(
-            str(authorized.project.id),
-            grant=authorized.grant,
-            content_write_allowed=authorized.grant.allows(ProjectAction.CONTENT_WRITE),
-            cache_rebuild_allowed=authorized.grant.allows(ProjectAction.PROJECT_MANAGE),
-        ),
-        message="Project Git view health loaded",
-    )
-
-
-@router.post(
-    "/{project_id}/git-view/rebuild-cache",
-    response_model=ApiResponse[dict],
-    summary="Rebuild Project repository Git view cache through the control plane",
-)
-def rebuild_project_git_view_cache(
-    authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_MANAGE)),
-    git_view: ProjectGitViewService = Depends(get_project_git_view_service),
-    _repository_contract: int = Depends(require_repository_target_contract),
-):
-    """Rebuild both derived root-view cache variants from canonical facts."""
-
-    return ApiResponse.success(
-        data=git_view.rebuild(str(authorized.project.id), grant=authorized.grant),
-        message="Project Git view caches rebuilt from canonical facts",
-    )

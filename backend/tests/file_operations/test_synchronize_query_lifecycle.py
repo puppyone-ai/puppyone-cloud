@@ -12,7 +12,7 @@ from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.synchronize.dependencies import get_synchronize_engine
 from src.platform.synchronize.public_router import router
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.version_engine.read.native_tree_reader import NativeTreeReader
 from tests.authorization_fakes import authorization_for, install_authorization
 from tests.repository_hosting.unit.test_repository_snapshot import row

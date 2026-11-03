@@ -1,5 +1,0 @@
-
-> context-base-ui@0.0.3 test:bff-contract
-> node scripts/test-bff-contract-forwarding.mjs
-
-BFF repository contract forwarding test passed.

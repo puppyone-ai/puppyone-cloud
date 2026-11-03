@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     GrantSource,
     ProjectGrant,
     ProjectRole,
     ROLE_CAPABILITIES,
 )
-from src.version_engine.admission.identity import PuppyOneAuthenticator
-from src.platform.repository_target.auth_context import repository_mode_from_auth
-from src.platform.repository_target.models import ProjectRootTarget
+from src.platform.access.authenticator import PuppyOneAuthenticator
+from src.version_engine.admission.auth_context import repository_mode_from_auth
+from src.shared_types.repository_target import ProjectRootTarget
 
 
 @pytest.fixture

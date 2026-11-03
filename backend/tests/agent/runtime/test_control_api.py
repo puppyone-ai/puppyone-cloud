@@ -1,6 +1,6 @@
 import pytest
 
-from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
+from src.platform.agent.runtime.persistence.commands import RunRepository
 
 pytestmark = pytest.mark.integration
 

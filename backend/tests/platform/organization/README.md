@@ -18,6 +18,9 @@ paid Agent inference are separate acceptance surfaces.
   acceptance, member/role management, self-promotion, creator protection,
   transfer/leave/removal, same-login revocation, Agent admission, token expiry,
   8-way redemption, last-seat concurrency, stale preflight and populated upgrade.
+- `integration/test_first_sign_in_acceptance.py` runs a brand-new user through
+  `/auth/initialize` against real SQL and storage, including retries, and checks
+  entry point counts and the Dashboard on the same real data.
 - `integration/test_sql_authorization_contract.py` runs the existing 59 pgTAP
   assertions for database constraints, runtime/human separation, Git credential
   downgrade/revocation and tenant boundaries.

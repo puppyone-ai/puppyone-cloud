@@ -70,6 +70,7 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
     && panel.view !== 'overview'
     && panel.view !== 'create'
     && requestedScope !== undefined;
+  const detailScope = detailOpen ? requestedScope : undefined;
   const selectedConnectors = requestedScope
     ? connectorsByTarget.get(repositoryViewKey(requestedScope)) ?? []
     : [];
@@ -123,7 +124,7 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
 
   const title = (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        <span>{clientsOpen ? 'Agent access' : detailOpen && requestedScope ? requestedScope.name : 'Access'}</span>
+        <span>{clientsOpen ? 'Agent access' : detailScope?.name ?? 'Access'}</span>
       {!detailOpen && !clientsOpen && <CountBadge value={sortedScopes.length} size='md' tone='neutral' />}
     </span>
   );
@@ -135,51 +136,60 @@ export function ProjectAccessPanel({ projectId, onClose }: { projectId: string; 
     />
   ) : undefined;
 
+  let onBack: (() => void) | undefined;
+  if (clientsOpen) onBack = () => setClientsOpen(false);
+  else if (detailOpen) onBack = openOverview;
+
+  const renderBody = () => {
+    if (clientsOpen && canManageClients) return <AccessManagement key={projectId} projectId={projectId} />;
+    if (loadError) return <AccessLoadError error={loadError} onRetry={() => { void refresh(); }} />;
+    if (loading) return <PageLoading variant='fill' label='Loading access' />;
+    if (noScopes) return <NoConnectorsState onCreateScope={canManageAccess ? () => openCreate() : undefined} />;
+    if (detailScope) {
+      return (
+        <ScopeDetailPanel
+          scope={detailScope}
+          connectors={selectedConnectors}
+          projectId={projectId}
+          onPauseResume={handlePauseResume}
+          onUpdate={handleUpdate}
+          onDelete={handleDelete}
+          pendingConnectorIds={pendingConnectorIds}
+          onScopeMutated={refresh}
+          onScopeDeleted={() => {
+            clearScopeSelection();
+            openOverview();
+          }}
+          canManage={canManageAccess}
+          enablingStandardAccess={enablingTargetKey === repositoryViewKey(detailScope)}
+          enableStandardAccessError={enableError}
+          onEnableStandardAccess={() => handleEnableTargetAccess(detailScope)}
+          onNavigationGuardChange={setPanelNavigationGuard}
+        />
+      );
+    }
+    return (
+      <ScopeSidebar
+        scopes={sortedScopes}
+        connectorsByTarget={connectorsByTarget}
+        selectedTargetKey={undefined}
+        onSelect={openScope}
+      />
+    );
+  };
+
   return (
     <>
       <PanelShell
         title={title}
         onClose={onClose}
-        onBack={clientsOpen ? () => setClientsOpen(false) : detailOpen ? openOverview : undefined}
+        onBack={onBack}
         headerRight={!clientsOpen ? <>
           {canManageClients && <DesktopChromeAction label='Manage agent access' icon={<ShieldCheck size={15} strokeWidth={2} />} onClick={() => setClientsOpen(true)} />}
           {createAction}
         </> : undefined}
       >
-        {clientsOpen && canManageClients ? <AccessManagement key={projectId} projectId={projectId} /> : loadError ? (
-          <AccessLoadError error={loadError} onRetry={() => { void refresh(); }} />
-        ) : loading ? (
-          <PageLoading variant='fill' label='Loading access' />
-        ) : noScopes ? (
-          <NoConnectorsState onCreateScope={canManageAccess ? () => openCreate() : undefined} />
-        ) : detailOpen && requestedScope ? (
-          <ScopeDetailPanel
-            scope={requestedScope}
-            connectors={selectedConnectors}
-            projectId={projectId}
-            onPauseResume={handlePauseResume}
-            onUpdate={handleUpdate}
-            onDelete={handleDelete}
-            pendingConnectorIds={pendingConnectorIds}
-            onScopeMutated={refresh}
-            onScopeDeleted={() => {
-              clearScopeSelection();
-              openOverview();
-            }}
-            canManage={canManageAccess}
-            enablingStandardAccess={enablingTargetKey === repositoryViewKey(requestedScope)}
-            enableStandardAccessError={enableError}
-            onEnableStandardAccess={() => handleEnableTargetAccess(requestedScope)}
-            onNavigationGuardChange={setPanelNavigationGuard}
-          />
-        ) : (
-          <ScopeSidebar
-            scopes={sortedScopes}
-            connectorsByTarget={connectorsByTarget}
-            selectedTargetKey={undefined}
-            onSelect={openScope}
-          />
-        )}
+        {renderBody()}
       </PanelShell>
       {canManageAccess && createOpen && panel.type === 'access_list' ? (
         <CreateAccessModal

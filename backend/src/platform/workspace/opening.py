@@ -75,7 +75,7 @@ class WorkspaceOpening:
             await host.runtime.aclose()
 
     async def _observe(self, user, project, wait_seconds):
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         deadline = time.monotonic() + wait_seconds
         preparation, prepared_row = None, None
@@ -140,7 +140,7 @@ class WorkspaceOpening:
                 await asyncio.gather(preparation, return_exceptions=True)
 
     async def prepare(self, user, project, generation, *, context=None, connection=None):
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         from .lifecycle import meter_id
 

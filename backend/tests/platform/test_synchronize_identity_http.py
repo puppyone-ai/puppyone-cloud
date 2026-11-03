@@ -77,9 +77,7 @@ class RunStore:
 
 @pytest.fixture
 def environment(monkeypatch):
-    from src.infra.scheduler import service as scheduler
-
-    monkeypatch.setattr(scheduler, "get_scheduler_service", lambda: SimpleNamespace(sync_trigger=Mock()))
+    monkeypatch.setattr(router, "sync_trigger", Mock())
     bindings = BindingStore()
     runs = RunStore()
     monkeypatch.setattr(router, "_get_run_repo", lambda: runs)

@@ -13,7 +13,8 @@ from fastapi import APIRouter
     "imports.database.router",
     "access.router",
     "access.project_router",
-    "project.dashboard_router",
+    "dashboard.resources",
+    "dashboard.sections",
 ])
 def test_operations_do_not_export_retired_routers(module):
     operations = importlib.import_module(f"src.platform.{module}")

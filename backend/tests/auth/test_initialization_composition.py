@@ -7,10 +7,10 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from src.platform.auth import dependencies as auth
+from src.platform.onboarding import dependencies as onboarding
 from src.platform.organization import repository as organizations
 from src.platform.profile import dependencies as profile
 from src.platform.profile import repository as profiles
-from src.platform.project import control_plane_dependencies as control_plane
 from src.platform.project import dependencies as projects
 
 
@@ -22,13 +22,15 @@ async def test_imperative_auth_and_profile_factories_resolve_real_project_servic
     monkeypatch.setattr(projects, "_project_repository", repository)
     monkeypatch.setattr(projects, "_project_membership_repository", MagicMock())
     monkeypatch.setattr(auth, "_initialization_service", None)
+    monkeypatch.setattr(onboarding, "_service", None)
     monkeypatch.setattr(profiles, "ProfileRepositorySupabase", lambda: profile_repository)
     monkeypatch.setattr(organizations, "OrganizationRepository", MagicMock())
-    monkeypatch.setattr(control_plane, "get_project_control_plane_service", MagicMock())
+    monkeypatch.setattr(onboarding, "get_project_control_plane_service", MagicMock())
+    monkeypatch.setattr(onboarding, "get_profile_repository", lambda: profile_repository)
     monkeypatch.setattr(profile, "get_profile_repository", lambda: profile_repository)
 
-    initialization = auth.get_initialization_service()
-    assert await initialization.maybe_seed_demo_project("user", "organization") is None
+    first_sign_in = onboarding.get_onboarding_service()
+    assert await first_sign_in.maybe_seed_demo_project("user", "organization") is None
     repository.get_by_org_id.assert_called_once_with("organization")
     profile_repository.mark_onboarded.assert_called_once_with(user_id="user")
     assert profile.get_profile_service()._project_service.get_by_org_id("organization") == [

@@ -2,8 +2,8 @@
 from unittest.mock import MagicMock
 
 
-from src.platform.access.adapters.agent.config.repository import _row_to_tool
-from src.platform.project.dashboard_router import _fetch_uploads
+from src.platform.agent.config.repository import _row_to_tool
+from src.platform.dashboard.sections import fetch_uploads
 from src.platform.synchronize.github.repository import _to_api_row
 
 NOW = '2026-09-27T00:00:00+00:00'
@@ -34,7 +34,7 @@ def test_dashboard_lists_upload_jobs_and_hides_retired_search_rows():
     uploads.execute.return_value.data = [dict(id='upload-1',status='running',type='file_ocr',progress=20)]
     client = MagicMock()
     client.table.side_effect = lambda name: {'uploads': uploads}[name]
-    result = _fetch_uploads(client, 'project-1')
+    result = fetch_uploads(client, 'project-1')
     assert [(row.id, row.type) for row in result] == [('upload-1','file_ocr')]
     uploads.neq.assert_called_once_with('type','search_index')
     uploads.eq.assert_called_once_with('project_id','project-1')

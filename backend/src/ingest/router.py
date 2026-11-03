@@ -128,7 +128,7 @@ def get_ingest_health(
 
 # === Rules Management Endpoints ===
 
-from src.infra.file_processing.rules.dependencies import get_rule_repository
+from src.ingest.rule_dependencies import get_rule_repository
 from src.infra.file_processing.rules.repository_supabase import RuleRepositorySupabase
 from src.infra.file_processing.rules.schemas import RuleCreateRequest
 from src.platform.upload.processing_schemas import (

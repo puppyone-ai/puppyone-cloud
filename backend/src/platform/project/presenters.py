@@ -1,6 +1,6 @@
 """Project HTTP presentation helpers shared across application domains."""
 
-from src.platform.authorization.models import ProjectGrant
+from src.shared_types.grants import ProjectGrant
 from src.platform.project.models import Project
 from src.platform.project.schemas import ProjectOut
 

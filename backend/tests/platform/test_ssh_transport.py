@@ -3,9 +3,13 @@
 import asyncio
 import base64
 import json
+import os
+import shutil
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import asyncssh
 import pytest
@@ -16,6 +20,7 @@ from src.platform.access.adapters.ssh.gateway import (
     session_ending,
     start_gateway,
 )
+from src.platform.access.agent_links import CONNECTION_OPTIONS, PROXY_HELPER
 from src.platform.workspace.errors import WorkspaceError
 
 HELPER = Path(__file__).parents[2] / "agent-worker/workbench-shell.py"
@@ -60,6 +65,7 @@ class NativeShell:
 class NativeAccess:
     def __init__(self, key, directory):
         self.key, self.directory, self.used, self.closed = key, directory, False, False
+        self.admitted, self.opened, self.renewed, self.finished = 0, 0, 0, []
 
     async def authenticate(self, identity, key):
         return (
@@ -68,25 +74,40 @@ class NativeAccess:
             and not self.used
         )
 
-    @asynccontextmanager
-    async def open(self, identity, notify=None):
+    async def admit(self, identity, notify=None):
+        # A credential admits one connection; its commands reuse the admission.
         if self.used:
             raise PermissionError("Used")
         self.used = True
+        self.admitted += 1
+        return {"id": identity}
+
+    @asynccontextmanager
+    async def open(self, session, notify=None):
+        self.opened += 1
         if getattr(self, "resume_notice", None):
             await notify(self.resume_notice)
         shell = NativeShell(self.directory)
         try:
-            yield {"id": identity}, shell
+            yield {"id": session["id"]}, shell
         finally:
             await shell.close()
             self.closed = True
 
     renewal_error = None
+    session_error = None
 
     async def renew(self, *args):
         if self.renewal_error:
             raise self.renewal_error
+
+    async def renew_session(self, session):
+        self.renewed += 1
+        if self.session_error:
+            raise self.session_error
+
+    async def finish(self, session):
+        self.finished.append(session["id"])
 
 
 @pytest.fixture
@@ -224,3 +245,218 @@ def test_session_endings_are_classified_through_task_groups():
         False,
     )
     assert session_ending(RuntimeError()) == (None, False)
+
+
+async def test_commands_over_one_connection_sign_in_once(transport):
+    connection, service = transport
+    async with asyncio.timeout(15):
+        for number in range(3):
+            result = await connection.run(f"printf {number}", encoding=None)
+            assert result.stdout == str(number).encode()
+        together = await asyncio.gather(
+            *(connection.run(f"printf {number}", encoding=None) for number in range(3, 6))
+        )
+    assert [result.stdout for result in together] == [b"3", b"4", b"5"]
+    # One admission for the connection; each command is its own shell.
+    assert service.admitted == 1
+    assert service.opened == 6
+
+
+async def test_the_server_ends_a_connection_whose_access_ended(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    await connection.run("true", encoding=None)
+    service.session_error = WorkspaceError(403, {"code": "access_denied"})
+    async with asyncio.timeout(15):
+        await connection.wait_closed()
+        while not service.finished:
+            await asyncio.sleep(0.05)
+    assert service.finished == ["fixture"]
+
+
+async def test_a_connection_left_idle_is_closed_and_its_session_finished(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(ssh_gateway, "IDLE_CONNECTION_SECONDS", 0.2)
+    await connection.run("true", encoding=None)
+    async with asyncio.timeout(15):
+        await connection.wait_closed()
+        while not service.finished:
+            await asyncio.sleep(0.05)
+    assert service.renewed >= 1
+
+
+async def test_an_infrastructure_blip_does_not_end_the_connection(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    await connection.run("true", encoding=None)
+    service.session_error = RuntimeError("database unavailable")
+    await asyncio.sleep(0.08)  # One failed renewal, fewer than the connection survives.
+    service.session_error = None
+    result = await connection.run("printf still-here", encoding=None)
+    assert result.stdout == b"still-here"
+    assert service.admitted == 1
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
+async def test_the_command_agents_are_given_signs_in_once_for_every_command(tmp_path):
+    host = asyncssh.generate_private_key("ssh-ed25519")
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    service = NativeAccess(key, tmp_path)
+
+    class Counted(set):
+        made = 0
+
+        def add(self, item):
+            Counted.made += 1
+            super().add(item)
+
+    gateway = await start_gateway(service, host, host="127.0.0.1", port=0, connections=Counted())
+    port = gateway.get_port()
+    identity = tmp_path / "id"
+    key.write_private_key(str(identity))
+    os.chmod(identity, 0o600)
+    known = tmp_path / "known_hosts"
+    known.write_text(f"[127.0.0.1]:{port} " + host.export_public_key().decode())
+    # The agent's options exactly, with a socket path short enough for any test directory.
+    options = CONNECTION_OPTIONS.replace(
+        "~/.ssh/puppyone-%C", f"/tmp/pk-{uuid4().hex[:8]}-%C"
+    ).split()
+    ssh = [
+        "ssh",
+        "-F",
+        "/dev/null",
+        "-i",
+        str(identity),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"UserKnownHostsFile={known}",
+        "-o",
+        "BatchMode=yes",
+        *options,
+        "-p",
+        str(port),
+    ]
+
+    async def run(*arguments):
+        process = await asyncio.create_subprocess_exec(
+            *ssh, *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        async with asyncio.timeout(20):
+            out, err = await process.communicate()
+        return process.returncode, out, err
+
+    try:
+        timings = []
+        for number in range(4):
+            started = time.monotonic()
+            code, out, err = await run("fixture@127.0.0.1", f"printf {number}")
+            timings.append(time.monotonic() - started)
+            assert code == 0, err
+            assert out == str(number).encode()
+        # One TCP connection and one admission carried every command; a second
+        # sign-in would have been refused by this credential.
+        assert Counted.made == 1
+        assert service.admitted == 1
+        assert service.opened == 4
+        assert max(timings[1:]) < 2
+    finally:
+        await run("-O", "exit", "fixture@127.0.0.1")
+        gateway.close()
+        await gateway.wait_closed()
+
+
+async def connect_proxy(required_auth):
+    """A minimal HTTP CONNECT proxy, as an Agent's sandbox puts in front of the internet."""
+    seen = []
+
+    async def pipe(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+
+    async def handle(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        seen.append(head)
+        if required_auth not in head:
+            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+            await writer.drain()
+            writer.close()
+            return
+        host, port = head.split(b"\r\n")[0].split()[1].decode().rsplit(":", 1)
+        upstream_reader, upstream_writer = await asyncio.open_connection(host, int(port))
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        await asyncio.gather(
+            pipe(reader, upstream_writer), pipe(upstream_reader, writer), return_exceptions=True
+        )
+
+    return await asyncio.start_server(handle, "127.0.0.1", 0), seen
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
+async def test_an_agent_behind_an_http_proxy_connects_with_the_helper_from_the_page(tmp_path):
+    host = asyncssh.generate_private_key("ssh-ed25519")
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    service = NativeAccess(key, tmp_path)
+    gateway = await start_gateway(service, host, host="127.0.0.1", port=0)
+    port = gateway.get_port()
+    proxy, seen = await connect_proxy(
+        b"Proxy-Authorization: Basic " + base64.b64encode(b"agent:p@ss")
+    )
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    identity = tmp_path / "id"
+    key.write_private_key(str(identity))
+    os.chmod(identity, 0o600)
+    known = tmp_path / "known_hosts"
+    known.write_text(f"[127.0.0.1]:{port} " + host.export_public_key().decode())
+    helper = tmp_path / "puppyone_proxy.py"
+    helper.write_text(PROXY_HELPER)
+    ssh = [
+        "ssh",
+        "-F",
+        "/dev/null",
+        "-i",
+        str(identity),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"UserKnownHostsFile={known}",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ProxyCommand={sys.executable} {helper} %h %p",
+        "-p",
+        str(port),
+    ]
+
+    async def run(proxy_url):
+        process = await asyncio.create_subprocess_exec(
+            *ssh,
+            "fixture@127.0.0.1",
+            "printf through-the-proxy",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "HTTPS_PROXY": proxy_url},
+        )
+        async with asyncio.timeout(20):
+            out, err = await process.communicate()
+        return process.returncode, out, err
+
+    try:
+        # A refusal is said in the proxy's own words, not as an SSH fault.
+        code, _, err = await run(f"http://127.0.0.1:{proxy_port}")
+        assert code != 0 and b"The proxy refused the connection: HTTP/1.1 407" in err
+        code, out, err = await run(f"http://agent:p%40ss@127.0.0.1:{proxy_port}")
+        assert code == 0, err
+        assert out == b"through-the-proxy"
+        assert seen[-1].startswith(f"CONNECT 127.0.0.1:{port} HTTP/1.1".encode())
+    finally:
+        proxy.close()
+        await proxy.wait_closed()
+        gateway.close()
+        await gateway.wait_closed()

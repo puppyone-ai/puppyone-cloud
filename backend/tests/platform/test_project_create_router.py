@@ -12,7 +12,7 @@ from src.exceptions import AppException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ROLE_CAPABILITIES,
     GrantSource,
     ProjectGrant,
@@ -27,7 +27,7 @@ from src.platform.project.control_plane_dependencies import get_project_control_
 from src.platform.project.dependencies import get_project_repository
 from src.platform.project.models import Project
 from src.platform.project.write_lease import get_project_write_lease_factory
-from src.version_engine.bootstrap.dependencies import get_version_write_engine
+from src.file_operations.engine_dependencies import get_version_write_engine
 
 OPERATION_KEY = "123e4567-e89b-42d3-a456-426614174000"
 
@@ -182,7 +182,7 @@ def _app(monkeypatch, control_plane: ControlPlaneStub | None = None):
         access_count_threads.append(get_ident())
         return {}
 
-    monkeypatch.setattr(project_router_module, "_count_user_access_points", count_access_points)
+    monkeypatch.setattr(project_router_module, "count_entry_points", count_access_points)
     app.state.test_authorization = authorization
     app.state.test_access_count_threads = access_count_threads
     app.state.test_request_loop_threads = request_loop_threads

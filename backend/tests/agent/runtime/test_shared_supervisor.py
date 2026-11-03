@@ -8,16 +8,16 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.admission import Admission
-from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
-from src.platform.access.adapters.agent.runtime.control.workspace import workspace_state
-from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.agent.runtime.control.admission import Admission
+from src.platform.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.agent.runtime.control.runner import RunSupervisor
+from src.platform.agent.runtime.control.shared_tasks import SharedTasks
+from src.platform.agent.runtime.control.workspace import workspace_state
+from src.platform.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
-from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
-from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
-from src.platform.access.adapters.agent.runtime.persistence.shared_tasks import SharedTaskRepository
+from src.platform.agent.runtime.loop.pi import PiLoop
+from src.platform.agent.runtime.persistence.commands import RunRepository
+from src.platform.agent.runtime.persistence.shared_tasks import SharedTaskRepository
 from tests.agent.runtime.test_workbench_attachment import shared_submit
 from tests.agent.runtime.test_workbench_task_leases import release, running, task
 from tests.agent.runtime.conftest import claimant

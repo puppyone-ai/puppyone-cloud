@@ -28,7 +28,7 @@ database release workflow. The API and supervisor share Supabase, S3, managed
 inference and runtime billing configuration. In `backend/`, start:
 
 ```sh
-uv run python -m src.platform.access.adapters.agent.runtime.worker
+uv run python -m src.platform.agent.runtime.worker
 ```
 
 `SERVICE_ROLE=agent_worker` selects that command on Railway. The repository's

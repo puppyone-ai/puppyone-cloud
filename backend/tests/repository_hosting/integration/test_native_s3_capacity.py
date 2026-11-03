@@ -8,13 +8,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
 from src.platform.project.write_lease import (
     ProjectWriteLease,
     ProjectWriteLeaseRepository,
     active_project_write_lease,
 )
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.derived.repository_gc import RepositoryCollector
 from src.version_engine.domain.errors import StorageWriteError
 from src.version_engine.infrastructure.supabase.capacity_repository import RepositoryCapacity

@@ -133,10 +133,9 @@ async def test_import_runner_writes_without_creating_sync_binding(monkeypatch):
     import src.version_engine.bootstrap.dependencies as version_deps
 
     monkeypatch.setattr(runner_module, "get_import_provider_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(version_deps, "build_worker_version_engine_container", SimpleNamespace)
     monkeypatch.setattr(
-        version_deps,
-        "build_worker_version_engine_container",
-        lambda: SimpleNamespace(product_operations=lambda: fake_ops),
+        "src.file_operations.dependencies.product_operations", lambda _container: fake_ops
     )
 
     job = ImportJob(
@@ -205,10 +204,9 @@ async def test_import_runner_uses_real_github_connector_archive_flow(monkeypatch
         "get_import_provider_registry",
         lambda: SingleConnectorRegistry(connector),
     )
+    monkeypatch.setattr(version_deps, "build_worker_version_engine_container", SimpleNamespace)
     monkeypatch.setattr(
-        version_deps,
-        "build_worker_version_engine_container",
-        lambda: SimpleNamespace(product_operations=lambda: fake_ops),
+        "src.file_operations.dependencies.product_operations", lambda _container: fake_ops
     )
 
     job = ImportJob(
@@ -261,10 +259,9 @@ async def test_live_github_import_smoke_octocat_hello_world(monkeypatch):
         "get_import_provider_registry",
         lambda: SingleConnectorRegistry(connector),
     )
+    monkeypatch.setattr(version_deps, "build_worker_version_engine_container", SimpleNamespace)
     monkeypatch.setattr(
-        version_deps,
-        "build_worker_version_engine_container",
-        lambda: SimpleNamespace(product_operations=lambda: fake_ops),
+        "src.file_operations.dependencies.product_operations", lambda _container: fake_ops
     )
 
     job = ImportJob(

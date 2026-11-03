@@ -6,3 +6,4 @@ COPY *.mjs *.py /opt/puppyone-agent/
 COPY providers/docker-recovery.mjs /opt/puppyone-agent/providers/
 RUN --network=none PUPPYONE_WORKBENCH_ACCEPTANCE=1 node --test /opt/puppyone-agent/workbench-process.docker.test.mjs
 RUN --network=none PUPPYONE_WORKBENCH_ACCEPTANCE=1 node --test /opt/puppyone-agent/workbench-git.docker.test.mjs
+RUN --network=none PUPPYONE_WORKBENCH_ACCEPTANCE=1 node --test /opt/puppyone-agent/workbench-shell.docker.test.mjs

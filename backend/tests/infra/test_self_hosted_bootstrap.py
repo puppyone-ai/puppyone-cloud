@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from src.infra.self_hosted_bootstrap import initialize_storage
+from src.platform.project.self_hosted_bootstrap import initialize_storage
 
 
 def fixture():
@@ -24,7 +24,7 @@ def test_empty_storage_requires_two_matching_observations(monkeypatch):
     proof = SimpleNamespace(object_count=0, multipart_count=0, digest="empty")
     observe = MagicMock(return_value=proof)
     monkeypatch.setattr(
-        "src.infra.self_hosted_bootstrap.observe_project_storage_inventory", observe
+        "src.platform.project.self_hosted_bootstrap.observe_project_storage_inventory", observe
     )
     initialize_storage(client, "fresh", repo)
     assert observe.call_count == 2
@@ -83,7 +83,7 @@ def test_existing_installation_never_gets_an_empty_replacement_bucket(completed)
 def test_changed_inventory_cannot_be_marked_complete(monkeypatch):
     client, repo = fixture()
     monkeypatch.setattr(
-        "src.infra.self_hosted_bootstrap.observe_project_storage_inventory",
+        "src.platform.project.self_hosted_bootstrap.observe_project_storage_inventory",
         MagicMock(
             side_effect=[
                 SimpleNamespace(object_count=0, multipart_count=0, digest="a"),

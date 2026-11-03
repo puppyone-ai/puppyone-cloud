@@ -42,7 +42,7 @@ Document-level constructs:
 - [Markdown Editor Architecture](document/markdown-editor-architecture.md)
 - [VM / SSH Agent Access Architecture](document/vm-ssh-agent-access.md)
 
-For product onboarding (install CLI, first project), see the [root README](../README.md).
+For product onboarding (install CLI, first project), see the [documentation](https://www.puppyone.ai/doc).
 
 The current source of truth for versioning is `backend/src/version_engine/`.
 Historical planning, migration, rename, audit, and verification notes live in

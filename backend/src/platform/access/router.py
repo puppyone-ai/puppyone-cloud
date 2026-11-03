@@ -15,18 +15,20 @@ from src.common_schemas import ApiResponse
 from src.config import settings
 from src.exceptions import AppException, ErrorCode, NotFoundException
 from src.infra.supabase.client import SupabaseClient
+from src.platform.access.config_redaction import redact_config
+from src.platform.access.surface_kinds import surface_kind
 from src.platform.access.surface_repository import AccessSurfaceRepository
 from src.platform.access.models import ACCESS_KINDS
 from src.platform.access import public_schemas as contracts
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.dependencies import resolve_org_ids
-from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.shared_types.repository_target import ProjectRootTarget, ScopeTarget
 from src.platform.repository_target.schemas import repository_target_schema
 from src.platform.access.credential_repository import AccessCredentialRepository
 
@@ -46,86 +48,6 @@ def _normalize_scope_path(path: str | None) -> str:
     while "//" in value:
         value = value.replace("//", "/")
     return value
-
-
-# Config keys that hold machine credentials / secrets. These must never be
-# returned by ordinary list/detail/mutation responses. Raw values are only
-# meaningful in the one-time create/regenerate issuance responses.
-_SECRET_CONFIG_KEYS = {
-    "access_key",
-    "mcp_api_key",
-    "api_key",
-    "secret",
-    "client_secret",
-    "token",
-    "bearer_token",
-    "refresh_token",
-    "access_token",
-    "password",
-    "private_key",
-    "credential",
-    "credentials",
-}
-
-_SECRET_CONFIG_KEY_SUFFIXES = (
-    "_access_key",
-    "_api_key",
-    "_secret",
-    "_password",
-    "_private_key",
-    "_bearer_token",
-    "_access_token",
-    "_refresh_token",
-    "_credential",
-    "_credentials",
-)
-
-
-def _normalise_config_key(key: Any) -> str:
-    """Return a conservative snake-case-ish representation for secret checks."""
-    import re
-
-    value = re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower()
-    return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
-
-
-def _is_secret_config_key(key: Any) -> bool:
-    normalised = _normalise_config_key(key)
-    return normalised in _SECRET_CONFIG_KEYS or normalised.endswith(_SECRET_CONFIG_KEY_SUFFIXES)
-
-
-def _redact_config(value: Any) -> Any:
-    """Recursively remove credential-bearing fields from response config.
-
-    Access surface config is intentionally provider-extensible, so a shallow
-    blacklist is unsafe: a provider can nest credentials under OAuth/session
-    metadata and ordinary read or mutation responses would echo them. Keep the
-    non-secret shape for existing clients, but fail closed for known credential
-    names at every depth (including camelCase variants and provider prefixes).
-    """
-    if isinstance(value, dict):
-        return {
-            key: _redact_config(child)
-            for key, child in value.items()
-            if not _is_secret_config_key(key)
-        }
-    if isinstance(value, list):
-        return [_redact_config(child) for child in value]
-    if isinstance(value, tuple):
-        return tuple(_redact_config(child) for child in value)
-    return value
-
-
-def _contains_secret_config_key(value: Any) -> bool:
-    """Reject attempts to smuggle credentials through the metadata endpoint."""
-    if isinstance(value, dict):
-        return any(
-            _is_secret_config_key(key) or _contains_secret_config_key(child)
-            for key, child in value.items()
-        )
-    if isinstance(value, list | tuple):
-        return any(_contains_secret_config_key(child) for child in value)
-    return False
 
 
 def _created_or_updated(value: Any) -> str | None:
@@ -231,13 +153,13 @@ def _enrich(rows: list[dict], sb_client) -> list[contracts.AccessSurface]:
                 status=r.get("status", "active"),
                 has_key=has_key,
                 key_last4=key_last4,
-                policy=_redact_config(cfg.get("policy") or {}),
-                trigger=_redact_config(cfg.get("trigger")),
+                policy=redact_config(cfg.get("policy") or {}),
+                trigger=redact_config(cfg.get("trigger")),
                 last_activity_at=_created_or_updated(
                     cfg.get("last_seen_at") or cfg.get("last_run_at")
                 ),
                 error_message=cfg.get("error_message"),
-                config=_redact_config(e["cfg"]),
+                config=redact_config(e["cfg"]),
                 created_at=_created_or_updated(r.get("created_at")),
                 updated_at=_created_or_updated(r.get("updated_at")),
             )
@@ -460,9 +382,7 @@ def regenerate_key(
             message="Key regenerated",
         )
     elif provider == "agent":
-        from src.platform.access.adapters.agent.config.repository import AgentRepository
-
-        new_key = AgentRepository(sb).regenerate_mcp_api_key(connection_id)
+        new_key = surface_kind("agent").regenerate_key(connection_id, sb)
         if not new_key:
             raise NotFoundException("Agent not found", code=ErrorCode.NOT_FOUND)
         return ApiResponse.success(
@@ -499,15 +419,6 @@ def list_connection_types():
             "category": "access",
             "icon": "plug",
         },
-        {
-            "kind": "sandbox",
-            "display_name": "Sandbox",
-            "description": "Isolated script execution environment",
-            "auth": "none",
-            "creation_mode": "direct",
-            "category": "access",
-            "icon": "box",
-        },
     ]
 
     return ApiResponse.success(data=[contracts.AccessSurfaceKind(**row) for row in access_types])
@@ -522,36 +433,7 @@ def _public_mcp_server_url() -> str | None:
 
 
 def _create_agent(payload: contracts.AccessSurfaceConfigure) -> contracts.AccessSurfaceCreated:
-    from src.platform.access.adapters.agent.config.repository import AgentRepository
-    from src.platform.access.adapters.agent.config.schemas import AgentBashCreate
-    from src.platform.access.adapters.agent.config.service import AgentConfigService
-
-    service = AgentConfigService(repository=AgentRepository())
-
-    bash_accesses = []
-    if payload.accesses:
-        bash_accesses = [
-            AgentBashCreate(
-                path=a["path"],
-                readonly=a.get("readonly", a.get("terminal_readonly", True)),
-            )
-            for a in payload.accesses
-        ]
-
-    cfg = payload.config
-    agent = service.create_agent(
-        project_id=payload.project_id,
-        name=payload.name or cfg.get("name", "Chat Agent"),
-        icon=cfg.get("icon", "✨"),
-        type=cfg.get("type", "chat"),
-        description=cfg.get("description"),
-        bash_accesses=bash_accesses,
-        trigger_type=cfg.get("trigger_type", "manual"),
-        trigger_config=cfg.get("trigger_config"),
-        task_content=cfg.get("task_content"),
-        task_path=cfg.get("task_path"),
-        external_config=cfg.get("external_config"),
-    )
+    agent = surface_kind("agent").create(payload)
     return contracts.AccessSurfaceCreated(
         id=agent.id,
         project_id=payload.project_id,
@@ -647,11 +529,11 @@ def create_connection(
     from src.platform.project.repository import ProjectRepositorySupabase
 
     provider = payload.kind
-    if provider not in {"agent", "mcp", "sandbox"}:
+    if provider not in {"agent", "mcp"}:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unknown Access kind: {provider}. Use Import or Synchronize APIs "
+                f"Unknown Access kind: {provider}. Use Import APIs "
                 "for external datasource connections."
             ),
         )

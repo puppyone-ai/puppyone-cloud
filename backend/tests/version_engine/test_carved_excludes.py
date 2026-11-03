@@ -15,7 +15,7 @@ from src.version_engine.admission.repo_facade import (
     compute_carved_excludes,
     repo_facade_from_auth,
 )
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,

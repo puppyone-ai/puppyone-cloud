@@ -111,7 +111,7 @@ def test_full_application_metadata_routes_never_enter_transport_lease(monkeypatc
     monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
     from src.main import create_app
     from src.platform.project import write_lease
-    from src.version_engine.bootstrap.dependencies import get_repo_manager
+    from src.file_operations.engine_dependencies import get_repo_manager
     from src.platform.access.adapters.git import auth, operations
     from tests.repository_hosting.unit.test_native_operation_status import runtime_grant
 
@@ -135,7 +135,7 @@ def test_full_application_metadata_routes_never_enter_transport_lease(monkeypatc
     assert response.status_code == (200 if suffix == "refs" else 404)
     assert response.headers["cache-control"] == "no-store"
     assert "X-PuppyOne-Repository-Revision" in response.headers["access-control-expose-headers"]
-    from src.platform.project.write_lease import git_project_write_lease
+    from src.platform.access.adapters.git.request_lease import git_project_write_lease
     transport = [r for r in app.routes if r.path.startswith("/git/") and r.path.endswith(("/git-upload-pack", "/git-receive-pack", "/rebuild-cache"))]
     assert transport
     assert all(any(d.call is git_project_write_lease for d in r.dependant.dependencies) for r in transport)

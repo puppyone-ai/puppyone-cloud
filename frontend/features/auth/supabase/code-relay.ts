@@ -1,4 +1,4 @@
-import type { DelegatedClient } from '../delegated-client';
+import type { DelegatedClient } from '../delegated-client-type';
 
 /**
  * Stateless authorization-code relay for a delegated client (Desktop or the

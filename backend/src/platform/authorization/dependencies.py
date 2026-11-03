@@ -10,7 +10,7 @@ from fastapi import Depends, Path
 from src.exceptions import ErrorCode, NotFoundException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.authorization.models import ProjectAction, ProjectGrant
+from src.shared_types.grants import ProjectAction, ProjectGrant
 from src.platform.authorization.repository import AuthorizationRepository
 from src.platform.authorization.service import AuthorizationService
 from src.platform.project.dependencies import get_project_repository

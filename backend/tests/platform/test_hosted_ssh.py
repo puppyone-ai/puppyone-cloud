@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from postgrest.exceptions import APIError
 
 from src.exceptions import PermissionException
-from src.platform.access.adapters.ssh.hosted import HostedSshAccess, public_key
+from src.platform.access.adapters.ssh.hosted import HostedSshAccess, SshSession, public_key
 from src.platform.workspace.connections import ConnectionRepository, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 from src.platform.workspace.execution.shell import WorkspaceShell
@@ -206,11 +206,39 @@ async def test_unsupported_artifact_cannot_reserve_connection_occupancy():
         HTTPException(401, detail={"code": "access_denied"}),
     ],
 )
-async def test_an_authority_denial_mid_session_is_a_product_ending(denial):
+async def test_an_authority_denial_mid_connection_is_a_product_ending(denial):
     service, _, grant = setup()
     service.connections.authorize.side_effect = denial
     with pytest.raises(WorkspaceError) as error:
-        await service.renew({"id": grant["id"]}, SimpleNamespace(control=AsyncMock()))
+        await service.renew_session(SshSession(grant["id"], grant, True))
+    assert error.value.code == "access_denied"
+
+
+@pytest.mark.parametrize(
+    "denial", [PermissionError(), HTTPException(403, detail={"code": "access_denied"})]
+)
+async def test_a_command_whose_lease_is_refused_ends_as_a_product_ending(denial):
+    service, _, _ = setup()
+    service.connections.renew.side_effect = denial
+    with pytest.raises(WorkspaceError) as error:
+        await service.renew({"id": str(uuid4())}, SimpleNamespace(control=AsyncMock()))
+    assert error.value.code == "access_denied"
+
+
+async def test_a_command_lease_needs_no_second_authority_check():
+    service, _, _ = setup()
+    await service.renew({"id": str(uuid4())}, SimpleNamespace(control=AsyncMock()))
+    # The connection's heartbeat holds authority; each command only extends its lease.
+    service.grants.get.assert_not_called()
+    service.connections.authorize.assert_not_called()
+
+
+async def test_an_owner_credential_past_its_expiry_ends_the_connection():
+    service, _, grant = setup()
+    grant["used_at"] = datetime.now(UTC).isoformat()
+    grant["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    with pytest.raises(WorkspaceError) as error:
+        await service.renew_session(SshSession(grant["id"], grant, True))
     assert error.value.code == "access_denied"
 
 
@@ -218,7 +246,7 @@ async def test_an_authority_outage_is_not_reported_as_a_denial():
     service, _, grant = setup()
     service.connections.authorize.side_effect = HTTPException(503, detail={"code": "x"})
     with pytest.raises(HTTPException):
-        await service.renew({"id": grant["id"]}, SimpleNamespace(control=AsyncMock()))
+        await service.renew_session(SshSession(grant["id"], grant, True))
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.infra.supabase import ProjectRepository
+from src.platform.project.supabase_repo import ProjectRepository
 from src.platform.authorization.repository import AuthorizationRepository
 
 

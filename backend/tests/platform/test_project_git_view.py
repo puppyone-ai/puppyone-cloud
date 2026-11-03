@@ -7,16 +7,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.platform.access.adapters.git.project_view import (
+    ProjectGitViewService,
+    get_project_git_view_service,
+)
+from src.platform.access.adapters.git.project_view import (
+    router as git_view_router,
+)
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.project.dependencies import get_project_repository
-from src.platform.project.git_view import ProjectGitViewService
-from src.platform.project.router import (
-    get_project_git_view_service,
-)
-from src.platform.project.router import (
-    router as project_router,
-)
 from src.platform.repository_target.protocol import require_repository_target_contract
 from tests.authorization_fakes import authorization_for, install_authorization
 
@@ -24,7 +24,7 @@ PROJECT_ID = "project-1"
 
 
 def test_health_and_rebuild_bind_the_native_endpoint_to_the_human_grant(monkeypatch):
-    from src.platform.project import git_view as module
+    from src.platform.access.adapters.git import project_view as module
 
     manager = MagicMock()
     endpoint = MagicMock()
@@ -56,7 +56,7 @@ def test_unmigrated_repository_has_no_old_view_fallback():
 
 def _app(role: str):
     app = FastAPI()
-    app.include_router(project_router, prefix="/api/v1")
+    app.include_router(git_view_router, prefix="/api/v1")
     app.dependency_overrides[require_repository_target_contract] = lambda: 2
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
         user_id="user-1",

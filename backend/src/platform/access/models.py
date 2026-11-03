@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
-from src.platform.repository_target.models import RepositoryScope, RepositoryTarget, repository_target_scope_id
+from src.shared_types.repository_target import RepositoryScope, RepositoryTarget, repository_target_scope_id
 # Explicit protocol kinds, not the shared external-source Provider catalog.
 ACCESS_KINDS = frozenset({"git_remote", "cli", "agent", "mcp", "mcp_endpoint", "sandbox", "sandbox_endpoint"})
 

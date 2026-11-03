@@ -5,6 +5,8 @@ import json
 from datetime import UTC
 from pathlib import Path
 
+import pytest
+
 
 def normalize(value):
     if isinstance(value, dict):
@@ -452,6 +454,20 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         for name, change in search[category]["changed"].items():
             assert expected["contract"][category][name] == change["before"]
             expected["contract"][category][name] = change["after"]
+    # External sources are not offered: agents reach a Project through MCP, CLI,
+    # SSH and Git. The delta names every route and schema that left with them.
+    synchronize = json.loads(
+        Path(__file__).with_name("synchronize_retirement_contract_delta.json").read_text()
+    )
+    assert all("/synchronize" in name for name in synchronize["paths"]["removed"])
+    assert not any(
+        category[kind]
+        for category in (synchronize["paths"], synchronize["schemas"])
+        for kind in ("added", "changed")
+    )
+    for category in ("paths", "schemas"):
+        for name, digest in synchronize[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     # Workspace Git operations outside a Run are purely additive: no existing
     # path or schema changes, so nothing here rewrites an earlier fixture.
     workspace_git = json.loads(
@@ -465,7 +481,28 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & workspace_git[category].keys()
         expected["contract"][category].update(workspace_git[category])
+    # Sandbox endpoints stopped executing with the native engine and are not an
+    # access method: agents use MCP, CLI, SSH and Git.
+    sandbox = json.loads(
+        Path(__file__).with_name("sandbox_endpoint_retirement_contract_delta.json").read_text()
+    )
+    assert all("/sandbox-endpoint" in name for name in sandbox["paths"]["removed"])
+    assert not any(
+        category[kind]
+        for category in (sandbox["paths"], sandbox["schemas"])
+        for kind in ("added", "changed")
+    )
+    for category in ("paths", "schemas"):
+        for name, digest in sandbox[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert contract(app.openapi()) == expected["contract"]
+
+
+@pytest.mark.parametrize("retired", ["/synchronize", "/sandbox-endpoint"])
+def test_retired_entry_points_are_not_registered(retired):
+    from src.main import app
+
+    assert not [route.path for route in app.routes if retired in route.path]
 
 
 def test_access_domain_kind_and_target_are_serialized_without_legacy_provider():
@@ -475,7 +512,7 @@ def test_access_domain_kind_and_target_are_serialized_without_legacy_provider():
 
     from src.platform.access.models import AccessSurface
     from src.platform.access.public_router import list_project_access_surfaces
-    from src.platform.repository_target.models import ProjectRootTarget
+    from src.shared_types.repository_target import ProjectRootTarget
 
     surface = AccessSurface(
         id="surface-1",

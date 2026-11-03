@@ -7,7 +7,7 @@ import pytest
 from src.exceptions import BusinessException
 from src.platform.access.service import AccessService
 from src.platform.access.models import AccessSurface
-from src.platform.repository_target.models import ScopeTarget
+from src.shared_types.repository_target import ScopeTarget
 
 
 NOW = datetime(2026, 5, 31, tzinfo=timezone.utc)

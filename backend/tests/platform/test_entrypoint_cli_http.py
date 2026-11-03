@@ -306,8 +306,11 @@ def test_actual_cli_dispatch_keeps_snapshot_binding_and_surface_ownership(server
     binding = next(iter(server.bindings.rows.values()))
     assert binding.trigger == {"type": "manual"}
     assert next(iter(server.runs.rows.values())).synchronize_binding_id == binding.id
-    # Real Access router and Sandbox service; only their repositories are substituted.
-    surface = server.cli("access", "add", "sandbox", "My sandbox")
+    # Sandbox endpoints are closed, but a surface saved earlier keeps its identity.
+    refused = server.cli("access", "add", "sandbox", "My sandbox", ok=False)
+    assert "Unknown Access kind: sandbox" in refused["error"]["message"]
+    saved = server.surfaces.create(project_id="project-1", name="My sandbox")
+    surface = server.cli("access", "info", saved["id"])
     assert surface["access"]["id"].startswith("surface-")
     assert surface["access"]["kind"] == "sandbox"
     assert "provider" not in surface["access"]
@@ -339,7 +342,7 @@ def test_actual_cli_denied_and_queue_failure_do_not_cross_lifecycles(server):
 
 
 def test_actual_cli_access_lifecycle_uses_canonical_identity_and_one_time_credentials(server):
-    assert server.cli("access", "providers")["kinds"] == ["agent", "mcp", "sandbox"]
+    assert server.cli("access", "providers")["kinds"] == ["agent", "mcp"]
     assert server.cli("access", "schema", "mcp")["surface_type"]["kind"] == "mcp"
     created = server.cli("access", "add", "mcp", "Notes", "--scope", "/notes")
     surface_id = created["access"]["id"]
@@ -374,7 +377,7 @@ def test_actual_cli_access_lifecycle_uses_canonical_identity_and_one_time_creden
 
 
 def test_actual_cli_access_permissions_and_invalid_metadata_prevent_writes(server):
-    created = server.cli("access", "add", "sandbox", "Sandbox")["access"]
+    created = server.surfaces.create(project_id="project-1", name="Sandbox")
     surface_id = created["id"]
     other = server.surfaces.create(project_id="project-2", name="Other tenant")
     before = json.dumps(server.surfaces.rows, sort_keys=True)

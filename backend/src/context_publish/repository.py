@@ -9,7 +9,7 @@ from src.context_publish.supabase_schemas import (
 from src.context_publish.supabase_schemas import (
     ContextPublishUpdate as SbContextPublishUpdate,
 )
-from src.infra.supabase.repository import SupabaseRepository
+from src.context_publish.supabase_repo import ContextPublishRepository
 
 
 class ContextPublishRepositoryBase(ABC):
@@ -43,8 +43,8 @@ class ContextPublishRepositoryBase(ABC):
 
 
 class ContextPublishRepositorySupabase(ContextPublishRepositoryBase):
-    def __init__(self, supabase_repo: SupabaseRepository):
-        self._repo = supabase_repo
+    def __init__(self, repository: ContextPublishRepository):
+        self._repo = repository
 
     def _to_model(self, resp) -> ContextPublish:
         return ContextPublish(
@@ -60,17 +60,17 @@ class ContextPublishRepositorySupabase(ContextPublishRepositoryBase):
         )
 
     def create(self, data: SbContextPublishCreate) -> ContextPublish:
-        resp = self._repo.create_context_publish(data)
+        resp = self._repo.create(data)
         return self._to_model(resp)
 
     def get_by_id(self, publish_id: int) -> ContextPublish | None:
-        resp = self._repo.get_context_publish(publish_id)
+        resp = self._repo.get_by_id(publish_id)
         if not resp:
             return None
         return self._to_model(resp)
 
     def get_by_key(self, publish_key: str) -> ContextPublish | None:
-        resp = self._repo.get_context_publish_by_key(publish_key)
+        resp = self._repo.get_by_publish_key(publish_key)
         if not resp:
             return None
         return self._to_model(resp)
@@ -78,7 +78,7 @@ class ContextPublishRepositorySupabase(ContextPublishRepositoryBase):
     def list_by_created_by(
         self, created_by: str, *, skip: int = 0, limit: int = 100
     ) -> list[ContextPublish]:
-        resps = self._repo.get_context_publish_list(
+        resps = self._repo.get_list(
             skip=skip, limit=limit, created_by=created_by
         )
         return [self._to_model(r) for r in resps]
@@ -86,10 +86,10 @@ class ContextPublishRepositorySupabase(ContextPublishRepositoryBase):
     def update(
         self, publish_id: int, data: SbContextPublishUpdate
     ) -> ContextPublish | None:
-        resp = self._repo.update_context_publish(publish_id, data)
+        resp = self._repo.update(publish_id, data)
         if not resp:
             return None
         return self._to_model(resp)
 
     def delete(self, publish_id: int) -> bool:
-        return self._repo.delete_context_publish(publish_id)
+        return self._repo.delete(publish_id)

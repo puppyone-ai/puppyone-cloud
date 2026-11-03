@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -61,13 +62,22 @@ def test_product_splice_publishes_exact_native_tree_without_transport_materializ
     def no_git(*args, **kwargs):
         raise AssertionError("product writer must not materialize a transport repository")
 
+    start_process = subprocess.Popen
+
+    def owned_pack_reader(command, *args, **kwargs):
+        # Stored packs are read by bounded stock Git (adopt-standard-git-pack-storage).
+        # That approval keeps the ban on anything else, including transport repositories.
+        if Path(command[1]).name != "git_pack_worker.py":
+            no_git()
+        return start_process(command, *args, **kwargs)
+
     unused = tmp_path / "no-product-transport"
     with (repository_snapshot(service.control, backend, grant(auth.project), project_id=auth.project) as snapshot,
           monkeypatch.context() as patch, backend.stage_object_writes() as batch):
         revision = snapshot.revision()
         assert (revision.commit_oid, revision.tree_oid) == (old, old_tree)
         patch.setattr(subprocess, "run", no_git)
-        patch.setattr(subprocess, "Popen", no_git)
+        patch.setattr(subprocess, "Popen", owned_pack_reader)
         store = ObjectStore(unused, backend, object_format=snapshot.object_format)
         new_tree, changes = splice_put_blob(store, revision.tree_oid, "nested/edit", content)
         assert changes == [("update", "nested/edit")]

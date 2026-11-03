@@ -17,12 +17,14 @@ from src.platform.imports.config import import_config  # noqa: E402
 from src.platform.imports.jobs import execute_import_job  # noqa: E402
 from src.platform.imports.repository import ImportJobRepository  # noqa: E402
 from src.platform.imports.runner import OneTimeImportRunner  # noqa: E402
+from src.platform.project.write_lease import install_storage_write_admission  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
 
 
 async def startup(ctx: dict) -> None:
+    install_storage_write_admission()
     ctx["process_concurrency"] = start_process_concurrency()
     ctx["import_job_repository"] = ImportJobRepository()
     ctx["one_time_import_runner"] = OneTimeImportRunner()

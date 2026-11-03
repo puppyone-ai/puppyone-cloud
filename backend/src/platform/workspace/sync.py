@@ -16,7 +16,7 @@ from contextlib import suppress
 from uuid import uuid4
 
 from src.infra.execution.runner import run_blocking
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.project.write_lease import ProjectWriteLease
 
 from .errors import WorkspaceError

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from src.infra.supabase.client import SupabaseClient
-from src.platform.repository_target.models import RepositoryScope
+from src.shared_types.repository_target import RepositoryScope
 
 
 def _row_to_scope(row: dict[str, Any]) -> RepositoryScope:

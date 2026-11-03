@@ -1,0 +1,29 @@
+{
+  "paths": {
+    "added": {},
+    "changed": {},
+    "removed": {
+      "/api/v1/sandbox-endpoints": "9a40e251e4decd74a67814097845c5b05ea4367bfed520818ee1500a026d09b3",
+      "/api/v1/sandbox-endpoints/by-path/{path}": "7103813a654da691473e570087119d28a3ae923ff52393b7e982bbe00d7e7cc9",
+      "/api/v1/sandbox-endpoints/{endpoint_id}": "7047c157d87e6cbe979deb43785e956b4ac25185c2d5434f580872c56614b33d",
+      "/api/v1/sandbox-endpoints/{endpoint_id}/exec": "3823e0297b40c82f59737d80d79babde8c5d857bb852693419627628e1c3baf6",
+      "/api/v1/sandbox-endpoints/{endpoint_id}/regenerate-key": "d76e709918a245b0368c2c38cae5ba59be4cd03ef818ef6e7fcfe5d8dfc65d62",
+      "/internal/sandbox-endpoint-by-key": "d31299186dfb888f2df01d7a7e511d10f9cbd7a0655281c3b78861fb9bf21b96"
+    }
+  },
+  "schemas": {
+    "added": {},
+    "changed": {},
+    "removed": {
+      "ApiResponse_SandboxEndpointOut_": "2e96572add3b5f60272c06f942ad74ba74831bed142ce023d3a6ebb61f597ab1",
+      "ApiResponse_list_SandboxEndpointOut__": "84430b78ee60e60530b9d1549117f479afb00346f4db628669e50904c58cb4ff",
+      "Body_get_sandbox_endpoint_by_key_internal_sandbox_endpoint_by_key_post": "22fd408ad6bdd779782c3dbe9b843dc4d88c87a6f93213757635f8fed6b0cefe",
+      "SandboxEndpointCreate": "ab74dd0b71d9bb43ebe88aebbed27438510192d78caed7c5a10f8ebfdf1895af",
+      "SandboxEndpointOut": "008eb735ebf96b7f6785e2d888dda3f5c85bf79d81a77ee85125960ccd4fb7f7",
+      "SandboxEndpointUpdate": "57a7fb944e8805f88b9d2c40839f3779641ddd109a94d94be00f7e5525ed72f4",
+      "SandboxMountItem": "5d49ef8770c8d3b0eb5082295a76a8897ca713ca8f7638313cee79e4ba2df3e4",
+      "SandboxMountPermissions": "b72df0a116f55fb23adbbd22846aa15dd7877b15db0d1a296d5505e876fa68e1",
+      "SandboxResourceLimits": "abd0b915ea220e11329e7234078ca7b0274d1cb29874e2f882f89aa34f36ff6d"
+    }
+  }
+}

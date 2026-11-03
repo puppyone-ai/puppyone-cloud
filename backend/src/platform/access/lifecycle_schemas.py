@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from src.platform.authorization.models import AccessCapability, AccessChannel
+from src.shared_types.grants import AccessCapability, AccessChannel
 
 
 class AccessRequest(BaseModel):

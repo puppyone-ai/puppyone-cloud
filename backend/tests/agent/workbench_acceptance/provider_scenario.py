@@ -16,8 +16,8 @@ import httpx
 import uvicorn
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime import worker as dispatcher
-from src.platform.access.adapters.agent.runtime.control.models import TERMINAL
+from src.platform.agent.runtime import worker as dispatcher
+from src.platform.agent.runtime.control.models import TERMINAL
 from src.platform.authorization.factory import build_authorization_service
 from src.platform.access.composition import build_workbench_service
 from tests.agent.runtime.test_supervisor import BashModel
@@ -268,7 +268,9 @@ async def accept_runtime(case, monkeypatch, probe):
             final = await completed(run["id"])
             assert final["publication"]["target_ref"] == status["target_ref"]
             grant = build_authorization_service().resolve_project_grant(case.project, case.user)
-            ops = case.engine.product_operations()
+            from src.file_operations.dependencies import product_operations
+
+            ops = product_operations(case.engine)
             with ops.open_read(
                 case.project, grant, selector=status["target_ref"].encode()
             ) as reader:

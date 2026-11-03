@@ -67,13 +67,13 @@ from src.tool.router import router as tool_router
 tool_router_duration = time.time() - tool_router_start
 
 mcp_v3_router_start = time.time()
-from src.platform.access.adapters.agent.mcp.router import router as mcp_v3_router
+from src.platform.agent.mcp.router import router as mcp_v3_router
 
 mcp_v3_router_duration = time.time() - mcp_v3_router_start
 
 agent_router_start = time.time()
-from src.platform.access.adapters.agent.config.router import router as agent_config_router
-from src.platform.access.adapters.agent.router import router as agent_router
+from src.platform.agent.config.router import router as agent_config_router
+from src.platform.agent.router import router as agent_router
 
 agent_router_duration = time.time() - agent_router_start
 
@@ -98,7 +98,7 @@ project_router_duration = time.time() - project_router_start
 from src.platform.organization.router import router as organization_router
 
 oauth_router_start = time.time()
-from src.provider.oauth.router import router as oauth_router
+from src.platform.provider_accounts.oauth_router import router as oauth_router
 
 oauth_router_duration = time.time() - oauth_router_start
 
@@ -134,10 +134,19 @@ database_import_router_duration = time.time() - database_import_router_start
 
 # Scheduler service import
 scheduler_start = time.time()
+from src.composition.agent import install_agent
+from src.composition.project import install_project_entry_points
+from src.composition.scheduled_jobs import scheduled_jobs
 from src.infra.scheduler.config import scheduler_settings
 from src.infra.scheduler.service import get_scheduler_service
 
 scheduler_import_duration = time.time() - scheduler_start
+
+from src.platform.project.write_lease import install_storage_write_admission
+
+install_storage_write_admission()
+install_agent()
+install_project_entry_points()
 
 
 def _validate_security_baseline() -> None:
@@ -222,7 +231,7 @@ async def _init_scheduler() -> None:
         if scheduler_settings.enabled:
             log_info("⏰ Initializing Scheduler service...")
             scheduler_service = get_scheduler_service()
-            await scheduler_service.start()
+            await scheduler_service.start(scheduled_jobs())
             scheduler_duration = time.time() - scheduler_init_start
             log_info(
                 f"✅ Scheduler service started successfully (took: {scheduler_duration * 1000:.2f}ms)"
@@ -555,19 +564,14 @@ def create_app() -> FastAPI:
     from src.utils.middleware import RequestContextMiddleware
 
     app.add_middleware(RequestContextMiddleware)
-    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
+    from src.platform.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     app.add_middleware(AgentDatabaseTelemetry)
 
     # Keep lifecycle admission outside Version Engine internals while making
     # every FastAPI Product command hold a renewable Project write lease.
-    from src.platform.project.write_lease import (
-        get_leased_version_write_command_service,
-        git_project_write_lease,
-    )
-    from src.version_engine.bootstrap.dependencies import (
-        get_version_write_command_service,
-    )
+    from src.platform.project.write_lease import get_leased_version_write_command_service
+    from src.file_operations.dependencies import get_version_write_command_service
 
     app.dependency_overrides[get_version_write_command_service] = (
         get_leased_version_write_command_service
@@ -580,7 +584,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_v3_router, prefix="/api/v1", tags=["mcp"])
     app.include_router(agent_router, prefix="/api/v1", tags=["agents"])
     app.include_router(agent_config_router, prefix="/api/v1", tags=["agent-config"])
-    from src.platform.access.adapters.agent.chat.router import router as chat_router
+    from src.platform.agent.chat.router import router as chat_router
 
     app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
     app.include_router(context_publish_router, prefix="/api/v1", tags=["publishes"])
@@ -598,6 +602,9 @@ def create_app() -> FastAPI:
     app.include_router(office_router, prefix="/api/v1", tags=["managed-office"])
 
     app.include_router(project_router, prefix="/api/v1", tags=["projects"])
+    from src.platform.access.adapters.git.project_view import router as git_project_view_router
+
+    app.include_router(git_project_view_router, prefix="/api/v1", tags=["projects"])
     app.include_router(template_registry_router, prefix="/api/v1", tags=["templates"])
     from src.platform.repository_context.router import router as repository_context_router
 
@@ -619,6 +626,7 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.api.audit import router as audit_router
 
     app.include_router(audit_router, prefix="/api/v1", tags=["audit-logs"])
+    from src.platform.access.adapters.git.request_lease import git_project_write_lease
     from src.platform.access.adapters.git.router import router as git_protocol_router
 
     app.include_router(
@@ -640,17 +648,6 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.cli.router import router as ap_fs_router
 
     app.include_router(ap_fs_router, prefix="/api/v1", tags=["access-point-fs"])
-    from src.platform.synchronize.public_router import router as synchronize_public_router
-
-    app.include_router(synchronize_public_router, prefix="/api/v1")
-    # Final resource release: only canonical binding/pull/push/webhook contracts.
-    from src.platform.synchronize.github.public_router import router as synchronize_github_router
-    from src.platform.synchronize.github.public_router import (
-        webhook_router as synchronize_github_webhook_router,
-    )
-
-    app.include_router(synchronize_github_router)
-    app.include_router(synchronize_github_webhook_router)
     from src.platform.access.adapters.ssh.hosted_router import router as hosted_ssh_router
 
     app.include_router(hosted_ssh_router)
@@ -668,6 +665,9 @@ def create_app() -> FastAPI:
     from src.platform.auth.router import router as auth_router
 
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
+    from src.platform.onboarding.router import router as onboarding_router
+
+    app.include_router(onboarding_router, prefix="/api/v1", tags=["auth"])
     app.include_router(analytics_router, tags=["analytics"])
     app.include_router(profile_router, tags=["profile"])
     app.include_router(imports_router, prefix="/api/v1", tags=["imports"])
@@ -688,12 +688,7 @@ def create_app() -> FastAPI:
     from src.platform.landing.router import router as landing_router
 
     app.include_router(landing_router, prefix="/api/v1", tags=["landing"])
-    from src.platform.access.adapters.sandbox_endpoint.router import (
-        router as sandbox_endpoint_router,
-    )
-
-    app.include_router(sandbox_endpoint_router, prefix="/api/v1", tags=["sandbox-endpoints"])
-    from src.platform.project.resource_dashboard import router as resource_dashboard_router
+    from src.platform.dashboard.router import router as resource_dashboard_router
 
     app.include_router(resource_dashboard_router, prefix="/api/v1", tags=["projects"])
     from src.platform.access.public_router import project_router as public_project_access_router
@@ -701,7 +696,7 @@ def create_app() -> FastAPI:
 
     app.include_router(public_access_router, prefix="/api/v1")
     app.include_router(public_project_access_router, prefix="/api/v1")
-    from src.provider.accounts.router import router as gateway_router
+    from src.platform.provider_accounts.accounts_router import router as gateway_router
 
     app.include_router(gateway_router, prefix="/api/v1", tags=["gateways"])
 

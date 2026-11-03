@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
+from src.platform.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.agent.runtime.control.recovery import Recovery
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
 
 pytestmark = pytest.mark.asyncio
@@ -64,7 +64,7 @@ async def test_unchanged_finalization_does_not_take_another_snapshot():
 async def test_pending_publication_is_not_reclassified_or_replayed():
     from unittest.mock import Mock
 
-    from src.platform.access.adapters.agent.runtime.control.publication import Publication
+    from src.platform.agent.runtime.control.publication import Publication
 
     transport = SimpleNamespace(result=Mock(return_value={"status": "pending"}), describe=Mock())
     worker = SimpleNamespace(control=AsyncMock())
@@ -122,7 +122,7 @@ async def test_agent_runtime_cannot_own_object_storage_or_git_codecs():
     import ast
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[3] / "src/platform/access/adapters/agent/runtime"
+    root = Path(__file__).resolve().parents[3] / "src/platform/agent/runtime"
     forbidden = (
         "src.infra.s3",
         "src.version_engine.storage",

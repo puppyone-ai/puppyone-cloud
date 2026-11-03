@@ -115,14 +115,24 @@ branches (`main`, `qubits`, `newmu`) are never deleted.
 
 ## Testing
 
-Test layers:
+Put a test next to the one part it covers. A test that needs several parts
+running together goes in the root `e2e/` directory.
+
+| Scope | Location |
+|-------|----------|
+| Backend only | `backend/tests/` |
+| Frontend only | `frontend/tests/` |
+| Database only | `supabase/tests/` |
+| Several parts running together | `e2e/`, see [its README](e2e/README.md) |
+
+Backend test layers:
 
 | Layer | Description |
 |-------|-------------|
 | `unit` | Pure functions/classes, no external deps |
 | `integration` | In-process integration (Supabase/Redis) |
 | `contract` | FastAPI route contract tests |
-| `e2e` | Full stack with Docker Compose |
+| `e2e` | May call real external services |
 
 Local commands (from `backend/`):
 

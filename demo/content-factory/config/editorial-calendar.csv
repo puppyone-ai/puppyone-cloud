@@ -1,9 +1,0 @@
-week,publish_date,title,status,author,reviewer,category,target_keyword
-1,2025-04-01,Build Your First MCP Server in 15 Minutes,in_review,writer-bot,review-bot,tutorial,MCP protocol tutorial
-1,2025-04-03,Why Your AI Agents Need Version Control,revision_needed,writer-bot,review-bot,thought_leadership,AI agent version control
-2,2025-04-07,MCP vs Function Calling: A Developer's Comparison,researching,research-bot,,comparison,MCP vs function calling
-2,2025-04-10,5 Patterns for Multi-Agent Data Pipelines,not_started,,,tutorial,multi agent collaboration
-3,2025-04-14,The AI Agent Permission Model You're Missing,not_started,,,thought_leadership,AI agent permissions
-3,2025-04-17,From Chatbot to Agent: A Migration Guide,not_started,,,tutorial,AI agent infrastructure
-4,2025-04-21,How We Use PuppyOne Internally (Dogfooding Report),not_started,,,case_study,puppyone
-4,2025-04-24,Agent Audit Trails: Why Compliance Teams Love Version Control,not_started,,,thought_leadership,AI agent audit trail

@@ -6,8 +6,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import (
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,

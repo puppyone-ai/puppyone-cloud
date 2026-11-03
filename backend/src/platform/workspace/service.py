@@ -7,7 +7,7 @@ from uuid import uuid4
 from src.config import settings
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.factory import build_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import runtime_provider, workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost

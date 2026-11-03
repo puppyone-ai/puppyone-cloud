@@ -40,7 +40,7 @@ from src.platform.synchronize.public_schemas import (
 )
 from src.platform.synchronize.service import SynchronizeService
 from src.provider.registry import ProviderRegistry
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 Service = Annotated[SynchronizeService, Depends(get_synchronize_service)]
 Registry = Annotated[ProviderRegistry, Depends(get_synchronize_provider_registry)]

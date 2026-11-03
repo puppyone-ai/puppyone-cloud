@@ -4,7 +4,6 @@ Auth router — for CLI / external clients
 POST   /auth/login           Sign in with email + password, returns access_token
 POST   /auth/refresh         Refresh access_token
 POST   /auth/logout          Revoke the refresh-token session (idempotent)
-POST   /auth/initialize      Idempotent user initialization (profile + org)
 POST   /auth/check-email     Resolve the existing email-first login flow
 GET    /auth/config           Public Supabase config (URL + anon key) for Realtime
 """
@@ -14,16 +13,13 @@ import os
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
 from supabase import create_client
 
 from src.common_schemas import ApiResponse
 from src.config import settings
-from src.platform.auth.dependencies import CurrentUser, get_current_user, get_initialization_service
-from src.platform.auth.initialization import UserInitializationService
 from src.platform.auth.methods import router as methods_router
-
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 router.include_router(methods_router)
@@ -274,45 +270,3 @@ async def logout(body: LogoutRequest):
         raise HTTPException(status_code=502, detail="Authentication provider unavailable") from exc
 
     return ApiResponse.success(data=LogoutResponse(revoked=True))
-
-
-class InitializeResponse(BaseModel):
-    org_id: str
-    is_new_org: bool
-    demo_project_id: str | None = None
-
-
-@router.post("/initialize", response_model=ApiResponse[InitializeResponse])
-async def initialize_user(
-    current_user: CurrentUser = Depends(get_current_user),
-    init_service: UserInitializationService = Depends(get_initialization_service),
-):
-    """Idempotent user initialization: ensures profile + default org +
-    membership exist, and on first sign-in seeds a "Get Started" demo
-    project so the post-login redirect can land the user inside it
-    instead of an empty dashboard."""
-    result = init_service.ensure_initialized(
-        user_id=current_user.user_id,
-        email=current_user.email,
-        display_name=current_user.user_metadata.get("full_name")
-        if current_user.user_metadata
-        else None,
-    )
-    if settings.ENTITLEMENTS_MODE == "db":
-        from src.platform.billing.provisioning import get_entitlement_provisioning_service
-
-        await get_entitlement_provisioning_service().ensure(
-            org_id=result["org_id"],
-            actor_user_id=current_user.user_id,
-        )
-    demo_project_id = await init_service.maybe_seed_demo_project(
-        user_id=current_user.user_id,
-        org_id=result["org_id"],
-    )
-    return ApiResponse.success(
-        data=InitializeResponse(
-            org_id=result["org_id"],
-            is_new_org=result["is_new_org"],
-            demo_project_id=demo_project_id,
-        )
-    )

@@ -57,10 +57,10 @@ def test_unified_agent_create_preserves_one_time_mcp_bearer(monkeypatch) -> None
             )
 
     monkeypatch.setattr(
-        "src.platform.access.adapters.agent.config.repository.AgentRepository",
+        "src.platform.agent.config.surface.AgentRepository",
         lambda: object(),
     )
-    monkeypatch.setattr("src.platform.access.adapters.agent.config.service.AgentConfigService", Service)
+    monkeypatch.setattr("src.platform.agent.config.surface.AgentConfigService", Service)
     monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.example.test")
 
     result = _create_agent(

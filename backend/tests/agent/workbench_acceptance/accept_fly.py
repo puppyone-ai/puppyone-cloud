@@ -9,12 +9,16 @@ import asyncio
 import base64
 import json
 import os
+from contextlib import asynccontextmanager
 from uuid import UUID
 
+import httpx
 import pytest
 
 from src.config import settings
+from src.platform.sandbox.providers.fly.naming import dedicated
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
+from src.platform.sandbox.providers.fly.transport import acquire_transport
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,
 )
@@ -54,25 +58,40 @@ def fly_configuration():
     FlyRuntimeProvider().validate(settings.CLOUD_AGENT_FLY_IMAGE)
 
 
+@asynccontextmanager
+async def fly_cli_environment():
+    """The product's isolated agent; default flyctl config keeps a peer for each network."""
+    transport = await acquire_transport(
+        settings.CLOUD_AGENT_FLY_APP,
+        settings.CLOUD_AGENT_FLY_TOKEN,
+        settings.CLOUD_AGENT_FLY_CLI,
+    )
+    try:
+        yield transport.env
+    finally:
+        transport.release()
+
+
 async def firewall_hits(resource):
     """Read the provider firewall counter; product files still use their API."""
-    process = await asyncio.create_subprocess_exec(
-        settings.CLOUD_AGENT_FLY_CLI,
-        "ssh",
-        "console",
-        "--quiet",
-        "--app",
-        resource["app"],
-        "--machine",
-        resource["resource_id"],
-        "--user",
-        "root",
-        "--command",
-        "nft -j list chain inet puppyone_task_egress output",
-        env={**os.environ, "FLY_API_TOKEN": settings.CLOUD_AGENT_FLY_TOKEN},
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    async with fly_cli_environment() as env:
+        process = await asyncio.create_subprocess_exec(
+            settings.CLOUD_AGENT_FLY_CLI,
+            "ssh",
+            "console",
+            "--quiet",
+            "--app",
+            resource["app"],
+            "--machine",
+            resource["resource_id"],
+            "--user",
+            "root",
+            "--command",
+            "nft -j list chain inet puppyone_task_egress output",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
     try:
         async with asyncio.timeout(45):
             stdout, _stderr = await process.communicate()
@@ -87,6 +106,16 @@ async def firewall_hits(resource):
         if process.returncode is None:
             process.kill()
             await process.wait()
+
+
+async def app_absent(provider, resource):
+    try:
+        await provider._request(resource, "GET", "")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return True
+        raise
+    return False
 
 
 async def cleanup_owned(case, provider, receipt):
@@ -106,10 +135,16 @@ async def cleanup_owned(case, provider, receipt):
     rows = [row for row in rows if row["resource"]]
     # A Project holds several machines, and the wait below is for all of them.
     for row in rows:
+        if dedicated(row["resource"]):
+            await provider.destroy_workspace(row["resource"])
+            continue
         for resolved in await provider.resolve(row["resource"]):
             await provider.cleanup(resolved)
     for row in rows:
         resource = row["resource"]
+        if dedicated(resource):
+            await eventually(lambda resource=resource: app_absent(provider, resource), bool)
+            continue
         await eventually(
             lambda resource=resource: provider._request(resource, "GET", "/machines"),
             lambda machines: (

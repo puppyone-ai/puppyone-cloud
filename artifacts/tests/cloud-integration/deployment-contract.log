@@ -1,5 +1,0 @@
-
-> context-base-ui@0.0.3 test:deployment-contract
-> node scripts/test-deployment-package-boundaries.mjs
-
-frontend deployment package boundary contract passed.

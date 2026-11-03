@@ -7,7 +7,7 @@ import pytest
 from src.platform.auth.models import CurrentUser
 from src.platform.access.adapters.api.helpers import ensure_project_access
 from src.exceptions import NotFoundException
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 _ensure_project_access = ensure_project_access  # back-compat alias for this test file
 

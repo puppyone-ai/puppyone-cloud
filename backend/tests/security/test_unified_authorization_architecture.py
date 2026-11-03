@@ -5,7 +5,7 @@ from src.platform.authorization.manifest import (
     PROJECT_ROUTE_AUTHORIZATION,
     AuthorizationPlane,
 )
-from src.platform.authorization.models import ACTION_CAPABILITY, ProjectAction
+from src.shared_types.grants import ACTION_CAPABILITY, ProjectAction
 
 BACKEND = Path(__file__).resolve().parents[2]
 SRC = BACKEND / "src"
@@ -47,14 +47,14 @@ def test_git_credential_revocation_is_an_owner_operation_not_project_read():
 
 def test_authorization_failure_logs_do_not_emit_raw_principal_or_project_ids():
     sensitive_fragments = {
-        "identity.py": ("user={user_id}", "project={project_id}"),
+        "authenticator.py": ("user={user_id}", "project={project_id}"),
         "router.py": ("user={acting_user}", "acting_user={acting_user}"),
-        "agent_job.py": ("user={user_id}", "project={project_id}"),
+        "schedule.py": ("user={user_id}", "project={project_id}"),
     }
     files = {
-        "identity.py": SRC / "version_engine" / "admission" / "identity.py",
+        "authenticator.py": SRC / "platform" / "access" / "authenticator.py",
         "router.py": SRC / "internal" / "router.py",
-        "agent_job.py": SRC / "infra" / "scheduler" / "jobs" / "agent_job.py",
+        "schedule.py": SRC / "platform" / "agent" / "schedule.py",
     }
     for name, path in files.items():
         text = path.read_text()

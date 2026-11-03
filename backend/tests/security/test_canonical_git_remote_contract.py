@@ -191,7 +191,7 @@ def test_runtime_has_no_local_checkout_registration_module_or_identity_fields():
     identity_sources = [
         source_root / "main.py",
         source_root / "platform/authorization/manifest.py",
-        source_root / "platform/authorization/models.py",
+        source_root / "shared_types/grants.py",
         source_root / "platform/repository_context/models.py",
         source_root / "platform/repository_context/repository.py",
         source_root / "platform/repository_context/router.py",

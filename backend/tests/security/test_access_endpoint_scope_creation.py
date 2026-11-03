@@ -39,3 +39,19 @@ def test_existing_scope_is_reused_without_mutating_its_mode(endpoint):
     scopes.list_for_project.return_value = [SimpleNamespace(id="existing", path="docs", max_mode="r")]
     assert repo._scope_for_path("project", "docs") == {"id": "existing", "path": "docs"}
     scopes.create.assert_not_called()
+
+
+def test_a_sandbox_endpoint_cannot_be_created_through_access():
+    from fastapi import HTTPException
+
+    from src.platform.access import router as access
+
+    payload = SimpleNamespace(kind="sandbox", project_id="project")
+    with pytest.raises(HTTPException) as refused:
+        access.create_connection(
+            payload=payload,
+            current_user=SimpleNamespace(user_id="user"),
+            entitlement_service=None,
+            authorization=None,
+        )
+    assert refused.value.status_code == 400

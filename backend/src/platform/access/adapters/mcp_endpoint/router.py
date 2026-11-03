@@ -18,7 +18,7 @@ from src.platform.auth.models import CurrentUser
 from src.common_schemas import ApiResponse
 from src.config import settings
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 
 

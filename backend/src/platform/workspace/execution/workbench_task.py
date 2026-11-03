@@ -9,6 +9,7 @@ from contextlib import suppress
 from uuid import UUID
 
 from src.platform.workspace.execution.pi_worker import PiWorker
+from src.platform.workspace.execution.task_identity import valid_task_uid
 from src.platform.workspace.execution.worker_port import WorkerDisconnected
 
 
@@ -18,7 +19,7 @@ class WorkbenchTask(PiWorker):
         self.workbench_id = str(UUID(workbench_id))
         self.workbench_generation = str(UUID(generation))
         self.task_execution_id = str(UUID(execution_id))
-        if type(task_uid) is not int or not 20000 <= task_uid <= 59999:
+        if not valid_task_uid(task_uid):
             raise ValueError("Invalid admitted task UID")
         self.task_uid = task_uid
 

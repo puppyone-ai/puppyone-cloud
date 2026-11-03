@@ -6,7 +6,7 @@ import pytest
 
 from src.file_operations.commands import VersionWriteCommandService
 from src.file_operations.native_commands import compile_native_command
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.storage.object_store import ObjectStore
 from src.version_engine.write_engine.git_object_format import encode_object
 from src.version_engine.write_engine.native_operation_writer import NativeWriteBase
@@ -16,12 +16,13 @@ pytestmark = pytest.mark.hosting_component
 
 def test_assembly_uses_canonical_file_operations_implementations():
     from src.file_operations import commands, operation_adapter
+    from src.file_operations.dependencies import product_operations, write_commands
     from src.version_engine.bootstrap.container import VersionEngineContainer
     from src.platform.access.adapters.api import write as content_write
 
     container = VersionEngineContainer(repo_manager=Mock(), history_graph_service=Mock())
-    assert type(container.product_operations()) is operation_adapter.ProductOperationAdapter
-    assert type(container.write_commands()) is commands.VersionWriteCommandService
+    assert type(product_operations(container)) is operation_adapter.ProductOperationAdapter
+    assert type(write_commands(container)) is commands.VersionWriteCommandService
     assert content_write.VersionWriteCommandService is commands.VersionWriteCommandService
 
 

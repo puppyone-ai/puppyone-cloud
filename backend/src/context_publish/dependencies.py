@@ -6,7 +6,8 @@ from src.content.table.dependencies import get_table_service
 from src.content.table.service import TableService
 from src.context_publish.repository import ContextPublishRepositorySupabase
 from src.context_publish.service import ContextPublishService
-from src.infra.supabase.dependencies import get_supabase_repository
+from src.context_publish.supabase_repo import ContextPublishRepository
+from src.infra.supabase.dependencies import get_supabase_client
 from src.platform.authorization.dependencies import get_authorization_service
 from src.platform.authorization.service import AuthorizationService
 
@@ -23,7 +24,7 @@ def get_context_publish_service(
         or _publish_service.table_service is not table_service
         or _publish_service.authorization is not authorization
     ):
-        repo = ContextPublishRepositorySupabase(get_supabase_repository())
+        repo = ContextPublishRepositorySupabase(ContextPublishRepository(get_supabase_client()))
         _publish_service = ContextPublishService(
             repo=repo,
             table_service=table_service,

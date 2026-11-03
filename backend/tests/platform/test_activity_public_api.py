@@ -12,7 +12,7 @@ from src.platform.activity.schemas import ActivityItemResponse
 from src.platform.activity.service import ActivityService
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ACTION_CAPABILITY,
     ROLE_CAPABILITIES,
     ProjectAction,

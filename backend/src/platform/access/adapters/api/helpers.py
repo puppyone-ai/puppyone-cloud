@@ -7,7 +7,7 @@ import base64
 from src.platform.access.repository_schemas import VersionEntryResponse
 from src.version_engine.read.tree_reader import VersionEntry
 from src.platform.auth.models import CurrentUser
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 
 
