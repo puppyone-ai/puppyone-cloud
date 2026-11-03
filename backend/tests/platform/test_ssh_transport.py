@@ -20,7 +20,7 @@ from src.platform.access.adapters.ssh.gateway import (
     session_ending,
     start_gateway,
 )
-from src.platform.access.agent_links import CONNECTION_OPTIONS
+from src.platform.access.agent_links import CONNECTION_OPTIONS, PROXY_HELPER
 from src.platform.workspace.errors import WorkspaceError
 
 HELPER = Path(__file__).parents[2] / "agent-worker/workbench-shell.py"
@@ -363,5 +363,100 @@ async def test_the_command_agents_are_given_signs_in_once_for_every_command(tmp_
         assert max(timings[1:]) < 2
     finally:
         await run("-O", "exit", "fixture@127.0.0.1")
+        gateway.close()
+        await gateway.wait_closed()
+
+
+async def connect_proxy(required_auth):
+    """A minimal HTTP CONNECT proxy, as an Agent's sandbox puts in front of the internet."""
+    seen = []
+
+    async def pipe(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+
+    async def handle(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        seen.append(head)
+        if required_auth not in head:
+            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
+            await writer.drain()
+            writer.close()
+            return
+        host, port = head.split(b"\r\n")[0].split()[1].decode().rsplit(":", 1)
+        upstream_reader, upstream_writer = await asyncio.open_connection(host, int(port))
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        await asyncio.gather(
+            pipe(reader, upstream_writer), pipe(upstream_reader, writer), return_exceptions=True
+        )
+
+    return await asyncio.start_server(handle, "127.0.0.1", 0), seen
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
+async def test_an_agent_behind_an_http_proxy_connects_with_the_helper_from_the_page(tmp_path):
+    host = asyncssh.generate_private_key("ssh-ed25519")
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    service = NativeAccess(key, tmp_path)
+    gateway = await start_gateway(service, host, host="127.0.0.1", port=0)
+    port = gateway.get_port()
+    proxy, seen = await connect_proxy(
+        b"Proxy-Authorization: Basic " + base64.b64encode(b"agent:p@ss")
+    )
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    identity = tmp_path / "id"
+    key.write_private_key(str(identity))
+    os.chmod(identity, 0o600)
+    known = tmp_path / "known_hosts"
+    known.write_text(f"[127.0.0.1]:{port} " + host.export_public_key().decode())
+    helper = tmp_path / "puppyone_proxy.py"
+    helper.write_text(PROXY_HELPER)
+    ssh = [
+        "ssh",
+        "-F",
+        "/dev/null",
+        "-i",
+        str(identity),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"UserKnownHostsFile={known}",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ProxyCommand={sys.executable} {helper} %h %p",
+        "-p",
+        str(port),
+    ]
+
+    async def run(proxy_url):
+        process = await asyncio.create_subprocess_exec(
+            *ssh,
+            "fixture@127.0.0.1",
+            "printf through-the-proxy",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "HTTPS_PROXY": proxy_url},
+        )
+        async with asyncio.timeout(20):
+            out, err = await process.communicate()
+        return process.returncode, out, err
+
+    try:
+        # A refusal is said in the proxy's own words, not as an SSH fault.
+        code, _, err = await run(f"http://127.0.0.1:{proxy_port}")
+        assert code != 0 and b"The proxy refused the connection: HTTP/1.1 407" in err
+        code, out, err = await run(f"http://agent:p%40ss@127.0.0.1:{proxy_port}")
+        assert code == 0, err
+        assert out == b"through-the-proxy"
+        assert seen[-1].startswith(f"CONNECT 127.0.0.1:{port} HTTP/1.1".encode())
+    finally:
+        proxy.close()
+        await proxy.wait_closed()
         gateway.close()
         await gateway.wait_closed()
