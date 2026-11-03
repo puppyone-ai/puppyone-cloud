@@ -24,6 +24,7 @@ from .credential_repository import (
 )
 from .credentials import normalize_ssh_public_key
 from .grant_repository import AccessRepository
+from .lifecycle_schemas import AGENT_AVATARS
 
 AGENT_USER_PREFIX = "agent-"
 SSH_KEY_PATH = "~/.ssh/puppyone_agent"
@@ -103,6 +104,9 @@ def public_origin():
     return origin
 
 
+AVATAR_CHOICES = ", ".join(AGENT_AVATARS)
+
+
 def agent_instructions(invitation):
     """The only thing an Agent reads, so it stays plain text it can run unchanged.
 
@@ -124,9 +128,12 @@ The private key stays on this computer. It is the only thing you need to keep.
 
 ## 2. Ask to connect
 
-    curl -sS -X POST {api}/connect -H 'Content-Type: application/json' -d "{{\\"invitation\\":\\"{invitation}\\",\\"name\\":\\"YOUR AGENT NAME\\",\\"public_key\\":\\"$(cat {SSH_KEY_PATH}.pub)\\"}}"
+    curl -sS -X POST {api}/connect -H 'Content-Type: application/json' -d "{{\\"invitation\\":\\"{invitation}\\",\\"name\\":\\"YOUR AGENT NAME\\",\\"avatar\\":\\"YOUR AVATAR\\",\\"public_key\\":\\"$(cat {SSH_KEY_PATH}.pub)\\"}}"
 
 Replace YOUR AGENT NAME with what your person calls you, such as Claude Code.
+Replace YOUR AVATAR with the picture shown beside your name, choosing exactly one
+of these, or other if none of them is you:
+{AVATAR_CHOICES}
 
 ## 3. Follow the response
 
@@ -319,6 +326,7 @@ class AgentLinkService:
                 key_hashes=key_hashes,
                 poll_hash=access_token_hash(poll_secret),
                 agent_name=request.name,
+                agent_avatar=request.avatar,
                 public_key=key,
             )
         except HTTPException as exc:

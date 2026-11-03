@@ -421,6 +421,13 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & agent_links[category].keys()
         expected["contract"][category].update(agent_links[category])
+    # An Agent may name the picture shown beside it when it connects: one optional
+    # request field. Paths, responses and every other schema stay identical.
+    avatar = json.loads(Path(__file__).with_name("agent_avatar_contract_delta.json").read_text())
+    assert avatar["paths"] == {} and set(avatar["schemas"]) == {"AgentConnect"}
+    change = avatar["schemas"]["AgentConnect"]
+    assert expected["contract"]["schemas"]["AgentConnect"] == change["before"]
+    expected["contract"]["schemas"]["AgentConnect"] = change["after"]
     # Search Tools and the vector (Turbopuffer) backend are retired exactly. Tool
     # type enums lose "search" (ToolOut keeps reading existing rows) and the
     # dashboard drops index fields; every other wire stays identical.

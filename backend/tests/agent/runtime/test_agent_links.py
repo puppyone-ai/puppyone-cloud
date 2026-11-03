@@ -490,6 +490,27 @@ def test_the_owner_sees_each_waiting_agent_until_one_is_allowed(postgres, submit
     assert status(postgres, first["id"], first_poll)["state"] == "approved"
 
 
+def test_the_picture_an_agent_chose_stays_beside_its_name(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    link = create_link(postgres, args, row, "sign_in")
+    chose = sql_call(postgres, "access_agent_connect", [link], hash_of(), "Grok helper", KEY, "grok-bot")
+    # An Agent from before the choice existed, or one that made none, has no picture.
+    silent, _ = connect(postgres, link)
+
+    assert {item["id"]: item["avatar"] for item in waiting(postgres, args)} == {
+        chose["id"]: "grok-bot", silent["id"]: None,
+    }
+    assert link_command(postgres, "review", args["user"], id=chose["id"])["avatar"] == "grok-bot"
+    link_command(postgres, "decide", args["user"], id=chose["id"], decision="approve")
+    connections = link_command(postgres, "inventory", args["user"], project_id=args["project"])["connections"]
+    assert [(item["name"], item["avatar"]) for item in connections] == [("Grok helper", "grok-bot")]
+    # The stored choice is a short identifier, never markup or a picture itself.
+    with pytest.raises(RuntimeError, match=r"access_agent_connections_avatar_check|check constraint"):
+        sql_call(postgres, "access_agent_connect", [create_link(postgres, args, row, "sign_in")], hash_of(),
+                 "Painter", KEY, "<svg onload=alert(1)>")
+
+
 def test_a_rejected_or_expired_request_stops_waiting(postgres, submitted):
     args, _ = submitted
     row = running(postgres, args)
