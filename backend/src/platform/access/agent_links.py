@@ -65,7 +65,8 @@ Replace YOUR AGENT NAME with what your person calls you, such as Claude Code.
 ## 3. Follow the response
 
 - `status` is `ready`: go to step 4 with its `ssh` object.
-- `status` is `pending`: send `sign_in_url` to your person and ask them to open it.
+- `status` is `pending`: tell your person you are waiting for them to allow you in
+  PuppyOne, and give them `sign_in_url` in case they are away from the app.
   Then repeat this every `poll_interval` seconds until `status` changes:
 
       curl -sS {api}/connections/CONNECTION_ID -H 'Authorization: Bearer POLL_SECRET'
