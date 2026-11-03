@@ -21,7 +21,6 @@ dependencies = [
     "litellm>=1.80.7",
     "lxml>=5.0.0",
     "moto[s3]>=5.0.0",
-    "openai>=2.8.0",
     "pydantic>=2.12.4",
     "pydantic-settings>=2.0.0",
     "pyjwt>=2.10.1",

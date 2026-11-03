@@ -99,6 +99,20 @@ def setup_access(db, args, *, workspace=None, channels=None, single_session=Fals
     )
 
 
+def agent_machine(db, context, state="running"):
+    """An external Agent's own machine, as the sandbox module would leave it."""
+    row = json.loads(
+        db.sql(f"SELECT to_jsonb(public.access_grant_agent_workspace('{context['grant']}'))")
+    )
+    db.sql(
+        "ALTER TABLE cloud_workbenches DISABLE TRIGGER USER;"
+        f"""UPDATE cloud_workbenches SET state='{state}',
+        resource='{{"allocation_pending":false}}',binding='{{}}' WHERE id='{row['id']}';"""
+        "ALTER TABLE cloud_workbenches ENABLE TRIGGER USER;"
+    )
+    return {**row, "state": state}
+
+
 def issue(db, context, *, channel="git", request=None, next_key=None, secret=None, public_key=None):
     request = request or str(uuid4())
     next_key = next_key or uuid4().hex * 2
@@ -257,8 +271,8 @@ def test_approver_loss_and_client_suspension_fail_closed(postgres, submitted):
 
 def test_workspace_session_outlives_login_ticket_but_not_parent(postgres, submitted):
     args, _ = submitted
-    workspace = running(postgres, args)
-    context = setup_access(postgres, args, workspace=workspace)
+    context = setup_access(postgres, args, workspace=running(postgres, args))
+    workspace = agent_machine(postgres, context)
     ticket, _, _ = issue(postgres, context, channel="ssh")
     call(postgres, "workspace_ssh_grant_consume", id=ticket["id"])
     connection = reserve(postgres, args, workspace, ticket["id"])
@@ -296,6 +310,7 @@ def test_workspace_session_outlives_login_ticket_but_not_parent(postgres, submit
 def test_single_session_parallel_admission_only_one_wins(postgres, submitted):
     args, _ = submitted
     context = setup_access(postgres, args, workspace=running(postgres, args), single_session=True)
+    workspace = agent_machine(postgres, context)
     ticket, _, _ = issue(postgres, context, channel="ssh")
 
     def consume(_):
@@ -554,8 +569,8 @@ def test_expiry_resource_and_capability_boundaries(postgres, submitted):
 
 def test_session_disconnect_allows_reconnect_without_another_approval(postgres, submitted):
     args, _ = submitted
-    workspace = running(postgres, args)
-    context = setup_access(postgres, args, workspace=workspace)
+    context = setup_access(postgres, args, workspace=running(postgres, args))
+    workspace = agent_machine(postgres, context)
     ticket, next_key, _ = issue(postgres, context, channel="ssh")
     call(postgres, "workspace_ssh_grant_consume", id=ticket["id"])
     connection = reserve(postgres, args, workspace, ticket["id"])
@@ -581,8 +596,8 @@ def test_session_disconnect_allows_reconnect_without_another_approval(postgres, 
 
 def test_deleting_registration_cannot_turn_live_connection_into_legacy(postgres, submitted):
     args, _ = submitted
-    workspace = running(postgres, args)
-    context = setup_access(postgres, args, workspace=workspace)
+    context = setup_access(postgres, args, workspace=running(postgres, args))
+    workspace = agent_machine(postgres, context)
     ticket, _, _ = issue(postgres, context, channel="ssh")
     call(postgres, "workspace_ssh_grant_consume", id=ticket["id"])
     connection = reserve(postgres, args, workspace, ticket["id"])
@@ -680,8 +695,8 @@ def test_shared_policy_evaluates_real_workspace_authority(postgres, submitted):
     from src.platform.authorization.service import AuthorizationService
 
     args, _ = submitted
-    workspace = running(postgres, args)
-    context = setup_access(postgres, args, workspace=workspace)
+    context = setup_access(postgres, args, workspace=running(postgres, args))
+    workspace = agent_machine(postgres, context)
     facts = call(postgres, "access_grant_context", grant=context["grant"], channel="ssh")
     authority = AuthorizationService.authorize_delegated(
         facts, "ssh", project=context["project"], workbench=workspace["id"]
@@ -698,9 +713,8 @@ def test_shared_policy_evaluates_real_workspace_authority(postgres, submitted):
 @pytest.mark.parametrize("wake", [False, True])
 def test_paused_workspace_credential_requires_the_wake_capability(postgres, submitted, wake):
     args, _ = submitted
-    workspace = running(postgres, args)
-    context = setup_access(postgres, args, workspace=workspace, wake=wake)
-    postgres.sql(f"UPDATE cloud_workbenches SET state='paused' WHERE id='{workspace['id']}'")
+    context = setup_access(postgres, args, workspace=running(postgres, args), wake=wake)
+    workspace = agent_machine(postgres, context, "paused")
     if not wake:
         with pytest.raises(RuntimeError, match="access_workspace_unavailable"):
             issue(postgres, context, channel="ssh")
@@ -709,7 +723,7 @@ def test_paused_workspace_credential_requires_the_wake_capability(postgres, subm
     # Resuming keeps the generation, so the ticket stays bound to this workspace.
     assert ticket["generation"] == workspace["generation"]
     # A retired workspace is replaced on reopen; wake cannot carry a ticket across.
-    postgres.sql(f"UPDATE cloud_workbenches SET state='retired' WHERE id='{workspace['id']}'")
+    agent_machine(postgres, context, "retired")
     with pytest.raises(RuntimeError, match="access_workspace_unavailable"):
         issue(postgres, context, channel="ssh", secret=next_key)
 

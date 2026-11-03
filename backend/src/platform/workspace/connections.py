@@ -101,10 +101,16 @@ class WorkspaceConnections:
             self.workspace.context, user, project, ProjectAction.AGENT_RUN
         )
         row = context["workbench"]
+        if not row or row["id"] != workbench:
+            # An external Agent never reaches the owner's own Workspace, only its own.
+            row = await run_blocking(self.workspace.repository.get, workbench)
+            if not row or not row.get("agent_registration_id") or row["user_id"] != user:
+                raise WorkspaceError(409, {"code": "workspace_connection_unavailable"})
         states = {"running"} if running else {"running", *RESUMABLE_STATES}
         if (
             not row
             or row["id"] != workbench
+            or row["project_id"] != project
             or row["generation"] != generation
             or row["state"] not in states
             or row["owner_deleted_at"] is not None

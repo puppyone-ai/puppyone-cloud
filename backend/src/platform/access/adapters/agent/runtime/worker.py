@@ -31,10 +31,7 @@ from src.platform.access.adapters.agent.runtime.control.admission import Admissi
 from src.platform.access.adapters.agent.runtime.control.publication import Publication
 from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
 from src.platform.access.adapters.agent.runtime.control.shared_tasks import SharedTasks
-from src.platform.access.adapters.agent.runtime.control.workspace import (
-    SessionWorkspace,
-    reap_workspaces,
-)
+from src.platform.access.adapters.agent.runtime.control.workspace import reap_workspaces
 from src.platform.access.adapters.agent.runtime.dispatch import worker_identity
 from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
@@ -135,6 +132,8 @@ def sandbox_passes(repository, workbench_owner, pool):
     from src.platform.access.sessions import reclaim_external_connections
 
     passes = [
+        # No Run uses a Session workspace any more. This pass stays until the
+        # machines left behind are retired, so that none is stranded running.
         (
             "session_workspace_retirement",
             lambda: reap_workspaces(repository, PiWorker, pool=pool),
@@ -164,8 +163,7 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
     billing = get_runtime_metering_service()
     claim_as = identity.claim()
     active = {}  # task -> claimed run
-    shared_first = False
-    task_repository = SharedTaskRepository(repository.client) if workbench_owner else None
+    task_repository = SharedTaskRepository(repository.client)
     counters = Counter()
     outcomes = Counter()
     waits = []
@@ -193,14 +191,7 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
                 filesystem=filesystem,
                 worker_factory=PiWorker,
                 worker_lifecycle=PiWorker,
-                workspace=None
-                if run.get("workbench_id")
-                else SessionWorkspace(repository, filesystem),
-                shared_tasks=(
-                    SharedTasks(task_repository, workbench_owner)
-                    if run.get("workbench_id")
-                    else None
-                ),
+                shared_tasks=SharedTasks(task_repository, workbench_owner),
                 capability=require_binding,
             )
             await supervisor.run_claim(run)
@@ -276,17 +267,7 @@ async def serve_agent(repository, engine, workbench_owner, *, identity, stop, gr
                     stopping.cancel()
                 continue
             try:
-                claims = [repository.claim_run]
-                if workbench_owner:
-                    claims.append(repository.claim_workbench_run)
-                    if shared_first:
-                        claims.reverse()
-                    shared_first = not shared_first
-                run = None
-                for claim in claims:
-                    run = await run_blocking(claim, worker=claim_as)
-                    if run is not None:
-                        break
+                run = await run_blocking(repository.claim_workbench_run, worker=claim_as)
                 if run is None:
                     await _until(stop, 1)
                     continue

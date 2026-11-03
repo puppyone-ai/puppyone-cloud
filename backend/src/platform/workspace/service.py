@@ -18,6 +18,7 @@ from .errors import WorkspaceError
 from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
+from .sync import WorkspaceGit
 
 
 @asynccontextmanager
@@ -99,6 +100,7 @@ class WorkbenchService(WorkbenchAdmission):
         )
         self.lifecycle = WorkbenchLifecycle(self)
         self.opening = WorkspaceOpening(self)
+        self.git = WorkspaceGit(self)
 
     async def current(self, user, project):
         context, _ = await run_blocking(
@@ -106,8 +108,8 @@ class WorkbenchService(WorkbenchAdmission):
         )
         return context["workbench"]
 
-    async def request_open(self, user, project):
-        return await self.lifecycle.request(user, project)
+    async def request_open(self, user, project, row=None):
+        return await self.lifecycle.request(user, project, row)
 
     async def open(self, user, project):
         return await self.ensure_running({"user_id": user, "project_id": project}, None)
@@ -144,14 +146,14 @@ class WorkbenchService(WorkbenchAdmission):
             raise WorkerDisconnected("Workspace ownership changed")
         await self.billing.check_session(meter_id(row))
 
-    async def connection(self, row, *, capabilities=()):
+    async def connection(self, row, *, capabilities=(), states=("running",)):
         # Used by already-admitted tasks, including revoked-task cleanup. The
         # task ledger holds occupancy until stop ACK, so idle pause cannot race.
         current = await run_blocking(self.repository.get, row["id"])
         if (
             not current
             or current["generation"] != row["generation"]
-            or current["state"] != "running"
+            or current["state"] not in states
         ):
             raise WorkerDisconnected("Workbench is not running")
         if capabilities:

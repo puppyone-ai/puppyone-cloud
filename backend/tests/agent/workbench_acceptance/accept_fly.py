@@ -103,13 +103,13 @@ async def cleanup_owned(case, provider, receipt):
         .execute()
         .data
     )
+    rows = [row for row in rows if row["resource"]]
+    # A Project holds several machines, and the wait below is for all of them.
+    for row in rows:
+        for resolved in await provider.resolve(row["resource"]):
+            await provider.cleanup(resolved)
     for row in rows:
         resource = row["resource"]
-        if not resource:
-            continue
-        matches = await provider.resolve(resource)
-        for resolved in matches:
-            await provider.cleanup(resolved)
         await eventually(
             lambda resource=resource: provider._request(resource, "GET", "/machines"),
             lambda machines: (
@@ -137,9 +137,13 @@ async def cleanup_owned(case, provider, receipt):
             lambda resource=resource: provider._request(resource, "GET", "/volumes"),
             # Fly soft-deletes Volumes; pending_destroy stays in the raw API
             # list but is no longer attachable or billed (Fly billing docs).
+            # scheduling_destroy comes first and can outlast this wait.
             lambda volumes, name=name: all(
                 v["name"] != name
-                or (v["state"] == "pending_destroy" and not v.get("attached_machine_id"))
+                or (
+                    v["state"] in {"scheduling_destroy", "pending_destroy"}
+                    and not v.get("attached_machine_id")
+                )
                 for v in volumes
             ),
             timeout=60,

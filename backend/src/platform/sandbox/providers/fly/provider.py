@@ -271,7 +271,7 @@ class FlyRuntimeProvider:
                 json={
                     "name": volume_name,
                     "region": settings.CLOUD_AGENT_FLY_REGION,
-                    "size_gb": 1,
+                    "size_gb": settings.CLOUD_AGENT_FLY_DISK_GB,
                     "encrypted": True,
                 },
             )

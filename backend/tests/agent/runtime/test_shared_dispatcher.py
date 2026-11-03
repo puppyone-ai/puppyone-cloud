@@ -1,4 +1,4 @@
-"""One dispatcher/concurrency budget; shared claims require an explicit owner."""
+"""One dispatcher and concurrency budget; every Run borrows its workbench."""
 
 import asyncio
 from contextlib import suppress
@@ -11,11 +11,14 @@ from src.platform.access.adapters.agent.runtime import worker
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, enabled):
+async def test_the_dispatcher_claims_only_workbench_runs(monkeypatch):
     from src.config import settings
 
-    legacy, shared = [{"id": "legacy"}], [{"id": "shared", "workbench_id": "workbench"}]
+    session = [{"id": "session"}]
+    shared = [
+        {"id": "second", "workbench_id": "workbench"},
+        {"id": "first", "workbench_id": "workbench"},
+    ]
     claims, active = [], []
     ready, release = asyncio.Event(), asyncio.Event()
 
@@ -25,15 +28,11 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
 
     repo = SimpleNamespace(
         client=object(),
-        claim_run=lambda **_: claim("legacy", legacy),
+        claim_run=lambda **_: claim("session", session),
         claim_workbench_run=lambda **_: claim("shared", shared),
     )
-    owner = (
-        SimpleNamespace(
-            reap=AsyncMock(), lifecycle=SimpleNamespace(serve=lambda **_: release.wait())
-        )
-        if enabled
-        else None
+    owner = SimpleNamespace(
+        reap=AsyncMock(), lifecycle=SimpleNamespace(serve=lambda **_: release.wait())
     )
 
     class Supervisor:
@@ -42,11 +41,11 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
 
         async def run_claim(self, run):
             active.append((run["id"], self.options))
-            if len(active) == (2 if enabled else 1):
+            if len(active) == 2:
                 ready.set()
             await release.wait()
 
-    monkeypatch.setattr(settings, "CLOUD_AGENT_CONCURRENCY", 2 if enabled else 1)
+    monkeypatch.setattr(settings, "CLOUD_AGENT_CONCURRENCY", 2)
     monkeypatch.setattr(worker, "RunRepository", lambda: repo)
     monkeypatch.setattr(worker, "Admission", lambda _: object())
     monkeypatch.setattr(worker, "Publication", lambda transport, filesystem: object())
@@ -65,16 +64,12 @@ async def test_legacy_and_shared_claims_use_the_same_dispatcher(monkeypatch, ena
     dispatch = asyncio.create_task(worker.serve(workbench_owner=owner))
     try:
         await asyncio.wait_for(ready.wait(), 2)
-        assert len(active) == (2 if enabled else 1)
         options = dict(active)
-        assert options["legacy"]["workspace"] is not None
-        assert options["legacy"]["shared_tasks"] is None
-        if enabled:
-            assert options["shared"]["workspace"] is None
-            assert options["shared"]["shared_tasks"].owner is owner
-            assert claims[:2] == ["legacy", "shared"]
-        else:
-            assert "shared" not in claims
+        assert set(options) == {"first", "second"}
+        assert options["first"]["shared_tasks"].owner is owner
+        assert "workspace" not in options["first"]
+        assert "session" not in claims
+        assert session == [{"id": "session"}]
     finally:
         dispatch.cancel()
         with suppress(asyncio.CancelledError):

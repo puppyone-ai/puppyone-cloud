@@ -75,6 +75,10 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     ("GET", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_READ),
     ("PUT", "/api/v1/projects/{project_id}/workbench/file"): _human(ProjectAction.CONTENT_WRITE),
     ("GET", "/api/v1/projects/{project_id}/workbench/events"): _human(ProjectAction.CONTENT_READ),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync/finish"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/sync/abort"): _human(ProjectAction.CONTENT_WRITE),
+    ("POST", "/api/v1/projects/{project_id}/workbench/publish"): _human(ProjectAction.CONTENT_WRITE),
 
     # Content and History surfaces.
     # Managed Office sessions are resource-owner operations, not project grants.
@@ -363,3 +367,14 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     )
 })
 PROJECT_ROUTE_AUTHORIZATION[("POST", "/api/v1/access/credentials/renew")] = _runtime("access.registration_renewal")
+PROJECT_ROUTE_AUTHORIZATION.update({
+    (method, "/api/v1/projects/{project_id}/agent-links"): _human(ProjectAction.CREDENTIAL_MANAGE)
+    for method in ("POST", "GET", "DELETE")
+})
+PROJECT_ROUTE_AUTHORIZATION.update({
+    ("GET", "/api/v1/agent-links/connections/{connection_id}/review"): _owner("access.agent_connection_owner"),
+    ("POST", "/api/v1/agent-links/connections/{connection_id}/decision"): _owner("access.agent_connection_owner"),
+    ("GET", "/agent/{invitation}"): _runtime("access.agent_link"),
+    ("POST", "/api/v1/agent-links/connect"): _runtime("access.agent_link"),
+    ("GET", "/api/v1/agent-links/connections/{connection_id}"): _runtime("access.agent_link"),
+})

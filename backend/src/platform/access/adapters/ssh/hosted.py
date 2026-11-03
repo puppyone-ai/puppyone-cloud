@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from src.exceptions import PermissionException
 from src.infra.execution.runner import run_blocking
+from src.platform.access.agent_links import AgentLinkService, agent_connection
 from src.platform.access.composition import build_workbench_service
 from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
@@ -73,7 +74,14 @@ def ssh_endpoint(config=None):
 
 class HostedSshAccess:
     def __init__(
-        self, workspace, grants=None, connections=None, config=None, authority=None, sessions=None
+        self,
+        workspace,
+        grants=None,
+        connections=None,
+        config=None,
+        authority=None,
+        sessions=None,
+        agent_links=None,
     ):
         self.workspace = workspace
         self.grants = grants or SshGrantRepository()
@@ -81,10 +89,17 @@ class HostedSshAccess:
         self.config = config or ssh_settings()
         self.authority = authority
         self.sessions = sessions
+        self.agent_links = agent_links
         self.resume_seconds = 180
+        self.first_start_seconds = 420
 
     def endpoint(self):
         return ssh_endpoint(self.config)
+
+    def linked_agents(self):
+        if self.agent_links is None:
+            self.agent_links = AgentLinkService(endpoint=self.endpoint)
+        return self.agent_links
 
     def lifecycle(self):
         # Legacy tests/clients do not instantiate new storage until it is needed.
@@ -199,16 +214,38 @@ class HostedSshAccess:
         if row["generation"] != grant["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
+    async def start_agent_workspace(self, connection, notify=None):
+        """A ticket binds one generation, so a machine must exist before it is minted."""
+        row = await self.linked_agents().workspace(connection)
+        if row["state"] == "running" or row["state"] in RESUMABLE_STATES:
+            return
+        if notify:
+            await notify("Preparing your workspace; this can take a few minutes.\r\n")
+        async with asyncio.timeout(self.first_start_seconds):
+            await self.workspace.ensure_running(
+                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+            )
+
     async def authenticate(self, identity, key):
         try:
             async with asyncio.timeout(10):
+                presented = public_key(key.export_public_key())
+                connection = agent_connection(identity)
+                if connection:
+                    return await self.linked_agents().admits(connection, presented) is True
                 grant = await self.validate(identity, unused=True, running=False)
-                return public_key(key.export_public_key()) == grant["public_key"]
+                return presented == grant["public_key"]
         except Exception:
             return False
 
     @asynccontextmanager
     async def open(self, identity, notify=None):
+        connection = agent_connection(identity)
+        if connection:
+            # A linked Agent keeps one key; each connection is still one ticket.
+            with access_denials():
+                await self.start_agent_workspace(connection, notify)
+                identity = await self.linked_agents().ticket(connection)
         grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)
         try:

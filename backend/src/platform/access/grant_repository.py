@@ -7,7 +7,7 @@ from src.infra.supabase.dependencies import get_supabase_client
 
 # Product refusals a client can act on. The text is a fixed code raised by our
 # own SQL, never data, so it may cross HTTP verbatim.
-ACTIONABLE_REFUSALS = frozenset({"access_workspace_unavailable"})
+ACTIONABLE_REFUSALS = frozenset({"access_workspace_unavailable", "workspace_agent_seat_limit"})
 
 
 class AccessRepository:
@@ -30,6 +30,7 @@ class AccessRepository:
                 "23505": 409,
                 "23503": 409,
                 "55000": 409,
+                "53400": 409,
             }.get(str(exc.code), 503)
             code = (
                 "access_unavailable"

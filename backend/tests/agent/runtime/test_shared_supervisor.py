@@ -375,6 +375,20 @@ async def test_publication_retry_keeps_original_candidate_and_skips_model_and_gi
     assert case.files["human"] == "newer unsaved human content"
 
 
+async def test_missing_publication_ack_is_not_an_agent_execution_failure(shared_case):
+    case = shared_case
+    case.publication.publish.side_effect = ConnectionError("push acknowledgement lost")
+    await case.supervisor().run_claim(case.run)
+    final = case.repo.get(case.run["id"])
+    assert final["state"] == "outcome_unknown"
+    assert final["snapshot"]["code"] == "publication_outcome_unknown"
+    assert len(case.starts) == 1
+    assert case.files["human"] == "newer unsaved human content"
+    saved = await Checkpoints().load(final, final["checkpoint"])
+    assert saved["reason"] == "settled"
+    assert saved["publication_candidate"] == case.run["id"]
+
+
 async def test_fenced_coordinator_cannot_discover_or_stop_successor(shared_case):
     case = shared_case
     old = task(case.postgres, case.run, case.wb)

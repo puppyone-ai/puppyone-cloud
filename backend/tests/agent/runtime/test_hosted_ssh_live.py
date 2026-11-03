@@ -3,8 +3,10 @@
 import asyncio
 import base64
 import hashlib
+import json
 import os
-from contextlib import suppress
+import subprocess
+from contextlib import asynccontextmanager, suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,6 +38,8 @@ from tests.agent.runtime.test_live_workbench_control import default, rpc, transi
 pytestmark = pytest.mark.integration
 IMAGE = "puppyone-workspace-ssh-acceptance:local"
 PROVIDER = os.environ.get("CLOUD_AGENT_TEST_SSH_PROVIDER", "docker")
+# A first connection waits for a new machine, which takes over a minute on a VM.
+FIRST_CONNECTION_S = 240 if PROVIDER == "fly" else 60
 
 
 @pytest.fixture
@@ -409,8 +413,53 @@ async def test_new_owner_reaps_lost_gateway_connection(live):
         assert result.exit_status == 0
 
 
+@asynccontextmanager
+async def agent_machines(live, transport=None):
+    """A first connection starts a machine, so the sandbox module has to be running.
+
+    Without a real ``transport`` the Project is empty: a Workspace initializes from no base.
+    """
+    workspace = live.workspace
+
+    def describe(project, grant, target_ref=None):
+        return {
+            "object_format": "sha1",
+            "target_ref": target_ref or "refs/heads/main",
+            "expected_oid": None,
+        }
+
+    transport = transport or SimpleNamespace(describe=describe)
+    workspace.transport = workspace.lifecycle.transport = transport
+    meter = SimpleNamespace(
+        ensure_session=AsyncMock(),
+        check_session=AsyncMock(),
+        detach_session=AsyncMock(),
+        resume_session=AsyncMock(),
+        finish_session=AsyncMock(return_value=True),
+    )
+    workspace.billing = workspace.lifecycle.billing = meter
+    stop = asyncio.Event()
+    lifecycle = asyncio.create_task(workspace.lifecycle.serve(stop=stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await asyncio.wait_for(lifecycle, 15)
+        # Fly machines leave with the Project in cleanup_owned.
+        if PROVIDER == "docker":
+            machines = await asyncio.to_thread(
+                live.db.sql,
+                f"""SELECT coalesce(string_agg(resource->>'resource_id',' '),'') FROM cloud_workbenches
+                WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
+            )
+            for machine in machines.split():
+                await asyncio.to_thread(
+                    subprocess.run, ["docker", "rm", "-f", machine], capture_output=True
+                )
+
+
 async def test_registered_external_agent_real_shell_and_parent_revocation(live):
-    """External identity reaches the owner's exact VM, then loses its live shell."""
+    """A registered Agent reaches its own machine, not the owner's, then loses its shell."""
     from src.platform.access.grant_repository import AccessRepository, GrantRepository
     from src.platform.access.grants import GrantService
     from src.platform.access.sessions import AccessSessions
@@ -421,24 +470,44 @@ async def test_registered_external_agent_real_shell_and_parent_revocation(live):
     live.service.authority = GrantService(GrantRepository(db_client))
     live.service.sessions = AccessSessions(AccessRepository(db_client))
     context = await asyncio.to_thread(setup_access, live.db, live.args, workspace=live.row)
-    ticket, _, _ = await asyncio.to_thread(
-        issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+    # What the renewal endpoint does on first contact, before the client retries.
+    machine = json.loads(
+        await asyncio.to_thread(
+            live.db.sql,
+            f"SELECT to_jsonb(public.access_grant_agent_workspace('{context['grant']}'))",
+        )
     )
-    grant = {**ticket, "username": ticket["id"]}
-    async with await connect(live, grant) as conn:
-        proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding=None)
-        async with asyncio.timeout(20):
-            assert await proc.stdout.readline() == b"ready\n"
-        assert await read_file(live, "registered.txt") == b"registered"
-        await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
-                                id=context["grant"], project_id=context["project"], state="revoked")
-        async with asyncio.timeout(25):
-            await proc.wait_closed()
-    await until_released(live, ticket["id"])
-    row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
-    assert row["state"] == "closed" and row["registration_id"] == context["registration"]
-    with pytest.raises(asyncssh.PermissionDenied):
-        await connect(live, grant)
+    assert machine["id"] != live.row["id"]
+    async with agent_machines(live):
+        await asyncio.wait_for(
+            live.workspace.ensure_running(
+                {"user_id": machine["user_id"], "project_id": machine["project_id"]}, machine
+            ),
+            120,
+        )
+        ticket, _, _ = await asyncio.to_thread(
+            issue_registered, live.db, context, channel="ssh", public_key=live.key.export_public_key().decode().strip()
+        )
+        grant = {**ticket, "username": ticket["id"]}
+        assert grant["workbench_id"] == machine["id"]
+        async with await connect(live, grant) as conn:
+            proc = await conn.create_process("printf registered > registered.txt; echo ready; sleep 300", encoding="utf-8")
+            async with asyncio.timeout(20):
+                assert await proc.stdout.readline() == "ready\n"
+            hidden = await live.api.get(
+                f"/api/v1/projects/{live.args['project']}/workbench/file",
+                params={"generation": live.row["generation"], "path": "registered.txt"},
+            )
+            assert hidden.status_code == 404
+            await asyncio.to_thread(command, live.db, "grant", "grant_state", context["owner"],
+                                    id=context["grant"], project_id=context["project"], state="revoked")
+            async with asyncio.timeout(25):
+                await proc.wait_closed()
+        await until_released(live, ticket["id"])
+        row = await asyncio.to_thread(live.db.row, f"SELECT * FROM access_sessions WHERE id='{ticket['id']}'")
+        assert row["state"] == "closed" and row["registration_id"] == context["registration"]
+        with pytest.raises(asyncssh.PermissionDenied):
+            await connect(live, grant)
 
 
 @pytest.mark.skipif(not os.environ.get("PUPPYONE_TEST_CLI_ROOT"), reason="standalone CLI candidate required")
@@ -454,6 +523,7 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
     from fastapi import Header, HTTPException
 
     from src.config import settings
+    from src.platform.access import composition
     from src.platform.access import lifecycle_router as routes
     from src.platform.access.adapters.ssh import hosted
     from src.platform.access.credentials import CredentialService
@@ -477,6 +547,8 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
     live.service.sessions = AccessSessions(AccessRepository(client))
     monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", True)
     monkeypatch.setattr(hosted, "ssh_settings", lambda: live.service.config)
+    # The first renewal starts the Agent's machine through this service.
+    monkeypatch.setattr(composition, "build_workbench_service", lambda: live.workspace)
     app = FastAPI()
     app.include_router(routes.router)
 
@@ -503,20 +575,32 @@ async def test_cli_invitation_approval_and_stock_ssh(live, tmp_path, monkeypatch
                     await serving
                 await asyncio.sleep(0.01)
         result_file = tmp_path / "result.json"
-        process = await asyncio.create_subprocess_exec(
-            "node", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "PUPPY_ACCESS_TEST_API": f"http://127.0.0.1:{port}",
-                 "PUPPY_ACCESS_TEST_PROJECT": live.args["project"], "PUPPY_ACCESS_TEST_WORKSPACE": live.row["id"],
-                 "PUPPY_ACCESS_TEST_OWNER": owner_key, "PUPPY_ACCESS_TEST_GUEST": guest_key,
-                 "PUPPY_ACCESS_TEST_STORE": str(tmp_path / "client"), "PUPPY_ACCESS_TEST_RESULT": str(result_file)},
-        )
-        async with asyncio.timeout(90):
-            stdout, stderr = await process.communicate()
-        assert process.returncode == 0, stderr.decode().replace(owner_key, "[redacted]").replace(guest_key, "[redacted]")
-        assert b"cli-connected" in stdout
-        assert await read_file(live, "cli-access.txt") == b"cli-through-http"
-        result = json.loads(result_file.read_text())
-        await until_released(live, result["ticket"])
+        async with agent_machines(live):
+            process = await asyncio.create_subprocess_exec(
+                "node", str(script), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PUPPY_ACCESS_TEST_API": f"http://127.0.0.1:{port}",
+                     "PUPPY_ACCESS_TEST_PROJECT": live.args["project"], "PUPPY_ACCESS_TEST_WORKSPACE": live.row["id"],
+                     "PUPPY_ACCESS_TEST_OWNER": owner_key, "PUPPY_ACCESS_TEST_GUEST": guest_key,
+                     "PUPPY_ACCESS_TEST_STORE": str(tmp_path / "client"), "PUPPY_ACCESS_TEST_RESULT": str(result_file)},
+            )
+            async with asyncio.timeout(FIRST_CONNECTION_S + 30):
+                stdout, stderr = await process.communicate()
+            assert process.returncode == 0, stderr.decode().replace(owner_key, "[redacted]").replace(guest_key, "[redacted]")
+            assert b"cli-connected" in stdout
+            # Read back on the Agent's machine: the write never reaches the owner's.
+            assert b"cli-through-http" in stdout
+            result = json.loads(result_file.read_text())
+            await until_released(live, result["ticket"])
+            machine = await asyncio.to_thread(
+                live.db.row,
+                f"SELECT id FROM cloud_workbenches WHERE agent_registration_id='{result['registration']}'",
+            )
+            assert machine["id"] != live.row["id"]
+            hidden = await live.api.get(
+                f"/api/v1/projects/{live.args['project']}/workbench/file",
+                params={"generation": live.row["generation"], "path": "cli-access.txt"},
+            )
+            assert hidden.status_code == 404
     finally:
         if process and process.returncode is None:
             process.kill()

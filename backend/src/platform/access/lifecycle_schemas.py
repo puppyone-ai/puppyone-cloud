@@ -85,6 +85,42 @@ class AccessApplication(AccessRequest):
         return _secret(value, "pai")
 
 
+class AgentLinkCreate(AccessRequest):
+    id: UUID
+    secret: SecretStr
+    workbench_id: UUID
+    admission: Literal["sign_in", "link"]
+
+    @field_validator("secret")
+    @classmethod
+    def check_secret(cls, value):
+        return _secret(value, "pai")
+
+
+class AgentConnect(AccessRequest):
+    invitation: SecretStr
+    name: str = Field(min_length=1, max_length=120)
+    public_key: str = Field(min_length=40, max_length=8192)
+
+    @field_validator("invitation")
+    @classmethod
+    def check_secret(cls, value):
+        return _secret(value, "pai")
+
+    @field_validator("name")
+    @classmethod
+    def printable_name(cls, value):
+        # Self-declared and shown to the owner beside an Allow button.
+        name = "".join(character for character in value if character.isprintable()).strip()
+        if not name:
+            raise ValueError("Agent name required")
+        return name
+
+
+class AgentConnectionDecision(AccessRequest):
+    decision: Literal["approve", "reject"]
+
+
 class AccessDecision(AccessRequest):
     decision: Literal["approve", "reject"]
     capabilities: list[AccessCapability] | None = Field(default=None, min_length=1, max_length=5)

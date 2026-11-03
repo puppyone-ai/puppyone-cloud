@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.platform.access.adapters.agent.runtime.control import tool_policy
 from src.platform.access.adapters.agent.runtime.control.admission import Admission
 from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
 from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
@@ -452,6 +453,23 @@ async def test_stop_waiting_approval_has_no_tool_effect(prepared):
     await asyncio.wait_for(task, 30)
     completed = case.repo.get(case.run["id"])
     assert completed["state"] == "stopped", completed
+    assert case.repo.tools(case.run["id"])[0]["state"] == "waiting"
+    with pytest.raises(FileNotFoundError):
+        read_case(case, "result.txt")
+    assert not case.repo.executions(case.run["id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_unanswered_approval_ends_the_run_without_tool_effect(prepared, monkeypatch):
+    case = prepared
+    monkeypatch.setattr(tool_policy, "APPROVAL_WAIT_SECONDS", 2)
+    task = asyncio.create_task(case.supervisor(model=DestructiveModel()).run_claim(case.run))
+    await wait_for_approval(case, task)
+    await asyncio.wait_for(task, 30)
+    completed = case.repo.get(case.run["id"])
+    assert completed["state"] == "stopped", completed
+    assert completed["snapshot"]["code"] == "approval_expired"
     assert case.repo.tools(case.run["id"])[0]["state"] == "waiting"
     with pytest.raises(FileNotFoundError):
         read_case(case, "result.txt")
@@ -913,8 +931,9 @@ async def test_native_rewritten_history_cannot_replace_existing_cloud_history(pr
         case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))
     )
     assert model.calls == 2
-    assert result["state"] in {"failed", "outcome_unknown"}, result
-    assert not result["publication"]
+    # Finalization keeps the rewritten commit; the host refuses the non-fast-forward push.
+    assert result["state"] == "conflict", result
+    assert result["publication"]["status"] == "conflict"
     saved = await case.checkpoints.load(result, result["checkpoint"])
     assert recovery_git(saved, "rev-parse", "HEAD") != saved["base"]["expected_oid"]
     assert recovery_file(saved, "notes.md") == b"rewritten"

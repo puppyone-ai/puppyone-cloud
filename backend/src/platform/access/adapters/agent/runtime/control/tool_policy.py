@@ -7,6 +7,16 @@ read-only enforcement and fenced Git publication remain authoritative.
 
 import posixpath
 import shlex
+from datetime import UTC, datetime
+
+# An unanswered Run must not hold its machine awake forever.
+APPROVAL_WAIT_SECONDS = 1800
+
+
+def approval_expired(receipt: dict) -> bool:
+    """A waiting receipt's own timestamp, so a re-dispatched Run keeps the same deadline."""
+    waiting_since = datetime.fromisoformat(receipt["updated_at"])
+    return (datetime.now(UTC) - waiting_since).total_seconds() >= APPROVAL_WAIT_SECONDS
 
 
 def approval_reason(name: str, value: dict) -> str | None:

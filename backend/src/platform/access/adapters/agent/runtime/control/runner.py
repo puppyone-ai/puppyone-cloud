@@ -17,7 +17,10 @@ from src.platform.access.adapters.agent.runtime.control.ports import BindingCapa
 from src.platform.access.adapters.agent.runtime.control.publication import PublicationRejected
 from src.platform.access.adapters.agent.runtime.control.recovery import Recovery
 from src.platform.access.adapters.agent.runtime.control.shared_recovery import SharedRecovery
-from src.platform.access.adapters.agent.runtime.control.tool_policy import approval_reason
+from src.platform.access.adapters.agent.runtime.control.tool_policy import (
+    approval_expired,
+    approval_reason,
+)
 from src.platform.access.adapters.agent.runtime.control.tool_results import (
     approval_denied,
     tool_denial,
@@ -778,6 +781,8 @@ class RunSupervisor:
             )
             return
         while receipt["state"] == "waiting":
+            if approval_expired(receipt):
+                raise EndRun("stopped", "approval_expired")
             await asyncio.sleep(1)
             reply = await self.command(
                 self.repo.begin_tool,
@@ -857,9 +862,19 @@ class RunSupervisor:
         await self.loop.send(self.worker, {"type": "reply", "id": frame["id"], "result": result})
 
     async def publish(self, grant):
-        with database_stage("publication"):
-            result = await self.publication.publish(self.run, self.value, grant, self.worker)
-        await self.write("publication", result, publication=result)
+        try:
+            with database_stage("publication"):
+                result = await self.publication.publish(self.run, self.value, grant, self.worker)
+            await self.write("publication", result, publication=result)
+        except PublicationRejected:
+            raise
+        except Exception as exc:
+            # The task and local candidate already completed. A missing push
+            # receipt is not evidence that the Agent's work must run again.
+            logger.exception(
+                "cloud_agent_publication_unconfirmed", extra={"run_id": self.run["id"]}
+            )
+            raise EndRun("outcome_unknown", "publication_outcome_unknown") from exc
         await self.finish(
             "succeeded" if result["status"] in {"committed", "no_changes"} else "conflict",
             "completed",

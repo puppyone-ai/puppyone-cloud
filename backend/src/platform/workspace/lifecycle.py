@@ -178,7 +178,8 @@ class WorkbenchLifecycle:
                     raise WorkspaceUnavailable(
                         row["operation_error"], retryable=row.get("operation_retryable", False)
                     )
-                if awaiting_files(row):
+                # The start path readies a Workspace that has no Editor to hand it to.
+                if row.get("is_default") and awaiting_files(row):
                     row, _ = await self.service.opening.prepare(
                         run["user_id"], run["project_id"], row["generation"]
                     )
@@ -423,7 +424,7 @@ class WorkbenchLifecycle:
         return await run_blocking(self.repository.transition, row, "resuming", host.resource)
 
     async def destroy(self, row):
-        """Destroy the compute and disk of a workspace whose owner was deleted."""
+        """Destroy compute and disk: the owner was deleted, or the work is on its branch."""
         await self.channels.invalidate(row["id"])
         if row["resource"] is not None:
             host = self.channel_factory(row)
@@ -436,7 +437,7 @@ class WorkbenchLifecycle:
         ):
             raise WorkerDisconnected("Workspace settlement awaits confirmation")
         await run_blocking(self.repository.transition, row, "retired")
-        logger.info("workbench_owner_deleted_destroyed", extra={"workbench_id": row["id"]})
+        logger.info("workbench_destroyed", extra={"workbench_id": row["id"]})
 
     async def _preserve_failed_start(self, row):
         host = self.channel_factory(row)
@@ -469,7 +470,29 @@ class WorkbenchLifecycle:
         finally:
             await host.runtime.aclose()
 
+    async def _save_agent_work(self, row):
+        """An external Agent's branch is the only way its work leaves the machine.
+
+        This runs while pausing, when no new connection can start. A failure raises,
+        so the machine keeps running and maintenance retries the pause.
+        """
+        if not row.get("agent_registration_id"):
+            return
+        try:
+            saved = await self.service.git.save(row)
+        except WorkerLost:
+            logger.warning("workspace_save_skipped_compute_lost", extra={"workbench_id": row["id"]})
+            return  # The disk holds the work, and it stays marked as unsaved.
+        except Exception as exc:
+            if not access_failure(exc):
+                raise
+            logger.warning("workspace_save_skipped_no_access", extra={"workbench_id": row["id"]})
+            return
+        if saved["status"] == "saved":
+            await run_blocking(self.repository.saved, row)
+
     async def pause(self, row):
+        await self._save_agent_work(row)
         await self.channels.invalidate(row["id"])
         host = self.channel_factory(row)
         try:
@@ -510,6 +533,14 @@ class WorkbenchLifecycle:
                     # deleted Project or user, so nothing is preserved.
                     if row["state"] in {"retained", "cleanup_pending"}:
                         claimed = await run_blocking(self.repository.reclaim_claim, row)
+                        if claimed["acquired"]:
+                            owned = claimed["workbench"]
+                            await self.destroy(owned)
+                    continue
+                if row["state"] == "paused":
+                    # Saved Agent work is on its branch; the machine can be rebuilt from it.
+                    if row.get("agent_registration_id"):
+                        claimed = await run_blocking(self.repository.retire, row)
                         if claimed["acquired"]:
                             owned = claimed["workbench"]
                             await self.destroy(owned)

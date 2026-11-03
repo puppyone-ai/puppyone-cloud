@@ -6,10 +6,9 @@ class ModelCapability(enum.Flag):
     """模型能力枚举"""
     NONE = 0                # 无能力
     LLM = 1                 # 语言模型能力 - 文本生成
-    EMBEDDING = 2           # 嵌入能力 - 向量生成
     
     # 复合能力可以用按位或运算（|）组合
-    ALL = LLM | EMBEDDING  # 所有能力
+    ALL = LLM  # 所有能力
 
 def cached(func: Callable) -> Callable:
     """函数结果缓存装饰器"""

@@ -104,7 +104,7 @@ backend/
 │   │   └── saas/                 # SaaS 平台同步 (Notion/GitHub 等)
 │   │
 │   ├── search/                   # 自建文本索引 (由提交构建)
-│   ├── llm/                      # LLM 服务 (生成 + Embedding)
+│   ├── llm/                      # LLM 服务 (文本生成)
 │   │
 │   ├── oauth/                    # OAuth 集成 (Notion/GitHub/Google/Linear/Airtable)
 │   ├── s3/                       # S3 存储服务 (上传/下载/分片上传/预签名URL)

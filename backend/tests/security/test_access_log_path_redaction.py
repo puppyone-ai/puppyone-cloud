@@ -35,3 +35,9 @@ def test_canonical_git_locator_is_safe_to_log_unchanged():
     path = "/git/project-1/scopes/scope-docs.git/info/refs"
 
     assert _sanitize_path_for_access_log(_request(path)) == path
+
+
+def test_agent_link_is_redacted_from_access_log_context():
+    secret = "pai_" + "s" * 43
+
+    assert _sanitize_path_for_access_log(_request(f"/agent/{secret}")) == "/agent/<redacted>"

@@ -90,9 +90,9 @@ export async function finalize(root, config, message) {
     throw new Error('Read-only workspace was modified');
   }
   const result = await inspect(root,config);
-  if (result.tip !== config.base_oid && config.base_oid)
-    await git(root,['merge-base','--is-ancestor',config.base_oid,result.tip]);
-  return { ...result, changed: result.tip !== config.base_oid, automatic_commit: before.tip !== result.tip };
+  // Record local work even when incoming history has not been merged. Push and
+  // the native host enforce ancestry; finalization must not discard the result.
+  return { ...result, changed: Boolean(result.tip && result.tip !== config.base_oid), automatic_commit: before.tip !== result.tip };
 }
 export async function push(root, config, remote, candidate, transport = {}) {
   await inspect(root,config); // A branch switch still invalidates this task's binding.

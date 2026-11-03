@@ -39,6 +39,10 @@ class RunGitTransport:
             self.manager.get_native_ref_metadata(project, grant), target_ref=target_ref
         ).wire()
 
+    def publication(self, request_key, base, candidate):
+        """Admit one push of ``candidate``; the same binding a Run publishes through."""
+        return RunPublication(request_key, GitBranchBase.parse(base), candidate)
+
     def result(self, project, grant, request_key):
         status = self.manager.get_native_operation_status(project, grant, request_key)
         if status is None:

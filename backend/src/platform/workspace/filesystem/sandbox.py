@@ -32,8 +32,11 @@ class SandboxFilesystem:
     async def finalize(self, channel: FilesystemChannel, message: str) -> Row:
         return await channel.control("finalize", {"message": message})
 
-    async def push(self, channel: FilesystemChannel, candidate: str) -> Row:
-        return await channel.control("push", {"candidate": candidate})
+    async def push(self, channel: FilesystemChannel, candidate: str, *, remote_tip=None) -> Row:
+        value = {"candidate": candidate}
+        if remote_tip:
+            value["remote_tip"] = remote_tip
+        return await channel.control("push", value)
 
     async def operation(self, channel: FileServiceChannel, operation: Row) -> Row:
         request = (

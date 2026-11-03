@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import signal
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from .hosted import build_hosted_ssh, public_key
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_SECONDS = 8
+# An open session keeps its machine running, so a forgotten one must not last.
+IDLE_SESSION_SECONDS = 1800
+IDLE_CHECK_SECONDS = 30
 
 SESSION_MESSAGES = {
     "workbench_not_running": "the workspace is not running and this credential cannot resume it.",
@@ -114,10 +118,20 @@ async def serve_shell(process, service):
                 },
             )
 
+            last_seen = time.monotonic()
+
+            async def idle_limit():
+                while True:
+                    await asyncio.sleep(IDLE_CHECK_SECONDS)
+                    if time.monotonic() - last_seen >= IDLE_SESSION_SECONDS:
+                        raise ClientDisconnected("SSH session idle")
+
             async def input_frames():
+                nonlocal last_seen
                 while True:
                     try:
                         data = await process.stdin.read(32768)
+                        last_seen = time.monotonic()
                     except asyncssh.TerminalSizeChanged as event:
                         await shell.control("resize", {"size": [event.width, event.height]})
                         continue
@@ -136,8 +150,10 @@ async def serve_shell(process, service):
                     await service.renew(connection, shell)
 
             async def output_frames():
+                nonlocal last_seen
                 while True:
                     frame = await shell.receive()
+                    last_seen = time.monotonic()
                     if frame["type"] == "shell_exit":
                         return int(frame["status"])
                     if frame["type"] != "shell_data":
@@ -154,10 +170,12 @@ async def serve_shell(process, service):
                 input_task = tasks.create_task(input_frames())
                 renewal = tasks.create_task(heartbeat())
                 monitor = tasks.create_task(disconnected())
+                idle = tasks.create_task(idle_limit())
                 status = await output_frames()
                 input_task.cancel()
                 renewal.cancel()
                 monitor.cancel()
+                idle.cancel()
         process.exit(status)
     except asyncio.CancelledError:
         process.close()

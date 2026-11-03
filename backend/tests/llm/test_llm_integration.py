@@ -1,6 +1,6 @@
-"""LLM Service 集成测试 - 使用真实模型 openrouter/qwen/qwen3-8b
+"""LLM Service 集成测试 - 使用真实模型 openai/deepseek-flash-1017
 
-此测试文件仅调用真实的 LLM 模型，需要设置正确的 OPENROUTER_API_KEY 环境变量。
+此测试文件仅调用真实的 LLM 模型，需要设置正确的 LLM_API_BASE 和 LLM_API_KEY 环境变量。
 测试将验证 LLM 服务的核心功能。
 """
 
@@ -19,7 +19,7 @@ from src.infra.llm.schemas import TextModelRequest, TextModelResponse
 from src.infra.llm.service import LLMService
 
 # 测试使用的模型
-TEST_MODEL = "openrouter/qwen/qwen3-8b"
+TEST_MODEL = "openai/deepseek-flash-1017"
 
 pytestmark = pytest.mark.integration
 
@@ -36,8 +36,8 @@ def check_api_key():
     """检查 API 密钥是否已设置"""
     if os.environ.get("RUN_LLM_INTEGRATION") != "1":
         pytest.skip("set RUN_LLM_INTEGRATION=1 to run live model integration tests")
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        pytest.skip("需要设置 OPENROUTER_API_KEY 环境变量才能运行集成测试")
+    if not (os.environ.get("LLM_API_BASE") and os.environ.get("LLM_API_KEY")):
+        pytest.skip("需要设置 LLM_API_BASE 和 LLM_API_KEY 环境变量才能运行集成测试")
 
 
 @pytest.fixture(autouse=True)

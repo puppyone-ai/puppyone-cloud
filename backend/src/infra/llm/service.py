@@ -115,6 +115,11 @@ class LLMService:
         if model not in self.supported_models:
             raise ModelNotFoundError(model, self.supported_models)
 
+        # Never let litellm fall back to a provider chosen from ambient credentials.
+        api_key = self.config.llm_api_key.get_secret_value()
+        if not api_key or not self.config.llm_api_base:
+            raise APIKeyError(model.split("/")[0])
+
         # Build messages
         messages = []
         if system_prompt:
@@ -131,6 +136,8 @@ class LLMService:
             "messages": messages,
             "temperature": temperature,
             "timeout": self.config.llm_timeout,
+            "api_base": self.config.llm_api_base,
+            "api_key": api_key,
         }
 
         # Add response format for JSON mode

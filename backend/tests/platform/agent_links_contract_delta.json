@@ -1,0 +1,14 @@
+{
+  "paths": {
+    "/api/v1/agent-links/connect": "4d28bd0ce91101527dde8e42f4abae07319f69b9724281f7a75aae6127a2d6e4",
+    "/api/v1/agent-links/connections/{connection_id}": "6203650494e8b7a78420845d7c5ef843853172218c8234d90a6d01395b714105",
+    "/api/v1/agent-links/connections/{connection_id}/decision": "443d709423ebf9f9aaa313be337e260fe8b3230fa9940ce3f23671d89cad7c36",
+    "/api/v1/agent-links/connections/{connection_id}/review": "a4c5e9b1fadb07dba1d97d263e155d312c762d7b0c8e22c1fb74e3aaf79ef523",
+    "/api/v1/projects/{project_id}/agent-links": "de2273e2124428c409f010ce5c962093bd4912fa1a16933cb193ea94fdea37e3"
+  },
+  "schemas": {
+    "AgentConnect": "33b341602469d56388a3e2470f421502fc1989ac055ceee728cc8e8f657bb398",
+    "AgentConnectionDecision": "8d6a2869f1a4e7dc392406ba429d0c1a538549d946d0d386a83e39b667c36ec7",
+    "AgentLinkCreate": "204048c76e66009f104f2c958003045cead301160c3ea21d8639963010d7e709"
+  }
+}

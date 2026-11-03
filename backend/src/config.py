@@ -1,11 +1,15 @@
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from src.shared_types.managed_ai_provider import (
+    ManagedAIProviderProfile,
+    parse_provider_profiles,
+)
 from src.version_engine.domain.git_pack_limits import (
     DEFAULT_PACK_SCRATCH_BYTES,
     DEFAULT_STORED_PACK_BYTES,
@@ -90,6 +94,11 @@ class Settings(BaseSettings):
     def _normalize_host_list(hosts: list[str]) -> list[str]:
         """Strip empty entries and trailing slashes (except for '*')."""
         return [host if host == "*" else host.rstrip("/") for host in hosts if host]
+
+    @field_validator("MANAGED_AI_PROVIDERS", mode="before")
+    @classmethod
+    def read_managed_ai_providers(cls, value: Any) -> tuple[ManagedAIProviderProfile, ...]:
+        return parse_provider_profiles(value)
 
     @field_validator("ALLOWED_HOSTS", mode="before")
     @classmethod
@@ -440,6 +449,7 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
+    CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_SPRITES_TOKEN: str = ""
@@ -577,6 +587,9 @@ class Settings(BaseSettings):
     ACCESS_CREDENTIAL_PREVIOUS_HASH_SECRET: str = ""
     # Enable issuance only after every API/gateway replica understands parent grants.
     ACCESS_LIFECYCLE_ENABLED: bool = False
+    # Agent links that admit their holder without the owner signing in. Closed
+    # means none can be created and those already issued stop admitting.
+    AGENT_OPEN_LINKS_ENABLED: bool = False
 
     # Product entitlements / billing enforcement.
     # disabled: open-source/self-hosted default, no product limits enforced.
@@ -587,6 +600,8 @@ class Settings(BaseSettings):
     LOCAL_ENTITLEMENTS_FILE: str | None = None
     MANAGED_AI_ENABLED: bool = False
     MANAGED_AI_OPENROUTER_KEY: str = ""
+    # JSON array of OpenAI-compatible routes; each names its key's environment variable.
+    MANAGED_AI_PROVIDERS: Annotated[tuple[ManagedAIProviderProfile, ...], NoDecode] = ()
     BILLING_UI_ENABLED: bool = False
     BILLING_WRITES_ENABLED: bool = False
     SEAT_BILLING_MODE: Literal["disabled", "shadow", "required"] = "disabled"

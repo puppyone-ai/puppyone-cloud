@@ -77,7 +77,7 @@ def repository_with(runs, claims):
         return runs.pop(0) if runs else None
 
     return SimpleNamespace(
-        client=object(), claim_run=claim, claim_workbench_run=claim, release_execution=Mock()
+        client=object(), claim_workbench_run=claim, release_execution=Mock()
     )
 
 

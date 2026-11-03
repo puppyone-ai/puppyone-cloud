@@ -178,6 +178,18 @@ class WorkbenchRepository:
             raise
         raise RuntimeError("Workspace opening contract did not reject an absent identity")
 
+    def has_active_runs(self, row):
+        rows = (
+            self.client.table("agent_runs")
+            .select("id")
+            .eq("workbench_id", row["id"])
+            .in_("state", ["queued", "running", "waiting_approval", "publishing"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        return bool(rows)
+
     def expire_open(self, row):
         return self.command("expire_open", workbench=row["id"], deadline=row["open_deadline"])
 
@@ -193,6 +205,18 @@ class WorkbenchRepository:
             version=row["version"],
             action="pause",
         )
+
+    def retire(self, row):
+        return self.command(
+            "idle_claim",
+            workbench=row["id"],
+            generation=row["generation"],
+            version=row["version"],
+            action="retire",
+        )
+
+    def saved(self, row):
+        return self.command("saved", workbench=row["id"], generation=row["generation"])
 
     def reclaim_claim(self, row):
         """Claim a deleted owner's workspace for destruction once unoccupied."""

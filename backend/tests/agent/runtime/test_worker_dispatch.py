@@ -211,7 +211,7 @@ async def test_stop_drains_then_hands_off_unfinished_runs(monkeypatch, finishes_
         return runs[0] if len(claims) == 1 else None
 
     repository = SimpleNamespace(
-        client=object(), claim_run=claim, claim_workbench_run=claim, release_execution=Mock()
+        client=object(), claim_workbench_run=claim, release_execution=Mock()
     )
 
     class Supervisor:
@@ -225,7 +225,10 @@ async def test_stop_drains_then_hands_off_unfinished_runs(monkeypatch, finishes_
     isolate_worker(monkeypatch, repository, Supervisor)
     monkeypatch.setattr(settings, "AGENT_WORKER_POOL", "dev-alice")
     monkeypatch.setattr(settings, "CLOUD_AGENT_SHUTDOWN_GRACE_SECONDS", 1)
-    serving = asyncio.create_task(worker.serve(workbench_owner=None, stop=stop))
+    owner = SimpleNamespace(
+        reap=AsyncMock(), lifecycle=SimpleNamespace(serve=lambda **_: stop.wait())
+    )
+    serving = asyncio.create_task(worker.serve(workbench_owner=owner, stop=stop))
     try:
         await asyncio.wait_for(started.wait(), 2)
         assert await asyncio.to_thread(claiming.wait, 5)

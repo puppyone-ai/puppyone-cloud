@@ -164,6 +164,66 @@ async def events(
     )
 
 
+class WorkspaceGitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    generation: UUID
+
+
+class WorkspaceSyncRequest(WorkspaceGitRequest):
+    source_ref: str | None = Field(default=None, max_length=1024)
+
+
+async def _bound_workspace(service, user, project_id, request):
+    row, _ = await service.bound(user.user_id, project_id, str(request.generation), write=True)
+    return row
+
+
+@router.post("/sync")
+async def sync_workspace(
+    project_id: str,
+    request: WorkspaceSyncRequest,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    """Bring the Project's branch, or an Agent's branch, into the Workspace."""
+    row = await _bound_workspace(service, user, project_id, request)
+    return await service.git.sync(row, request.source_ref)
+
+
+@router.post("/sync/finish")
+async def finish_sync(
+    project_id: str,
+    request: WorkspaceGitRequest,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    row = await _bound_workspace(service, user, project_id, request)
+    return await service.git.finish(row)
+
+
+@router.post("/sync/abort")
+async def abort_sync(
+    project_id: str,
+    request: WorkspaceGitRequest,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    row = await _bound_workspace(service, user, project_id, request)
+    return await service.git.abort(row)
+
+
+@router.post("/publish")
+async def publish_workspace(
+    project_id: str,
+    request: WorkspaceGitRequest,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    """Save the Workspace's work and move the Project's branch to it."""
+    row = await _bound_workspace(service, user, project_id, request)
+    return await service.git.publish(row)
+
+
 def workspace_error_handler(request, error: WorkspaceError):
     """Preserve the existing HTTP error contract at the adapter boundary."""
     from src.exception_handler import http_exception_handler

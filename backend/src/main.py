@@ -657,6 +657,11 @@ def create_app() -> FastAPI:
     from src.platform.access.lifecycle_router import router as access_lifecycle_router
 
     app.include_router(access_lifecycle_router)
+    from src.platform.access.agent_link_router import instructions_router as agent_instructions_router
+    from src.platform.access.agent_link_router import router as agent_link_router
+
+    app.include_router(agent_link_router)
+    app.include_router(agent_instructions_router)
     from src.platform.access.adapters.api.workbench_router import router as workbench_router
 
     app.include_router(workbench_router)
