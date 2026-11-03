@@ -14,12 +14,16 @@ export function taskBinding(args) {
   return { uid: Number(uid), workbench, generation, execution };
 }
 
-export async function initializeTask(task) {
+/** Where every SSH command on a machine lives: one person or Agent, one home. */
+export const SHELL_HOME = `${CONTROL_ROOT}/homes/shell`;
+
+export async function initializeTask(task, { sharedHome = false } = {}) {
   // Tasks cannot initialize the workspace or its platform control roots.
   await requireWorkspace(task);
-  const homes = `${CONTROL_ROOT}/homes`, home = `${homes}/${task.uid}`;
+  const homes = `${CONTROL_ROOT}/homes`, home = sharedHome ? SHELL_HOME : `${homes}/${task.uid}`;
   await mkdir(homes, { recursive: true }); await chmod(homes, 0o711);
-  await mkdir(home, { recursive: true }); await chown(home, 1000, task.uid); await chmod(home, 0o700);
+  // A shared home belongs to the file user, not to the command that made it first.
+  await mkdir(home, { recursive: true }); await chown(home, 1000, sharedHome ? 1000 : task.uid); await chmod(home, 0o700);
   const name = `${STATE}/task-${task.uid}.json`;
   try { await writeFile(name, JSON.stringify(task), { flag: 'wx', mode: 0o600 }); }
   catch (error) {
@@ -36,13 +40,16 @@ export async function initializeTask(task) {
  * of that user could be rearranging; root then removes only what root owns. Best
  * effort: the stop has already succeeded and must still be acknowledged.
  */
-export async function forgetTask(task, home) {
+export async function forgetTask(task, home = null) {
   const asFileUser = (command, args) => new Promise(resolve => execFile(command, args, {
     uid: 1000, gid: task.uid, timeout: 60000, env: { PATH: '/usr/bin:/bin' },
   }, () => resolve()));
-  await asFileUser('chmod', ['-R', 'u+rwX', '--', home]);
-  await asFileUser('find', [home, '-mindepth', '1', '-delete']);
-  await rmdir(home).catch(() => undefined);
+  // A shared home outlives each command, so only a home of its own goes with it.
+  if (home) {
+    await asFileUser('chmod', ['-R', 'u+rwX', '--', home]);
+    await asFileUser('find', [home, '-mindepth', '1', '-delete']);
+    await rmdir(home).catch(() => undefined);
+  }
   for (const name of [`task-${task.uid}.json`, `task-${task.uid}.started`, `task-${task.uid}.revoked`,
     `stop-${task.uid}.lock`])
     await rm(`${STATE}/${name}`, { force: true }).catch(() => undefined);

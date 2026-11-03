@@ -7,7 +7,8 @@ import { ROOT, exists } from './git.mjs';
 import { STATE, taskBinding, initializeTask, signalTask, withTaskControlLock, forgetTask } from './workbench-task.mjs';
 
 const task = taskBinding(process.argv.slice(2));
-const home = await initializeTask(task);
+// Settings such as `git config --global` and shell history carry from one command to the next.
+const home = await initializeTask(task, { sharedHome: true });
 const flag = name => `${STATE}/task-${task.uid}.${name}`;
 // Stopped stays true once the stop's records are forgotten, so a start can never follow.
 let child, closed = false, stopped = false, stopping, operations = Promise.resolve();
@@ -25,7 +26,7 @@ async function stop() {
     await signalTask(task, 'SIGSTOP');
     await signalTask(task, 'SIGKILL');
     // Only after every process is gone; ``stopped`` refuses any later start here.
-    await forgetTask(task, home);
+    await forgetTask(task);
   });
 }
 function close() {

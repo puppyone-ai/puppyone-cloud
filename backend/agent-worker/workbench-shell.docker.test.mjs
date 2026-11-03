@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { CONTROL_ROOT, STATE } from './workbench-task.mjs';
+import { SHELL_HOME, STATE } from './workbench-task.mjs';
 import { exists as stat } from './git.mjs';
 
 const exists = async path => Boolean(await stat(path));
@@ -56,10 +56,10 @@ function workbench() {
   return initialized;
 }
 
-test('a command in the wider range runs, and once stopped leaves no process, home or record', { skip: !enabled, timeout: 60000 }, async () => {
+test('a command in the wider range runs, and once stopped leaves no process or record', { skip: !enabled, timeout: 60000 }, async () => {
   const { workbench: id, generation } = await workbench();
   // Past 59999 and nogroup (65534): the first identity of the second range.
-  const uid = 100000, home = `${CONTROL_ROOT}/homes/${uid}`;
+  const uid = 100000, home = SHELL_HOME;
   const command = shell(uid, id, generation);
   try {
     assert.equal((await command.control('capabilities')).workspace_shell, 1);
@@ -72,8 +72,8 @@ test('a command in the wider range runs, and once stopped leaves no process, hom
 
     await command.control('stop');
     assert.deepEqual(await holders(uid), []);
-    // Its home, even a directory it made unwritable, and its control records are gone.
-    assert.equal(await exists(home), false);
+    // Its control records are gone; the home is the machine's and stays.
+    assert.equal(await exists(`${home}/note`), true);
     for (const name of [`task-${uid}.json`, `task-${uid}.started`, `task-${uid}.revoked`, `stop-${uid}.lock`])
       assert.equal(await exists(`${STATE}/${name}`), false, name);
     await assert.rejects(command.control('start', { term: '', size: [80, 24], command: 'true' }), /not startable/);
@@ -101,3 +101,22 @@ test('an identity that could share a group the image has is refused', { skip: !e
     assert.notEqual(command.child.exitCode, 0, String(uid));
   }
 });
+
+test('every command on a machine shares one home, so settings carry to the next', { skip: !enabled, timeout: 60000 }, async () => {
+  const { workbench: id, generation } = await workbench();
+  const run = async (uid, script) => {
+    const command = shell(uid, id, generation);
+    try {
+      await command.control('start', { term: '', size: [80, 24], command: script });
+      await poll(() => command.child.exitCode !== null || exists(`${SHELL_HOME}/.done-${uid}`));
+      await command.control('stop');
+    } finally {
+      command.child.kill('SIGKILL');
+    }
+  };
+  await run(100010, `git config --global user.name 'Agent Fixture' && echo "$HOME" > "$HOME/.done-100010"`);
+  await run(100011, `git config --global user.name > "$HOME/seen" && touch "$HOME/.done-100011"`);
+  assert.equal((await readFile(`${SHELL_HOME}/seen`, 'utf8')).trim(), 'Agent Fixture');
+  assert.equal((await readFile(`${SHELL_HOME}/.done-100010`, 'utf8')).trim(), SHELL_HOME);
+});
+

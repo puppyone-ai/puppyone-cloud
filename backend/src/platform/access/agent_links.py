@@ -162,7 +162,8 @@ cat > {PROXY_HELPER_PATH} <<'PUPPYONE_PROXY'
 Then add `-o ProxyCommand='python3 {PROXY_HELPER_PATH} %h %p'` to `ssh.command`.
 
 Each command starts in your own copy of the project, on a machine only you use.
-Your files are saved to your own branch when the machine goes to sleep, and your
+Your home directory is kept from one command to the next, so settings such as
+`git config --global` stay. Your files are saved to your own branch when the machine goes to sleep, and your
 person decides when they join the project. Your first connection can take a few
 minutes while the machine is prepared, and says so while it waits; after that,
 waking takes up to a minute.
