@@ -97,6 +97,20 @@ async def until_app_absent(live, resource):  # noqa: F811
             await asyncio.sleep(1)
 
 
+async def until_reclaimed(live, identity, timeout=240):  # noqa: F811
+    """Maintenance takes the oldest due machines a batch at a time, repeatedly.
+
+    Other machines can fill one batch, so a single pass proves nothing here.
+    """
+    async with asyncio.timeout(timeout):
+        while True:
+            await live.workspace.lifecycle.reap()
+            row = await asyncio.to_thread(live.workspace.repository.get, identity)
+            if row["state"] == "retired":
+                return row
+            await asyncio.sleep(1)
+
+
 async def put_to_sleep(live, identity):  # noqa: F811
     """What maintenance does to an idle machine; its own loop may get there first."""
     await asyncio.to_thread(
@@ -159,8 +173,8 @@ async def reclaim(live, identity):  # noqa: F811
         f"""UPDATE cloud_workbenches SET paused_at=now()-interval '8 days',
         maintenance_after=now()-interval '10 years' WHERE id='{identity}'""",
     )
-    await live.workspace.lifecycle.reap()
-    return await until_state(live, identity, "retired")
+    # Other machines can fill one maintenance batch, so reap until this one is taken.
+    return await until_reclaimed(live, identity)
 
 
 @pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")

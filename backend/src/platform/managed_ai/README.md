@@ -6,13 +6,19 @@ It does not execute Agent tools or enable hosted Runtime billing.
 - `router.py`: HTTP/auth boundary, personal-credit proxy and internal usage recovery.
 - `schemas.py`: bounded text/function-tool inputs; no caller-supplied provider, actor or price.
 - `service.py`: reservation → single execution claim → provider stream → actual usage settlement.
+- `providers/`: OpenAI-compatible HTTP and streaming, plus OpenRouter's profile and usage recovery.
 - `../billing/gateway.py`: existing allow-listed PuppyPay service client.
 - `../auth/`: existing human identity and Desktop sign-in flow.
 
 PuppyPay owns every balance write. Provider identity must be durable before
 forwarding content; incomplete usage stays reserved for Worker recovery.
-The current service still contains OpenRouter HTTP and FastAPI SSE details;
-separating these adapters is follow-up, not completed layering.
+
+A route is `(provider, account_ref)`. PuppyPay's AI catalog chooses it and the
+reservation locks it. OpenRouter is built in; `MANAGED_AI_PROVIDERS` adds other
+OpenAI-compatible routes and names each key's environment variable. A provider
+without OpenRouter's `/generation` lookup cannot recover interrupted usage, so
+its hold moves to PuppyPay manual review. Never remove a route that held
+reservations still reference.
 
 Canonical architecture, data ownership and remaining work live in
 [`puppy-issues/document/puppyone/architecture/control-plane/desktop-agent-inference.md`](https://github.com/puppyone-ai/puppy-issues/blob/main/document/puppyone/architecture/control-plane/desktop-agent-inference.md).

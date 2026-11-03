@@ -94,6 +94,9 @@ def accept(config: dict) -> dict:
         )
         client.headers["Authorization"] = "Bearer " + login["access_token"]
         client.headers["X-PuppyOne-Repository-Contract"] = "2"
+        # Agent calls are prepaid. This account starts like any new user, with
+        # its one-time trial; claiming again changes nothing.
+        call("POST", "/ai/trial", json={})
         project = call(
             "POST",
             "/projects/",

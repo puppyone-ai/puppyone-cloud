@@ -126,6 +126,18 @@ jobs:
           python -m pip install 'uv==0.5.11'
           cd backend
           uv sync --locked
+      # The upgrade contracts start their own PostgreSQL 17 server.
+      - name: Install PostgreSQL 17
+        timeout-minutes: 10
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1
         if: inputs.live
         with:

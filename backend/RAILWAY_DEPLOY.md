@@ -108,7 +108,9 @@ MINERU_POLL_INTERVAL=5
 MINERU_MAX_WAIT_TIME=600
 
 # LLM 配置
-DEFAULT_TEXT_MODEL=openrouter/qwen/qwen3-235b-a22b-2507
+LLM_API_BASE=https://your-provider.example/v1
+LLM_API_KEY=your-key
+DEFAULT_TEXT_MODEL=openai/deepseek-flash-1017
 LLM_TIMEOUT=60
 LLM_TEMPERATURE=0.3
 ```
