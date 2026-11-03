@@ -3,6 +3,8 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import asyncssh
@@ -168,7 +170,11 @@ def link_service(control_api, monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
     endpoint = {"host": "gateway.fixture", "port": 2222, "known_hosts": "gateway.fixture ssh-ed25519 AAAA"}
-    return AgentLinkService(AgentLinkRepository(control_api), endpoint=lambda: endpoint)
+    # Starting the admitted Agent's machine is covered without a provider elsewhere.
+    workspaces = SimpleNamespace(request_open=AsyncMock())
+    return AgentLinkService(
+        AgentLinkRepository(control_api), endpoint=lambda: endpoint, workspaces=workspaces
+    )
 
 
 def secret():

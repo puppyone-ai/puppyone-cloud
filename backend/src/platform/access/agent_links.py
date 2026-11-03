@@ -6,6 +6,8 @@ invitation admits it at once. From then on its SSH key is the only thing it keep
 Grants, sessions, revocation and audit are the existing lifecycle records.
 """
 
+import asyncio
+import logging
 import re
 from uuid import UUID
 
@@ -35,6 +37,10 @@ CONNECTION_OPTIONS = (
 )
 POLL_INTERVAL_SECONDS = 3
 INVITATION_PATTERN = re.compile(r"pai_[A-Za-z0-9_-]{43,128}")
+
+logger = logging.getLogger(__name__)
+# Machines being prepared for Agents just let in; held so the loop keeps them.
+_PREPARING: set[asyncio.Task] = set()
 
 
 def public_origin():
@@ -147,9 +153,10 @@ class AgentLinkRepository(AccessRepository):
 
 
 class AgentLinkService:
-    def __init__(self, repository=None, endpoint=None):
+    def __init__(self, repository=None, endpoint=None, workspaces=None):
         self.repository = repository or AgentLinkRepository()
         self._endpoint = endpoint
+        self._workspaces = workspaces
 
     def endpoint(self):
         if self._endpoint is not None:
@@ -194,9 +201,38 @@ class AgentLinkService:
         return await run_blocking(self.repository.command, "review", user, id=connection)
 
     async def decide(self, user, connection, decision):
-        return await run_blocking(
+        row = await run_blocking(
             self.repository.command, "decide", user, id=connection, decision=decision
         )
+        if row.get("state") == "approved":
+            self.prepare_soon(row["id"])
+        return row
+
+    def prepare_soon(self, connection):
+        """Start the Agent's machine once it is let in, without making anyone wait for it."""
+        task = asyncio.get_running_loop().create_task(self.prepare(connection))
+        _PREPARING.add(task)
+        task.add_done_callback(_PREPARING.discard)
+
+    async def prepare(self, connection):
+        """Ask for the Agent's machine now, so its first command does not wait for it.
+
+        Only the intent is recorded; the sandbox module starts the machine. Best
+        effort: the Agent's first connection prepares it anyway.
+        """
+        from src.platform.workspace.connections import RESUMABLE_STATES
+
+        try:
+            row = await self.workspace(connection)
+            if row["state"] == "running" or row["state"] in RESUMABLE_STATES:
+                return
+            if self._workspaces is None:
+                from .composition import build_workbench_service
+
+                self._workspaces = build_workbench_service()
+            await self._workspaces.request_open(row["user_id"], row["project_id"], row)
+        except Exception:
+            logger.warning("agent_workspace_prepare_failed", exc_info=True)
 
     async def connect(self, request):
         try:
@@ -230,6 +266,7 @@ class AgentLinkService:
                 raise HTTPException(403, detail={"code": "agent_link_unavailable"}) from exc
             raise
         if row["state"] == "approved":
+            self.prepare_soon(row["id"])
             return self._ready(row["id"], None)
         return {
             "status": "pending",
