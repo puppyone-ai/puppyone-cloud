@@ -170,3 +170,28 @@ def test_a_session_cannot_be_borrowed_by_another_workspace(postgres, submitted):
     with pytest.raises(RuntimeError, match="workspace_connection_expired"):
         command(postgres, args, other, session)
     assert command(postgres, args, workspace, session)["workbench_id"] == workspace["id"]
+
+
+def test_the_owner_sees_whether_a_connection_is_running_a_command(postgres, submitted):
+    args, _ = submitted
+    _, workspace, session, _ = connected(postgres, args)
+
+    def listed():
+        rows = call(
+            postgres,
+            "access_inspect",
+            user=args["user"],
+            collection="sessions",
+            project=args["project"],
+        )
+        return next(row for row in rows if row["id"] == session)
+
+    # Connected and idle is not at work.
+    assert listed()["commands_running"] == 0
+    assert listed()["last_command_at"] is None
+    running_command = command(postgres, args, workspace, session)
+    assert listed()["commands_running"] == 1
+    started = listed()["last_command_at"]
+    released(postgres, running_command)
+    assert listed()["commands_running"] == 0
+    assert listed()["last_command_at"] >= started
