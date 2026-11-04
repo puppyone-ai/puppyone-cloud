@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.imports.arq_client import ImportArqClient
 from src.platform.imports.provider import detect_import_provider, suggest_import_name

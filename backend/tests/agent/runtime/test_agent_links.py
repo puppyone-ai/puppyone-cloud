@@ -3,6 +3,8 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import asyncssh
@@ -168,7 +170,11 @@ def link_service(control_api, monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
     endpoint = {"host": "gateway.fixture", "port": 2222, "known_hosts": "gateway.fixture ssh-ed25519 AAAA"}
-    return AgentLinkService(AgentLinkRepository(control_api), endpoint=lambda: endpoint)
+    # Starting the admitted Agent's machine is covered without a provider elsewhere.
+    workspaces = SimpleNamespace(request_open=AsyncMock())
+    return AgentLinkService(
+        AgentLinkRepository(control_api), endpoint=lambda: endpoint, workspaces=workspaces
+    )
 
 
 def secret():
@@ -285,7 +291,7 @@ def test_a_link_admits_one_agent_and_stopping_sharing_ends_it(postgres, submitte
     with pytest.raises(RuntimeError, match="access_denied"):
         connect(postgres, link)
     inventory = link_command(postgres, "inventory", args["user"], project_id=args["project"])
-    assert inventory == {"links": [], "connections": []}
+    assert inventory == {"links": [], "connections": [], "pending": []}
 
 
 def test_every_external_agent_has_its_own_machine_and_branch(postgres, submitted):
@@ -457,6 +463,80 @@ def test_an_abandoned_request_cannot_be_approved_later(postgres, submitted):
     assert status(postgres, connection["id"], poll)["state"] == "expired"
     with pytest.raises(RuntimeError, match="access_conflict"):
         link_command(postgres, "decide", args["user"], id=connection["id"], decision="approve")
+
+
+def waiting(db, args):
+    return link_command(db, "inventory", args["user"], project_id=args["project"])["pending"]
+
+
+def test_the_owner_sees_each_waiting_agent_until_one_is_allowed(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    link = create_link(postgres, args, row, "sign_in")
+    first, first_poll = connect(postgres, link)
+    second, _ = connect(postgres, link)
+
+    pending = waiting(postgres, args)
+    assert [item["id"] for item in pending] == [second["id"], first["id"]]
+    assert {item["name"] for item in pending} == {"Test agent"}
+    assert {item["admission"] for item in pending} == {"sign_in"}
+    # What the owner decides on, never what would let someone else connect.
+    rendered = json.dumps(pending)
+    assert KEY not in rendered and first_poll not in rendered and link not in rendered
+
+    # A link admits one Agent, so allowing one ends the others' wait.
+    link_command(postgres, "decide", args["user"], id=first["id"], decision="approve")
+    assert waiting(postgres, args) == []
+    assert status(postgres, first["id"], first_poll)["state"] == "approved"
+
+
+def test_the_picture_an_agent_chose_stays_beside_its_name(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    link = create_link(postgres, args, row, "sign_in")
+    chose = sql_call(postgres, "access_agent_connect", [link], hash_of(), "Grok helper", KEY, "grok-bot")
+    # An Agent from before the choice existed, or one that made none, has no picture.
+    silent, _ = connect(postgres, link)
+
+    assert {item["id"]: item["avatar"] for item in waiting(postgres, args)} == {
+        chose["id"]: "grok-bot", silent["id"]: None,
+    }
+    assert link_command(postgres, "review", args["user"], id=chose["id"])["avatar"] == "grok-bot"
+    link_command(postgres, "decide", args["user"], id=chose["id"], decision="approve")
+    connections = link_command(postgres, "inventory", args["user"], project_id=args["project"])["connections"]
+    assert [(item["name"], item["avatar"]) for item in connections] == [("Grok helper", "grok-bot")]
+    # The stored choice is a short identifier, never markup or a picture itself.
+    with pytest.raises(RuntimeError, match=r"access_agent_connections_avatar_check|check constraint"):
+        sql_call(postgres, "access_agent_connect", [create_link(postgres, args, row, "sign_in")], hash_of(),
+                 "Painter", KEY, "<svg onload=alert(1)>")
+
+
+def test_a_rejected_or_expired_request_stops_waiting(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    link = create_link(postgres, args, row, "sign_in")
+    rejected, _ = connect(postgres, link)
+    expired, _ = connect(postgres, link)
+    kept, _ = connect(postgres, link)
+
+    link_command(postgres, "decide", args["user"], id=rejected["id"], decision="reject")
+    postgres.sql(
+        f"""UPDATE access_agent_connections SET created_at=clock_timestamp()-interval '1 hour',
+        expires_at=clock_timestamp()-interval '1 minute' WHERE id='{expired["id"]}';"""
+    )
+    assert [item["id"] for item in waiting(postgres, args)] == [kept["id"]]
+
+    # Stopping sharing ends every link, and with it every wait.
+    link_command(postgres, "stop", args["user"], project_id=args["project"])
+    assert waiting(postgres, args) == []
+
+
+def test_only_the_owner_sees_who_is_waiting(postgres, submitted):
+    args, _ = submitted
+    row = running(postgres, args)
+    connect(postgres, create_link(postgres, args, row, "sign_in"))
+    with pytest.raises(RuntimeError, match="access_denied"):
+        link_command(postgres, "inventory", stranger(postgres), project_id=args["project"])
 
 
 def test_rejection_is_final(postgres, submitted):

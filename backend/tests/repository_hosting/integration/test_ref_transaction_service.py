@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     GrantSource,
     ProjectCapability,
     ProjectGrant,

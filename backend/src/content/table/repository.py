@@ -54,21 +54,25 @@ class TableRepositoryBase(ABC):
 class TableRepositorySupabase(TableRepositoryBase):
     """Supabase-based Table repository implementation"""
 
-    def __init__(self, supabase_repo=None):
+    def __init__(self, table_repo=None, project_repo=None):
         """
         Initialize repository.
 
         Args:
-            supabase_repo: Optional SupabaseRepository instance; creates a new one if not provided
+            table_repo: Optional TableRepository; built on the shared client if not provided
+            project_repo: Optional ProjectRepository; built on the shared client if not provided
         """
-        if supabase_repo is None:
+        if table_repo is None or project_repo is None:
             # Lazy import to avoid triggering during module import
-            from src.infra.supabase.dependencies import get_supabase_repository
+            from src.content.table.supabase_repo import TableRepository
+            from src.infra.supabase.dependencies import get_supabase_client
+            from src.platform.project.supabase_repo import ProjectRepository
 
-            # Use shared singleton instance to avoid duplicate creation
-            self._supabase_repo = get_supabase_repository()
-        else:
-            self._supabase_repo = supabase_repo
+            client = get_supabase_client()
+            table_repo = table_repo or TableRepository(client)
+            project_repo = project_repo or ProjectRepository(client)
+        self._table_repo = table_repo
+        self._project_repo = project_repo
 
     def get_by_org_id(self, org_id: str) -> list[Table]:
         """
@@ -80,7 +84,7 @@ class TableRepositorySupabase(TableRepositoryBase):
         Returns:
             List of Tables
         """
-        projects = self._supabase_repo.get_projects(org_id=org_id)
+        projects = self._project_repo.get_list(org_id=org_id)
         project_ids = [project.id for project in projects]
 
         if not project_ids:
@@ -88,7 +92,7 @@ class TableRepositorySupabase(TableRepositoryBase):
 
         all_tables = []
         for project_id in project_ids:
-            tables = self._supabase_repo.get_tables(project_id=project_id)
+            tables = self._table_repo.get_list(project_id=project_id)
             all_tables.extend(tables)
 
         return [self._table_response_to_table(table) for table in all_tables]
@@ -107,11 +111,11 @@ class TableRepositorySupabase(TableRepositoryBase):
         """
         from src.content.table.schemas import TableOut
 
-        projects = self._supabase_repo.get_projects(org_id=org_id)
+        projects = self._project_repo.get_list(org_id=org_id)
 
         result = []
         for project in projects:
-            tables_response = self._supabase_repo.get_tables(project_id=project.id)
+            tables_response = self._table_repo.get_list(project_id=project.id)
 
             tables = [
                 TableOut(
@@ -148,7 +152,7 @@ class TableRepositorySupabase(TableRepositoryBase):
         Returns:
             Table object, or None if not found
         """
-        table_response = self._supabase_repo.get_table(table_id)
+        table_response = self._table_repo.get_by_id(table_id)
         if table_response:
             return self._table_response_to_table(table_response)
         return None
@@ -188,7 +192,7 @@ class TableRepositorySupabase(TableRepositoryBase):
             description=description,
             data=data,
         )
-        table_response = self._supabase_repo.create_table(table_data)
+        table_response = self._table_repo.create(table_data)
         return self._table_response_to_table(table_response)
 
     def update(
@@ -217,7 +221,7 @@ class TableRepositorySupabase(TableRepositoryBase):
             description=description,
             data=data,
         )
-        table_response = self._supabase_repo.update_table(table_id, update_data)
+        table_response = self._table_repo.update(table_id, update_data)
         if table_response:
             return self._table_response_to_table(table_response)
         return None
@@ -232,7 +236,7 @@ class TableRepositorySupabase(TableRepositoryBase):
         Returns:
             Whether deletion was successful
         """
-        return self._supabase_repo.delete_table(table_id)
+        return self._table_repo.delete(table_id)
 
     def update_context_data(self, table_id: str, data: dict) -> Table | None:
         """
@@ -248,7 +252,7 @@ class TableRepositorySupabase(TableRepositoryBase):
         from src.content.table.supabase_schemas import TableUpdate
 
         update_data = TableUpdate(data=data)
-        table_response = self._supabase_repo.update_table(table_id, update_data)
+        table_response = self._table_repo.update(table_id, update_data)
         if table_response:
             return self._table_response_to_table(table_response)
         return None

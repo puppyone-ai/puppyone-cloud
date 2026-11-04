@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.platform.repository_context.models import GitCredentialMode
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     RepositoryTarget,
     repository_target_scope_id,
 )

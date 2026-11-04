@@ -18,7 +18,7 @@ from src.context_publish.supabase_schemas import (
 )
 from src.exceptions import ErrorCode, NotFoundException, ValidationException
 from src.infra.supabase.exceptions import SupabaseDuplicateKeyError, SupabaseException
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 
 _BASE62_ALPHABET = string.ascii_letters + string.digits

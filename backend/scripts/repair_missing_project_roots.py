@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 import re
 
 from src.infra.supabase.client import SupabaseClient
+from src.platform.project.write_lease import install_storage_write_admission
 from src.version_engine.bootstrap.dependencies import (
     build_worker_version_engine_container,
 )
@@ -241,6 +242,7 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
+    install_storage_write_admission()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-id", action="append", default=[])
     parser.add_argument("--all", action="store_true", help="dry-run all projects")

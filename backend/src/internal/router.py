@@ -64,7 +64,7 @@ def _enforce_acting_user_project_access(
 
     try:
         from src.platform.authorization.factory import build_authorization_service
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         selected_action = action or ProjectAction.CONTENT_READ
         allowed = build_authorization_service().allows(project_id, acting_user, selected_action)
@@ -207,7 +207,7 @@ def get_table_context_schema(
     table_service=Depends(get_table_service),
 ):
     try:
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         _enforce_acting_user_table_access(
             request, table_service, table_id, ProjectAction.CONTENT_READ
@@ -235,7 +235,7 @@ def get_table_context_data(
     table_service=Depends(get_table_service),
 ):
     try:
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         _enforce_acting_user_table_access(
             request, table_service, table_id, ProjectAction.CONTENT_READ
@@ -266,7 +266,7 @@ async def create_table_context_data(
     table_service=Depends(get_table_service),
 ):
     try:
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         _enforce_acting_user_table_access(
             request, table_service, table_id, ProjectAction.CONTENT_WRITE
@@ -300,7 +300,7 @@ async def update_table_context_data(
     table_service=Depends(get_table_service),
 ):
     try:
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         _enforce_acting_user_table_access(
             request, table_service, table_id, ProjectAction.CONTENT_WRITE
@@ -332,7 +332,7 @@ async def delete_table_context_data(
     table_service=Depends(get_table_service),
 ):
     try:
-        from src.platform.authorization.models import ProjectAction
+        from src.shared_types.grants import ProjectAction
 
         _enforce_acting_user_table_access(
             request, table_service, table_id, ProjectAction.CONTENT_WRITE
@@ -351,12 +351,7 @@ async def delete_table_context_data(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post(
-    "/sandbox-endpoint-by-key",
-    summary="Get standalone Sandbox endpoint configuration by access key",
-    description="External consumers call this to get Sandbox endpoint mounts, runtime, and other configuration before execution",
-    dependencies=[Depends(verify_internal_secret)],
-)
+# Not registered: Sandbox endpoints are not offered as an access method.
 def get_sandbox_endpoint_by_key(access_key: str = Body(..., embed=True)):
     from src.platform.access.adapters.sandbox_endpoint.repository import SandboxEndpointRepository
 

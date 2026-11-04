@@ -68,7 +68,7 @@ class TestAccessListMaskingHelpers:
         return router
 
     def test_redact_config_strips_secrets(self):
-        r = self._mod()
+        from src.platform.access.config_redaction import redact_config
         cfg = {
             "mcp_api_key": "secret",
             "api_key": "secret",
@@ -77,7 +77,7 @@ class TestAccessListMaskingHelpers:
             "sync_url": "https://example.com",  # non-secret, kept
             "name": "my connector",             # kept
         }
-        out = r._redact_config(cfg)
+        out = redact_config(cfg)
         assert "sync_url" in out and "name" in out
         for secret_key in ("mcp_api_key", "api_key", "access_key", "token"):
             assert secret_key not in out

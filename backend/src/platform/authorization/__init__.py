@@ -1,6 +1,6 @@
 """Canonical human Project authorization boundary."""
 
-from .models import (
+from src.shared_types.grants import (
     GrantSource,
     ProjectAction,
     ProjectCapability,

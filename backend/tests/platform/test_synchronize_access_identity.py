@@ -15,7 +15,7 @@ from src.platform.access.service import AccessService
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.repository_target.models import ProjectRootTarget
+from src.shared_types.repository_target import ProjectRootTarget
 from src.platform.synchronize import public_router as sync_router
 from src.platform.synchronize.dependencies import get_synchronize_service
 from src.platform.synchronize.models import SynchronizeBinding

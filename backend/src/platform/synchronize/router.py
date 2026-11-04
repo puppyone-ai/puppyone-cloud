@@ -18,9 +18,10 @@ from src.infra.execution.runner import run_owned
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.synchronize.arq_client import SyncArqClient
+from src.platform.synchronize.classification import ensure_classified_binding
 from src.platform.synchronize.config_contract import (
     validate_bootstrap_config,
     validate_structured_config,
@@ -47,12 +48,13 @@ from src.platform.synchronize.public_schemas import (
     SynchronizeStatusItem,
     SynchronizeTriggerUpdate,
 )
+from src.platform.synchronize.schedule import sync_trigger
 from src.platform.synchronize.schemas import binding_to_response
 from src.platform.synchronize.service import SynchronizeService
 from src.provider._base import AuthRequirement
 from src.provider.registry import ProviderRegistry
 from src.utils.logger import log_error
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 _PROJECT_ID_DESC = "Project ID"
 _PULL_DIRECTIONS = {"inbound", "bidirectional"}
@@ -94,28 +96,6 @@ def _ensure_project_access(
     )
 
 
-def _ensure_classified_binding(connection) -> None:
-    # Final storage ownership is authoritative. Only an explicitly retained,
-    # disabled historical binding may carry a retired provider classification.
-    # Corrupt/unmigrated input still fails closed; no provider-based filtering.
-    reason = getattr(connection, "legacy_read_only_reason", None)
-    if isinstance(reason, str) and reason.strip() and connection.status == "disabled":
-        return
-    config = getattr(connection, "config", None) or {}
-    if (
-        getattr(connection, "provider", None) == "database"
-        or "db_config" in config
-        or (getattr(connection, "trigger", None) or {}).get("type") == "import_once"
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "SOURCE_CLASSIFICATION_REQUIRED",
-                "message": "Classify and migrate legacy source records before Synchronize management. Import source IDs must not be reused as binding IDs.",
-            },
-        )
-
-
 def _get_connection_with_access(
     *,
     connection_id: str,
@@ -131,7 +111,7 @@ def _get_connection_with_access(
             detail=f"Integration connection #{connection_id} not found",
         )
     _ensure_project_access(authorization, current_user, connection.project_id, action)
-    _ensure_classified_binding(connection)
+    ensure_classified_binding(connection)
     if action is not None and getattr(connection, "legacy_read_only_reason", None):
         raise HTTPException(
             409,
@@ -262,7 +242,7 @@ def get_project_sync_status(
     _ensure_project_access(authorization, current_user, project_id)
     connections = service.repository.list_by_project(project_id)
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     items = [
         SynchronizeStatusItem(
             id=c.id,
@@ -352,7 +332,7 @@ async def create_connection(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
 
     _ensure_project_access(
         authorization,
@@ -422,9 +402,7 @@ async def create_connection(
 
     if execution_result and body.sync_mode == "scheduled" and body.trigger:
         try:
-            from src.infra.scheduler.service import get_scheduler_service
-
-            get_scheduler_service().sync_trigger(
+            sync_trigger(
                 connection_id=connection.id,
                 provider=provider,
                 trigger_config=body.trigger,
@@ -459,7 +437,7 @@ def list_connections(
     else:
         connections = service.repository.list_by_project(project_id)
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     return ApiResponse.success(data=[_sync_resp(c) for c in connections])
 
 
@@ -477,9 +455,7 @@ def delete_connection(
         action=ProjectAction.SYNCHRONIZE_MANAGE,
     )
     try:
-        from src.infra.scheduler.service import get_scheduler_service
-
-        get_scheduler_service().sync_trigger(connection_id)
+        sync_trigger(connection_id)
     except Exception:
         pass
     service.remove_sync(connection_id)
@@ -574,9 +550,7 @@ def update_connection_trigger(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        from src.infra.scheduler.service import get_scheduler_service
-
-        get_scheduler_service().sync_trigger(
+        sync_trigger(
             connection_id=connection_id,
             provider=connection.provider,
             trigger_config=trigger_data if body.sync_mode == "scheduled" else None,
@@ -666,7 +640,7 @@ def list_failed_runs(
     if not connections:
         return ApiResponse.success(data=[])
     for connection in connections:
-        _ensure_classified_binding(connection)
+        ensure_classified_binding(connection)
     by_id = {c.id: c for c in connections}
     runs = _get_run_repo().list_failed_for_connections(list(by_id), limit=limit)
     items = []
@@ -773,7 +747,7 @@ async def bootstrap(
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
 
     _ensure_project_access(
         authorization,
@@ -834,11 +808,8 @@ async def bootstrap(
 
     if body.sync_mode == "scheduled" and body.trigger:
         try:
-            from src.infra.scheduler.service import get_scheduler_service
-
-            scheduler = get_scheduler_service()
             for connection in queued_connections:
-                scheduler.sync_trigger(
+                sync_trigger(
                     connection_id=connection.id,
                     provider=provider,
                     trigger_config=body.trigger,
@@ -891,7 +862,7 @@ async def trigger_pull(
         )
         # Validate the whole batch before enqueueing any work.
         for connection in connections:
-            _ensure_classified_binding(connection)
+            ensure_classified_binding(connection)
         results = []
         for connection in connections:
             if connection.direction not in _PULL_DIRECTIONS:
@@ -924,7 +895,7 @@ async def trigger_push(
 ):
     import json as _json
 
-    from src.platform.authorization.models import ProjectAction
+    from src.shared_types.grants import ProjectAction
     from src.version_engine.read.tree_reader import detect_type
 
     grant = await run_owned(

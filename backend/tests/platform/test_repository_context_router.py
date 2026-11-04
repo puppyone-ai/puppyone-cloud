@@ -10,7 +10,7 @@ from src.exceptions import AppException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ROLE_CAPABILITIES,
     GrantSource,
     ProjectGrant,
@@ -25,7 +25,7 @@ from src.platform.repository_context.models import (
     RepositoryProjectContext,
 )
 from src.platform.repository_context.router import router
-from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.shared_types.repository_target import ProjectRootTarget, ScopeTarget
 
 _OPERATION_KEY = "123e4567-e89b-42d3-a456-426614174000"
 _RAW_CREDENTIAL = "pwg_" + "A" * 43

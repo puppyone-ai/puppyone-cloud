@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime import worker
+from src.platform.agent.runtime import worker
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_the_dispatcher_claims_only_workbench_runs(monkeypatch):
     monkeypatch.setattr(worker, "RunRepository", lambda: repo)
     monkeypatch.setattr(worker, "Admission", lambda _: object())
     monkeypatch.setattr(worker, "Publication", lambda transport, filesystem: object())
-    monkeypatch.setattr(worker, "RunGitTransport", lambda _: object())
+    monkeypatch.setattr(worker, "build_git_transport", lambda _: object())
     monkeypatch.setattr(
         worker,
         "build_worker_version_engine_container",

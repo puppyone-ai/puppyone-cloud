@@ -16,11 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.platform.repository_target.auth_context import (
+from src.version_engine.admission.auth_context import (
     repository_mode_from_auth,
     repository_view_from_auth,
 )
-from src.platform.repository_target.models import ResolvedRepositoryView
+from src.shared_types.repository_target import ResolvedRepositoryView
 from src.version_engine.write_engine.path_utils import normalize_path
 from src.utils.logger import log_warning
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import asyncssh
 
 from src.infra.execution.runner import run_blocking
+from src.platform.project.write_lease import install_storage_write_admission
 from src.platform.workspace.errors import WorkspaceError
 
 from .config import ssh_settings
@@ -22,6 +23,16 @@ HEARTBEAT_SECONDS = 8
 # An open session keeps its machine running, so a forgotten one must not last.
 IDLE_SESSION_SECONDS = 1800
 IDLE_CHECK_SECONDS = 30
+# The connection's own heartbeat, inside its Access session's 45-second lease.
+CONNECTION_HEARTBEAT_SECONDS = 15
+# A connection with no command running holds no machine, but still ends in time,
+# as a client keeping it open (OpenSSH ControlPersist) expects.
+IDLE_CONNECTION_SECONDS = 1800
+# Infrastructure failures a renewal survives; the lease decides access meanwhile.
+CONNECTION_RENEWAL_ATTEMPTS = 3
+# Dead clients behind a proxy leave no FIN; keepalives find them.
+KEEPALIVE_SECONDS = 15
+KEEPALIVE_COUNT = 4
 
 SESSION_MESSAGES = {
     "workbench_not_running": "the workspace is not running and this credential cannot resume it.",
@@ -30,12 +41,19 @@ SESSION_MESSAGES = {
     "workspace_connection_ended": (
         "this session was ended: the workspace owner disconnected it or the workspace stopped."
     ),
+    "workspace_preparing": "the workspace is still being prepared; run the command again in a minute.",
     "access_denied": (
         "access to this workspace is not available: it was revoked, expired or ended by "
         "the owner, or is already in use by another session."
     ),
 }
 UNEXPECTED_ENDING = "the session ended unexpectedly; reconnect to continue."
+# How long a refused command's client gets to read why before its connection closes.
+CLOSE_NOTICE_SECONDS = 5
+# Codes that end the session every command on a connection shares, not one command.
+CONNECTION_ENDINGS = frozenset(
+    {"access_denied", "workspace_connection_ended", "workbench_generation_changed"}
+)
 
 
 class ClientDisconnected(ConnectionError):
@@ -66,10 +84,99 @@ def session_ending(error):
     return None, bool(leaves) and all(isinstance(leaf, ClientDisconnected) for leaf in leaves)
 
 
+class ConnectionAdmission:
+    """What one SSH connection was admitted to, shared by every command over it.
+
+    A client multiplexing commands over one connection (OpenSSH ControlMaster)
+    signs in once: the first command admits the connection, the rest reuse it.
+    Its heartbeat holds the session; when the server ends it, new commands are
+    refused, running ones end and say why, and then the connection closes.
+    """
+
+    def __init__(self, service, connection):
+        self.service, self.connection = service, connection
+        self.lock = asyncio.Lock()
+        self.session = None
+        self.ended = None
+        self.ending = asyncio.Event()
+        self.commands = 0
+        self.last_seen = time.monotonic()
+        self.keeper = None
+
+    async def session_for(self, identity, notify):
+        async with self.lock:
+            if self.ended:
+                raise WorkspaceError(403, {"code": self.ended})
+            if self.session is None:
+                self.session = await self.service.admit(identity, notify=notify)
+                self.keeper = asyncio.create_task(self.keep())
+            return self.session
+
+    def begin(self):
+        self.commands += 1
+        self.last_seen = time.monotonic()
+
+    def end(self):
+        self.commands -= 1
+        self.last_seen = time.monotonic()
+        if self.ended and self.commands == 0:
+            self.connection.close()
+
+    def stop(self, code):
+        if not self.ended:
+            self.ended = code
+            self.ending.set()
+        if self.commands == 0:
+            self.connection.close()
+
+    async def until_ended(self):
+        """A running command's own lease may outlive the session, as an owner's does."""
+        await self.ending.wait()
+        raise WorkspaceError(403, {"code": self.ended})
+
+    async def keep(self):
+        failures = 0
+        while True:
+            await asyncio.sleep(CONNECTION_HEARTBEAT_SECONDS)
+            if self.commands == 0 and time.monotonic() - self.last_seen >= IDLE_CONNECTION_SECONDS:
+                logger.info("workspace_ssh_connection_idle")
+                self.stop("workspace_connection_ended")
+                return
+            try:
+                await self.service.renew_session(self.session)
+                failures = 0
+            except WorkspaceError as exc:
+                # Revoked, expired, replaced or no longer allowed: an expected ending.
+                code, _ = session_ending(exc)
+                logger.warning("workspace_ssh_connection_ended", extra={"code": code})
+                self.stop(code)
+                return
+            except Exception:
+                failures += 1
+                if failures >= CONNECTION_RENEWAL_ATTEMPTS:
+                    logger.exception("workspace_ssh_connection_renewal_failed")
+                    self.stop("workspace_unavailable")
+                    return
+
+    async def close(self):
+        if self.keeper:
+            self.keeper.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.keeper
+        if self.session is not None:
+            try:
+                await self.service.finish(self.session)
+            except Exception:
+                # The lease lapses and cleanup closes the session instead.
+                logger.warning("workspace_ssh_connection_finish_pending")
+
+
 class SshServer(asyncssh.SSHServer):
-    def __init__(self, service, connections, max_connections=None):
+    def __init__(self, service, connections, max_connections=None, admissions=None, closing=None):
         self.service, self.connections = service, connections
         self.max_connections = max_connections
+        self.admissions = admissions if admissions is not None else {}
+        self.closing = closing if closing is not None else set()
 
     def connection_made(self, connection):
         self.connection = connection
@@ -79,9 +186,15 @@ class SshServer(asyncssh.SSHServer):
             connection.close()
             return
         self.connections.add(connection)
+        self.admissions[connection] = ConnectionAdmission(self.service, connection)
 
     def connection_lost(self, exc):
         self.connections.discard(self.connection)
+        admission = self.admissions.pop(self.connection, None)
+        if admission is not None:
+            task = asyncio.ensure_future(admission.close())
+            self.closing.add(task)
+            task.add_done_callback(self.closing.discard)
 
     def begin_auth(self, username):
         return True
@@ -93,18 +206,24 @@ class SshServer(asyncssh.SSHServer):
         return await self.service.authenticate(username, key)
 
 
-async def serve_shell(process, service):
+async def serve_shell(process, service, admission):
     if process.subsystem:
         process.exit(1)
         return
     identity = process.get_extra_info("username")
 
     async def notify(message):
-        process.stderr.write(message.encode())
-        await process.stderr.drain()
+        try:
+            process.stderr.write(message.encode())
+            await process.stderr.drain()
+        except (BrokenPipeError, ConnectionError, asyncssh.Error) as exc:
+            # The client left while it waited; stop waiting for it.
+            raise ClientDisconnected("SSH client disconnected") from exc
 
+    admission.begin()
     try:
-        async with service.open(identity, notify=notify) as (connection, shell):
+        session = await admission.session_for(identity, notify)
+        async with service.open(session, notify=notify) as (connection, shell):
             command = process.command or ""
             if len(command) > 32768:
                 raise ValueError("Command too large")
@@ -171,11 +290,13 @@ async def serve_shell(process, service):
                 renewal = tasks.create_task(heartbeat())
                 monitor = tasks.create_task(disconnected())
                 idle = tasks.create_task(idle_limit())
+                ended = tasks.create_task(admission.until_ended())
                 status = await output_frames()
                 input_task.cancel()
                 renewal.cancel()
                 monitor.cancel()
                 idle.cancel()
+                ended.cancel()
         process.exit(status)
     except asyncio.CancelledError:
         process.close()
@@ -193,30 +314,51 @@ async def serve_shell(process, service):
                 "workspace_ssh_session_refused", extra={"connection": identity, "code": code}
             )
             message = SESSION_MESSAGES.get(code, code)
+            if code in CONNECTION_ENDINGS:
+                # Close once this command has said why, rather than refuse every
+                # later one until the next heartbeat notices.
+                admission.stop(code)
         else:
             logger.exception("workspace_ssh_session_failed", extra={"connection": identity})
             message = UNEXPECTED_ENDING
         with suppress(Exception):
             await notify(f"PuppyOne: {message}\r\n")
         process.exit(1 if code else 255)
+        if admission.ended:
+            # The connection closes after this command; let the client take in why first.
+            with suppress(Exception):
+                async with asyncio.timeout(CLOSE_NOTICE_SECONDS):
+                    await process.wait_closed()
+    finally:
+        admission.end()
 
 
 async def start_gateway(
-    service, host_key, *, host, port, connections=None, sessions=None, max_connections=None
+    service,
+    host_key,
+    *,
+    host,
+    port,
+    connections=None,
+    sessions=None,
+    max_connections=None,
+    closing=None,
 ):
     connections = connections if connections is not None else set()
     sessions = sessions if sessions is not None else set()
+    closing = closing if closing is not None else set()
+    admissions = {}
 
     async def session(process):
         task = asyncio.current_task()
         sessions.add(task)
         try:
-            await serve_shell(process, service)
+            await serve_shell(process, service, admissions[process.channel.get_connection()])
         finally:
             sessions.discard(task)
 
     return await asyncssh.create_server(
-        lambda: SshServer(service, connections, max_connections),
+        lambda: SshServer(service, connections, max_connections, admissions, closing),
         host,
         port,
         server_host_keys=[host_key],
@@ -227,6 +369,8 @@ async def start_gateway(
         public_key_auth=True,
         line_editor=False,  # The remote POSIX PTY owns editing, echo and control keys.
         login_timeout=15,
+        keepalive_interval=KEEPALIVE_SECONDS,
+        keepalive_count_max=KEEPALIVE_COUNT,
         agent_forwarding=False,
         x11_forwarding=False,
         allow_scp=False,
@@ -245,6 +389,27 @@ def load_host_key(config):
             "Configure WORKSPACE_SSH_HOST_KEY or a private persistent WORKSPACE_SSH_HOST_KEY_FILE"
         )
     return asyncssh.read_private_key(path)
+
+
+async def stop_gateway(gateway, connections, sessions=(), closing=()):
+    """Stop accepting, end every connection, and wait until each has cleaned up.
+
+    A server counts as closed only once its connections are, and a client keeps one
+    open between commands: they are closed first, or shutdown waits for every client.
+    """
+    gateway.close()
+    active = list(connections)
+    for connection in active:
+        connection.close()
+    await asyncio.gather(
+        *(connection.wait_closed() for connection in active), return_exceptions=True
+    )
+    await gateway.wait_closed()
+    # SSH transport closure does not imply the remote process stop has been
+    # acknowledged. Keep Workspace transports alive until session cleanup ends.
+    await asyncio.gather(*list(sessions), return_exceptions=True)
+    # Each connection's session is finished before the process lets go.
+    await asyncio.gather(*list(closing), return_exceptions=True)
 
 
 async def run():
@@ -267,7 +432,7 @@ async def run():
 
     # Lapsed or revoked connections are reclaimed by the worker's sandbox
     # module, scoped to its pool; this process only ends its own sessions.
-    connections, sessions = set(), set()
+    connections, sessions, closing = set(), set(), set()
     gateway = await start_gateway(
         service,
         host_key,
@@ -276,26 +441,18 @@ async def run():
         connections=connections,
         sessions=sessions,
         max_connections=config.max_connections,
+        closing=closing,
     )
     try:
         await stop.wait()
     finally:
-        gateway.close()
-        await gateway.wait_closed()
-        active = list(connections)
-        for connection in active:
-            connection.close()
-        await asyncio.gather(
-            *(connection.wait_closed() for connection in active), return_exceptions=True
-        )
-        # SSH transport closure does not imply the remote process stop has been
-        # acknowledged. Keep Workspace transports alive until session cleanup ends.
-        await asyncio.gather(*list(sessions), return_exceptions=True)
+        await stop_gateway(gateway, connections, sessions, closing)
         await service.workspace.close()
 
 
 def main():
     logging.basicConfig(level=logging.INFO)
+    install_storage_write_admission()
     asyncio.run(run())
 
 

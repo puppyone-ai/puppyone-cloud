@@ -2,9 +2,9 @@
   "_contract": "Exact source reference review inventory, not a runtime network budget or security proof. New files/aliases/references/counts require review; remove stale entries. See openspec/changes/refactor-operation-lifetimes/entrypoint-audit.md.",
   "known_gaps": [
     {
-      "path": "platform/project/dashboard_router.py",
-      "function": "_compute_node_counts",
-      "reason": "Mounted resource dashboard passes unbound ops; head and tree also use separate snapshots."
+      "path": "platform/dashboard/sections.py",
+      "function": "compute_node_counts",
+      "reason": "Head and tree use separate snapshots."
     },
     {
       "path": "platform/access/identity_router.py",
@@ -34,26 +34,29 @@
   ],
   "references": {
     "factories": {
-      "infra/scheduler/jobs/native_projection_job.py": {
-        "process_native_events::build_worker_version_engine_container": 1
+      "file_operations/engine_dependencies.py": {
+        "get_version_engine_container::build_version_engine_container": 1
       },
       "main.py": {
         "app_lifespan::build_version_engine_container": 1
       },
-      "platform/access/adapters/agent/runtime/worker.py": {
-        "serve::build_worker_version_engine_container": 1
-      },
       "platform/access/composition.py": {
         "build_workbench_service::build_worker_version_engine_container": 1
       },
-      "platform/auth/initialization.py": {
-        "UserInitializationService._seed_demo_project::build_worker_version_engine_container": 1
+      "platform/agent/runtime/worker.py": {
+        "serve::build_worker_version_engine_container": 1
       },
       "platform/landing/service.py": {
         "LandingService.claim::build_worker_version_engine_container": 1
       },
+      "platform/onboarding/service.py": {
+        "OnboardingService._seed_demo_project::build_worker_version_engine_container": 1
+      },
       "platform/project/initialization_reconciler.py": {
         "process_project_initialization_reconciliation::build_worker_version_engine_container": 1
+      },
+      "platform/project/native_projection_job.py": {
+        "process_native_events::build_worker_version_engine_container": 1
       },
       "platform/project/write_lease.py": {
         "build_leased_worker_write_commands::build_worker_version_engine_container": 1
@@ -68,9 +71,7 @@
         "_do_import::build_worker_version_engine_container": 1
       },
       "version_engine/bootstrap/dependencies.py": {
-        "build_request_version_engine_container::build_version_engine_container": 1,
-        "build_worker_version_engine_container::build_version_engine_container": 1,
-        "get_version_engine_container::build_version_engine_container": 1
+        "build_worker_version_engine_container::build_version_engine_container": 1
       },
       "version_engine/derived/object_gc_worker.py": {
         "process_object_gc_projects::build_worker_version_engine_container": 1
@@ -95,9 +96,6 @@
       },
       "infra/data_migrations/release/backup.py": {
         "create_backup::destination.stat": 1
-      },
-      "platform/access/adapters/agent/config/metadata.py": {
-        "read_path_metadata::read.stat": 1
       },
       "platform/access/adapters/api/read.py": {
         "download.chunks::read.read_file": 1,
@@ -173,9 +171,12 @@
       "platform/access/identity_router.py": {
         "get_access_point::ops.get_head_commit_id": 1
       },
-      "platform/project/dashboard_router.py": {
-        "_compute_node_counts::ops.get_head_commit_id": 1,
-        "_compute_node_counts::ops.list_tree": 1
+      "platform/agent/config/metadata.py": {
+        "read_path_metadata::read.stat": 1
+      },
+      "platform/dashboard/sections.py": {
+        "compute_node_counts::ops.get_head_commit_id": 1,
+        "compute_node_counts::ops.list_tree": 1
       },
       "platform/repository_target/scope_router.py": {
         "auto_suggest_scopes::ops.list_dir": 1

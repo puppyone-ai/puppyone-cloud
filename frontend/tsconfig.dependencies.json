@@ -2,9 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "paths": {
-      "@/*": ["./*"],
-      "@puppyone/data-core": ["../packages/data-core/src/index.ts"],
-      "@puppyone/editor-ui": ["../packages/editor-ui/src/index.ts"]
+      "@/*": ["./*"]
     }
   }
 }

@@ -33,7 +33,7 @@ def navigation(monkeypatch):
     service.get_by_org_id.return_value = projects
     counts = Mock(return_value={"visible": 7})
     monkeypatch.setattr(routes, "resolve_org_ids", lambda org_id, user_id: ["org"])
-    monkeypatch.setattr(routes, "_count_user_access_points", counts)
+    monkeypatch.setattr(routes, "count_entry_points", counts)
     app = FastAPI()
     app.add_exception_handler(AppException, app_exception_handler)
     app.include_router(routes.router, prefix="/api/v1")

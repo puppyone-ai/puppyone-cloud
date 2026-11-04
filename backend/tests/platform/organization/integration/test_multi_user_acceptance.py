@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.repository import AuthorizationRepository
 from src.platform.authorization.service import AuthorizationService
 from tests.agent.runtime.test_data_access import measured

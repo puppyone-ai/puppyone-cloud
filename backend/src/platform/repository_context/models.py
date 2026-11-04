@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from src.platform.authorization.models import ProjectGrant
+from src.shared_types.grants import ProjectGrant
 from src.platform.project.models import Project
-from src.platform.repository_target.models import RepositoryTarget
+from src.shared_types.repository_target import RepositoryTarget
 
 
 class GitCredentialMode(StrEnum):

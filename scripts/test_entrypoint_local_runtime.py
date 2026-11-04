@@ -242,7 +242,7 @@ class Stack:
             "POSTGRES_PASSWORD": self.values["POSTGRES_PASSWORD"], "PGHOST": "127.0.0.1", "PGPORT": str(self.port+32)}
         for name in ("migrate", "migrate-replay"):
             self.run(name, self.python, str(self.source_root/"scripts/self_hosted_migrate.py"), env=migration_env)
-        self.run("storage-bootstrap", self.python, "-m", "src.infra.self_hosted_bootstrap")
+        self.run("storage-bootstrap", self.python, "-m", "src.platform.project.self_hosted_bootstrap")
         for name in ("mcp", "api", "import", "synchronize", "upload"):
             self.start(name)
         self.check("fresh schema + replay + real dependency readiness", readiness=self.ready())

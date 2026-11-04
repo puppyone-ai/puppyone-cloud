@@ -40,6 +40,7 @@ from src.platform.synchronize.github.repository import (
 )
 from src.provider.github.client import GithubApi, GithubApiError
 from src.utils.logger import log_error, log_info
+from src.file_operations.dependencies import product_operations
 from src.version_engine.bootstrap.dependencies import build_worker_version_engine_container
 
 
@@ -328,7 +329,7 @@ async def _record_failure(
 
 
 def _read_native_export(project_id, user_id):
-    ops = build_worker_version_engine_container().product_operations().for_user(project_id, user_id)
+    ops = product_operations(build_worker_version_engine_container()).for_user(project_id, user_id)
     with ops.open_read(project_id, ops._grant) as reader:
         entries = reader.list_tree(project_id)
         files = {

@@ -3,13 +3,13 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import (
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.version_engine.admission import connector_policy
+from src.platform.access import connector_policy
 
 
 def _auth(scope_id: str | None = "scope-1", project_id: str = "project-1") -> dict:

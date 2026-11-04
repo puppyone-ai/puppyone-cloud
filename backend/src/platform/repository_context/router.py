@@ -7,7 +7,7 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import AuthorizedProject, require_project_action
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.idempotency import mark_idempotency_replay, require_idempotency_key
 from src.platform.repository_context.dependencies import get_repository_context_service
 from src.platform.repository_context.schemas import (
@@ -20,7 +20,7 @@ from src.platform.repository_context.schemas import (
     RepositoryProjectSummaryOut,
 )
 from src.platform.repository_context.service import RepositoryContextService
-from src.platform.repository_target.models import repository_target_scope_id
+from src.shared_types.repository_target import repository_target_scope_id
 from src.platform.repository_target.protocol import require_repository_target_contract
 from src.platform.repository_target.schemas import repository_target_schema
 from src.platform.access.adapters.git.locator import canonical_git_url

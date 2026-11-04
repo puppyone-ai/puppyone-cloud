@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from src.exceptions import ErrorCode, NotFoundException
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.imports.database.models import DBConnection
 from src.platform.imports.database.repository import DBConnectionRepository

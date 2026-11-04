@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.infra.supabase.client import SupabaseClient
-from src.platform.repository_target.models import repository_target_from_storage
+from src.shared_types.repository_target import repository_target_from_storage
 from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.models import AccessSurface
-from src.platform.repository_target.models import RepositoryScope
+from src.shared_types.repository_target import RepositoryScope
 from src.platform.access.models import ResolvedAccessSurfaceCredential
 
 ACCESS_SURFACE_KINDS = frozenset({

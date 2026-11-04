@@ -120,7 +120,7 @@ def test_database_rejection_logs_sqlstate_without_response_content():
 
 @pytest.mark.asyncio
 async def test_streamed_api_telemetry_includes_late_database_calls(caplog):
-    from src.platform.access.adapters.agent.runtime.control.telemetry import AgentDatabaseTelemetry
+    from src.platform.agent.runtime.control.telemetry import AgentDatabaseTelemetry
 
     client = httpx.Client(
         transport=DatabaseTransport(httpx.MockTransport(lambda _: httpx.Response(200)))
@@ -172,7 +172,7 @@ if sys.argv[1] == "worker":
         coroutine.close()
         emit()
     asyncio.run = no_external_services
-    runpy.run_module("src.platform.access.adapters.agent.runtime.worker", run_name="__main__")
+    runpy.run_module("src.platform.agent.runtime.worker", run_name="__main__")
 else:
     from src.utils.logging_setup import setup_logging
     setup_logging()

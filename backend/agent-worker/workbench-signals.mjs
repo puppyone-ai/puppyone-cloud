@@ -1,7 +1,8 @@
 /** Executed as a single task UID; kernel permissions fence PID reuse races. */
 import { readdir, readFile } from 'node:fs/promises';
+import { validTaskUid } from './workbench-state.mjs';
 const signal = process.argv[2], uid = process.getuid();
-if (uid < 20000 || uid > 59999 || !['SIGKILL', 'SIGSTOP', 'SIGCONT'].includes(signal))
+if (!validTaskUid(uid) || !['SIGKILL', 'SIGSTOP', 'SIGCONT'].includes(signal))
   throw new Error('Invalid task signal identity');
 for (let attempt = 0; attempt < 32; attempt++) {
   let found = false;

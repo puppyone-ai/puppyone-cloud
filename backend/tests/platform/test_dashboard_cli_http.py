@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.project import resource_dashboard as dashboard
+from src.platform.dashboard import router as dashboard
 from tests.platform.test_resource_dashboard import (
     environment as dashboard_environment,  # noqa: F401 -- fixture registration
 )

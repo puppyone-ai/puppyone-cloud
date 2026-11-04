@@ -36,19 +36,19 @@ class ProjectRepositoryBase(ABC):
 class ProjectRepositorySupabase(ProjectRepositoryBase):
     """Supabase-based Project repository implementation"""
 
-    def __init__(self, supabase_repo=None):
+    def __init__(self, project_repo=None):
         """
         Initialize the repository
 
         Args:
-            supabase_repo: Optional SupabaseRepository instance; creates a new one if not provided
+            project_repo: Optional ProjectRepository; built on the shared client if not provided
         """
-        if supabase_repo is None:
-            from src.infra.supabase.dependencies import get_supabase_repository
+        if project_repo is None:
+            from src.infra.supabase.dependencies import get_supabase_client
+            from src.platform.project.supabase_repo import ProjectRepository
 
-            self._supabase_repo = get_supabase_repository()
-        else:
-            self._supabase_repo = supabase_repo
+            project_repo = ProjectRepository(get_supabase_client())
+        self._project_repo = project_repo
 
     def get_by_id(self, project_id: str) -> Project | None:
         """
@@ -60,7 +60,7 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
         Returns:
             Project object, or None if not found
         """
-        project_response = self._supabase_repo.get_project(project_id)
+        project_response = self._project_repo.get_by_id(project_id)
         if project_response:
             return self._project_response_to_project(project_response)
         return None
@@ -75,7 +75,7 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
         Returns:
             List of Projects
         """
-        projects_response = self._supabase_repo.get_projects(org_id=org_id)
+        projects_response = self._project_repo.get_list(org_id=org_id)
         return [self._project_response_to_project(p) for p in projects_response]
 
     def rotate_share_token(self, project_id: str) -> Project | None:
@@ -91,7 +91,7 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
         from src.platform.project.supabase_schemas import ProjectUpdate
 
         update_data = ProjectUpdate(share_token=secrets.token_urlsafe(24))
-        project_response = self._supabase_repo.update_project(project_id, update_data)
+        project_response = self._project_repo.update(project_id, update_data)
         if project_response:
             return self._project_response_to_project(project_response)
         return None
@@ -156,7 +156,7 @@ class ProjectRepositorySupabase(ProjectRepositoryBase):
             update_data.bound_git_branch = bound_git_branch
         if share_token is not None:
             update_data.share_token = share_token
-        project_response = self._supabase_repo.update_project(project_id, update_data)
+        project_response = self._project_repo.update(project_id, update_data)
         if project_response:
             return self._project_response_to_project(project_response)
         return None

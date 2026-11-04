@@ -36,12 +36,12 @@ test('relative dynamic imports cannot bypass the package boundary', t => {
   assert.match(result.output, /packages-no-application/);
 });
 
-test('allowed directions resolve app aliases and root package aliases', t => {
+test('allowed directions resolve app aliases into shared packages', t => {
   const path = fixture(t);
   write(path, 'frontend/app/page.ts', "export { value } from '@/features/a';");
-  write(path, 'frontend/features/a.ts', "export { value } from '@puppyone/data-core';");
-  write(path, 'packages/data-core/src/index.ts', 'export const value = 1;');
-  write(path, 'packages/example/src/index.ts', "export { value } from '@puppyone/data-core';");
+  write(path, 'frontend/features/a.ts', "export { value } from '@/packages/example/src/index';");
+  write(path, 'frontend/packages/example/src/index.ts', "export { value } from '../../core/src/index';");
+  write(path, 'frontend/packages/core/src/index.ts', 'export const value = 1;');
   const result = gate(path, 'run-dependencies');
   assert.equal(result.status, 0, result.output);
   assert.match(result.output, /0 dependency violations/);

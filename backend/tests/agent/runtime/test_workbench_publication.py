@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control.publication import (
+from src.platform.agent.runtime.control.publication import (
     PUSH_ATTEMPTS,
     Publication,
 )

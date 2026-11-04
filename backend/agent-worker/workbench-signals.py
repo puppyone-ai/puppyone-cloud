@@ -12,8 +12,12 @@ import sys
 import time
 
 
+# The same ranges as TASK_UID_RANGES in workbench-state.mjs.
+TASK_UID_RANGES = ((20000, 59999), (100000, 2000000000))
+
+
 def quiesce(gid, operation):
-    if os.geteuid() != 0 or not 20000 <= gid <= 59999:
+    if os.geteuid() != 0 or not any(low <= gid <= high for low, high in TASK_UID_RANGES):
         raise ValueError("Invalid admitted task identity")
     if operation not in ("SIGSTOP", "SIGKILL", "SIGCONT"):
         raise ValueError("Invalid task signal")

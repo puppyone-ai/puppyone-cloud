@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 from src.config import settings
 from src.exception_handler import app_exception_handler
 from src.exceptions import AppException
-from src.infra.supabase.repository import SupabaseRepository
 from src.platform.auth import dependencies as auth_dependencies
 from src.platform.auth.service import AuthService
 from src.platform.authorization.repository import ProjectMembershipRepository
@@ -33,7 +32,8 @@ from src.platform.project.repository import ProjectRepositorySupabase
 from src.platform.project.write_lease import ProjectWriteLease
 from src.utils.middleware import RequestContextMiddleware
 from src.file_operations.commands import VersionWriteCommandService
-from src.version_engine.bootstrap.dependencies import (
+from src.file_operations.dependencies import (
+    product_operations,
     get_product_operation_adapter,
     get_version_write_command_service,
 )
@@ -109,8 +109,10 @@ async def team(prepared, services, postgres, monkeypatch):
         return InviteEmailResult(sent=True)
 
     monkeypatch.setattr(org_service, "send_invite_email", deliver)
-    from src.platform.access.adapters.agent.dependencies import get_agent_service
-    from src.platform.access.adapters.agent.router import router as agent_router
+    from src.platform.agent.dependencies import get_agent_service
+    from src.platform.agent.router import router as agent_router
+    from src.platform.dashboard.router import router as dashboard_router
+    from src.platform.onboarding.router import router as onboarding_router
     from src.platform.organization.router import router as org_router
     from src.platform.project.router import router as project_router
     from src.platform.access.adapters.api.read import read_router
@@ -123,19 +125,19 @@ async def team(prepared, services, postgres, monkeypatch):
     )
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_middleware(RequestContextMiddleware)
-    for router in (org_router, project_router, agent_router):
+    for router in (org_router, project_router, agent_router, dashboard_router, onboarding_router):
         app.include_router(router, prefix="/api/v1")
     for router in (resource_router, read_router, write_router):
         app.include_router(router, prefix="/api/v1/content")
-    project_repo = ProjectRepositorySupabase(SupabaseRepository())
+    project_repo = ProjectRepositorySupabase()
     app.dependency_overrides[get_org_service] = lambda: org_service
     app.dependency_overrides[get_project_repository] = lambda: project_repo
     app.dependency_overrides[get_project_membership_repository] = lambda: (
         ProjectMembershipRepository(api)
     )
-    app.dependency_overrides[get_product_operation_adapter] = container.product_operations
+    app.dependency_overrides[get_product_operation_adapter] = lambda: product_operations(container)
     app.dependency_overrides[get_version_write_command_service] = lambda: (
-        VersionWriteCommandService(container.product_operations())
+        VersionWriteCommandService(product_operations(container))
     )
     app.dependency_overrides[get_agent_service] = lambda: c.service
 

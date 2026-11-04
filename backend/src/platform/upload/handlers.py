@@ -47,7 +47,7 @@ from src.infra.task_status import IngestStatus
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.billing.runtime import guard_unmetered_hosted_runtime
 from src.platform.entitlements.dependencies import get_entitlement_service

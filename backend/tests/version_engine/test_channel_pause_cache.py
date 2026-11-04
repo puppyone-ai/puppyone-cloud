@@ -6,13 +6,13 @@ import pytest
 from fastapi import HTTPException
 
 from src.platform.access.service import _clear_connector_admission_cache
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import (
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     ResolvedRepositoryView,
     ScopeTarget,
 )
-from src.version_engine.admission import channel_pause
+from src.platform.access import channel_pause
 
 
 def _auth(project_id="project-1", scope_id=None):

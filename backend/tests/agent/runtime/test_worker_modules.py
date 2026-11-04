@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime import dispatch, worker
+from src.platform.agent.runtime import dispatch, worker
 from src.platform.workspace.lifecycle import pending_snapshot
 from src.platform.workspace.sandbox_worker import SandboxModule
 from tests.agent.runtime.test_worker_dispatch import isolate_worker

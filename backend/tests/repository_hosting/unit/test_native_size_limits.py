@@ -9,7 +9,7 @@ from pydantic import ValidationError, create_model
 
 from src.config import Settings
 from src.platform.access.adapters.git import object_pack
-from src.version_engine.domain.git_pack_limits import MAX_RECEIVE_PACK_BYTES
+from src.shared_types.git_pack_limits import MAX_RECEIVE_PACK_BYTES
 from src.version_engine.storage.git_pack import GitPack
 from src.version_engine.storage.git_pack_cache import pack_cache
 from src.version_engine.storage.git_pack_limits import PackLimits
@@ -113,7 +113,7 @@ async def test_two_gib_http_limit_rejects_declared_overflow_before_reading(monke
     from fastapi import HTTPException
 
     from src.platform.access.adapters.git import router
-    from src.version_engine.domain.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
+    from src.shared_types.git_pack_limits import MAX_RECEIVE_COMMAND_BYTES
 
     monkeypatch.setattr(router, "_git_receive_max_body_bytes", lambda _: MAX_RECEIVE_PACK_BYTES)
 

@@ -93,6 +93,100 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.importlinter]
+root_package = "src"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Dependencies only point downward"
+type = "layers"
+layers = [
+    "src.main",
+    "src.composition",
+    "src.internal : src.platform : src.content : src.tool : src.context_publish : src.file_operations : src.ingest",
+    "src.version_engine",
+    "src.infra : src.provider",
+    "src.exception_handler : src.exceptions : src.config : src.utils : src.schemas : src.common_schemas",
+    "src.shared_types",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core and base layers do not know the web framework"
+type = "forbidden"
+source_modules = ["src.version_engine", "src.infra", "src.provider", "src.shared_types"]
+forbidden_modules = ["fastapi", "starlette"]
+
+[[tool.importlinter.contracts]]
+name = "Business modules point downward"
+type = "layers"
+layers = [
+    "src.platform.dashboard : src.platform.onboarding",
+    "src.platform.agent",
+    "src.platform.access : src.internal",
+    "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.sandbox : src.platform.landing",
+    "src.content : src.tool : src.context_publish : src.platform.provider_accounts : src.platform.managed_ai : src.platform.office : src.platform.template_registry",
+    "src.platform.repository_target : src.platform.project : src.platform.repository_context : src.file_operations",
+    "src.platform.billing : src.platform.analytics : src.platform.activity",
+    "src.platform.auth : src.platform.organization : src.platform.profile : src.platform.entitlements : src.platform.authorization",
+    "src.platform.idempotency : src.platform.query_contract",
+]
+# Existing violations. Remove an entry when its import is fixed; never add one.
+# tests/platform/test_import_layers.py pins the count.
+ignore_imports = [
+    "src.platform.auth.initialization -> src.platform.billing.provisioning",
+    "src.platform.authorization.dependencies -> src.platform.project.dependencies",
+    "src.platform.authorization.dependencies -> src.platform.project.models",
+    "src.platform.authorization.dependencies -> src.platform.project.repository",
+    "src.platform.billing.runtime -> src.platform.project.repository",
+    "src.platform.landing.service -> src.platform.access.adapters.mcp_endpoint.schemas",
+    "src.platform.landing.service -> src.platform.access.adapters.mcp_endpoint.service",
+    "src.platform.landing.service -> src.platform.access.credential_repository",
+    "src.platform.organization.router -> src.platform.billing.provisioning",
+    "src.platform.organization.service -> src.platform.billing.provisioning",
+    "src.platform.organization.service -> src.platform.billing.seats",
+    "src.platform.profile.dependencies -> src.platform.project.dependencies",
+    "src.platform.profile.service -> src.platform.project.service",
+    "src.platform.project.deletion_cleanup -> src.platform.sandbox",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.config",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.dependencies",
+    "src.platform.project.deletion_cleanup -> src.platform.upload.tasks.repository",
+    "src.platform.project.deletion_cleanup -> src.platform.workspace.project_cleanup",
+    "src.platform.project.router -> src.platform.template_registry.dependencies",
+    "src.platform.project.router -> src.platform.template_registry.exceptions",
+    "src.platform.project.router -> src.platform.template_registry.http_errors",
+    "src.platform.project.router -> src.platform.template_registry.schemas",
+    "src.platform.project.router -> src.platform.template_registry.service",
+    "src.platform.repository_context.repository -> src.platform.access.credential_repository",
+    "src.platform.repository_context.router -> src.platform.access.adapters.git.locator",
+    "src.platform.repository_context.service -> src.platform.access.credential_repository",
+    "src.platform.repository_target.scope_router -> src.platform.access.model_repository",
+]
+
+[[tool.importlinter.contracts]]
+name = "Project knows none of its entry points"
+type = "forbidden"
+source_modules = ["src.platform.project"]
+forbidden_modules = ["src.platform.access", "src.platform.agent"]
+
+[[tool.importlinter.contracts]]
+name = "Auth knows no Project"
+type = "forbidden"
+source_modules = ["src.platform.auth"]
+forbidden_modules = ["src.platform.project"]
+
+[[tool.importlinter.contracts]]
+name = "Sandbox knows none of its callers"
+type = "forbidden"
+source_modules = ["src.platform.sandbox"]
+forbidden_modules = ["src.platform.workspace", "src.platform.access", "src.platform.agent"]
+
+[[tool.importlinter.contracts]]
+name = "Workspace knows none of its callers"
+type = "forbidden"
+source_modules = ["src.platform.workspace"]
+forbidden_modules = ["src.platform.access", "src.platform.agent"]
+allow_indirect_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
@@ -102,4 +196,9 @@ markers = [
     "e2e: end-to-end tests that may call real external services",
     "integration: integration tests that call live third-party APIs or require explicit operator opt-in",
     "network: tests that require public internet access and should run only in non-blocking smoke jobs",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
 ]

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sys
 
+from src.platform.project.write_lease import install_storage_write_admission
 from src.version_engine.bootstrap.dependencies import (
     build_worker_version_engine_container,
 )
@@ -200,6 +201,7 @@ def repair_project(project_id: str, *, apply: bool) -> int:
 
 
 def main(argv: list[str]) -> int:
+    install_storage_write_admission()
     args = [a for a in argv[1:] if a != "--apply"]
     apply = "--apply" in argv
     if len(args) != 1:

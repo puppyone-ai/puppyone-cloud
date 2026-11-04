@@ -1,7 +1,9 @@
 """Public-key delegation to one existing private Hosted Workspace."""
 
 import asyncio
-from contextlib import asynccontextmanager, contextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -15,7 +17,7 @@ from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
-from src.platform.authorization.models import AccessCapability, ProjectAction
+from src.shared_types.grants import AccessCapability, ProjectAction
 from src.platform.workspace.connections import RESUMABLE_STATES, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
 
@@ -48,6 +50,51 @@ def access_denials():
 
 # Existing callers keep their import while persistence belongs to shared Access.
 SshGrantRepository = SshCredentialRepository
+
+# While a Workspace is prepared the connection would otherwise be silent for
+# minutes, and proxies and clients drop a connection that says nothing.
+PROGRESS_SECONDS = 10
+
+
+@dataclass(frozen=True)
+class SshSession:
+    """One SSH connection, admitted once; every command run over it uses this.
+
+    ``id`` is the spent credential: for a linked Agent, also its Access session.
+    """
+
+    id: str
+    grant: dict
+    may_wake: bool
+
+    @property
+    def delegated(self):
+        return bool(self.grant.get("access_grant_id"))
+
+
+async def while_telling(work, notify, message, *, seconds, refusal):
+    """Await ``work`` and say it is still under way every few seconds.
+
+    At the limit the client hears a product code it can act on, not a fault;
+    the durable intent behind ``work`` stays for the next attempt.
+    """
+    task = asyncio.ensure_future(work)
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(seconds):
+            while not (await asyncio.wait({task}, timeout=PROGRESS_SECONDS))[0]:
+                if notify:
+                    await notify(message.format(seconds=int(time.monotonic() - started)))
+        return task.result()
+    except TimeoutError as exc:
+        if task.done() and not task.cancelled() and task.exception() is exc:
+            raise
+        raise WorkspaceError(503, {"code": refusal}) from exc
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 def ssh_endpoint(config=None):
@@ -207,10 +254,15 @@ class HostedSshAccess:
             raise WorkspaceError(409, {"code": "workbench_not_running", "state": row["state"]})
         if notify:
             await notify("Resuming the workspace; this can take up to a minute.\r\n")
-        async with asyncio.timeout(self.resume_seconds):
-            row = await self.workspace.ensure_running(
+        row = await while_telling(
+            self.workspace.ensure_running(
                 {"user_id": row["user_id"], "project_id": row["project_id"]}, row
-            )
+            ),
+            notify,
+            "Still resuming the workspace ({seconds}s)...\r\n",
+            seconds=self.resume_seconds,
+            refusal="workspace_preparing",
+        )
         if row["generation"] != grant["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
@@ -221,10 +273,15 @@ class HostedSshAccess:
             return
         if notify:
             await notify("Preparing your workspace; this can take a few minutes.\r\n")
-        async with asyncio.timeout(self.first_start_seconds):
-            await self.workspace.ensure_running(
+        await while_telling(
+            self.workspace.ensure_running(
                 {"user_id": row["user_id"], "project_id": row["project_id"]}, row
-            )
+            ),
+            notify,
+            "Still preparing your workspace ({seconds}s)...\r\n",
+            seconds=self.first_start_seconds,
+            refusal="workspace_preparing",
+        )
 
     async def authenticate(self, identity, key):
         try:
@@ -238,34 +295,59 @@ class HostedSshAccess:
         except Exception:
             return False
 
-    @asynccontextmanager
-    async def open(self, identity, notify=None):
+    async def admit(self, identity, notify=None):
+        """Admit one SSH connection: its Workspace is ready and its credential spent.
+
+        Every command over the connection then runs under the returned session,
+        so signing in, the ticket and the delegation check happen once.
+        """
         connection = agent_connection(identity)
         if connection:
-            # A linked Agent keeps one key; each connection is still one ticket.
+            # A linked Agent keeps one key; each connection is one ticket.
             with access_denials():
                 await self.start_agent_workspace(connection, notify)
                 identity = await self.linked_agents().ticket(connection)
         grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)
-        try:
-            await self.resume(grant, may_wake, notify)
-            async with self.connections.open(
-                identity,
-                grant["user_id"],
-                grant["project_id"],
-                grant["workbench_id"],
-                grant["generation"],
-            ) as connection:
-                yield connection
-        finally:
-            if grant.get("access_grant_id"):
+        return SshSession(identity, grant, may_wake)
+
+    @asynccontextmanager
+    async def open(self, session, notify=None):
+        """One command: its own shell, under the connection's session."""
+        grant = session.grant
+        await self.resume(grant, session.may_wake, notify)
+        async with self.connections.open(
+            str(uuid4()),
+            grant["user_id"],
+            grant["project_id"],
+            grant["workbench_id"],
+            grant["generation"],
+            session=session.id if session.delegated else None,
+        ) as connection:
+            yield connection
+
+    async def renew_session(self, session):
+        """The connection's heartbeat: admission's authority, with no command required.
+
+        A paused Workspace does not end it; the next command resumes the Workspace.
+        """
+        async with asyncio.timeout(10):
+            await self.validate(session.id, running=False)
+            if session.delegated:
                 _, sessions = self.lifecycle()
-                await sessions.finish_unallocated(identity)
+                with access_denials():
+                    await sessions.renew(session.id)
+
+    async def finish(self, session):
+        """The connection ended; its session closes once no command holds the Workspace."""
+        if session.delegated:
+            _, sessions = self.lifecycle()
+            await sessions.finish(session.id)
 
     async def renew(self, connection, shell):
+        """A command's lease. Its authority is the connection's, renewed by ``renew_session``;
+        the database fences each renewal against that session as well."""
         async with asyncio.timeout(10):
-            await self.validate(connection["id"])
             with access_denials():
                 await self.connections.renew(connection, shell)
 

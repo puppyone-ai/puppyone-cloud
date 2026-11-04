@@ -6,14 +6,14 @@ from typing import Annotated, Any, Literal
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from src.shared_types.managed_ai_provider import (
-    ManagedAIProviderProfile,
-    parse_provider_profiles,
-)
-from src.version_engine.domain.git_pack_limits import (
+from src.shared_types.git_pack_limits import (
     DEFAULT_PACK_SCRATCH_BYTES,
     DEFAULT_STORED_PACK_BYTES,
     MAX_RECEIVE_PACK_BYTES,
+)
+from src.shared_types.managed_ai_provider import (
+    ManagedAIProviderProfile,
+    parse_provider_profiles,
 )
 
 # Roles that operate Agent workspaces (open, files, SSH, lifecycle).
@@ -397,7 +397,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_git_transport_caps(self):
-        from src.version_engine.domain.git_pack_limits import PackLimits
+        from src.shared_types.git_pack_limits import PackLimits
 
         PackLimits(
             receive_bytes=self.GIT_MAX_RECEIVE_PACK_BYTES,
@@ -448,6 +448,8 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
     CLOUD_AGENT_FLY_TOKEN: str = ""
+    # Set to give each internal and external Agent Workspace its own app and private network.
+    CLOUD_AGENT_FLY_ORG: str = ""
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""

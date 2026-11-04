@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import ProjectRootTarget, ResolvedRepositoryView
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.infrastructure.supabase.ref_authority_repository import (
     AdmittedRefAuthorityRepository,
 )

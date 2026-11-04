@@ -22,7 +22,7 @@ from src.infra.s3.service import S3Service
 from src.platform.access.adapters.mcp_endpoint.schemas import McpAccessItem
 from src.platform.access.adapters.mcp_endpoint.service import McpEndpointService
 from src.platform.access.credential_repository import AccessCredentialRepository
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.service import EntitlementService
 from src.platform.landing import tickets
@@ -382,6 +382,7 @@ class LandingService:
         # Shared born-owned create-chain (create Project row + init tree),
         # same as platform/project/router.create_project. The container is built
         # here because it is reused below for the content write.
+        from src.file_operations.dependencies import write_commands
         from src.version_engine.bootstrap.dependencies import (
             build_worker_version_engine_container,
         )
@@ -403,7 +404,7 @@ class LandingService:
             )
 
             file_path = f"{spec.scope_path}/{md_name}"
-            await container.write_commands().bulk_write(
+            await write_commands(container).bulk_write(
                 project_id,
                 {file_path: md_bytes},
                 actor=f"landing:{user_id}",

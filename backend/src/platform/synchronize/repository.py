@@ -6,6 +6,7 @@ exist physically, but application code must not use it to derive write paths.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -278,6 +279,15 @@ class SynchronizeRepository:
             .execute()
         ).data or []
         return [self._connection_to_model(row) for row in rows]
+
+    def count_by_projects(self, project_ids: list[str]) -> dict[str, int]:
+        rows = (
+            self.client.table(self.CONNECTIONS)
+            .select("project_id")
+            .in_("project_id", project_ids)
+            .execute()
+        ).data or []
+        return dict(Counter(row["project_id"] for row in rows))
 
     def list_by_path(self, path: str) -> list[SynchronizeBinding]:
         target = normalize_path(path)

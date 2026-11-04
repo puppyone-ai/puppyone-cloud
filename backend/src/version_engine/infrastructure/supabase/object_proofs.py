@@ -15,6 +15,12 @@ class ObjectProofRepository:
         self.purpose = purpose
         self.cache = {}
         self.published = set()
+        self.published_only = False
+
+    def distrust_unpublished(self):
+        """Ignore proofs this pin issued, so a walk reads its new objects again."""
+        self.published_only = True
+        self.cache.clear()
 
     def prefetch(self, oids):
         missing = list(dict.fromkeys(oid for oid in oids if oid not in self.cache))
@@ -43,6 +49,9 @@ class ObjectProofRepository:
                         raise ClosureVerificationError("invalidated or mismatched object proof")
                     if row["published"]:
                         self.published.add(oid)
+                    elif self.published_only:
+                        self.cache[oid] = None
+                        continue
                     record = VerifiedObject(
                         row["kind"],
                         row["body_bytes"],

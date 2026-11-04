@@ -9,7 +9,7 @@ from uuid import UUID
 from postgrest.exceptions import APIError
 
 from src.infra.execution.runner import run_blocking
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 
 from .errors import WorkspaceError
 from .execution.shell import WorkspaceShell
@@ -22,11 +22,14 @@ RESUMABLE_STATES = frozenset({"paused", "pausing", "resuming"})
 
 
 class ConnectionRepository(WorkbenchRepository):
-    def reserve(self, identity, row, revision):
+    def reserve(self, identity, row, revision, session=None):
+        # A command run over a shared SSH connection belongs to that connection's session.
+        scope = {"session": session} if session else {}
         try:
             return self.command(
-                "connection_acquire",
+                "connection_acquire_in_session" if session else "connection_acquire",
                 id=identity,
+                **scope,
                 workbench=row["id"],
                 generation=row["generation"],
                 user=row["user_id"],
@@ -34,9 +37,14 @@ class ConnectionRepository(WorkbenchRepository):
                 revision=revision,
             )
         except APIError as exc:
+            message = str(exc.message or exc)
             # Bounded occupancy is an expected, actionable refusal.
-            if "workspace_connection_limit" in str(exc.message or exc):
+            if "workspace_connection_limit" in message:
                 raise WorkspaceError(429, {"code": "workspace_connection_limit"}) from exc
+            # The session or grant this command would run under has ended: revoked,
+            # expired or ended by the owner. Also expected, as when a renewal fails.
+            if "workspace_connection_expired" in message or "access_denied" in message:
+                raise WorkspaceError(403, {"code": "access_denied"}) from exc
             raise
 
     def update(self, connection, action):
@@ -121,11 +129,12 @@ class WorkspaceConnections:
         return row, context["revision"]
 
     @asynccontextmanager
-    async def open(self, identity, user, project, workbench, generation):
+    async def open(self, identity, user, project, workbench, generation, *, session=None):
+        """One shell; ``session`` is the Access session of the connection it runs over."""
         identity = str(UUID(identity))
         row, revision = await self.authorize(user, project, workbench, generation)
         handle = await self.workspace.connection(row, capabilities={"workspace_shell"})
-        connection = await run_blocking(self.repository.reserve, identity, row, revision)
+        connection = await run_blocking(self.repository.reserve, identity, row, revision, session)
         shell = self.shell_factory(connection)
         try:
             await shell.connect(handle)

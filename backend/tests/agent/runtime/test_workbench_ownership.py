@@ -44,6 +44,24 @@ def transition(database, row, state, resource=None):
     )
 
 
+def test_only_the_internal_workspace_may_reach_the_internet(postgres, submitted):
+    args, _ = submitted
+    automation = create(postgres, args)
+    assert automation["internet_access"] is False
+    with pytest.raises(Exception, match="cloud_workbenches_internet_internal_only"):
+        postgres.sql(
+            f"UPDATE cloud_workbenches SET internet_access=true WHERE id='{automation['id']}'"
+        )
+    internal = call(
+        postgres,
+        "default",
+        user=args["user"],
+        project=args["project"],
+        revision=args["policy"]["revision"],
+    )
+    assert internal["is_default"] is True and internal["internet_access"] is True
+
+
 def test_workbench_is_not_unique_per_actor_or_session(postgres, submitted):
     args, legacy = submitted
     first, second = create(postgres, args), create(postgres, args)

@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from src.config import settings
-from src.version_engine.admission.connector_policy import CLI_FS_KNOWN_COMMANDS
+from src.platform.access.connector_policy import CLI_FS_KNOWN_COMMANDS
 from tests.agent.workbench_acceptance.accept_fly import http_server
 from tests.agent.workbench_acceptance.accept_production_entry import (
     control_api as control_api,

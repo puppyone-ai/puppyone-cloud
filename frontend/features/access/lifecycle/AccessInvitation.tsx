@@ -51,6 +51,21 @@ export function AccessInvitation({ onConsumeFragment }: { onConsumeFragment: () 
   </div></main>;
 }
 
+function applicationHeading(state: AccessRecord['state']) {
+  if (state === 'approved') return 'Access approved';
+  if (state === 'rejected') return 'Request declined';
+  return 'Waiting for approval';
+}
+
+function ApplicationStatus({ application }: { application: AccessRecord }) {
+  return <section className={styles.section} aria-live="polite">
+    <h2 className={styles.heading}>{applicationHeading(application.state)}</h2>
+    <p className={styles.muted}>Check this agent’s access with <code>puppyone access clients status</code>.</p>
+    {application.state === 'approved' && application.grant_id && application.channels?.includes('ssh')
+      && <code className={styles.code}>puppyone access ssh {application.grant_id} --client {application.registration_id}</code>}
+  </section>;
+}
+
 function Applicant({ invitation, userId }: { invitation: string; userId: string }) {
   const { data: registrations, error: loadError } = useSWR(['access-registrations', userId],
     () => accessRequest<Registration[]>('GET', '/api/v1/access/registrations'));
@@ -81,12 +96,7 @@ function Applicant({ invitation, userId }: { invitation: string; userId: string 
     } catch { setError('Could not apply. The invitation may have expired or been revoked.'); }
     finally { setBusy(false); inFlight.current = false; }
   }
-  if (current) return <section className={styles.section} aria-live="polite">
-    <h2 className={styles.heading}>{current.state === 'approved' ? 'Access approved' : current.state === 'rejected' ? 'Request declined' : 'Waiting for approval'}</h2>
-    <p className={styles.muted}>Check this agent’s access with <code>puppyone access clients status</code>.</p>
-    {current.state === 'approved' && current.grant_id && current.channels?.includes('ssh')
-      && <code className={styles.code}>puppyone access ssh {current.grant_id} --client {current.registration_id}</code>}
-  </section>;
+  if (current) return <ApplicationStatus application={current} />;
   return <section className={styles.section}>
     {(error || loadError) && <p className={styles.error} role="alert">{error || 'Could not load your registered agents.'}</p>}
     {active.length > 0 ? <>

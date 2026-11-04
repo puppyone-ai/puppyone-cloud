@@ -9,11 +9,11 @@ import pytest
 from src.exceptions import AppException
 from src.infra.execution.runner import run_blocking
 from src.infra.s3.service import S3Service
+from src.platform.access.adapters.git.request_lease import git_project_write_lease
 from src.platform.project.write_lease import (
     PHYSICAL_S3_WRITE_LEASE_TTL_SECONDS,
     ProjectWriteLease,
     active_project_write_lease,
-    git_project_write_lease,
 )
 
 
@@ -88,7 +88,7 @@ async def test_copied_background_context_cannot_reuse_released_outer_claim(
 
     async def late_write() -> None:
         await continue_background.wait()
-        with s3._project_write_guard("version/project-1/objects/aa/blob", "put_object"):
+        with s3._object_write_guard("version/project-1/objects/aa/blob", "put_object"):
             pass
 
     async with outer:
@@ -137,7 +137,7 @@ async def test_physical_child_inherits_live_initializer_proof(monkeypatch) -> No
             "src.platform.project.write_lease.ProjectWriteLease",
             RecordingChildLease,
         )
-        with s3._project_write_guard("projects/project-1/uploads/staged", "put_object"):
+        with s3._object_write_guard("projects/project-1/uploads/staged", "put_object"):
             pass
 
     assert recorded[0]["reuse_active"] is False
@@ -299,6 +299,41 @@ async def test_git_mutations_still_reject_read_only_runtime_grants(
 
     dependency = git_project_write_lease(
         _git_request(path, method=method, query=query)
+    )
+    with pytest.raises(AppException) as caught:
+        await anext(dependency)
+
+    assert caught.value.status_code == 403
+    assert lease_entered is False
+
+
+@pytest.mark.asyncio
+async def test_git_read_without_a_runtime_grant_is_refused_before_any_lease(monkeypatch) -> None:
+    lease_entered = False
+
+    async def resolve(_project_id, _request):
+        return {}
+
+    class Lease:
+        def __init__(self, _project_id: str, _operation: str):
+            pass
+
+        async def __aenter__(self):
+            nonlocal lease_entered
+            lease_entered = True
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "src.platform.access.adapters.git.auth.resolve_git_project_auth",
+        resolve,
+    )
+    monkeypatch.setattr("src.platform.project.write_lease.ProjectWriteLease", Lease)
+
+    dependency = git_project_write_lease(
+        _git_request("/git/project-1.git/git-upload-pack", method="POST")
     )
     with pytest.raises(AppException) as caught:
         await anext(dependency)

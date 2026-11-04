@@ -1,6 +1,6 @@
 """Project templates — built-in starter content for new projects.
 
-Public API (stable, used by ``router.py`` and ``auth/initialization.py``):
+Public API (stable, used by ``router.py`` and ``onboarding/service.py``):
 
 - ``TEMPLATES``               — dict[id, ProjectTemplate], loaded at import
 - ``get_template(id)``        — single lookup

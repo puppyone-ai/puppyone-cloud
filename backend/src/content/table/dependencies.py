@@ -9,9 +9,9 @@ from src.exceptions import ErrorCode, NotFoundException
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
-from src.version_engine.bootstrap.dependencies import get_repo_manager
+from src.file_operations.engine_dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 
 _table_repository = None

@@ -157,7 +157,7 @@ class _BusClient:
 
 
 def _manager():
-    from src.version_engine.derived.notifications import NotificationManager
+    from src.platform.project.commit_notifications import NotificationManager
     return NotificationManager()
 
 
@@ -204,7 +204,7 @@ def test_broadcast_publishes_with_origin_when_redis_present():
 
 def test_two_managers_fan_out_across_shared_bus_once():
     async def main():
-        from src.version_engine.derived.notifications import NotificationManager
+        from src.platform.project.commit_notifications import NotificationManager
 
         bus = _SharedPubSubBus()
         first = NotificationManager(redis_client=bus.client())

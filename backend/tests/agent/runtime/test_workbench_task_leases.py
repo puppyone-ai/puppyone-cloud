@@ -153,11 +153,20 @@ def test_task_lease_blocks_lower_level_lifecycle_rpc(postgres, submitted):
         postgres.sql(f"UPDATE cloud_workbenches SET generation=gen_random_uuid() WHERE id='{wb['id']}'")
 
 
-def test_exhausted_uid_space_never_wraps_or_reuses_an_identity(postgres, submitted):
+def test_the_first_range_continues_past_the_image_groups_instead_of_running_out(postgres, submitted):
     args, _ = submitted
     wb = running(postgres, args)
     run = claimed(postgres, args, wb)
     postgres.sql(f"UPDATE cloud_workbenches SET next_task_uid=60000 WHERE id='{wb['id']}'")
+    # 60000-99999 holds groups the image has, such as nogroup (65534).
+    assert task(postgres, run, wb)["task_uid"] == 100000
+
+
+def test_exhausted_uid_space_never_wraps_or_reuses_an_identity(postgres, submitted):
+    args, _ = submitted
+    wb = running(postgres, args)
+    run = claimed(postgres, args, wb)
+    postgres.sql(f"UPDATE cloud_workbenches SET next_task_uid=2000000001 WHERE id='{wb['id']}'")
     with pytest.raises(RuntimeError, match="workbench_task_identity_exhausted"):
         task(postgres, run, wb)
 

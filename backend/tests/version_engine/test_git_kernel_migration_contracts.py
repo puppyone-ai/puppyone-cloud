@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.platform.authorization.models import RuntimeGrant, RuntimeMode, RuntimePrincipal
-from src.platform.repository_target.models import ResolvedRepositoryView, ScopeTarget
+from src.shared_types.grants import RuntimeGrant, RuntimeMode, RuntimePrincipal
+from src.shared_types.repository_target import ResolvedRepositoryView, ScopeTarget
 from src.platform.upload.jobs import stage_blob_from_s3
 from src.version_engine.admission.repo_facade import repo_facade_from_auth
 from src.version_engine.domain.errors import ObjectNotFoundError
@@ -52,7 +52,6 @@ PRODUCT_WRITE_MODULES = (
 ACTIVE_RUNTIME_SCAN_ROOTS = (
     "AGENTS.md",
     "backend/AGENTS.md",
-    "backend/CLAUDE.md",
     "backend/mcp_service",
     "backend/scripts",
     "backend/src/platform/repository_target",
@@ -81,7 +80,6 @@ ACTIVE_RUNTIME_SCAN_ROOTS = (
     "frontend/app/(main)/projects/[projectId]",
     "frontend/components",
     "scripts",
-    "tests/e2e",
 )
 
 ALLOWED_DEFERRED_DB_NAME_FILES = {
@@ -837,7 +835,7 @@ def test_core_no_longer_imports_removed_protocol_normalize_path() -> None:
 def test_access_point_auth_uses_repo_scopes_without_legacy_fallback() -> None:
     checked = (
         BACKEND_ROOT / "src/platform/access/credentials.py",
-        BACKEND_ROOT / "src/version_engine/admission/identity.py",
+        BACKEND_ROOT / "src/platform/access/authenticator.py",
     )
 
     offenders = [
@@ -896,7 +894,7 @@ def test_access_tables_are_confined_to_repository_boundaries() -> None:
             or rel.endswith("scope_repository.py")
             # Agent reads moved from repository.py into its typed query adapter.
             # Keep this exact so application services cannot acquire table access.
-            or rel == "src/platform/access/adapters/agent/runtime/persistence/queries.py"
+            or rel == "src/platform/agent/runtime/persistence/queries.py"
         )
         if allowed:
             continue

@@ -1,6 +1,6 @@
 """Canonical Project-root and repository-Scope target domain."""
 
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     RepositoryPathProjection,
     RepositoryTarget,

@@ -15,7 +15,7 @@ from src.file_operations.queries import ProductQueries, run_read
 from src.platform.access.filesystem.errors import ScopedFsError
 from src.platform.access.filesystem.indexed_grep import IndexedGrepError, run_indexed_grep_payload
 from src.platform.access.filesystem.service import ScopedFsService
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 
 from .context import (
     _assert_not_excluded,

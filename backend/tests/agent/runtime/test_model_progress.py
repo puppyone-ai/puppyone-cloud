@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.config import settings
-from src.platform.access.adapters.agent.runtime.control.heartbeat import EndRun
-from src.platform.access.adapters.agent.runtime.control.model_progress import ModelProgress
-from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.agent.runtime.control.heartbeat import EndRun
+from src.platform.agent.runtime.control.model_progress import ModelProgress
+from src.platform.agent.runtime.control.runner import RunSupervisor
+from src.platform.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
-from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
+from src.platform.agent.runtime.loop.pi import PiLoop
 from src.platform.managed_ai.contracts import InferenceRun, ModelChunk
 from src.platform.workspace.execution.pi_worker import PiWorker
 from src.platform.sandbox.store import InMemoryExecutionSessionStore

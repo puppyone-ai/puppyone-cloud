@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.internal.dependencies import verify_internal_secret
-from src.version_engine.bootstrap.dependencies import (
+from src.file_operations.dependencies import (
     get_product_operation_adapter,
     get_version_write_command_service,
 )

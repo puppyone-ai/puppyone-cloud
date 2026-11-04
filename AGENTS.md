@@ -101,12 +101,10 @@ It aggregates information scattered across various sources into a unified Contex
 
 - **`backend/`** — Python (FastAPI) backend service
 - **`frontend/`** — Next.js frontend application
-- **`cli/`** — Node.js command-line tool (Commander.js)
-- **`sandbox/`** — Docker sandbox environment (JSON editing / code execution)
 
 ## Deprecated Directories (do not modify)
 
-- `PuppyEngine`, `PuppyFlow`, `PuppyStorage`, `tools`
+- `archived/` (`PuppyEngine`, `PuppyFlow`, `PuppyStorage`)
 
 ---
 
@@ -129,6 +127,9 @@ backend/
 │   ├── main.py                # App entrypoint & lifespan
 │   ├── config.py              # Global config (Pydantic Settings)
 │   │
+│   ├── composition/           # Composition root: the only code that may know every module
+│   ├── shared_types/          # Plain types; imports nothing from src
+│   │
 │   ├── version_engine/        # Git-native Version Engine (core write funnel)
 │   │   ├── write_engine/      #   native operations, ref transactions, Git formats
 │   │   ├── read/              #   pinned native tree/history readers
@@ -145,11 +146,14 @@ backend/
 │   ├── provider/              # External-source adapters, OAuth, database capabilities
 │   │
 │   ├── platform/              # Platform services
-│   │   ├── access/            #   Git/Web/CLI/MCP/Agent adapters, credentials, shared FS
+│   │   ├── dashboard/         #   Project dashboard: read-only view across modules
+│   │   ├── onboarding/        #   First sign-in: account, entitlements, demo Project
+│   │   ├── agent/             #   Platform-run Agent: config, chat, runtime, MCP tool bindings
+│   │   ├── access/            #   Git/Web/CLI/MCP/SSH adapters, credentials, shared FS
 │   │   ├── repository_target/ #   Project-root/Scope models and geometry management
 │   │   ├── auth/              #   JWT auth (Supabase Auth)
 │   │   ├── organization/      #   Org management & member invitations
-│   │   ├── project/           #   Project CRUD & members & dashboard
+│   │   ├── project/           #   Project CRUD & members
 │   │   ├── profile/           #   User profile & onboarding status
 │   │   ├── sandbox/           #   Pluggable compute providers (Fly/E2B/Docker) behind RuntimeProvider
 │   │   ├── workspace/         #   Workspace management
@@ -202,8 +206,8 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `synchronize_bindings` / `synchronize_runs` | `platform/synchronize/repository.py`, `platform/synchronize/run_repository.py` | Durable bindings and executions; run parent is `synchronize_binding_id` |
 | `import_database_sources` | `platform/imports/database/repository.py` | Encrypted reusable one-time Import configuration; never inferred from provider or equal IDs |
 | `synchronize_github_bindings` / `synchronize_github_logs` | `platform/synchronize/github/repository.py` | Dedicated GitHub bindings/history, canonical parent, watermarks and inbound/outbound direction |
-| `access_permissions` | `platform/access/adapters/agent/config/repository.py` | Access surface ↔ content node permissions |
-| `access_tools` | `platform/access/adapters/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
+| `access_permissions` | `platform/agent/config/repository.py` | Access surface ↔ content node permissions |
+| `access_tools` | `platform/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
 | `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
 | `access_surface_credentials` | `platform/access/credential_repository.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
@@ -214,13 +218,13 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `oauth_connections` | `provider/oauth/repository.py` | OAuth integrations |
 | `chat_sessions` | `agent/chat/repository.py` | Agent chat sessions |
 | `chat_messages` | `agent/chat/repository.py` | Agent chat messages |
-| `agent_execution_logs` | `agent/config/repository.py`, `scheduler/jobs/agent_job.py` | Scheduled agent execution logs |
+| `agent_execution_logs` | `agent/config/repository.py`, `platform/agent/schedule.py` | Scheduled agent execution logs |
 | `file_versions` | _(deprecated — no longer used in code)_ | Legacy file version history |
 | `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
 | `audit_logs` | `version_engine/infrastructure/supabase/audit_repository.py` | Audit trail |
 | `search_index_tasks` | _(retired with Search Tools; no runtime reader)_ | Legacy search indexing tasks |
-| `ingest_tasks` | `project/dashboard_router.py` | Ingestion tasks |
+| `ingest_tasks` | _(no runtime reader)_ | Ingestion tasks |
 | `agent_logs` | `analytics/service.py` | Agent usage analytics |
 | `access_logs` | `analytics/service.py`, `analytics/router.py` | API access analytics |
 
@@ -229,13 +233,14 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | Route Prefix | Module | Description |
 |-------------|--------|-------------|
 | `/api/v1/organizations` | organization | Org CRUD & members & invitations |
-| `/api/v1/projects` | project | Project CRUD & members & dashboard |
+| `/api/v1/projects` | project | Project CRUD & members |
+| `/api/v1/projects/{project_id}/git-view` | platform/access/adapters/git/project_view | Human Git view health and cache rebuild |
 | `/api/v1/content/{project_id}` | platform/access/adapters/api/router | Versioned content tree, write, history, diff, rollback |
 | `/api/v1/tables` | table | Data tables & JSON Pointer operations |
 | `/api/v1/tools` | tool | Tool registration (Search Tools retired: stored rows are read/delete only) |
-| `/api/v1/agents` | platform/access/adapters/agent | Agent SSE streaming chat |
-| `/api/v1/agent-config` | platform/access/adapters/agent/config | Agent CRUD & access permissions |
-| `/api/v1/mcp` | platform/access/adapters/agent/mcp | MCP v3 tool binding & proxy |
+| `/api/v1/agents` | platform/agent | Agent SSE streaming chat |
+| `/api/v1/agent-config` | platform/agent/config | Agent CRUD & access permissions |
+| `/api/v1/mcp` | platform/agent/mcp | MCP v3 tool binding & proxy |
 | `/api/v1/mcp-endpoints` | platform/access/adapters/mcp_endpoint | MCP endpoint CRUD & API key |
 | `/api/v1/sandbox-endpoints` | platform/access/adapters/sandbox_endpoint | Sandbox endpoint CRUD & exec |
 | `/api/v1/access/surfaces` | platform/access/public_router | Access surface management (`kind`, contract v2) |
@@ -248,11 +253,12 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/git/ap/{access_key}.git` | platform/access/adapters/git/router | Bounded, instrumented legacy compatibility only; never construct for new clients |
 | `/api/v1/imports/database/sources` | platform/imports/database/public_router | One-time database sources; never Synchronize or Access identities |
 | `/api/v1/projects/{project_id}/synchronize/github` | platform/synchronize/github/public_router | GitHub binding, pull/push and logs; webhook at `/api/v1/synchronize/github/webhook` |
-| `/api/v1/projects/{project_id}/dashboard/resources`, `/api/v1/activity/items` | project/resource_dashboard, activity/public_router | Domain-qualified read-only aggregates; no legacy DTO fallback |
+| `/api/v1/projects/{project_id}/dashboard/resources`, `/api/v1/activity/items` | dashboard/router, activity/public_router | Domain-qualified read-only aggregates; no legacy DTO fallback |
 | `/api/v1/db-connector`, old GitHub/dashboard/activity URLs | retired resource routes | Not mounted; target-environment release/configuration evidence remains separate |
 | `/api/v1/publishes` | context_publish | Public JSON short links |
-| `/api/v1/oauth` | provider/oauth | OAuth authorization (9+ platforms) |
+| `/api/v1/oauth` | platform/provider_accounts | OAuth authorization (9+ platforms) |
 | `/api/v1/auth` | auth | Authentication (login/refresh) |
+| `/api/v1/auth/initialize` | onboarding | First sign-in: account, entitlements, demo Project |
 | `/api/v1/analytics` | analytics | Usage statistics |
 | `/api/v1/profile` | profile | User profile & onboarding |
 | `/api/v1/s3` | s3 | File upload/download/presigned URLs |
@@ -308,6 +314,14 @@ store. Preserve the existing desktop appearance during responsive changes.
 - **Auth**: Supabase Auth
 - **State management**: Zustand + React Context
 - **Data fetching**: SWR
+
+### UI conventions
+
+- Colours come from the `--po-*` tokens; `npm run theme:audit` reports raw colours.
+- Use `StatusDot` or `StatusIndicator` from `frontend/components/ui/StatusDot.tsx`
+  for every runtime status marker. Do not hand-roll status dots or add glow,
+  pulse or page-local colour tables.
+- Write the product name as `puppyone`: lowercase, one word, no space or hyphen.
 
 ### Directory Structure
 
@@ -393,41 +407,11 @@ NEXT_PUBLIC_DEV_MODE            # Dev mode flag
 
 ## CLI
 
-- **Language**: JavaScript (ESM)
-- **Framework**: Commander.js
-- **Install**: `npm install -g puppyone`
-
-### Directory Structure
-
-```
-cli/
-├── bin/puppyone.js             # Entrypoint & command registration
-├── src/
-│   ├── commands/               # Command implementations
-│   │   ├── auth.js             # Auth (login/logout/whoami/targets)
-│   │   ├── org.js              # Organization management
-│   │   ├── project.js          # Project management
-│   │   ├── access.js           # Unified Access Point management (all access types)
-│   │   ├── ap/                 # Access Point profile command domain
-│   │   │   ├── index.js        # ap command registration
-│   │   │   └── profiles.js     # login/use/list/current/logout/clear
-│   │   ├── fs/                 # Access Point scoped filesystem command domain
-│   │   │   ├── index.js        # fs command registration
-│   │   │   ├── commands/       # ls/tree/find/cat/head/tail/stat/write/mkdir/touch/cp/mv/rm/upload/download
-│   │   │   └── lib/            # shared FS context/http/path/render/read/transfer helpers
-│   │   ├── ap.js               # Compatibility re-export only
-│   │   ├── chat.js             # Agent chat (SSE streaming)
-│   │   ├── config-cmd.js       # CLI configuration
-│   │   ├── global.js           # Global commands (status/ps)
-│   │   └── _daemon.js          # Filesystem sync daemon (internal, legacy)
-│   ├── api.js                  # HTTP client
-│   ├── config.js               # Config file read/write
-│   ├── daemon.js               # Background daemon management
-│   ├── registry.js             # Local access registry
-│   ├── output.js               # Output formatting (human/JSON)
-│   ├── helpers.js              # Shared utilities
-│   └── state.js                # Sync state management
-```
+The CLI lives in [`puppyone-ai/puppyone-cli`](https://github.com/puppyone-ai/puppyone-cli)
+and is published to npm as `puppyone` (`npm install -g puppyone`). Do not add its
+sources here: `backend/tests/platform/test_cli_not_vendored.py` fails if they
+reappear. Contract tests resolve the real binary through
+`backend/tests/support/cli_binary.py`.
 
 ### Key Commands
 
@@ -457,16 +441,7 @@ See `docs/architecture/03-cli.md` for full reference.
 
 ## Sandbox
 
-Lightweight Docker sandbox environment for securely executing CLI commands (e.g. `jq` for JSON editing) in isolated containers.
-
-```
-sandbox/
-├── README.md          # Usage docs
-├── Dockerfile         # Alpine + jq/bash/coreutils
-└── test-data.json     # Sample test data
-```
-
-Both the frontend (`app/api/sandbox/route.ts`) and backend (`src/platform/sandbox/`) integrate with sandboxes; the backend provider layer supports Fly, E2B and local Docker.
+The backend provider layer in `backend/src/platform/sandbox/` supports Fly, E2B and local Docker. The sandbox image is built from `backend/agent-worker`.
 
 ---
 

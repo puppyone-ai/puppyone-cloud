@@ -19,7 +19,7 @@ from src.platform.auth.models import CurrentUser
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.project import repository as project_repository
 from src.platform.project.dependencies import get_project_repository
-from src.platform.repository_target.models import ProjectRootTarget, ScopeTarget
+from src.shared_types.repository_target import ProjectRootTarget, ScopeTarget
 from tests.authorization_fakes import authorization_for, install_authorization
 
 BASE = "/api/v1/access/surfaces"
@@ -293,7 +293,6 @@ def test_global_static_catalog_create_and_one_time_credentials(environment):
         assert [row["kind"] for row in client.get(BASE + "/types").json()["data"]] == [
             "agent",
             "mcp",
-            "sandbox",
         ]
         created = client.post(
             BASE, json={"project_id": "project-1", "kind": "mcp", "name": "Endpoint"}

@@ -1,6 +1,6 @@
 """P-3 — Dashboard node-count cache.
 
-The fix caches `_compute_node_counts` keyed by (project_id, head_commit_id).
+The fix caches `compute_node_counts` keyed by (project_id, head_commit_id).
 We assert: same head ⇒ tree walked once; new head ⇒ tree walked again;
 cache misses don't raise; cache stays bounded.
 """
@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from src.platform.project.dashboard_router import (
+from src.platform.dashboard.sections import (
     _NODE_COUNT_CACHE,
-    _compute_node_counts,
+    compute_node_counts,
 )
 
 
@@ -42,8 +42,8 @@ def test_repeat_request_same_commit_walks_tree_once():
     project_id = "proj-cache"
     ops = _ops(["commit-1", "commit-1"], [_Entry("folder"), _Entry("file")])
 
-    a = _compute_node_counts(ops, project_id)
-    b = _compute_node_counts(ops, project_id)
+    a = compute_node_counts(ops, project_id)
+    b = compute_node_counts(ops, project_id)
 
     assert (a.folders, a.files, a.total) == (1, 1, 2)
     assert (b.folders, b.files, b.total) == (1, 1, 2)
@@ -59,8 +59,8 @@ def test_new_commit_invalidates_cache():
         ["commit-1", "commit-2"],
         [_Entry("folder"), _Entry("file")],
     )
-    _compute_node_counts(ops, project_id)
-    _compute_node_counts(ops, project_id)
+    compute_node_counts(ops, project_id)
+    compute_node_counts(ops, project_id)
     assert ops.list_tree.call_count == 2
 
 
@@ -70,7 +70,7 @@ def test_head_commit_unavailable_falls_back_to_live():
     ops = MagicMock()
     ops.get_head_commit_id.side_effect = RuntimeError("down")
     ops.list_tree.return_value = [_Entry("folder")]
-    res = _compute_node_counts(ops, "proj-x")
+    res = compute_node_counts(ops, "proj-x")
     assert res.folders == 1
     assert res.total == 1
 
@@ -78,13 +78,13 @@ def test_head_commit_unavailable_falls_back_to_live():
 def test_cache_bound_clears_when_full():
     """Per-process cache must be bounded — long-running workers should not
     OOM from a stream of distinct (project, commit) pairs."""
-    from src.platform.project.dashboard_router import _NODE_COUNT_CACHE_MAX
+    from src.platform.dashboard.sections import _NODE_COUNT_CACHE_MAX
     # Pre-fill cache to its max.
     for i in range(_NODE_COUNT_CACHE_MAX):
         _NODE_COUNT_CACHE[(f"p-{i}", f"c-{i}")] = MagicMock()
 
     ops = _ops(["new-commit"], [_Entry("file")])
-    _compute_node_counts(ops, "new-project")
+    compute_node_counts(ops, "new-project")
     # The cache was full → cleared, then this entry inserted.
     assert len(_NODE_COUNT_CACHE) == 1
     assert ("new-project", "new-commit") in _NODE_COUNT_CACHE

@@ -68,10 +68,17 @@ PROFILE_FUNCTIONS = (
 )
 
 
-def measured_reservation(a, rows, *, entry="page"):
+def function_calls(a):
     names = ",".join(map(literal, PROFILE_FUNCTIONS))
-    a.pg.sql("SELECT pg_stat_reset_single_function_counters(oid) FROM pg_proc "
-             f"WHERE pronamespace='public'::regnamespace AND proname IN ({names})")
+    return json.loads(a.pg.value(
+        "SELECT coalesce(jsonb_object_agg(funcname,calls),'{}') FROM pg_stat_user_functions "
+        f"WHERE schemaname='public' AND funcname IN ({names})"
+    ))
+
+
+def measured_reservation(a, rows, *, entry="page"):
+    # Compare totals: resetting counters needs a superuser, which Supabase withholds.
+    before = function_calls(a)
     # One real RPC, including policy, both bulk inserts, counters, event and FKs.
     # Eight seconds matches the observed hosted statement limit. Call-count
     # assertions are the stable performance contract; timing is supplementary.
@@ -82,11 +89,10 @@ def measured_reservation(a, rows, *, entry="page"):
         + "RESET ROLE; SELECT pg_stat_force_next_flush();"
     )
     plan, _ = json.JSONDecoder().raw_decode(result.stdout.strip())
-    calls = json.loads(a.pg.value(
-        "SELECT coalesce(jsonb_object_agg(funcname,calls),'{}') FROM pg_stat_user_functions "
-        f"WHERE schemaname='public' AND funcname IN ({names})"
-    ))
-    return plan[0]["Execution Time"], calls
+    after = function_calls(a)
+    return plan[0]["Execution Time"], {
+        name: after.get(name, 0) - before.get(name, 0) for name in PROFILE_FUNCTIONS
+    }
 
 
 @pytest.mark.parametrize("count,entry", [(1, "page"), (6017, "page"), (16384, "page"), (200, "legacy")])

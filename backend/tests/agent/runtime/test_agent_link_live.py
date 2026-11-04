@@ -117,6 +117,8 @@ def ssh_line(access, home, known):
     command = home(access["command"]).replace(
         home("~/.ssh/puppyone_known_hosts"), str(known)
     )
+    # A Unix socket path has about 100 bytes; a test directory can be longer than a home.
+    command = command.replace(home("~/.ssh/puppyone-%C"), f"/tmp/pk-{known.parent.name[:12]}-%C")
     return command + " -o BatchMode=yes"
 
 
@@ -189,12 +191,12 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
         assert machine["machine"] and machine["machine"] != live.row["resource"]["resource_id"]
         assert machine["target_ref"].startswith("refs/heads/agents/")
 
-        # A different key on the same stable user is refused.
+        # A different key on the same stable user is refused. It comes from another
+        # computer, so it has no open connection of this Agent's to reuse.
         stranger = tmp_path / "stranger"
         await run(f"ssh-keygen -q -t ed25519 -N '' -f {stranger}")
-        refused = await run(
-            re.sub(r"-i \S+", f"-i {stranger}", command) + " true", check=False
-        )
+        elsewhere = re.sub(r"-o ControlPath=\S+", "-o ControlPath=none", command)
+        refused = await run(re.sub(r"-i \S+", f"-i {stranger}", elsewhere) + " true", check=False)
         assert refused.returncode == 255
         assert "Permission denied" in refused.stderr
 
@@ -203,8 +205,14 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
 
         stopped = await owner.delete(f"/api/v1/projects/{live.args['project']}/agent-links")
         assert stopped.status_code == 200, stopped.text
+        # The open connection says why and closes, unless its heartbeat closed it
+        # first; either way nothing runs, and signing in again is refused.
         ended = await run(command + " true", check=False)
-        assert ended.returncode == 255
+        assert ended.returncode in (1, 255), ended.stderr
+        if ended.returncode == 1:
+            assert "access to this workspace is not available" in ended.stderr
+        again = await run(command + " true", check=False)
+        assert again.returncode == 255
         assert json.loads((await run(poll)).stdout)["status"] == "revoked"
 
 

@@ -8,18 +8,18 @@ from uuid import uuid4
 
 import pytest
 
-from src.platform.access.adapters.agent.runtime.control import tool_policy
-from src.platform.access.adapters.agent.runtime.control.admission import Admission
-from src.platform.access.adapters.agent.runtime.control.checkpoints import Checkpoints
-from src.platform.access.adapters.agent.runtime.control.models import SubmitRun
-from src.platform.access.adapters.agent.runtime.control.publication import Publication
-from src.platform.access.adapters.agent.runtime.control.runner import RunSupervisor
-from src.platform.access.adapters.agent.runtime.control.workspace import SessionWorkspace
-from src.platform.access.adapters.agent.runtime.execution.sandbox import SandboxExecution
+from src.platform.agent.runtime.control import tool_policy
+from src.platform.agent.runtime.control.admission import Admission
+from src.platform.agent.runtime.control.checkpoints import Checkpoints
+from src.platform.agent.runtime.control.models import SubmitRun
+from src.platform.agent.runtime.control.publication import Publication
+from src.platform.agent.runtime.control.runner import RunSupervisor
+from src.platform.agent.runtime.control.workspace import SessionWorkspace
+from src.platform.agent.runtime.execution.sandbox import SandboxExecution
 from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
-from src.platform.access.adapters.agent.runtime.loop.pi import PiLoop
-from src.platform.access.adapters.agent.runtime.persistence.commands import RunRepository
-from src.platform.access.adapters.agent.service import AgentService
+from src.platform.agent.runtime.loop.pi import PiLoop
+from src.platform.agent.runtime.persistence.commands import RunRepository
+from src.platform.agent.service import AgentService
 from src.platform.billing.runtime import get_runtime_metering_service
 from src.platform.managed_ai.contracts import InferenceDone, InferenceRun, ModelChunk
 from src.platform.project.write_lease import ProjectWriteLease
@@ -229,7 +229,9 @@ async def prepared(services, postgres, submitted, request):
     args, first = submitted
     postgres.sql(f"UPDATE agent_runs SET state='failed' WHERE id='{first['id']}'")
     project, user, agent = args["project"], args["user"], args["agent"]
-    ops = container.product_operations().for_user(project, user)
+    from src.file_operations.dependencies import product_operations
+
+    ops = product_operations(container).for_user(project, user)
     profile = getattr(request, "param", "native")
     from tests.repository_hosting.integration.test_repository_file_policy import (
         enroll_file_policy,

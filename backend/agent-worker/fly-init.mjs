@@ -1,22 +1,20 @@
 /** Root-owned Fly boot: disk layout and sealed task egress before SSH admission. */
 import { mkdir, chmod, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import { egressRules, PUBLIC_DNS } from './fly-egress.mjs';
 import { superviseFiles } from './workbench-files-supervisor.mjs';
 // Fly supports native nftables but not the iptables xt_owner kernel match.
 // Install both IP families atomically, before admitting any task. SSH/provider
-// control runs as root; UID 1000 may reach only local model and Git relays.
+// control runs as root; UID 1000 reaches local model and Git relays, and the
+// public internet only where the Workspace allows it.
 // An unsupported firewall aborts boot, with diagnostics, never open egress.
+const internet = process.env.PUPPYONE_TASK_INTERNET;
 execFileSync('nft', ['-f', '-'], {
-  input: `table inet puppyone_task_egress {
-    chain output {
-      type filter hook output priority 0; policy accept;
-      meta skuid 1000 ip daddr 127.0.0.0/8 accept
-      meta skuid 1000 ip6 daddr ::1/128 accept
-      meta skuid 1000 counter reject with icmpx type admin-prohibited
-    }
-  }`,
+  input: egressRules(internet),
   stdio: ['pipe', 'inherit', 'inherit'],
 });
+// Fly's resolver sits on the private network the task user cannot reach.
+if (internet === 'open') await writeFile('/etc/resolv.conf', PUBLIC_DNS);
 await mkdir('/data/workspace', {recursive: true});
 await mkdir('/data/control', {recursive: true});
 await chmod('/data', 0o755); await chmod('/data/control', 0o700);

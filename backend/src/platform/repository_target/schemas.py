@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from src.platform.repository_target.models import (
+from src.shared_types.repository_target import (
     ProjectRootTarget,
     RepositoryTarget,
     ScopeTarget,

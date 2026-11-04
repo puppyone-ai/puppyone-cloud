@@ -10,7 +10,7 @@ import base64
 import uuid
 from contextlib import suppress
 
-from src.platform.billing.storage import logical_verified_tree_bytes
+from src.version_engine.storage.logical_size import logical_verified_tree_bytes
 from src.version_engine.read.repository_snapshot import RepositorySnapshot
 from src.version_engine.storage.publication import ClosureVerifier
 from src.version_engine.write_engine.git_object_format import encode_object

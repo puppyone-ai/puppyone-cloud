@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from src.platform.auth.dependencies import get_current_user
 from src.platform.authorization.dependencies import get_authorization_service
 from src.file_operations.operation_adapter import ProductOperationAdapter
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.file_operations.dependencies import get_product_operation_adapter
 from src.version_engine.domain.errors import ObjectNotFoundError
 from src.platform.access.adapters.api.router import router
 from src.platform.access.adapters.api.resource import TEXT_PREVIEW_BYTES

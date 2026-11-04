@@ -5,6 +5,7 @@ from contextlib import suppress
 from uuid import UUID
 
 from .control_channel import ControlChannel
+from .task_identity import valid_task_uid
 from .worker_port import WorkerDisconnected
 
 
@@ -15,7 +16,7 @@ class WorkspaceShell(ControlChannel):
         self.workbench = str(UUID(connection["workbench_id"]))
         self.generation = str(UUID(connection["generation"]))
         self.task_uid = connection["task_uid"]
-        if type(self.task_uid) is not int or not 20000 <= self.task_uid <= 59999:
+        if not valid_task_uid(self.task_uid):
             raise ValueError("Invalid shell task identity")
         binding, resource = connection["binding"], connection["resource"]
         super().__init__(

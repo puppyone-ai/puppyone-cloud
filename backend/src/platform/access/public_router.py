@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from src.common_schemas import ApiResponse
 from src.platform.access import project_router as project_ops
 from src.platform.access import router as global_ops
+from src.platform.access.config_redaction import contains_secret_config_key, redact_config
 from src.platform.access.public_schemas import (
     AccessCredentialIssued,
     AccessDirection,
@@ -31,7 +32,7 @@ from src.platform.authorization.dependencies import (
     get_authorization_service,
     require_project_action,
 )
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
 from src.platform.entitlements.dependencies import get_entitlement_service
 from src.platform.entitlements.service import EntitlementService
@@ -90,9 +91,9 @@ def _surface(value) -> AccessSurface:
     project_id = fields["project_id"]
     if project_id != target["project_id"]:
         raise ValueError("Access surface and target Project identities disagree")
-    fields["config"] = global_ops._redact_config(fields.get("config") or {})
-    fields["policy"] = global_ops._redact_config(fields.get("policy") or {})
-    fields["trigger"] = global_ops._redact_config(fields.get("trigger"))
+    fields["config"] = redact_config(fields.get("config") or {})
+    fields["policy"] = redact_config(fields.get("policy") or {})
+    fields["trigger"] = redact_config(fields.get("trigger"))
     return AccessSurface(**fields)
 
 
@@ -107,7 +108,7 @@ def _reply(
 
 
 def _safe_metadata(*values) -> None:
-    if any(global_ops._contains_secret_config_key(value) for value in values):
+    if any(contains_secret_config_key(value) for value in values):
         raise HTTPException(
             400,
             "Credentials cannot be written through Access metadata; use explicit credential issuance.",

@@ -5,15 +5,11 @@ on:
     branches: [main]
     paths:
       - 'frontend/**'
-      - 'packages/**'
-      - 'artifacts/tests/issue-105/**'
       - '.github/workflows/frontend-readability.yml'
   push:
     branches: [main]
     paths:
       - 'frontend/**'
-      - 'packages/**'
-      - 'artifacts/tests/issue-105/**'
       - '.github/workflows/frontend-readability.yml'
 
   workflow_dispatch:

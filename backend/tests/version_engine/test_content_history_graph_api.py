@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 from src.platform.access.adapters.api.history import history_router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.version_engine.bootstrap.dependencies import (
+from src.file_operations.dependencies import get_product_operation_adapter
+from src.file_operations.engine_dependencies import (
     get_history_graph_service,
-    get_product_operation_adapter,
     get_version_admin_service,
 )
 from src.version_engine.read.admin import VersionAdminService

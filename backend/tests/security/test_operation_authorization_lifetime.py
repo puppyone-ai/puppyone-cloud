@@ -5,7 +5,7 @@ import pytest
 
 from src.exceptions import NotFoundException
 from src.platform.authorization.lifetime import OperationAuthorization
-from src.platform.authorization.models import ProjectAction
+from src.shared_types.grants import ProjectAction
 from src.utils.request_context import project_access_cache_var
 from tests.authorization_fakes import authorization_for
 

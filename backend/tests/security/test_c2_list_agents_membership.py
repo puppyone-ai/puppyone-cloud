@@ -8,14 +8,14 @@ from datetime import UTC, datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from src.platform.access.adapters.agent.config.dependencies import get_agent_config_service
-from src.platform.access.adapters.agent.config.models import Agent
-from src.platform.access.adapters.agent.config.router import router as agent_config_router
+from src.platform.agent.config.dependencies import get_agent_config_service
+from src.platform.agent.config.models import Agent
+from src.platform.agent.config.router import router as agent_config_router
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.platform.authorization.models import ProjectAction
-from src.version_engine.bootstrap.dependencies import get_product_operation_adapter
+from src.shared_types.grants import ProjectAction
+from src.file_operations.dependencies import get_product_operation_adapter
 
 
 ALLOWED_PROJECT = "proj-A"

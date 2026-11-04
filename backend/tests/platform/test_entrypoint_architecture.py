@@ -86,14 +86,14 @@ def test_repository_api_dependencies_remain_one_way():
             "src.platform.access.adapters", "src.platform.access.credentials",
             "src.platform.access.credential_repository", "src.platform.access.filesystem",
         )),
-        ("platform/repository_target/models.py", ("src.platform.access",)),
+        ("shared_types/repository_target.py", ("src.platform.access",)),
         ("platform/repository_target/schemas.py", ("src.platform.access",)),
         ("platform/repository_target/scope_repository.py", ("src.platform.access",)),
         ("platform/repository_target/scope_service.py", ("src.platform.access",)),
         ("platform/access/filesystem", ("src.platform.access.adapters",)),
         ("platform/access/adapters/cli", ("src.platform.access.adapters.mcp_endpoint",)),
         ("platform/access/adapters/mcp_endpoint", ("src.platform.access.adapters.cli",)),
-        ("platform/access/adapters/git", ("src.platform.access.adapters.agent",)),
+        ("platform/access/adapters/git", ("src.platform.agent",)),
         ("file_operations", ("src.platform.access.adapters",)),
         ("version_engine/read", ("src.file_operations",)),
         ("version_engine/write_engine", ("src.file_operations",)),
@@ -308,7 +308,7 @@ def test_import_and_synchronize_share_registered_provider_instances(monkeypatch)
 
 @pytest.mark.parametrize("role,allowed", [("viewer", False), ("editor", False), ("admin", True)])
 def test_renamed_management_actions_keep_the_original_role_boundary(role, allowed):
-    from src.platform.authorization.models import ACTION_CAPABILITY, ROLE_CAPABILITIES, ProjectAction, ProjectRole
+    from src.shared_types.grants import ACTION_CAPABILITY, ROLE_CAPABILITIES, ProjectAction, ProjectRole
 
     for action in (ProjectAction.SYNCHRONIZE_MANAGE, ProjectAction.ACCESS_MANAGE, ProjectAction.IMPORT_SOURCE_MANAGE):
         assert (ACTION_CAPABILITY[action] in ROLE_CAPABILITIES[ProjectRole(role)]) is allowed

@@ -14,7 +14,7 @@ from src.exceptions import (
 )
 from src.infra.dependency_diagnostics import dependency_failure
 from src.platform.authorization.failures import authorization_unavailable
-from src.platform.authorization.models import (
+from src.shared_types.grants import (
     ROLE_CAPABILITIES,
     AccessCapability,
     AccessChannel,

@@ -70,7 +70,7 @@ def test_real_route_rejects_unauthenticated_discovery(monkeypatch, path, service
     "method,suffix", [("post", "git-receive-pack"), ("post", "git-upload-pack")]
 )
 def test_anonymous_write_cannot_reach_repository_resolver(monkeypatch, method, suffix):
-    from src.version_engine.bootstrap.dependencies import get_repo_manager
+    from src.file_operations.engine_dependencies import get_repo_manager
 
     app = FastAPI()
     app.include_router(git_router)

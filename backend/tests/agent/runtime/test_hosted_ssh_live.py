@@ -20,7 +20,7 @@ from src.platform.access.adapters.api.workbench_router import (
     workspace_error_handler,
 )
 from src.platform.access.adapters.api.workbench_router import router as files_router
-from src.platform.access.adapters.ssh.gateway import start_gateway
+from src.platform.access.adapters.ssh.gateway import start_gateway, stop_gateway
 from src.platform.access.adapters.ssh.hosted import (
     HostedSshAccess,
     SshGrantRepository,
@@ -86,7 +86,7 @@ async def live(postgres, submitted, control_api, tmp_path, monkeypatch):
     owner = WorkbenchChannel(row)
     workspace = None
     gateway = None
-    sessions, clients = set(), set()
+    sessions, clients, closing = set(), set(), set()
     try:
         # Persist allocation intent before I/O, including a lost create reply.
         row = transition(postgres, row, "allocating", owner.resource)
@@ -126,6 +126,7 @@ async def live(postgres, submitted, control_api, tmp_path, monkeypatch):
             port=0,
             connections=clients,
             sessions=sessions,
+            closing=closing,
         )
         config.public_port = gateway.get_port()
         key_file = tmp_path / "client-key"
@@ -158,11 +159,8 @@ async def live(postgres, submitted, control_api, tmp_path, monkeypatch):
             )
     finally:
         if gateway:
-            gateway.close()
-            await gateway.wait_closed()
-        for client in list(clients):
-            client.close()
-        await asyncio.gather(*list(sessions), return_exceptions=True)
+            # An Agent's ssh keeps its connection open; the gateway ends it, as on shutdown.
+            await stop_gateway(gateway, clients, sessions, closing)
         if workspace:
             await workspace.close()
         await owner.close()
@@ -217,14 +215,36 @@ async def read_file(live, path):
 
 
 async def until_released(live, identity):
+    """Every command under this session or credential is released; returns the last.
+
+    Each command over a shared connection has its own row, held by the connection's
+    session. An owner's credential holds none, so its rows are its Workspace's since issue.
+    """
+    owned = f"""FROM cloud_workbench_connections c
+        LEFT JOIN workspace_ssh_grants g ON g.id='{identity}'
+        WHERE c.id='{identity}' OR c.access_session_id='{identity}'
+           OR (g.access_grant_id IS NULL AND c.access_session_id IS NULL
+               AND c.workbench_id=g.workbench_id AND c.created_at>=g.created_at)"""
     async with asyncio.timeout(25):
         while True:
             row = await asyncio.to_thread(
-                live.db.row, f"SELECT * FROM cloud_workbench_connections WHERE id='{identity}'"
+                live.db.row,
+                f"""SELECT c.*, count(*) FILTER (WHERE c.state<>'released') OVER () AS held
+                {owned} ORDER BY c.created_at DESC LIMIT 1""",
             )
-            if row and row["state"] == "released":
+            if row and row["held"] == 0:
                 return row
             await asyncio.sleep(0.1)
+
+
+async def test_the_gateway_refuses_port_forwarding(live):
+    """Forwarding would carry a machine past its firewall through the client's network."""
+    grant = await issue(live)
+    async with await connect(live, grant) as conn:
+        with pytest.raises(asyncssh.ChannelOpenError):
+            await conn.open_connection("1.1.1.1", 443)
+        with pytest.raises(asyncssh.ChannelListenError):
+            await conn.forward_remote_port("127.0.0.1", 0, "127.0.0.1", 9)
 
 
 async def test_stock_ssh_exec_binary_and_editor_same_uncommitted_files(live):

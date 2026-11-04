@@ -17,8 +17,8 @@ from copy import copy
 from dataclasses import dataclass
 
 from src.infra.execution.context import checkpoint
-from src.platform.authorization.models import ProjectAction, ProjectGrant, RuntimeGrant
-from src.platform.repository_target.models import ProjectRootTarget
+from src.shared_types.grants import ProjectAction, ProjectGrant, RuntimeGrant
+from src.shared_types.repository_target import ProjectRootTarget
 from src.version_engine.infrastructure.supabase.billing_repository import RepositoryBilling
 from src.version_engine.infrastructure.supabase.capacity_repository import RepositoryCapacity
 from src.version_engine.infrastructure.supabase.file_policy_repository import RepositoryFilePolicy
@@ -340,6 +340,10 @@ class RefTransactionService:
         if pin is not None and manifest is None and self.billing is not None:
             # A sealed retry can contain not-yet-published roots. Verify its own
             # publication proof; never add those roots to a reader's snapshot.
+            # Its own proofs would end the walk at the root, which changes the
+            # sealed digest and hides new blobs from the file size policy.
+            if self.verifier.proofs is not None:
+                self.verifier.proofs.distrust_unpublished()
             manifest = self.verifier.verify(roots, progress=renew)
         self.progress()
         if self.billing is not None:

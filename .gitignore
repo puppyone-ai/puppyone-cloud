@@ -162,3 +162,9 @@ backend/.native-migration-test-results/
 e2e/test-results/
 
 /backend/.native-retirement-hosting-results/
+
+# Local and CI test evidence stays out of the tree
+/artifacts/
+
+# Puppyone Desktop workspace state
+/.puppyone/
