@@ -204,6 +204,26 @@ def ssh_access(connection, endpoint):
 
 
 class AgentLinkRepository(AccessRepository):
+    def agent_saves(self, project):
+        """The last save of each Agent's Workspace, by its branch."""
+        rows = (
+            self.client.table("cloud_workbenches")
+            .select("target_ref,save_status,save_error,save_finished_at,unpublished_changes")
+            .eq("project_id", project)
+            .not_.is_("agent_registration_id", "null")
+            .execute()
+            .data
+        )
+        return {
+            row["target_ref"]: {
+                "status": row["save_status"],
+                "error": row["save_error"],
+                "finished_at": row["save_finished_at"],
+                "unsaved_work": row["unpublished_changes"],
+            }
+            for row in rows or []
+        }
+
     def command(self, action, user, **payload):
         return self.call("access_agent_link_command", action=action, user=user, payload=payload)
 
@@ -260,7 +280,16 @@ class AgentLinkService:
 
     async def inventory(self, user, project):
         row = await run_blocking(self.repository.command, "inventory", user, project_id=project)
-        return {**row, "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED}
+        saves = await run_blocking(self.repository.agent_saves, project)
+        connections = [
+            {**connection, "save": saves.get(connection.get("branch"))}
+            for connection in row.get("connections") or []
+        ]
+        return {
+            **row,
+            "connections": connections,
+            "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED,
+        }
 
     async def stop(self, user, project):
         return await run_blocking(self.repository.command, "stop", user, project_id=project)

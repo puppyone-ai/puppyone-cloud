@@ -268,7 +268,8 @@ for (const format of ['sha1', 'sha256']) {
       const message = 'Bring in changes';
       try {
         await lifecycle.control('initialize', config);
-        assert.equal((await lifecycle.control('capabilities')).workspace_git, 1);
+        // 2: it can also save an external Agent's files without using its Git state.
+        assert.equal((await lifecycle.control('capabilities')).workspace_git, 2);
 
         // Saving reaches only the Workspace's own branch.
         await write('local.md', 'local work');

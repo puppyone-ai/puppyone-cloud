@@ -24,6 +24,13 @@ from .opening import awaiting_files
 
 logger = logging.getLogger(__name__)
 
+# A save gets a few tries inside one operation lease, then the pause goes on without it.
+SAVE_ATTEMPTS = 3
+SAVE_RETRY_SECONDS = 5
+SAVE_BUDGET_SECONDS = 150
+# Past this a pause stops retrying: the machine goes back to running, or to retained.
+PAUSE_LIMIT_SECONDS = 600
+
 
 def meter_id(row):
     return f"cloud-workbench:{row['id']}:{row['generation']}:{row['compute_epoch']}"
@@ -390,6 +397,9 @@ class WorkbenchLifecycle:
                 raise RuntimeError("Workspace artifact does not implement lifecycle initialization")
             await self.progress(row, "initializing")
             await host.control("initialize", host.resource["initialization"])
+            # A resource without this mark has no working directory to go back to.
+            host.resource["initialized"] = True
+            row = await run_blocking(self.repository.transition, row, "allocating", host.resource)
         # Resume is proved by the file service's hello + real root read, on the
         # consuming connection. Do not create two disposable worker SSH channels.
         await self.progress(row, "checking_files")
@@ -440,56 +450,104 @@ class WorkbenchLifecycle:
         logger.info("workbench_destroyed", extra={"workbench_id": row["id"]})
 
     async def _preserve_failed_start(self, row):
+        """Bring a failed start to rest, then out of retained once it can be checked.
+
+        Only what cannot be checked stays retained, and every pass reports it.
+        """
         host = self.channel_factory(row)
         try:
-            if row["resource"] is None:
+            if row["resource"] is None or self._never_created(row):
                 # Intent is persisted before allocation, so no provider resource exists.
+                if row["resource"] is not None and await host.runtime.resolve(host.resource):
+                    raise WorkerDisconnected("Allocation outcome requires reconciliation")
                 if settings.RUNTIME_METERING_MODE != "disabled":
                     await self.billing.cancel_session(meter_id(row))
-            else:
-                matches = await host.runtime.resolve(host.resource)
-                if len(matches) != 1:
-                    # Keep reconciling a possibly late allocation. Absence after a
-                    # timeout is not permission to create a second empty workspace.
-                    raise WorkerDisconnected("Allocation outcome requires reconciliation")
-                host.resource = matches[0]
-                result = await host.runtime.pause_resource(host)
-                host.resource["preservation"] = result.receipt(host.resource)
-                if (
-                    settings.RUNTIME_METERING_MODE != "disabled"
-                    and not await self.billing.finish_session(meter_id(row), retry=True)
-                ):
-                    raise WorkerDisconnected("Workspace settlement awaits confirmation")
-            if row["state"] != "retained":
                 await run_blocking(
                     self.repository.transition,
                     row,
-                    "retained",
-                    host.resource if row["resource"] is not None else None,
+                    "retired" if row["state"] == "retained" else "retained",
                 )
+                return
+            matches = await host.runtime.resolve(host.resource)
+            if len(matches) != 1:
+                # Keep reconciling a possibly late allocation. Absence after a
+                # timeout is not permission to create a second empty workspace.
+                logger.error("workspace_requires_operator", extra={"workbench_id": row["id"]})
+                raise WorkerDisconnected("Allocation outcome requires reconciliation")
+            host.resource = matches[0]
+            if row["state"] == "resuming":
+                host.resource["initialized"] = True  # Only an initialized disk resumes.
+            result = await host.runtime.pause_resource(host)
+            host.resource["preservation"] = result.receipt(host.resource)
+            if (
+                settings.RUNTIME_METERING_MODE != "disabled"
+                and not await self.billing.finish_session(meter_id(row), retry=True)
+            ):
+                raise WorkerDisconnected("Workspace settlement awaits confirmation")
+            if row["state"] != "retained":
+                await run_blocking(self.repository.transition, row, "retained", host.resource)
+            elif host.resource.get("initialized"):
+                # The one original resource is confirmed stopped: an ordinary paused disk.
+                await run_blocking(self.repository.transition, row, "paused", host.resource)
+            else:
+                logger.error("workspace_requires_operator", extra={"workbench_id": row["id"]})
         finally:
             await host.runtime.aclose()
+
+    @staticmethod
+    def _never_created(row):
+        resource = row["resource"] or {}
+        return row["state"] == "retained" and bool(resource.get("allocation_pending")) and (
+            not resource.get("volume_id")
+        )
+
+    async def _attempt_save(self, row):
+        """One save with its retries: the status and error to record, and the commit."""
+        for attempt in range(SAVE_ATTEMPTS):
+            try:
+                saved = await self.service.git.snapshot(row)
+            except WorkerLost:
+                # The disk holds the work, and it stays marked as unsaved.
+                return "skipped", "workbench_save_compute_lost", None
+            except Exception as exc:
+                if access_failure(exc):
+                    return "skipped", "workbench_save_no_access", None
+                logger.warning(
+                    "workspace_save_attempt_failed",
+                    extra={"workbench_id": row["id"], "attempt": attempt + 1},
+                )
+                if attempt + 1 < SAVE_ATTEMPTS:
+                    await asyncio.sleep(SAVE_RETRY_SECONDS)
+                continue
+            if saved["status"] == "saved":
+                return "saved", None, saved.get("tip")
+            if saved["status"] == "merging":
+                return "merging", "workbench_save_merging", None
+            return "rejected", "workbench_save_rejected", None
+        return "failed", "workbench_save_failed", None
 
     async def _save_agent_work(self, row):
         """An external Agent's branch is the only way its work leaves the machine.
 
-        This runs while pausing, when no new connection can start. A failure raises,
-        so the machine keeps running and maintenance retries the pause.
+        This runs while pausing, when no new connection can start. A pause keeps the
+        disk, and unsaved work is never reclaimed, so a failed save loses nothing and
+        cannot hold the pause: the machine sleeps, the Agent can come back, and the
+        result is recorded for its owner.
         """
         if not row.get("agent_registration_id"):
             return
         try:
-            saved = await self.service.git.save(row)
-        except WorkerLost:
-            logger.warning("workspace_save_skipped_compute_lost", extra={"workbench_id": row["id"]})
-            return  # The disk holds the work, and it stays marked as unsaved.
-        except Exception as exc:
-            if not access_failure(exc):
-                raise
-            logger.warning("workspace_save_skipped_no_access", extra={"workbench_id": row["id"]})
-            return
-        if saved["status"] == "saved":
-            await run_blocking(self.repository.saved, row)
+            async with asyncio.timeout(SAVE_BUDGET_SECONDS):
+                status, error, oid = await self._attempt_save(row)
+        except TimeoutError:
+            status, error, oid = "failed", "workbench_save_timeout", None
+        if status != "saved":
+            logger.error(
+                "workspace_save_incomplete",
+                extra={"workbench_id": row["id"], "save_status": status, "save_error": error},
+            )
+        await run_blocking(self.repository.save_outcome, row, status, error=error, oid=oid)
+        await self.progress(row, "pausing")  # The save may have used most of the lease.
 
     async def pause(self, row):
         await self._save_agent_work(row)
@@ -498,6 +556,10 @@ class WorkbenchLifecycle:
         try:
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
+        except WorkspaceDiskLost:
+            await run_blocking(self.repository.disk_lost, row)
+            logger.error("workbench_disk_lost", extra={"workbench_id": row["id"]})
+            return
         finally:
             await host.runtime.aclose()
         # Settlement precedes paused ACK and the next compute epoch.
@@ -507,6 +569,28 @@ class WorkbenchLifecycle:
             raise WorkerDisconnected("Workspace settlement awaits confirmation")
         paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
         await run_blocking(self.repository.progress, paused, "paused")
+
+    @staticmethod
+    def _pause_expired(row):
+        started = row.get("pausing_since")
+        if not started:
+            return False
+        elapsed = (datetime.now(UTC) - datetime.fromisoformat(started)).total_seconds()
+        return elapsed >= PAUSE_LIMIT_SECONDS
+
+    async def _abandon_pause(self, row):
+        """A pause that cannot finish ends: back to serving, or held for a check."""
+        logger.error("workspace_pause_abandoned", extra={"workbench_id": row["id"]})
+        host = self.channel_factory(row)
+        try:
+            await host.runtime.running_connection(host)
+        except Exception:
+            await run_blocking(self.repository.transition, row, "retained")
+        else:
+            running = await run_blocking(self.repository.transition, row, "running")
+            await run_blocking(self.repository.progress, running, "ready")
+        finally:
+            await host.runtime.aclose()
 
     async def reap(self):
         for name in workspace_providers(self.providers(None).name):
@@ -536,6 +620,13 @@ class WorkbenchLifecycle:
                         if claimed["acquired"]:
                             owned = claimed["workbench"]
                             await self.destroy(owned)
+                    continue
+                if row["state"] == "cleanup_pending":
+                    # A claimed reclaim that failed: its work is saved, so it is retried.
+                    claimed = await run_blocking(self.repository.reclaim_claim, row)
+                    if claimed["acquired"]:
+                        owned = claimed["workbench"]
+                        await self.destroy(owned)
                     continue
                 if row["state"] == "paused":
                     # Saved Agent work is on its branch; the machine can be rebuilt from it.
@@ -584,7 +675,9 @@ class WorkbenchLifecycle:
                     claimed = await run_blocking(self.repository.lifecycle_claim, row)
                     if claimed["acquired"]:
                         current = owned = claimed["workbench"]
-                        if current["state"] == "pausing":
+                        if current["state"] == "pausing" and self._pause_expired(current):
+                            await self._abandon_pause(current)
+                        elif current["state"] == "pausing":
                             await self.pause(current)
                         else:
                             await self._preserve_failed_start(current)
