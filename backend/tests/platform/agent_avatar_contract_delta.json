@@ -1,0 +1,9 @@
+{
+  "paths": {},
+  "schemas": {
+    "AgentConnect": {
+      "before": "33b341602469d56388a3e2470f421502fc1989ac055ceee728cc8e8f657bb398",
+      "after": "859653dc1650685d2a2d3fd06191648c0ca38f43baecd10dfe2a541c6d2f6c41"
+    }
+  }
+}

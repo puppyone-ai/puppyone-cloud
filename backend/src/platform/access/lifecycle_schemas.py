@@ -97,10 +97,37 @@ class AgentLinkCreate(AccessRequest):
         return _secret(value, "pai")
 
 
+# The pictures an Agent may choose from when it connects. Each is a mark the
+# Desktop already draws; "other" is for an Agent that is none of them, which the
+# Desktop then draws as a creature of its own.
+AGENT_AVATARS = (
+    "claude",
+    "codex",
+    "chatgpt",
+    "cursor",
+    "gemini",
+    "grok-bot",
+    "hermes",
+    "opencode",
+    "manus",
+    "pi",
+    "workbuddy",
+    "replit",
+    "devin",
+    "jules",
+    "github-copilot",
+    "copilot-studio",
+    "viktor",
+    "other",
+)
+
+
 class AgentConnect(AccessRequest):
     invitation: SecretStr
     name: str = Field(min_length=1, max_length=120)
     public_key: str = Field(min_length=40, max_length=8192)
+    # Self-declared, like the name, and shown beside it before the owner allows it.
+    avatar: str | None = None
 
     @field_validator("invitation")
     @classmethod
@@ -115,6 +142,16 @@ class AgentConnect(AccessRequest):
         if not name:
             raise ValueError("Agent name required")
         return name
+
+    @field_validator("avatar", mode="before")
+    @classmethod
+    def known_avatar(cls, value):
+        # A picture outside the list is no choice at all: an Agent is never
+        # refused for it, and the Desktop falls back as if it had not chosen.
+        if not isinstance(value, str):
+            return None
+        avatar = value.strip().lower()
+        return avatar if avatar in AGENT_AVATARS else None
 
 
 class AgentConnectionDecision(AccessRequest):

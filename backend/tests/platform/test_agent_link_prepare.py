@@ -82,3 +82,39 @@ async def test_a_machine_that_cannot_be_started_never_fails_the_owner(caplog):
     assert (await links.decide("owner", CONNECTION, "approve"))["state"] == "approved"
     await prepared()
     assert "agent_workspace_prepare_failed" in caplog.text
+
+
+def test_an_agent_chooses_its_picture_from_the_list_and_anything_else_is_no_choice():
+    def connect(avatar):
+        return AgentConnect(
+            invitation="pai_" + "a" * 43, name="Codex", public_key=KEY, avatar=avatar
+        )
+
+    assert connect("grok-bot").avatar == "grok-bot"
+    assert connect("  Claude ").avatar == "claude"
+    assert connect("other").avatar == "other"
+    # Never a refusal: an Agent that misreads the list still connects, with no picture.
+    for avatar in ("YOUR AVATAR", "https://example.com/me.png", "<svg/>", "x" * 500, 7, None):
+        assert connect(avatar).avatar is None
+    assert AgentConnect(invitation="pai_" + "a" * 43, name="Codex", public_key=KEY).avatar is None
+
+
+def test_the_instructions_ask_for_exactly_one_picture_from_the_list(monkeypatch):
+    monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
+    text = agent_links.agent_instructions("pai_" + "a" * 43)
+    assert '\\"avatar\\":\\"YOUR AVATAR\\"' in text
+    assert ", ".join(agent_links.AGENT_AVATARS) in text
+    assert agent_links.AGENT_AVATARS[-1] == "other"
+
+
+async def test_connecting_records_the_chosen_picture(monkeypatch):
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
+    links, _, _ = service(decided="pending")
+    request = AgentConnect(
+        invitation="pai_" + "a" * 43, name="Codex", public_key=KEY, avatar="codex"
+    )
+    await links.connect(request)
+    name, values = links.repository.call.call_args.args[0], links.repository.call.call_args.kwargs
+    assert name == "access_agent_connect"
+    assert values["agent_name"] == "Codex" and values["agent_avatar"] == "codex"
