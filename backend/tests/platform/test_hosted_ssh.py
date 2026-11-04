@@ -264,3 +264,13 @@ def test_a_lease_that_cannot_be_renewed_is_an_expected_ending(message, code):
     assert error.value.code == code
     with pytest.raises(APIError):  # Cleanup keeps the raw fault for the reaper's log.
         repository.update({"id": "c", "generation": "g"}, "stop")
+
+
+@pytest.mark.parametrize("message", ["workspace_connection_expired", "access_denied"])
+def test_a_command_under_an_ended_session_is_refused_as_denied(message):
+    repository = ConnectionRepository.__new__(ConnectionRepository)
+    repository.command = Mock(side_effect=APIError({"message": message, "code": "42501"}))
+    row = {"id": "w", "generation": "g", "user_id": "u", "project_id": "p"}
+    with pytest.raises(WorkspaceError) as error:
+        repository.reserve("c", row, {}, session="s")
+    assert error.value.code == "access_denied"

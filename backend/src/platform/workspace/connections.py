@@ -37,9 +37,14 @@ class ConnectionRepository(WorkbenchRepository):
                 revision=revision,
             )
         except APIError as exc:
+            message = str(exc.message or exc)
             # Bounded occupancy is an expected, actionable refusal.
-            if "workspace_connection_limit" in str(exc.message or exc):
+            if "workspace_connection_limit" in message:
                 raise WorkspaceError(429, {"code": "workspace_connection_limit"}) from exc
+            # The session or grant this command would run under has ended: revoked,
+            # expired or ended by the owner. Also expected, as when a renewal fails.
+            if "workspace_connection_expired" in message or "access_denied" in message:
+                raise WorkspaceError(403, {"code": "access_denied"}) from exc
             raise
 
     def update(self, connection, action):

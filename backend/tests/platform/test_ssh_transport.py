@@ -19,6 +19,7 @@ from src.platform.access.adapters.ssh.gateway import (
     ClientDisconnected,
     session_ending,
     start_gateway,
+    stop_gateway,
 )
 from src.platform.access.agent_links import CONNECTION_OPTIONS, PROXY_HELPER
 from src.platform.workspace.errors import WorkspaceError
@@ -82,9 +83,13 @@ class NativeAccess:
         self.admitted += 1
         return {"id": identity}
 
+    open_error = None
+
     @asynccontextmanager
     async def open(self, session, notify=None):
         self.opened += 1
+        if self.open_error:
+            raise self.open_error
         if getattr(self, "resume_notice", None):
             await notify(self.resume_notice)
         shell = NativeShell(self.directory)
@@ -271,6 +276,80 @@ async def test_the_server_ends_a_connection_whose_access_ended(transport, monkey
         await connection.wait_closed()
         while not service.finished:
             await asyncio.sleep(0.05)
+    assert service.finished == ["fixture"]
+
+
+async def test_a_command_refused_because_access_ended_closes_the_connection(transport):
+    connection, service = transport
+    await connection.run("true", encoding=None)
+    service.open_error = WorkspaceError(403, {"code": "access_denied"})
+    async with asyncio.timeout(15):
+        result = await connection.run("true", encoding=None)
+        assert result.exit_status == 1
+        assert b"PuppyOne: access to this workspace is not available" in result.stderr
+        # Not held open until the heartbeat notices: the next command signs in again.
+        await connection.wait_closed()
+        while not service.finished:
+            await asyncio.sleep(0.05)
+    assert service.finished == ["fixture"]
+
+
+async def test_a_running_command_ends_with_its_connections_session(transport, monkeypatch):
+    connection, service = transport
+    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    process = await connection.create_process("echo started; sleep 30", encoding=None)
+    async with asyncio.timeout(15):
+        assert await process.stdout.readline() == b"started\n"
+        # The command's own lease still renews, as one under an owner's credential does.
+        service.session_error = WorkspaceError(403, {"code": "access_denied"})
+        await process.wait_closed()
+        assert process.exit_status == 1
+        assert b"PuppyOne: access to this workspace is not available" in (
+            await process.stderr.read()
+        )
+        await connection.wait_closed()
+    assert service.closed
+
+
+async def test_a_command_refused_for_now_keeps_the_connection(transport):
+    connection, service = transport
+    service.open_error = WorkspaceError(503, {"code": "workspace_preparing"})
+    async with asyncio.timeout(15):
+        refused = await connection.run("true", encoding=None)
+        assert refused.exit_status == 1
+        service.open_error = None
+        result = await connection.run("printf ready", encoding=None)
+    assert result.stdout == b"ready"
+    assert service.admitted == 1
+
+
+async def test_shutdown_does_not_wait_for_clients_to_leave(tmp_path):
+    host = asyncssh.generate_private_key("ssh-ed25519")
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    service = NativeAccess(key, tmp_path)
+    connections, sessions, closing = set(), set(), set()
+    gateway = await start_gateway(
+        service,
+        host,
+        host="127.0.0.1",
+        port=0,
+        connections=connections,
+        sessions=sessions,
+        closing=closing,
+    )
+    client = await asyncssh.connect(
+        "127.0.0.1",
+        port=gateway.get_port(),
+        username="fixture",
+        client_keys=[key],
+        known_hosts=None,
+        encoding=None,
+    )
+    # A multiplexing client keeps its connection open between commands.
+    await client.run("true")
+    async with asyncio.timeout(5):
+        await stop_gateway(gateway, connections, sessions, closing)
+        await client.wait_closed()
     assert service.finished == ["fixture"]
 
 
