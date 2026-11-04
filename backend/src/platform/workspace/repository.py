@@ -215,8 +215,15 @@ class WorkbenchRepository:
             action="retire",
         )
 
-    def saved(self, row):
-        return self.command("saved", workbench=row["id"], generation=row["generation"])
+    def save_outcome(self, row, status, *, error=None, oid=None):
+        return self.command(
+            "save_outcome",
+            workbench=row["id"],
+            generation=row["generation"],
+            status=status,
+            error=error,
+            oid=oid,
+        )
 
     def reclaim_claim(self, row):
         """Claim a deleted owner's workspace for destruction once unoccupied."""

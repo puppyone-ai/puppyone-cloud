@@ -1,5 +1,7 @@
 /** Shared native Git operations without reading or rewriting user Git config. */
-import { mkdir, lstat, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, lstat, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { ROOT, git, exists } from './git.mjs';
 import { gitControl } from './workbench-git-layout.mjs';
 
@@ -48,6 +50,61 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
   const run = args => git(ROOT, args, { ...transport, GIT_DIR: directory, GIT_WORK_TREE: ROOT,
     GIT_INDEX_FILE: `${ROOT}/.git/index`, GIT_ATTR_NOSYSTEM: '1' });
   await run(['check-ref-format', target]);
+
+  // What the Workspace actually has checked out, whatever the task did to it.
+  async function currentCommit() {
+    const head = (await readFile(`${ROOT}/.git/HEAD`, 'utf8')).trim();
+    const name = head.startsWith('ref: ') ? head.slice(5) : head;
+    try { return await run(['rev-parse', '--verify', '-q', `${name}^{commit}`]); }
+    catch (error) { if (error.code === 1 || error.code === 128) return null; throw error; }
+  }
+
+  /**
+   * The working files as a commit on the Workspace's branch. Reads through a private
+   * index and never touches HEAD, .git/index or the local branch, so nothing a task
+   * did to its own Git state can stop a save, and it finds its repository unchanged.
+   * The branch's cloud tip is always an ancestor: amended or reset history joins as
+   * a second parent, so a save is a fast-forward and needs no force.
+   */
+  async function snapshot({ message, tip = null }) {
+    if (await exists(MERGE_STATE)) return { status: 'merging' };
+    const directory_ = await mkdtemp(path.join(tmpdir(), 'puppyone-snapshot-'));
+    try {
+      const indexed = args => git(ROOT, args, { ...transport, GIT_DIR: directory, GIT_WORK_TREE: ROOT,
+        GIT_INDEX_FILE: `${directory_}/index`, GIT_ATTR_NOSYSTEM: '1' });
+      await indexed(['add', '-A', '--', '.']);
+      const tree = await indexed(['write-tree']);
+      if (tip && !(await run(['cat-file', '-e', `${tip}^{commit}`]).then(() => true, () => false))) {
+        await run(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${target}:refs/remotes/origin/selected`]);
+        if (await run(['rev-parse', 'refs/remotes/origin/selected']) !== tip)
+          throw new Error('Workspace branch moved during save');
+      }
+      const head = await currentCommit();
+      let parents = [tip, head].filter(Boolean);
+      if (tip && head && (tip === head || await isAncestor(run, tip, head))) parents = [head];
+      const treeOf = async commit => run(['rev-parse', `${commit}^{tree}`]);
+      let candidate = tip || head;
+      if (!candidate || tree !== await treeOf(parents[0])) {
+        candidate = await run(['commit-tree', tree, ...parents.flatMap(parent => ['-p', parent]), '-m', message]);
+      } else if (parents.length === 1) candidate = parents[0];
+      // Keep the commit reachable until the next save; no working ref moves.
+      await run(['update-ref', 'refs/puppyone/snapshot', candidate]);
+      return { status: 'ready', candidate };
+    } finally { await rm(directory_, { recursive: true, force: true }); }
+  }
+
+  async function pushCandidate(candidate) {
+    if (typeof candidate !== 'string' || !new RegExp(`^[0-9a-f]{${width}}$`).test(candidate))
+      throw new Error('Invalid publication candidate');
+    try { return { status: 'pushed', output: await run(['push', '--porcelain', '--no-verify', remote, `${candidate}:${target}`]) }; }
+    catch (error) {
+      if (/^!\t[^\n]+\t\[rejected\] \((fetch first|non-fast-forward)\)$/m.test(error.output || '')) return { status: 'rejected' };
+      throw error;
+    }
+  }
+
+  if (action === 'snapshot') return snapshot(value);
+  if (action === 'push-snapshot') return pushCandidate(value.candidate);
 
   async function inspect() {
     const dot = await lstat(`${ROOT}/.git`);

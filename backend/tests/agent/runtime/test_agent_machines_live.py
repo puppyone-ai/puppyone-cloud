@@ -20,6 +20,7 @@ from src.platform.sandbox.errors import WorkspaceUnavailable
 from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
 from src.platform.sandbox.providers.fly.transport import acquire_transport
+from src.platform.workspace import lifecycle as lifecycle_module
 from tests.agent.runtime.test_access_lifecycle import issue as issue_registered
 from tests.agent.runtime.test_access_lifecycle import setup_access
 from tests.agent.runtime.test_hosted_ssh_live import (  # noqa: F401
@@ -175,6 +176,117 @@ async def reclaim(live, identity):  # noqa: F811
     )
     # Other machines can fill one maintenance batch, so reap until this one is taken.
     return await until_reclaimed(live, identity)
+
+
+def fresh_tip(case, ref):
+    grant = case.admission.authorization.resolve_project_grant(case.project, case.user)
+    return case.publication.transport.describe(case.project, grant, target_ref=ref)["expected_oid"]
+
+
+async def sleep_until_settled(live, identity):  # noqa: F811
+    """A pause always ends, whatever the Agent left behind."""
+    await asyncio.to_thread(
+        live.db.sql,
+        f"UPDATE cloud_workbenches SET last_activity_at=now()-interval '1 day' WHERE id='{identity}'",
+    )
+    repository = live.workspace.repository
+    claimed = await asyncio.to_thread(
+        repository.idle, await asyncio.to_thread(repository.get, identity)
+    )
+    assert claimed["acquired"], claimed
+    await live.workspace.lifecycle.pause(claimed["workbench"])
+    return await asyncio.to_thread(repository.get, identity)
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+@pytest.mark.parametrize(
+    "command",
+    [
+        # What an Agent can leave behind; none of it may stop the machine from sleeping.
+        "printf 'two\\n' > agent.md && : > .git/index.lock",
+        "printf 'two\\n' > agent.md && /usr/bin/git switch -c feature",
+    ],
+)
+async def test_a_damaged_checkout_is_still_saved(prepared, live, command):  # noqa: F811
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        await shell(live, context, command)
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "saved", slept["save_error"]
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_a_save_that_cannot_run_lets_the_machine_sleep_and_the_agent_return(
+    prepared,
+    live,  # noqa: F811
+    monkeypatch,
+):
+    monkeypatch.setattr(lifecycle_module, "SAVE_RETRY_SECONDS", 0)
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        first = await start(live, machine)
+        moved = await shell(live, context, "printf 'kept\\n' > agent.md && mv .git .git-moved")
+        assert moved.exit_status == 0, moved.stderr
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "failed"
+        assert slept["unpublished_changes"] is True
+
+        woken = await start(live, slept)
+        assert woken["generation"] == first["generation"]
+        read = await shell(live, context, "cat agent.md")
+        assert read.stdout == b"kept\n", read.stderr
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_rewritten_history_still_reaches_the_branch_as_a_fast_forward(
+    prepared,
+    live,  # noqa: F811
+):
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    identity = "-c user.name=a -c user.email=a@a.invalid"
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        wrote = await shell(
+            live,
+            context,
+            f"printf 'one\\n' > agent.md && git add -A && git {identity} commit -qm first",
+        )
+        assert wrote.exit_status == 0, wrote.stderr
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["save_status"] == "saved", slept["save_error"]
+        first = await asyncio.to_thread(fresh_tip, case, slept["target_ref"])
+
+        await start(live, slept)
+        amended = await shell(
+            live,
+            context,
+            f"printf 'two\\n' > agent.md && git add -A && git {identity} commit -q --amend -m re",
+        )
+        assert amended.exit_status == 0, amended.stderr
+        local = await shell(live, context, "git rev-parse HEAD; git status --porcelain")
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["save_status"] == "saved", slept["save_error"]
+        second = await asyncio.to_thread(fresh_tip, case, slept["target_ref"])
+        assert second != first
+
+        # The Agent finds its own repository exactly as it left it.
+        await start(live, slept)
+        back = await shell(live, context, "git rev-parse HEAD; git status --porcelain")
+        assert back.stdout == local.stdout
 
 
 @pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")
