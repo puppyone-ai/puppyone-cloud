@@ -17,7 +17,6 @@ from src.platform.access.grant_repository import AccessRepository, GrantReposito
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
 from src.platform.sandbox.errors import WorkspaceUnavailable
-from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.ssh import FlySSHConnections
 from src.platform.sandbox.providers.fly.transport import acquire_transport
 from src.platform.workspace import lifecycle as lifecycle_module
@@ -289,32 +288,6 @@ async def test_rewritten_history_still_reaches_the_branch_as_a_fast_forward(
         assert back.stdout == local.stdout
 
 
-@pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")
-@pytest.mark.parametrize("prepared", ["native"], indirect=True)
-async def test_a_machine_on_the_shared_app_moves_to_its_own_network_when_rebuilt(
-    prepared,
-    live,  # noqa: F811
-    monkeypatch,
-):
-    case = prepared
-    await native_write(case, "seed.md", b"seed")
-    authorities(live)
-    context, machine = await enroll(live)
-    async with agent_machines(live, case.publication.transport):
-        with monkeypatch.context() as shared:
-            shared.setattr(settings, "CLOUD_AGENT_FLY_ORG", "")
-            first = await start(live, machine)
-        assert first["resource"]["app"] == settings.CLOUD_AGENT_FLY_APP
-        wrote = await shell(live, context, "printf 'kept\\n' > agent.md")
-        assert wrote.exit_status == 0, wrote.stderr
-
-        retired = await reclaim(live, machine["id"])
-        rebuilt = await start(live, retired)
-        assert rebuilt["resource"]["app"] == workspace_app(machine["id"])
-        read = await shell(live, context, "cat agent.md seed.md")
-        assert read.stdout == b"kept\nseed", read.stderr
-
-
 REACH = """
 import errno, json, os, socket, subprocess, sys
 targets = json.loads(sys.argv[1])
@@ -331,6 +304,12 @@ try:
     seen["internal_dns"] = socket.getaddrinfo(sys.argv[2], 22)[0][4][0]
 except OSError as error:
     seen["internal_dns"] = "unresolved"
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    try:
+        connection.connect("/.fly/api")
+        seen["fly_api"] = "OPEN"
+    except OSError as error:
+        seen["fly_api"] = errno.errorcode.get(error.errno, "timeout")
 run = lambda *command: subprocess.run(command, capture_output=True, text=True)
 seen["nft_flush"] = run("sh", "-c", "nft flush ruleset").returncode
 seen["sudo"] = run("sh", "-c", "sudo -n true").returncode
@@ -469,16 +448,12 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
 
         peer, internal = await private_address(theirs), await private_address(owner)
 
-        if settings.CLOUD_AGENT_FLY_ORG:
-            # Root owns the firewall, so only the private network can stop it here.
-            blocked = await as_root(mine["resource"], ROOT_REACH + peer)
-            assert "OPEN" not in blocked, blocked
-            neighbor = await same_network_machine(provider, mine)
-            assert "OPEN" in await reach_until_open(mine["resource"], neighbor)
-        else:
-            # The route exists, so the only thing stopping the Agent is the rule below.
-            control = await as_root(mine["resource"], ROOT_REACH + peer)
-            assert "OPEN" in control, control
+        # Root owns the firewall, so only the private network can stop it here.
+        assert settings.CLOUD_AGENT_FLY_ORG, "Fly acceptance never runs on a shared network"
+        blocked = await as_root(mine["resource"], ROOT_REACH + peer)
+        assert "OPEN" not in blocked, blocked
+        neighbor = await same_network_machine(provider, mine)
+        assert "OPEN" in await reach_until_open(mine["resource"], neighbor)
 
         before = await firewall_hits(mine["resource"])
         targets = [
@@ -496,6 +471,7 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
         seen = json.loads(reached.stdout)
         print("AGENT_NETWORK_BOUNDARY " + json.dumps(seen), flush=True)
         assert seen["uid"] == 1000
+        assert seen["fly_api"] != "OPEN"
         assert seen["nft_flush"] != 0
         assert seen["sudo"] != 0
         for name, *_ in targets:
@@ -511,7 +487,6 @@ async def test_an_agent_cannot_reach_another_machine_or_the_internet(live):  # n
 
 
 @pytest.mark.skipif(PROVIDER != "fly", reason="the boundary under test is a VM provider's network")
-@pytest.mark.skipif(not settings.CLOUD_AGENT_FLY_ORG, reason="needs per-Workspace apps")
 async def test_the_internal_workspace_reaches_the_internet_but_no_private_address(live):  # noqa: F811
     from tests.agent.workbench_acceptance.accept_fly import firewall_hits
 
