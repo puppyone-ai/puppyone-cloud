@@ -16,9 +16,12 @@ class Repository:
         self.epoch = str(EPOCH)
         self.owner = OWNER
         self.events = []
+        self.fail_audit = None
 
     def command(self, name, **params):
         if name == "host_file_event_record":
+            if params["p_outcome"] == self.fail_audit:
+                raise RuntimeError("audit unavailable")
             self.events.append(params["p_outcome"])
             return True
         assert name == "host_folder_admit"
@@ -60,3 +63,26 @@ async def test_dispatch_uses_current_epoch_and_never_trusts_client_supplied_fold
     with pytest.raises(HTTPException) as stranger:
         await gateway.dispatch("ffffffff-ffff-4fff-8fff-ffffffffffff", FOLDER, "read", {"path": "note.md"})
     assert stranger.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_audit_failure_is_closed_before_delivery_and_unknown_after_write():
+    repository = Repository()
+    gateway = HostGateway(repository, authentication=object())
+    socket = Socket()
+    connection = DeviceConnection(DEVICE, EPOCH, socket)
+    socket.connection = connection
+    gateway.connections[DEVICE] = connection
+    repository.fail_audit = "intended"
+    with pytest.raises(HTTPException) as rejected:
+        await gateway.dispatch(OWNER, FOLDER, "write", {"path": "note.md"})
+    assert rejected.value.status_code == 503
+    assert rejected.value.detail["outcome_unknown"] is False
+    assert socket.sent == []
+    repository.fail_audit = "succeeded"
+    with pytest.raises(HTTPException) as uncertain:
+        await gateway.dispatch(OWNER, FOLDER, "write", {"path": "note.md"})
+    assert uncertain.value.status_code == 503
+    assert uncertain.value.detail["outcome_unknown"] is True
+    assert repository.events == ["intended"]
+    assert len(socket.sent) == 1
