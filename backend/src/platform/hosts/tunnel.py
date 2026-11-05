@@ -25,7 +25,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 
 from src.infra.execution.runner import run_blocking
 
-from .execution import token_from
+from .execution import is_person, token_from
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ async def serve_tunnel(gateway, websocket: WebSocket, folder: UUID, authenticate
         user = await run_blocking(authenticate, token) if token else None
     except Exception:
         user = None
-    if user is None:
+    if not is_person(user):
         await websocket.close(code=1008)
         return
     await websocket.accept(subprotocol=subprotocol)

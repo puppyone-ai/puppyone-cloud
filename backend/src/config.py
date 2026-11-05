@@ -329,7 +329,9 @@ class Settings(BaseSettings):
             raise ValueError("HOST_GATEWAY_INTERNAL_SECRET must be dedicated and >=32 chars")
         if self.SERVICE_ROLE == "api" and not self.HOST_GATEWAY_INTERNAL_URL:
             raise ValueError("HOST_GATEWAY_INTERNAL_URL is required when device hosts are enabled")
-        if not self.HOST_GATEWAY_PUBLIC_URL.startswith("https://"):
+        # Optional: without it, devices and clients use the API's own address and API
+        # workers carry their sockets to the gateway over the private network.
+        if self.HOST_GATEWAY_PUBLIC_URL and not self.HOST_GATEWAY_PUBLIC_URL.startswith("https://"):
             raise ValueError("HOST_GATEWAY_PUBLIC_URL must be an https origin")
         # Every API worker must sign with the same authority the hosts trust.
         if "BEGIN OPENSSH PRIVATE KEY" not in (self.HOST_SSH_CA_PRIVATE_KEY or ""):

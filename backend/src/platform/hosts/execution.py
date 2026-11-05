@@ -257,15 +257,22 @@ def end_sessions(connection, code: str):
         session.deliver({"type": "error", "code": code})
 
 
+def is_person(user) -> bool:
+    """A signed-in person (not anonymous); runtime credentials never reach this point."""
+    return bool(user) and getattr(user, "role", None) == "authenticated" and not getattr(user, "is_anonymous", False)
+
+
 def token_from(websocket: WebSocket) -> tuple[str, str | None]:
     """Bearer token from the header or a ``version.bearer.<jwt>`` subprotocol."""
     header = websocket.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         return header[7:].strip(), None
-    for raw in websocket.headers.get("sec-websocket-protocol", "").split(","):
-        protocol = raw.strip()
+    offered = [raw.strip() for raw in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+    for protocol in offered:
         if protocol.startswith("version.bearer.") and len(protocol) > len("version.bearer."):
-            return protocol[len("version.bearer."):], "version.v1"
+            # Answer only with a protocol the client offered: strict clients refuse anything else,
+            # and the token itself is never echoed back.
+            return protocol[len("version.bearer."):], "version.v1" if "version.v1" in offered else None
     return "", None
 
 
@@ -276,7 +283,7 @@ async def serve_exec(gateway, websocket: WebSocket, folder: UUID, authenticate):
         user = await run_blocking(authenticate, token) if token else None
     except Exception:
         user = None
-    if user is None:
+    if not is_person(user):
         await websocket.close(code=1008)
         return
     await websocket.accept(subprotocol=subprotocol)

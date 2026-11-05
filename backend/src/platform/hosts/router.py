@@ -19,9 +19,9 @@ from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 
 from .connection_auth import HostConnectionAuth
-from .execution import serve_exec
+from .execution import is_person, serve_exec
 from .gateway import HostGateway
-from .routing import ForwardingRoute, LocalRoute
+from .routing import ForwardingRoute, LocalRoute, forward_websocket
 from .service import HostService
 from .ssh_authority import device_host_key, host_ssh_authority
 from .tunnel import serve_tunnel
@@ -32,6 +32,14 @@ REVISION = r"^[a-f0-9]{64}$"
 def require_host_devices_enabled():
     if not settings.HOST_DEVICES_ENABLED:
         raise HTTPException(404, "Not found")
+
+
+def get_person(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Hosts serve a person's own sign-in only: never an anonymous session, and never a
+    runtime credential (Agent, Sandbox, MCP, CLI) or PuppyOne's own cloud Agents."""
+    if not is_person(user):
+        raise HTTPException(403, {"code": "person_required"})
+    return user
 
 
 router = APIRouter(prefix="/api/v1/hosts", tags=["hosts"],
@@ -145,9 +153,12 @@ def get_file_route(gateway: HostGateway = Depends(get_gateway)) -> LocalRoute | 
 async def connect_device(websocket: WebSocket, device_id: UUID):
     # This path has no human JWT: the owner-bound, one-use challenge and
     # signature are verified before any file request can be delivered. When a
-    # device_gateway is deployed, devices connect there and never to API workers.
-    if not settings.HOST_DEVICES_ENABLED or forwarding():
+    # device_gateway is deployed, API workers only carry the socket to it.
+    if not settings.HOST_DEVICES_ENABLED:
         await websocket.close(code=4003)
+        return
+    if forwarding():
+        await forward_websocket(websocket, f"/api/v1/hosts/devices/{device_id}/connect")
         return
     await get_gateway().connected(device_id, websocket)
 
@@ -155,7 +166,7 @@ async def connect_device(websocket: WebSocket, device_id: UUID):
 @router.get("/folders/{folder_id}/files")
 async def list_folder(folder_id: UUID, response: Response,
                       path: str = Query(default="", max_length=4096),
-                      user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                      user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     response.headers["Cache-Control"] = "no-store"
     return await route.dispatch(user.user_id, folder_id, "list", {"path": path})
 
@@ -163,20 +174,20 @@ async def list_folder(folder_id: UUID, response: Response,
 @router.get("/folders/{folder_id}/file")
 async def read_folder_file(folder_id: UUID, response: Response,
                            path: str = Query(min_length=1, max_length=4096),
-                           user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                           user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     response.headers["Cache-Control"] = "no-store"
     return await route.dispatch(user.user_id, folder_id, "read", {"path": path})
 
 
 @router.put("/folders/{folder_id}/file")
 async def write_folder_file(folder_id: UUID, body: FileWrite,
-                            user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                            user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     return await route.dispatch(user.user_id, folder_id, "write", body.model_dump())
 
 
 @router.post("/folders/{folder_id}/files")
 async def change_folder_files(folder_id: UUID, body: HostDirectoryOperation,
-                              user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                              user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     if (body.action == "move") != (body.destination is not None):
         raise HTTPException(422, "A move needs a destination; other operations do not.")
     operation = body.model_dump(exclude={"action"}, exclude_none=True)
@@ -185,7 +196,7 @@ async def change_folder_files(folder_id: UUID, body: HostDirectoryOperation,
 
 @router.get("/folders/{folder_id}/events")
 async def folder_events(folder_id: UUID, request: Request,
-                        user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                        user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     stream = route.watch(user.user_id, folder_id)
     first = await anext(stream)  # Offline / denied answer as HTTP status, not as a stream.
 
@@ -214,7 +225,7 @@ async def folder_events(folder_id: UUID, request: Request,
 
 @router.post("/folders/{folder_id}/git")
 async def folder_git(folder_id: UUID, body: HostGitOperation,
-                     user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
+                     user: CurrentUser = Depends(get_person), route=Depends(get_file_route)):
     if body.paths and any(not isinstance(item, str) or not item or len(item) > 4096 for item in body.paths):
         raise HTTPException(422, "Invalid paths.")
     return await route.dispatch(user.user_id, folder_id, "git", body.model_dump(exclude_none=True))
@@ -222,10 +233,13 @@ async def folder_git(folder_id: UUID, body: HostGitOperation,
 
 @router.websocket("/folders/{folder_id}/exec")
 async def folder_exec(websocket: WebSocket, folder_id: UUID):
-    # A terminal or Agent on the owner's computer. Served by the process that
-    # holds device sockets; with a device_gateway, clients connect there instead.
-    if not settings.HOST_DEVICES_ENABLED or forwarding():
+    # A terminal or Agent on the owner's computer, served by the process that
+    # holds device sockets; with a device_gateway, API workers carry it there.
+    if not settings.HOST_DEVICES_ENABLED:
         await websocket.close(code=4003)
+        return
+    if forwarding():
+        await forward_websocket(websocket, f"/api/v1/hosts/folders/{folder_id}/exec")
         return
     from src.platform.auth.dependencies import get_auth_service
 
@@ -235,8 +249,11 @@ async def folder_exec(websocket: WebSocket, folder_id: UUID):
 @router.websocket("/folders/{folder_id}/tunnel")
 async def folder_tunnel(websocket: WebSocket, folder_id: UUID):
     # Bytes only: the SSH session inside ends on the host, encrypted end to end.
-    if not settings.HOST_DEVICES_ENABLED or forwarding():
+    if not settings.HOST_DEVICES_ENABLED:
         await websocket.close(code=4003)
+        return
+    if forwarding():
+        await forward_websocket(websocket, f"/api/v1/hosts/folders/{folder_id}/tunnel")
         return
     from src.platform.auth.dependencies import get_auth_service
 
@@ -251,7 +268,7 @@ def ssh_authority():
 
 @router.post("/devices/{device_id}/ssh-certificate")
 def ssh_certificate(device_id: UUID, body: HostSshCertificateRequest,
-                    user: CurrentUser = Depends(get_current_user),
+                    user: CurrentUser = Depends(get_person),
                     connection: HostConnectionAuth = Depends(get_connection_auth)):
     """A five-minute certificate for one of the owner's own active devices, and its host key."""
     try:
@@ -282,7 +299,7 @@ def with_connect_url(issued: dict, device_id: UUID) -> dict:
 
 
 @router.get("")
-def catalog(response: Response, user: CurrentUser = Depends(get_current_user),
+def catalog(response: Response, user: CurrentUser = Depends(get_person),
             service: HostService = Depends(get_host_service)):
     response.headers["Cache-Control"] = "no-store"
     # Where clients attach terminals: the device gateway when one is deployed.
@@ -291,7 +308,7 @@ def catalog(response: Response, user: CurrentUser = Depends(get_current_user),
 
 
 @router.post("/devices", status_code=201)
-def register_device(body: DeviceRegistration, user: CurrentUser = Depends(get_current_user),
+def register_device(body: DeviceRegistration, user: CurrentUser = Depends(get_person),
                     service: HostService = Depends(get_host_service)):
     identity = service.register_device(user.user_id, body.public_key, body.name, body.platform)
     return {"device_id": identity}
@@ -299,7 +316,7 @@ def register_device(body: DeviceRegistration, user: CurrentUser = Depends(get_cu
 
 @router.post("/devices/{device_id}/folders", status_code=201)
 def register_folder(device_id: UUID, body: FolderRegistration,
-                    user: CurrentUser = Depends(get_current_user),
+                    user: CurrentUser = Depends(get_person),
                     service: HostService = Depends(get_host_service)):
     identity = service.register_folder(user.user_id, device_id, body.folder_id, body.name, body.writable)
     return {"folder_id": identity}
@@ -307,14 +324,14 @@ def register_folder(device_id: UUID, body: FolderRegistration,
 
 @router.patch("/devices/{device_id}/folders/{folder_id}")
 def update_folder(device_id: UUID, folder_id: UUID, body: HostFolderUpdate,
-                  user: CurrentUser = Depends(get_current_user),
+                  user: CurrentUser = Depends(get_person),
                   service: HostService = Depends(get_host_service)):
     return service.update_folder(user.user_id, device_id, folder_id, body.name, body.writable,
                                  body.expected_revision, terminal=body.terminal, git=body.git, agent=body.agent)
 
 
 @router.delete("/devices/{device_id}")
-async def revoke_device(device_id: UUID, user: CurrentUser = Depends(get_current_user),
+async def revoke_device(device_id: UUID, user: CurrentUser = Depends(get_person),
                         service: HostService = Depends(get_host_service), route=Depends(get_file_route)):
     revoked = bool(await run_blocking(service.revoke_device, user.user_id, device_id))
     if revoked:
@@ -325,7 +342,7 @@ async def revoke_device(device_id: UUID, user: CurrentUser = Depends(get_current
 
 
 @router.delete("/devices/{device_id}/folders/{folder_id}")
-def remove_folder(device_id: UUID, folder_id: UUID, user: CurrentUser = Depends(get_current_user),
+def remove_folder(device_id: UUID, folder_id: UUID, user: CurrentUser = Depends(get_person),
                   service: HostService = Depends(get_host_service)):
     # Admission rechecks the folder on every request and every watch keepalive.
     return {"removed": bool(service.remove_folder(user.user_id, device_id, folder_id))}

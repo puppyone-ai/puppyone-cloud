@@ -43,11 +43,12 @@ class FakeGateway:
         self.disconnected.append(str(device))
 
 
-def make_client():
+def make_client(user=None):
     repository = FakeRepository()
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id=OWNER)
+    signed_in = user or SimpleNamespace(user_id=OWNER, role="authenticated", is_anonymous=False)
+    app.dependency_overrides[get_current_user] = lambda: signed_in
     app.dependency_overrides[require_host_devices_enabled] = lambda: None
     app.dependency_overrides[get_host_service] = lambda: HostService(repository)
     gateway = FakeGateway()
@@ -133,3 +134,17 @@ def test_repository_allows_every_host_rpc_the_module_calls():
     for name in sorted(defined):
         assert host_repository.HostRepository(client).command(name) is True
     assert client.names == sorted(defined)
+
+
+def test_hosts_serve_only_a_persons_own_sign_in():
+    """Anonymous sessions and anything that is not a person's sign-in never reach a computer."""
+    for user in (SimpleNamespace(user_id=OWNER, role="authenticated", is_anonymous=True),
+                 SimpleNamespace(user_id=OWNER, role="anon", is_anonymous=False),
+                 SimpleNamespace(user_id=OWNER, role="service_role", is_anonymous=False)):
+        client, repository = make_client(user)
+        for response in (client.get("/api/v1/hosts"),
+                         client.post("/api/v1/hosts/devices", json={"public_key": "A" * 44, "name": "Mac",
+                                                                    "platform": "darwin"}),
+                         client.get(f"/api/v1/hosts/folders/{DEVICE}/file?path=a.md")):
+            assert (response.status_code, response.json()["detail"]) == (403, {"code": "person_required"})
+        assert repository.calls == []

@@ -276,9 +276,11 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
     audit = database.sql(
         f"SELECT string_agg(operation||':'||outcome, ',' ORDER BY id) FROM public.host_file_events "
         f"WHERE device_id='{device}';")
-    assert audit == ("read:intended,read:succeeded,write:intended,write:failed,"
-                     "read:intended,read:failed,list:intended,list:failed,list:intended,list:succeeded,"
-                     "move:intended,move:succeeded,write:intended,write:failed")
+    # File operations on a person's own computer leave no record at all.
+    assert audit is None or audit == ""
+    assert database.sql(
+        "SELECT count(*) FROM public.host_file_events WHERE operation IN "
+        "('list','read','write','mkdir','move','remove','git');") == "0"
     assert database.sql(
         "SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns "
         "WHERE table_schema='public' AND table_name='host_file_events';"
@@ -711,3 +713,21 @@ def test_every_host_rpc_is_service_only(database, repository):
                   "host_connection_challenges", "host_file_events"):
         assert database.sql(
             f"SELECT has_table_privilege('service_role','public.{table}','SELECT');") == "f", table
+
+
+def test_connection_records_are_kept_thirty_days(database, repository):
+    owner = str(uuid4())
+    users(database, owner)
+    device = database.sql(f"SET ROLE service_role; SELECT public.host_device_register('{owner}', "
+                          "decode(repeat('cd',32),'hex'), 'Mac', 'darwin');").splitlines()[-1]
+    folder = str(uuid4())
+    database.sql(f"SET ROLE service_role; SELECT public.host_folder_register('{owner}', '{device}', '{folder}', "
+                 "'Notes', ARRAY['folder.read']);")
+    database.sql("INSERT INTO public.host_file_events(device_id,folder_id,actor_user_id,operation,outcome,created_at) "
+                 f"VALUES ('{device}','{folder}','{owner}','tunnel','succeeded', now() - interval '31 days'),"
+                 f"('{device}','{folder}','{owner}','tunnel','succeeded', now() - interval '29 days');")
+    repository.command("host_file_event_record", p_actor=owner, p_device=device, p_folder=folder,
+                       p_operation="watch", p_outcome="succeeded")
+    kept = database.sql("SELECT string_agg(operation || ':' || (created_at > now() - interval '30 days')::text, ',' "
+                        f"ORDER BY id) FROM public.host_file_events WHERE device_id='{device}';")
+    assert kept == "tunnel:true,watch:true"

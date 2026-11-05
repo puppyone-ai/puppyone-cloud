@@ -279,15 +279,14 @@ class HostGateway:
         admitted = await self._admit(owner, folder, action)
         admit_ms = _elapsed(started)
         connection = self._connection(admitted)
-        device = connection.device
         if len(connection.pending) >= MAX_PENDING:
             raise HTTPException(503, {"code": "device_busy"})
         mutating = action in MUTATIONS or (action == "git" and operation.get("op") in GIT_WRITES)
         outcome = "failed"
         round_trip = time.monotonic()
-        # Audit failure before delivery denies the operation. A failure after a
-        # mutation is outcome-unknown; the client must keep its draft, not replay.
-        await self._audit(owner, device, folder, action, "intended")
+        # File operations on a person's own computer are not recorded one by one;
+        # only connections are (watches, tunnels, sessions). A lost reply to a
+        # mutation is outcome-unknown: the client keeps its draft and never replays.
         request_id = str(uuid4())
         future = asyncio.get_running_loop().create_future()
         connection.pending[request_id] = future
@@ -299,18 +298,14 @@ class HostGateway:
                 reply = await asyncio.wait_for(future, REQUEST_TIMEOUT)
             except TimeoutError as exc:
                 outcome = "unknown" if mutating else "failed"
-                await self._audit(owner, device, folder, action, outcome, sent=True, mutating=mutating)
                 raise HTTPException(504, {"code": "device_timeout", "outcome_unknown": mutating}) from exc
             except Exception:
                 outcome = "unknown" if mutating else "failed"
-                await self._audit(owner, device, folder, action, outcome, sent=True, mutating=mutating)
                 raise
             if reply.get("error"):
-                await self._audit(owner, device, folder, action, "failed", sent=True, mutating=mutating)
                 error = reply["error"]
                 code = error if isinstance(error, str) and error in DEVICE_ERRORS else "file_operation_failed"
                 raise HTTPException(DEVICE_ERRORS[code], {"code": code})
-            await self._audit(owner, device, folder, action, "succeeded", sent=True, mutating=mutating)
             outcome = "succeeded"
             result = reply.get("result")
             return result if isinstance(result, dict) else {}
@@ -327,10 +322,11 @@ class HostGateway:
         connection = self._connection(admitted)
         device = connection.device
         watch = connection.watches.get(folder)
+        if watch is None and len(connection.watches) >= MAX_WATCHES:
+            raise HTTPException(503, {"code": "device_busy"})
+        # Opening a folder (its live view) is a connection: recorded, without names or paths.
+        await self._audit(owner, device, folder, "watch", "intended")
         if watch is None:
-            if len(connection.watches) >= MAX_WATCHES:
-                raise HTTPException(503, {"code": "device_busy"})
-            await self._audit(owner, device, folder, "watch", "intended")
             watch = FolderWatch(folder, str(uuid4()))
             connection.watches[folder] = watch
             try:
@@ -340,7 +336,7 @@ class HostGateway:
                 connection.watches.pop(folder, None)
                 await self._audit(owner, device, folder, "watch", "failed", sent=True)
                 raise HTTPException(503, {"code": "device_disconnected"}) from exc
-            await self._audit(owner, device, folder, "watch", "succeeded", sent=True)
+        await self._audit(owner, device, folder, "watch", "succeeded", sent=True)
         subscriber = Subscriber()
         watch.subscribers.add(subscriber)
         subscriber.offer({"paths": [], "reset": True})  # Every new reader rescans first.

@@ -54,7 +54,8 @@ async def test_dispatch_uses_current_epoch_and_never_trusts_client_supplied_fold
     gateway.connections[DEVICE] = connection
     result = await gateway.dispatch(OWNER, FOLDER, "read", {"path": "note.md", "folder_id": "other"})
     assert result == {"ok": True}
-    assert repository.events == ["intended", "succeeded"]
+    # A file operation on a person's own computer leaves no record.
+    assert repository.events == []
     assert socket.sent[0]["folder_id"] == str(FOLDER)
     assert not connection.pending
     repository.epoch = str(UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"))
@@ -109,7 +110,8 @@ async def test_watch_fans_out_isolates_slow_readers_and_ends_on_disconnect(monke
         for subscriber in watch.subscribers:
             subscriber.offer(gateway_module._CLOSED)
     assert await anext(reader) == {"unavailable": {"retryable": True}}
-    assert repository.events.count("intended") == 2 and repository.events.count("succeeded") == 2
+    # Each reader that opened the folder is one connection record, without names or paths.
+    assert repository.events.count("intended") == 3 and repository.events.count("succeeded") == 3
 
 
 @pytest.mark.asyncio
@@ -136,7 +138,7 @@ async def test_unknown_actions_and_device_errors_never_leak_detail():
 
 
 @pytest.mark.asyncio
-async def test_audit_failure_is_closed_before_delivery_and_unknown_after_write():
+async def test_file_operations_never_depend_on_records_but_opening_a_folder_does():
     repository = Repository()
     gateway = HostGateway(repository, authentication=object())
     socket = Socket()
@@ -144,18 +146,15 @@ async def test_audit_failure_is_closed_before_delivery_and_unknown_after_write()
     socket.connection = connection
     gateway.connections[DEVICE] = connection
     repository.fail_audit = "intended"
-    with pytest.raises(HTTPException) as rejected:
-        await gateway.dispatch(OWNER, FOLDER, "write", {"path": "note.md"})
-    assert rejected.value.status_code == 503
-    assert rejected.value.detail["outcome_unknown"] is False
-    assert socket.sent == []
-    repository.fail_audit = "succeeded"
-    with pytest.raises(HTTPException) as uncertain:
-        await gateway.dispatch(OWNER, FOLDER, "write", {"path": "note.md"})
-    assert uncertain.value.status_code == 503
-    assert uncertain.value.detail["outcome_unknown"] is True
-    assert repository.events == ["intended"]
-    assert len(socket.sent) == 1
+    # Nothing about the write is recorded, so a record outage cannot block or blur it.
+    assert await gateway.dispatch(OWNER, FOLDER, "write", {"path": "note.md"}) == {"ok": True}
+    assert repository.events == [] and len(socket.sent) == 1
+    # Opening the folder's live view is a connection: no record, no connection.
+    reader = gateway.watch(OWNER, FOLDER)
+    with pytest.raises(HTTPException) as refused:
+        await anext(reader)
+    assert (refused.value.status_code, refused.value.detail["code"]) == (503, "audit_unavailable")
+    assert [frame["type"] for frame in socket.sent] == ["file"]
 
 
 @pytest.mark.asyncio
@@ -174,7 +173,6 @@ async def test_git_names_an_operation_and_writes_are_never_assumed_done():
     with pytest.raises(HTTPException) as unknown:
         await gateway.dispatch(OWNER, FOLDER, "git", {"op": "config", "args": ["--global"]})
     assert unknown.value.status_code == 400 and socket.sent == []
-    repository.fail_audit = "unknown"
     task = asyncio.create_task(gateway.dispatch(OWNER, FOLDER, "git", {"op": "commit", "message": "m"}))
     for _ in range(200):  # Admission runs in a worker thread first.
         if socket.sent:
@@ -182,8 +180,11 @@ async def test_git_names_an_operation_and_writes_are_never_assumed_done():
         await asyncio.sleep(0.01)
     frame = socket.sent[-1]
     assert (frame["action"], frame["op"]) == ("git", "commit")
-    connection.pending[frame["id"]].set_exception(HTTPException(503, {"code": "device_disconnected"}))
+    # The device went away mid-commit, as the gateway reports it.
+    connection.pending[frame["id"]].set_exception(
+        HTTPException(503, {"code": "device_disconnected", "outcome_unknown": True}))
     with pytest.raises(HTTPException) as lost:
         await task
-    # The audit of a lost commit failed too: the client must not assume either way.
-    assert lost.value.detail == {"code": "audit_unavailable", "outcome_unknown": True}
+    # The client must not assume either way, and must not replay.
+    assert lost.value.detail == {"code": "device_disconnected", "outcome_unknown": True}
+    assert repository.events == []

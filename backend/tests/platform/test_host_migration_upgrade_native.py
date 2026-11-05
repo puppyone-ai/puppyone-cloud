@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 LAST_ACCEPTED = "20261105090000_workspace_state_exits.sql"
 HOST_MIGRATIONS = ["20261105120000_expand_device_hosts.sql", "20261106100000_expand_host_execution.sql",
-                   "20261107090000_expand_host_device_challenge.sql", "20261107100000_expand_host_tunnels.sql"]
+                   "20261107090000_expand_host_device_challenge.sql", "20261107100000_expand_host_tunnels.sql",
+                   "20261107110000_expand_host_connection_records.sql"]
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 STRANGER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 
