@@ -123,7 +123,7 @@ layers = [
     "src.platform.dashboard : src.platform.onboarding",
     "src.platform.agent",
     "src.platform.access : src.internal",
-    "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.sandbox : src.platform.landing",
+    "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.hosts : src.platform.sandbox : src.platform.landing",
     "src.content : src.tool : src.context_publish : src.platform.provider_accounts : src.platform.managed_ai : src.platform.office : src.platform.template_registry",
     "src.platform.repository_target : src.platform.project : src.platform.repository_context : src.file_operations",
     "src.platform.billing : src.platform.analytics : src.platform.activity",
