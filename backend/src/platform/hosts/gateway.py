@@ -24,6 +24,7 @@ from src.infra.execution.runner import run_blocking
 
 from .connection_auth import HostConnectionAuth
 from .execution import ExecRelay, device_exec_frame, end_sessions
+from .tunnel import TunnelRelay, device_tunnel_frame, end_tunnels
 from .repository import HostRepository
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ class DeviceConnection:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     watches: dict[UUID, FolderWatch] = field(default_factory=dict)
     exec_sessions: dict = field(default_factory=dict)
+    tunnels: dict = field(default_factory=dict)
     closed: bool = False
     protocol: int = 1
     boot_id: UUID | None = None
@@ -145,6 +147,7 @@ class HostGateway:
         self.authentication = authentication or HostConnectionAuth(self.repository)
         self.connections: dict[UUID, DeviceConnection] = {}
         self.exec = ExecRelay(self)
+        self.tunnels = TunnelRelay(self)
 
     async def connected(self, device: UUID, websocket: WebSocket):
         await websocket.accept()
@@ -193,7 +196,7 @@ class HostGateway:
                             future.set_result(message)
                 elif kind == "event" and isinstance(message.get("subscription"), str):
                     self._fan_out(connection, message)
-                elif device_exec_frame(connection, message):
+                elif device_exec_frame(connection, message) or device_tunnel_frame(connection, message):
                     pass
                 else:
                     raise ValueError("Invalid device frame")
@@ -211,6 +214,7 @@ class HostGateway:
                         future.set_exception(HTTPException(503, {"code": "device_disconnected",
                                                                  "outcome_unknown": True}))
                 end_sessions(connection, "device_disconnected")
+                end_tunnels(connection)
                 for watch in connection.watches.values():
                     for subscriber in watch.subscribers:
                         subscriber.offer(_CLOSED)
@@ -239,6 +243,7 @@ class HostGateway:
         connection = self.connections.pop(device, None)
         if connection:
             end_sessions(connection, "not_allowed")
+            end_tunnels(connection)
             await _close(connection.websocket, CLOSE_REVOKED)
 
     async def _admit(self, owner: str, folder: UUID, action: str):

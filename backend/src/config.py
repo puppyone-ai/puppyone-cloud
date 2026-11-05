@@ -331,6 +331,9 @@ class Settings(BaseSettings):
             raise ValueError("HOST_GATEWAY_INTERNAL_URL is required when device hosts are enabled")
         if not self.HOST_GATEWAY_PUBLIC_URL.startswith("https://"):
             raise ValueError("HOST_GATEWAY_PUBLIC_URL must be an https origin")
+        # Every API worker must sign with the same authority the hosts trust.
+        if "BEGIN OPENSSH PRIVATE KEY" not in (self.HOST_SSH_CA_PRIVATE_KEY or ""):
+            raise ValueError("HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled")
         return self
 
     @model_validator(mode="after")
@@ -448,6 +451,9 @@ class Settings(BaseSettings):
     HOST_GATEWAY_INTERNAL_SECRET: str = ""
     # Public origin devices dial for their outbound WebSocket (wss://...).
     HOST_GATEWAY_PUBLIC_URL: str = ""
+    # Signs the short-lived SSH user certificates hosts accept (OpenSSH Ed25519
+    # private key). Development and test generate one per process when unset.
+    HOST_SSH_CA_PRIVATE_KEY: str = ""
 
     # Anthropic configuration
     ANTHROPIC_API_KEY: str = ""

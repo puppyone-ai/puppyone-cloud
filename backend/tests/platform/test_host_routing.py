@@ -35,8 +35,16 @@ def test_hosted_device_hosts_require_a_dedicated_gateway():
         hosted(SERVICE_ROLE="api", HOST_GATEWAY_INTERNAL_SECRET=SECRET,
                HOST_GATEWAY_INTERNAL_URL="http://gateway.internal:8080",
                HOST_GATEWAY_PUBLIC_URL="http://devices.example").enforce_device_gateway_safety()
+    # Every worker signs SSH user certificates with the one authority hosts trust.
+    with pytest.raises(ValueError, match="HOST_SSH_CA_PRIVATE_KEY"):
+        hosted(SERVICE_ROLE="device_gateway", HOST_GATEWAY_INTERNAL_SECRET=SECRET,
+               HOST_GATEWAY_PUBLIC_URL="https://devices.puppyone.ai").enforce_device_gateway_safety()
+    import asyncssh
+
+    authority = asyncssh.generate_private_key("ssh-ed25519").export_private_key("openssh").decode()
     assert hosted(SERVICE_ROLE="device_gateway", HOST_GATEWAY_INTERNAL_SECRET=SECRET,
-                  HOST_GATEWAY_PUBLIC_URL="https://devices.puppyone.ai").enforce_device_gateway_safety()
+                  HOST_GATEWAY_PUBLIC_URL="https://devices.puppyone.ai",
+                  HOST_SSH_CA_PRIVATE_KEY=authority).enforce_device_gateway_safety()
 
 
 def test_secret_comparison_fails_closed(monkeypatch):

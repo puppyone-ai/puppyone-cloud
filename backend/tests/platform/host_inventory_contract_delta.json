@@ -14,7 +14,9 @@
     "/api/v1/host-directory": "cd780b50782483dac35472505bc3f744573ed1ee879c5b816dd1285efb758c48",
     "/api/v1/host-directory/{host}/folders/{folder_id}/files": "2cb2632d277b47830fd8527dbc143d404df722039e6071be48bedf684261fff4",
     "/api/v1/host-directory/{host}/folders/{folder_id}/file": "601238206430dbb70f53f5aa644dad41ec067aec3f1d543458c17a06f729d4f2",
-    "/api/v1/host-directory/{host}/folders/{folder_id}/events": "73a751e9d298894c32fbc116f31fe5a1300066c037a3a8dfd754a585aeb35a22"
+    "/api/v1/host-directory/{host}/folders/{folder_id}/events": "73a751e9d298894c32fbc116f31fe5a1300066c037a3a8dfd754a585aeb35a22",
+    "/api/v1/hosts/ssh-authority": "234a560638856d5351e870494658b3cd7a03ded428fb7ae6017afd5f13b390ad",
+    "/api/v1/hosts/devices/{device_id}/ssh-certificate": "3005d71206e5aca3c0180359fdb01742f860c4c0a9b11f549d49d80e58f70e08"
   },
   "schemas": {
     "DeviceRegistration": "269b5c3bf9fb882f6e29c3946b0c24194b3036b40c88e217a2e14d10cadfd41d",
@@ -23,6 +25,7 @@
     "FileWrite": "d0b05f2a870c7d52a2a46ca4a0c1b0687062241f2f6349999398f94696951778",
     "HostFolderUpdate": "64c42c5b758ec6d7b53c9ac5244acd371cf51073d2e41b720cda18072391b4b8",
     "HostDirectoryOperation": "c68ab2d93cdffcc9f137ebfac288ee1519d40909657a59ccf81f219f60f9156f",
-    "HostGitOperation": "faaceaac3872376bfa7b0eaf83c9c046e1ac0ff26f103e385dfea7734fd1a464"
+    "HostGitOperation": "faaceaac3872376bfa7b0eaf83c9c046e1ac0ff26f103e385dfea7734fd1a464",
+    "HostSshCertificateRequest": "8e997bd10e7003344ef54e31e13352e916710f58a219e336cdcc78b82fca7959"
   }
 }

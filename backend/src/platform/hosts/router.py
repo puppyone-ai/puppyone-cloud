@@ -23,6 +23,8 @@ from .execution import serve_exec
 from .gateway import HostGateway
 from .routing import ForwardingRoute, LocalRoute
 from .service import HostService
+from .ssh_authority import device_host_key, host_ssh_authority
+from .tunnel import serve_tunnel
 
 REVISION = r"^[a-f0-9]{64}$"
 
@@ -49,6 +51,12 @@ class DeviceChallengeRequest(BaseModel):
     owner: UUID
     timestamp: int = Field(ge=0, le=2**40)
     signature: str = Field(min_length=86, max_length=128)
+
+
+class HostSshCertificateRequest(BaseModel):
+    """The client's own SSH key; the certificate lets it log in to this device's host service."""
+    model_config = ConfigDict(extra="forbid")
+    public_key: str = Field(min_length=60, max_length=200)
 
 
 class FolderRegistration(BaseModel):
@@ -228,6 +236,39 @@ async def folder_exec(websocket: WebSocket, folder_id: UUID):
 def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
               connection: HostConnectionAuth = Depends(get_connection_auth)):
     return with_connect_url(connection.issue(user.user_id, device_id), device_id)
+
+
+@router.websocket("/folders/{folder_id}/tunnel")
+async def folder_tunnel(websocket: WebSocket, folder_id: UUID):
+    # Bytes only: the SSH session inside ends on the host, encrypted end to end.
+    if not settings.HOST_DEVICES_ENABLED or forwarding():
+        await websocket.close(code=4003)
+        return
+    from src.platform.auth.dependencies import get_auth_service
+
+    await serve_tunnel(get_gateway(), websocket, folder_id, get_auth_service().get_current_user)
+
+
+@router.get("/ssh-authority")
+def ssh_authority():
+    """The key hosts trust for SSH user certificates. Public by nature."""
+    return {"keys": [host_ssh_authority().public_key()]}
+
+
+@router.post("/devices/{device_id}/ssh-certificate")
+def ssh_certificate(device_id: UUID, body: HostSshCertificateRequest,
+                    user: CurrentUser = Depends(get_current_user),
+                    connection: HostConnectionAuth = Depends(get_connection_auth)):
+    """A five-minute certificate for one of the owner's own active devices, and its host key."""
+    try:
+        record = connection.repository.command("host_device_key", p_owner=user.user_id, p_device=str(device_id))
+    except Exception as exc:
+        if getattr(exc, "code", "") == "42501":
+            raise HTTPException(404, {"code": "device_unavailable"}) from exc
+        raise HTTPException(503, {"code": "device_unavailable"}) from exc
+    issued = host_ssh_authority().issue(user.user_id, device_id, body.public_key)
+    return {**issued, "host_key": device_host_key(record["public_key"]),
+            "gateway_url": settings.HOST_GATEWAY_PUBLIC_URL or None}
 
 
 @router.post("/devices/{device_id}/device-challenge")

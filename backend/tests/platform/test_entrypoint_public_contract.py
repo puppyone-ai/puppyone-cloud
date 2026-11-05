@@ -507,7 +507,7 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     assert all(path.startswith(("/api/v1/hosts", "/api/v1/host-directory")) for path in hosts["paths"])
     assert set(hosts["schemas"]) == {"DeviceRegistration", "DeviceChallengeRequest", "FolderRegistration",
                                      "FileWrite", "HostFolderUpdate", "HostDirectoryOperation",
-                                     "HostGitOperation"}
+                                     "HostGitOperation", "HostSshCertificateRequest"}
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & hosts[category].keys()
         expected["contract"][category].update(hosts[category])
