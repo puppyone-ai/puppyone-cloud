@@ -4,7 +4,6 @@
     "/api/v1/hosts/folders/{folder_id}/file": "7f2941d56a34819ad2d27083d756b6f1da71d4c7015b75f75fa16413709f37f4",
     "/api/v1/hosts/folders/{folder_id}/events": "14f6912e5f48e0eb7a554ea40bb0fbef10611ed88d3fa1ee16ed3cfed50ae2b0",
     "/api/v1/hosts/folders/{folder_id}/git": "6566f4f836c42b6d42f14476912fdc2e54b87275595d9033055852f37e849599",
-    "/api/v1/hosts/devices/{device_id}/challenge": "b8d2ff2ed466b9767dfb2a7e02129055a627d3211ae2f5c23048a2a169deada8",
     "/api/v1/hosts/devices/{device_id}/device-challenge": "2e46c89b296d5b848b84a2a4644b71a0f4be87154355055e5004a67407e31f76",
     "/api/v1/hosts": "5309cae43900679f7a91089a477177cce75f7d190d0ec7d872510ce59345c18f",
     "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",

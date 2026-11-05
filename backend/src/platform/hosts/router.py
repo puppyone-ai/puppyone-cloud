@@ -232,12 +232,6 @@ async def folder_exec(websocket: WebSocket, folder_id: UUID):
     await serve_exec(get_gateway(), websocket, folder_id, get_auth_service().get_current_user)
 
 
-@router.post("/devices/{device_id}/challenge")
-def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
-              connection: HostConnectionAuth = Depends(get_connection_auth)):
-    return with_connect_url(connection.issue(user.user_id, device_id), device_id)
-
-
 @router.websocket("/folders/{folder_id}/tunnel")
 async def folder_tunnel(websocket: WebSocket, folder_id: UUID):
     # Bytes only: the SSH session inside ends on the host, encrypted end to end.

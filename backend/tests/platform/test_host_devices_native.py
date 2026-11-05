@@ -112,8 +112,16 @@ def users(database, *identities):
 BOOT = str(uuid4())
 
 
+def device_challenge(client, owner, device, key):
+    """A challenge requested the way a host does: signed by its device key, no human JWT."""
+    timestamp = int(time.time())
+    signature = base64.b64encode(key.sign(device_request_message(owner, device, timestamp))).decode()
+    return client.post(f"/api/v1/hosts/devices/{device}/device-challenge",
+                       json={"owner": owner, "timestamp": timestamp, "signature": signature})
+
+
 def connect(client, sockets, owner, device, key, protocol=1):
-    challenge = client.post(f"/api/v1/hosts/devices/{device}/challenge")
+    challenge = device_challenge(client, owner, device, key)
     assert challenge.status_code == 200, challenge.text
     body = challenge.json()
     signature = key.sign(proof_message(owner, device, body["challenge_id"], body["epoch"], body["nonce"]))
@@ -217,7 +225,8 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
     actor["id"] = stranger
     assert client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md").status_code == 403
     assert client.get("/api/v1/hosts").json()["devices"] == []
-    assert client.post(f"/api/v1/hosts/devices/{device}/challenge").status_code == 403
+    # Claiming someone else's device is a definite denial.
+    assert device_challenge(client, stranger, device, key).status_code == 403
     actor["id"] = owner
 
     socket.send_json({"type": "heartbeat"})
@@ -285,7 +294,7 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
         replacement.receive_json()
     assert closed.value.code == CLOSE_REVOKED
     assert client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md").status_code == 403
-    assert client.post(f"/api/v1/hosts/devices/{device}/challenge").status_code == 403
+    assert device_challenge(client, owner, device, key).status_code == 403
     assert client.get("/api/v1/hosts").json()["devices"] == []
 
 
