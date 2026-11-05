@@ -3,13 +3,15 @@
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 
+from .connection_auth import HostConnectionAuth
+from .gateway import HostGateway
 from .service import HostService
 
 def require_host_devices_enabled():
@@ -30,12 +32,72 @@ class DeviceRegistration(BaseModel):
 
 class FolderRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    folder_id: UUID  # client-chosen: a lost response retries the same identity
     name: str = Field(min_length=1, max_length=120)
     writable: bool = False
 
 
+class FileWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=4096)
+    content_base64: str = Field(max_length=12 * 1024 * 1024)
+    expected_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 def get_host_service() -> HostService:
     return HostService()
+
+
+def get_connection_auth() -> HostConnectionAuth:
+    return HostConnectionAuth()
+
+
+_gateway: HostGateway | None = None
+
+
+def get_gateway() -> HostGateway:
+    global _gateway
+    if _gateway is None:
+        _gateway = HostGateway()
+    return _gateway
+
+
+@router.websocket("/devices/{device_id}/connect")
+async def connect_device(websocket: WebSocket, device_id: UUID):
+    # This path has no human JWT: the owner-bound, one-use challenge and
+    # signature are verified before any file request can be delivered.
+    if not settings.HOST_DEVICES_ENABLED:
+        await websocket.close(code=4003)
+        return
+    await get_gateway().connected(device_id, websocket)
+
+
+@router.get("/folders/{folder_id}/files")
+async def list_folder(folder_id: UUID, response: Response,
+                      path: str = Query(default="", max_length=4096),
+                      user: CurrentUser = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "no-store"
+    return await get_gateway().dispatch(user.user_id, folder_id, "list", {"path": path})
+
+
+@router.get("/folders/{folder_id}/file")
+async def read_folder_file(folder_id: UUID, response: Response,
+                           path: str = Query(min_length=1, max_length=4096),
+                           user: CurrentUser = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "no-store"
+    return await get_gateway().dispatch(user.user_id, folder_id, "read", {"path": path})
+
+
+@router.put("/folders/{folder_id}/file")
+async def write_folder_file(folder_id: UUID, body: FileWrite,
+                            user: CurrentUser = Depends(get_current_user)):
+    return await get_gateway().dispatch(user.user_id, folder_id, "write", body.model_dump())
+
+
+@router.post("/devices/{device_id}/challenge")
+def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
+              connection: HostConnectionAuth = Depends(get_connection_auth)):
+    return connection.issue(user.user_id, device_id)
 
 
 @router.get("")
@@ -56,7 +118,7 @@ def register_device(body: DeviceRegistration, user: CurrentUser = Depends(get_cu
 def register_folder(device_id: UUID, body: FolderRegistration,
                           user: CurrentUser = Depends(get_current_user),
                           service: HostService = Depends(get_host_service)):
-    identity = service.register_folder(user.user_id, device_id, body.name, body.writable)
+    identity = service.register_folder(user.user_id, device_id, body.folder_id, body.name, body.writable)
     return {"folder_id": identity}
 
 

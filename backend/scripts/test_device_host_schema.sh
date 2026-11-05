@@ -33,6 +33,16 @@ DO $$ DECLARE
  old_epoch uuid:='ffffffff-ffff-4fff-8fff-ffffffffffff';
  new_epoch uuid:='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 BEGIN
+ DECLARE
+   challenge uuid;
+ BEGIN
+   challenge:=public.host_challenge_issue(owner,device,old_epoch,decode(repeat('12',32),'hex'));
+   IF public.host_challenge_consume(owner,device,challenge,old_epoch,decode(repeat('12',32),'hex'))->>'public_key'
+      <>repeat('ab',32) THEN RAISE EXCEPTION 'challenge proof key mismatch'; END IF;
+   BEGIN PERFORM public.host_challenge_consume(owner,device,challenge,old_epoch,decode(repeat('12',32),'hex'));
+     RAISE EXCEPTION 'challenge replay accepted';
+   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+ END;
  PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30);
  PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30);
  IF public.host_connection_renew(device,old_epoch,'gateway-1',30) THEN
@@ -64,10 +74,15 @@ DO $$ DECLARE
  device uuid; folder uuid;
 BEGIN
  device:=public.host_device_register(owner,decode(repeat('cd',32),'hex'),'Laptop','darwin');
- folder:=public.host_folder_register(owner,device,'Work',ARRAY['folder.read','folder.write']);
+ IF public.host_device_register(owner,decode(repeat('cd',32),'hex'),'Laptop','darwin')<>device THEN
+   RAISE EXCEPTION 'device retry changed identity'; END IF;
+ folder:=gen_random_uuid();
+ IF public.host_folder_register(owner,device,folder,'Work',ARRAY['folder.read','folder.write'])<>folder
+   OR public.host_folder_register(owner,device,folder,'Work',ARRAY['folder.read','folder.write'])<>folder THEN
+   RAISE EXCEPTION 'folder retry changed identity'; END IF;
  IF jsonb_array_length(public.host_device_catalog(owner))<>1 THEN RAISE EXCEPTION 'catalog missing device'; END IF;
  IF jsonb_array_length(public.host_device_catalog(stranger))<>0 THEN RAISE EXCEPTION 'catalog leaked device'; END IF;
- BEGIN PERFORM public.host_folder_register(stranger,device,'No',ARRAY['folder.read']);
+ BEGIN PERFORM public.host_folder_register(stranger,device,gen_random_uuid(),'No',ARRAY['folder.read']);
    RAISE EXCEPTION 'foreign folder registration';
  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
  IF public.host_folder_remove(stranger,device,folder) THEN RAISE EXCEPTION 'foreign folder removal'; END IF;

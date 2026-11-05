@@ -45,6 +45,19 @@ CREATE TABLE public.host_connections (
 );
 CREATE INDEX host_connections_lease ON public.host_connections(lease_until);
 
+CREATE TABLE public.host_connection_challenges (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ device_id uuid NOT NULL REFERENCES public.host_devices(id) ON DELETE CASCADE,
+ owner_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+ epoch uuid NOT NULL,
+ nonce_hash bytea NOT NULL CHECK (octet_length(nonce_hash)=32),
+ expires_at timestamptz NOT NULL,
+ used_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK (expires_at>created_at AND expires_at<=created_at+interval '60 seconds')
+);
+CREATE INDEX host_challenges_expiry ON public.host_connection_challenges(expires_at,id);
+
 -- Metadata only. No file content or client filesystem path is admitted here.
 CREATE TABLE public.host_file_events (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -60,12 +73,43 @@ CREATE INDEX host_file_events_device_time ON public.host_file_events(device_id,c
 -- Calls must go through an authenticated API and later, atomic service-only RPCs.
 -- A service_role direct-table read is deliberately not granted by this migration.
 DO $$ DECLARE relation text; BEGIN
- FOREACH relation IN ARRAY ARRAY['host_devices','host_folders','host_connections','host_file_events'] LOOP
+ FOREACH relation IN ARRAY ARRAY['host_devices','host_folders','host_connections','host_connection_challenges','host_file_events'] LOOP
    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',relation);
    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC,anon,authenticated,service_role',relation);
  END LOOP;
 END $$;
 REVOKE ALL ON SEQUENCE public.host_file_events_id_seq FROM PUBLIC,anon,authenticated,service_role;
+
+CREATE FUNCTION public.host_challenge_issue(p_owner uuid,p_device uuid,p_epoch uuid,p_nonce_hash bytea)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE result uuid;
+BEGIN
+ IF p_epoch IS NULL OR p_nonce_hash IS NULL OR octet_length(p_nonce_hash)<>32 THEN
+   RAISE EXCEPTION 'host_invalid_challenge' USING ERRCODE='22023'; END IF;
+ PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active';
+ IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ INSERT INTO public.host_connection_challenges(device_id,owner_user_id,epoch,nonce_hash,expires_at)
+ VALUES(p_device,p_owner,p_epoch,p_nonce_hash,clock_timestamp()+interval '60 seconds') RETURNING id INTO result;
+ RETURN result;
+END $$;
+
+CREATE FUNCTION public.host_challenge_consume(p_owner uuid,p_device uuid,p_challenge uuid,p_epoch uuid,p_nonce_hash bytea)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE result jsonb;
+BEGIN
+ UPDATE public.host_connection_challenges c SET used_at=clock_timestamp()
+ FROM public.host_devices d WHERE c.id=p_challenge AND c.device_id=p_device AND c.owner_user_id=p_owner
+   AND c.epoch=p_epoch AND c.nonce_hash=p_nonce_hash AND c.used_at IS NULL
+   AND c.expires_at>clock_timestamp() AND d.id=c.device_id AND d.owner_user_id=p_owner AND d.state='active'
+ RETURNING jsonb_build_object('public_key',encode(d.public_key,'hex'),'revision',d.revision) INTO result;
+ IF result IS NULL THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ RETURN result;
+END $$;
+
+REVOKE ALL ON FUNCTION public.host_challenge_issue(uuid,uuid,uuid,bytea),
+ public.host_challenge_consume(uuid,uuid,uuid,uuid,bytea) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.host_challenge_issue(uuid,uuid,uuid,bytea),
+ public.host_challenge_consume(uuid,uuid,uuid,uuid,bytea) TO service_role;
 
 -- The gateway has already verified a device-key challenge before calling open.
 -- A service-role caller is still not allowed to revive a revoked device.
@@ -141,6 +185,12 @@ BEGIN
    RAISE EXCEPTION 'host_invalid_device' USING ERRCODE='22023';
  END IF;
  -- Serialize registration count for this user, not across all tenants.
+ PERFORM pg_advisory_xact_lock(hashtextextended(encode(p_key,'hex'),72344));
+ SELECT id INTO result FROM public.host_devices WHERE public_key=p_key AND owner_user_id=p_owner AND state='active';
+ IF FOUND THEN RETURN result; END IF;
+ IF EXISTS(SELECT 1 FROM public.host_devices WHERE public_key=p_key) THEN
+   RAISE EXCEPTION 'host_key_unavailable' USING ERRCODE='42501';
+ END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended(p_owner::text,72343));
  IF (SELECT count(*) FROM public.host_devices WHERE owner_user_id=p_owner AND state<>'revoked')>=16 THEN
    RAISE EXCEPTION 'host_device_limit' USING ERRCODE='22023';
@@ -150,11 +200,11 @@ BEGIN
  RETURN result;
 END $$;
 
-CREATE FUNCTION public.host_folder_register(p_owner uuid,p_device uuid,p_name text,p_capabilities text[])
+CREATE FUNCTION public.host_folder_register(p_owner uuid,p_device uuid,p_folder uuid,p_name text,p_capabilities text[])
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
-DECLARE result uuid;
+DECLARE existing public.host_folders;
 BEGIN
- IF p_owner IS NULL OR p_name IS NULL OR length(btrim(p_name)) NOT BETWEEN 1 AND 120 OR
+ IF p_owner IS NULL OR p_folder IS NULL OR p_name IS NULL OR length(btrim(p_name)) NOT BETWEEN 1 AND 120 OR
    p_capabilities IS NULL OR NOT (p_capabilities <@ ARRAY['folder.read','folder.write']::text[]) OR
    NOT ('folder.read'=ANY(p_capabilities)) OR cardinality(p_capabilities) NOT BETWEEN 1 AND 2 OR
    array_position(p_capabilities,NULL) IS NOT NULL THEN
@@ -162,12 +212,18 @@ BEGIN
  END IF;
  PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ SELECT * INTO existing FROM public.host_folders WHERE id=p_folder;
+ IF FOUND THEN
+   IF existing.device_id=p_device AND existing.state='active' AND
+      existing.display_name=btrim(p_name) AND existing.capabilities=p_capabilities THEN RETURN p_folder; END IF;
+   RAISE EXCEPTION 'host_folder_conflict' USING ERRCODE='23505';
+ END IF;
  IF (SELECT count(*) FROM public.host_folders WHERE device_id=p_device AND state<>'removed')>=64 THEN
    RAISE EXCEPTION 'host_folder_limit' USING ERRCODE='22023';
  END IF;
- INSERT INTO public.host_folders(device_id,display_name,capabilities)
- VALUES(p_device,btrim(p_name),p_capabilities) RETURNING id INTO result;
- RETURN result;
+ INSERT INTO public.host_folders(id,device_id,display_name,capabilities)
+ VALUES(p_folder,p_device,btrim(p_name),p_capabilities);
+ RETURN p_folder;
 END $$;
 
 CREATE FUNCTION public.host_device_catalog(p_owner uuid)
@@ -203,11 +259,11 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION public.host_device_register(uuid,bytea,text,text),
- public.host_folder_register(uuid,uuid,text,text[]),public.host_device_catalog(uuid),
+ public.host_folder_register(uuid,uuid,uuid,text,text[]),public.host_device_catalog(uuid),
  public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
  FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.host_device_register(uuid,bytea,text,text),
- public.host_folder_register(uuid,uuid,text,text[]),public.host_device_catalog(uuid),
+ public.host_folder_register(uuid,uuid,uuid,text,text[]),public.host_device_catalog(uuid),
  public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
  TO service_role;
 

@@ -66,12 +66,12 @@ def test_bad_public_key_and_unexpected_fields_fail_before_repository():
 
 def test_folder_defaults_read_only_and_never_accepts_a_path():
     client, repository = make_client()
-    response = client.post(f"/api/v1/hosts/devices/{DEVICE}/folders", json={"name": "Notes"})
+    response = client.post(f"/api/v1/hosts/devices/{DEVICE}/folders", json={"folder_id": FOLDER, "name": "Notes"})
     assert response.status_code == 201
     assert repository.calls == [("host_folder_register", {"p_owner": OWNER,
-        "p_device": DEVICE, "p_name": "Notes", "p_capabilities": ["folder.read"]})]
+        "p_device": DEVICE, "p_folder": FOLDER, "p_name": "Notes", "p_capabilities": ["folder.read"]})]
     assert client.post(f"/api/v1/hosts/devices/{DEVICE}/folders",
-                       json={"name": "Notes", "path": "/Users/private"}).status_code == 422
+                       json={"folder_id": FOLDER, "name": "Notes", "path": "/Users/private"}).status_code == 422
     assert len(repository.calls) == 1
 
 

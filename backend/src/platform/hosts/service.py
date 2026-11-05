@@ -22,7 +22,7 @@ class HostService:
             if code == "42501":
                 raise HTTPException(403, "Host access denied") from exc
             if code == "23505":
-                raise HTTPException(409, "Device key already registered") from exc
+                raise HTTPException(409, "Host identity already registered") from exc
             if code == "22023":
                 raise HTTPException(400, "Invalid host operation") from exc
             raise HTTPException(503, "Host inventory unavailable") from exc
@@ -40,9 +40,9 @@ class HostService:
     def catalog(self, owner: str):
         return self._command(self.repository, "host_device_catalog", p_owner=owner)
 
-    def register_folder(self, owner: str, device: UUID, name: str, writable: bool):
+    def register_folder(self, owner: str, device: UUID, folder: UUID, name: str, writable: bool):
         return self._command(self.repository, "host_folder_register", p_owner=owner,
-                             p_device=str(device), p_name=name,
+                             p_device=str(device), p_folder=str(folder), p_name=name,
                              p_capabilities=["folder.read", "folder.write"] if writable else ["folder.read"])
 
     def revoke_device(self, owner: str, device: UUID):
