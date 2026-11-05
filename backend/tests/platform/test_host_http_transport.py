@@ -23,6 +23,9 @@ class Repository:
     revoked = False
 
     def command(self, name, **params):
+        if name == "host_file_event_record":
+            assert params["p_actor"] == OWNER
+            return True
         if name == "host_folder_admit":
             if self.revoked or params["p_actor"] != OWNER or params["p_folder"] != str(FOLDER):
                 raise ValueError("denied")

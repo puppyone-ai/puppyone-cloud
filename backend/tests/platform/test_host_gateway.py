@@ -15,8 +15,12 @@ class Repository:
     def __init__(self):
         self.epoch = str(EPOCH)
         self.owner = OWNER
+        self.events = []
 
     def command(self, name, **params):
+        if name == "host_file_event_record":
+            self.events.append(params["p_outcome"])
+            return True
         assert name == "host_folder_admit"
         if params["p_actor"] != self.owner:
             raise ValueError("denied")
@@ -46,6 +50,7 @@ async def test_dispatch_uses_current_epoch_and_never_trusts_client_supplied_fold
     gateway.connections[DEVICE] = connection
     result = await gateway.dispatch(OWNER, FOLDER, "read", {"path": "note.md", "folder_id": "other"})
     assert result == {"ok": True}
+    assert repository.events == ["intended", "succeeded"]
     assert socket.sent[0]["folder_id"] == str(FOLDER)
     assert not connection.pending
     repository.epoch = str(UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"))

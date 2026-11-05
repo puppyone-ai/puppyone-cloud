@@ -106,18 +106,37 @@ class HostGateway:
             raise HTTPException(503, {"code": "device_offline"})
         if len(connection.pending) >= MAX_PENDING:
             raise HTTPException(503, {"code": "device_busy"})
+        async def audit(outcome: str, *, sent: bool = False):
+            try:
+                await run_blocking(self.repository.command, "host_file_event_record",
+                                   p_actor=owner, p_device=str(device), p_folder=str(folder),
+                                   p_operation=action, p_outcome=outcome)
+            except Exception as exc:
+                raise HTTPException(503, {"code": "audit_unavailable",
+                                          "outcome_unknown": sent and action == "write"}) from exc
+
+        # Audit failure before delivery denies the operation. A failure after a
+        # write is outcome-unknown; the client must keep its draft, not replay.
+        await audit("intended")
         request_id = str(uuid4())
         future = asyncio.get_running_loop().create_future()
         connection.pending[request_id] = future
         try:
-            async with connection.send_lock:
-                await connection.websocket.send_json({"type": "file", **operation, "id": request_id,
-                    "folder_id": str(folder), "action": action})
-            reply = await asyncio.wait_for(future, 25)
+            try:
+                async with connection.send_lock:
+                    await connection.websocket.send_json({"type": "file", **operation, "id": request_id,
+                        "folder_id": str(folder), "action": action})
+                reply = await asyncio.wait_for(future, 25)
+            except TimeoutError as exc:
+                await audit("unknown" if action == "write" else "failed", sent=True)
+                raise HTTPException(504, {"code": "device_timeout", "outcome_unknown": action == "write"}) from exc
+            except Exception:
+                await audit("unknown" if action == "write" else "failed", sent=True)
+                raise
             if reply.get("error"):
+                await audit("failed", sent=True)
                 raise HTTPException(409 if reply["error"] == "conflict" else 400, {"code": reply["error"]})
+            await audit("succeeded", sent=True)
             return reply.get("result")
-        except TimeoutError as exc:
-            raise HTTPException(504, {"code": "device_timeout", "outcome_unknown": action not in ("read", "list")}) from exc
         finally:
             connection.pending.pop(request_id, None)

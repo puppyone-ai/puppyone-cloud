@@ -51,6 +51,14 @@ BEGIN
    RAISE EXCEPTION 'old epoch closed new slot'; END IF;
  IF (public.host_folder_admit(owner,folder,'read')->>'epoch')::uuid<>new_epoch THEN
    RAISE EXCEPTION 'wrong epoch'; END IF;
+ PERFORM public.host_file_event_record(owner,device,folder,'read','intended');
+ IF (SELECT count(*) FROM public.host_file_events WHERE actor_user_id=owner AND outcome='intended')<>1
+   THEN RAISE EXCEPTION 'audit missing'; END IF;
+ BEGIN PERFORM public.host_file_event_record(stranger,device,folder,'read','intended');
+   RAISE EXCEPTION 'foreign audit accepted';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+ IF has_function_privilege('authenticated','public.host_file_event_record(uuid,uuid,uuid,text,text)','EXECUTE')
+   THEN RAISE EXCEPTION 'public audit RPC'; END IF;
  BEGIN PERFORM public.host_folder_admit(stranger,folder,'read');
    RAISE EXCEPTION 'cross-account admitted';
  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
