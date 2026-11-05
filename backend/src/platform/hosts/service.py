@@ -25,6 +25,8 @@ class HostService:
                 raise HTTPException(409, "Host identity already registered") from exc
             if code == "22023":
                 raise HTTPException(400, "Invalid host operation") from exc
+            if code == "PT409":
+                raise HTTPException(409, {"code": "folder_changed"}) from exc
             raise HTTPException(503, "Host inventory unavailable") from exc
 
     def register_device(self, owner: str, key: str, name: str, platform: str):
@@ -44,6 +46,13 @@ class HostService:
         return self._command(self.repository, "host_folder_register", p_owner=owner,
                              p_device=str(device), p_folder=str(folder), p_name=name,
                              p_capabilities=["folder.read", "folder.write"] if writable else ["folder.read"])
+
+    def update_folder(self, owner: str, device: UUID, folder: UUID, name: str, writable: bool,
+                      expected_revision: int):
+        return self._command(self.repository, "host_folder_update", p_owner=owner,
+                             p_device=str(device), p_folder=str(folder), p_name=name,
+                             p_capabilities=["folder.read", "folder.write"] if writable else ["folder.read"],
+                             p_expected_revision=expected_revision)
 
     def revoke_device(self, owner: str, device: UUID):
         return self._command(self.repository, "host_device_revoke", p_owner=owner, p_device=str(device))

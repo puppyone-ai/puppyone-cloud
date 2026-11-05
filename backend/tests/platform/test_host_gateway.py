@@ -65,6 +65,75 @@ async def test_dispatch_uses_current_epoch_and_never_trusts_client_supplied_fold
     assert stranger.value.status_code == 403
 
 
+class WatchSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, frame):
+        self.sent.append(frame)
+
+
+@pytest.mark.asyncio
+async def test_watch_fans_out_isolates_slow_readers_and_ends_on_disconnect(monkeypatch):
+    import src.platform.hosts.gateway as gateway_module
+
+    monkeypatch.setattr(gateway_module, "SUBSCRIBER_QUEUE", 2)
+    repository = Repository()
+    gateway = HostGateway(repository, authentication=object())
+    socket = WatchSocket()
+    connection = DeviceConnection(DEVICE, EPOCH, socket)
+    gateway.connections[DEVICE] = connection
+    fast, slow = gateway.watch(OWNER, FOLDER), gateway.watch(OWNER, FOLDER)
+    assert await anext(fast) == {"paths": [], "reset": True}
+    assert await anext(slow) == {"paths": [], "reset": True}
+    # One device-side watcher serves every reader of the folder.
+    assert [frame["type"] for frame in socket.sent] == ["watch"]
+    subscription = socket.sent[0]["subscription"]
+    for index in range(5):
+        gateway._fan_out(connection, {"type": "event", "subscription": subscription,
+                                      "paths": [f"note-{index}.md"], "reset": False})
+        assert (await anext(fast))["paths"] == [f"note-{index}.md"]
+    # The slow reader lost its backlog and is told to rescan, never blocking the device.
+    assert await anext(slow) == {"paths": [], "reset": True}
+    gateway._fan_out(connection, {"type": "event", "subscription": subscription, "paths": ["x" * 5000]})
+    assert await anext(fast) == {"paths": [], "reset": True}
+    await slow.aclose()
+    assert [frame["type"] for frame in socket.sent] == ["watch"]
+    await fast.aclose()
+    assert socket.sent[-1] == {"type": "unwatch", "subscription": subscription}
+
+    reader = gateway.watch(OWNER, FOLDER)
+    assert (await anext(reader))["reset"] is True
+    for watch in connection.watches.values():
+        for subscriber in watch.subscribers:
+            subscriber.offer(gateway_module._CLOSED)
+    assert await anext(reader) == {"unavailable": {"retryable": True}}
+    assert repository.events.count("intended") == 2 and repository.events.count("succeeded") == 2
+
+
+@pytest.mark.asyncio
+async def test_unknown_actions_and_device_errors_never_leak_detail():
+    repository = Repository()
+    gateway = HostGateway(repository, authentication=object())
+
+    class ErrorSocket(Socket):
+        async def send_json(self, frame):
+            self.sent.append(frame)
+            self.connection.pending[frame["id"]].set_result(
+                {"type": "reply", "id": frame["id"], "error": "/Users/private/secret.md"})
+
+    socket = ErrorSocket()
+    connection = DeviceConnection(DEVICE, EPOCH, socket)
+    socket.connection = connection
+    gateway.connections[DEVICE] = connection
+    with pytest.raises(HTTPException) as unknown:
+        await gateway.dispatch(OWNER, FOLDER, "chmod", {"path": "note.md"})
+    assert unknown.value.status_code == 400 and socket.sent == []
+    with pytest.raises(HTTPException) as opaque:
+        await gateway.dispatch(OWNER, FOLDER, "read", {"path": "note.md"})
+    assert opaque.value.detail == {"code": "file_operation_failed"}
+
+
 @pytest.mark.asyncio
 async def test_audit_failure_is_closed_before_delivery_and_unknown_after_write():
     repository = Repository()

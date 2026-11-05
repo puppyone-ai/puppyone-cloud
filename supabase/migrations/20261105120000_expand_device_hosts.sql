@@ -86,8 +86,13 @@ DECLARE result uuid;
 BEGIN
  IF p_epoch IS NULL OR p_nonce_hash IS NULL OR octet_length(p_nonce_hash)<>32 THEN
    RAISE EXCEPTION 'host_invalid_challenge' USING ERRCODE='22023'; END IF;
- PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active';
+ PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ -- A challenge is worthless once used or expired; never retain them per reconnect.
+ DELETE FROM public.host_connection_challenges
+ WHERE device_id=p_device AND (used_at IS NOT NULL OR expires_at<=clock_timestamp());
+ IF (SELECT count(*) FROM public.host_connection_challenges WHERE device_id=p_device)>=8 THEN
+   RAISE EXCEPTION 'host_challenge_limit' USING ERRCODE='22023'; END IF;
  INSERT INTO public.host_connection_challenges(device_id,owner_user_id,epoch,nonce_hash,expires_at)
  VALUES(p_device,p_owner,p_epoch,p_nonce_hash,clock_timestamp()+interval '60 seconds') RETURNING id INTO result;
  RETURN result;
@@ -131,6 +136,7 @@ BEGIN
    gateway_instance=EXCLUDED.gateway_instance,lease_until=EXCLUDED.lease_until,
    connected_at=clock_timestamp(),renewed_at=clock_timestamp()
  RETURNING * INTO connection;
+ UPDATE public.host_devices SET last_seen_at=connection.connected_at WHERE id=p_device;
  RETURN jsonb_build_object('epoch',connection.epoch,'lease_until',connection.lease_until);
 END $$;
 
@@ -147,13 +153,19 @@ END $$;
 
 CREATE FUNCTION public.host_connection_close(p_device uuid,p_epoch uuid,p_gateway text)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE last_renewal timestamptz;
 BEGIN
- DELETE FROM public.host_connections WHERE device_id=p_device AND epoch=p_epoch AND gateway_instance=p_gateway;
- RETURN FOUND;
+ DELETE FROM public.host_connections WHERE device_id=p_device AND epoch=p_epoch AND gateway_instance=p_gateway
+ RETURNING renewed_at INTO last_renewal;
+ IF last_renewal IS NULL THEN RETURN false; END IF;
+ UPDATE public.host_devices SET last_seen_at=greatest(last_seen_at,last_renewal) WHERE id=p_device;
+ RETURN true;
 END $$;
 
 -- Directory presence is not authority. This is the bounded read admission for
 -- the owner's own files, not a Project grant and not a remote shell grant.
+-- Authority is decided first; only the owner of an authorized folder learns
+-- that its device is offline (55000) rather than denied (42501).
 CREATE FUNCTION public.host_folder_admit(p_actor uuid,p_folder uuid,p_operation text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE admitted jsonb;
@@ -163,14 +175,15 @@ BEGIN
  END IF;
  SELECT jsonb_build_object('device_id',d.id,'folder_id',f.id,'epoch',c.epoch,
    'gateway_instance',c.gateway_instance,'device_revision',d.revision,
-   'folder_revision',f.revision,'lease_until',c.lease_until) INTO admitted
+   'folder_revision',f.revision,'lease_until',c.lease_until,
+   'online',coalesce(c.lease_until>clock_timestamp(),false)) INTO admitted
  FROM public.host_folders f JOIN public.host_devices d ON d.id=f.device_id
- JOIN public.host_connections c ON c.device_id=d.id
- WHERE f.id=p_folder AND d.owner_user_id=p_actor AND d.state='active' AND f.state='active'
-   AND c.lease_until>clock_timestamp() AND
+ LEFT JOIN public.host_connections c ON c.device_id=d.id
+ WHERE f.id=p_folder AND d.owner_user_id=p_actor AND d.state='active' AND f.state='active' AND
    (CASE WHEN p_operation IN ('list','read','watch') THEN 'folder.read' ELSE 'folder.write' END)=ANY(f.capabilities);
  IF admitted IS NULL THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
- RETURN admitted;
+ IF NOT (admitted->>'online')::boolean THEN RAISE EXCEPTION 'host_offline' USING ERRCODE='55000'; END IF;
+ RETURN admitted - 'online';
 END $$;
 
 -- Register from an authenticated human session. Possession of the private key
@@ -226,11 +239,43 @@ BEGIN
  RETURN p_folder;
 END $$;
 
+-- Rename or change write access. Revision fences a stale editor; narrowing to
+-- read-only takes effect on the next admission of every replica.
+CREATE FUNCTION public.host_folder_update(p_owner uuid,p_device uuid,p_folder uuid,p_name text,
+  p_capabilities text[],p_expected_revision bigint)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE updated public.host_folders;
+BEGIN
+ IF p_owner IS NULL OR p_folder IS NULL OR p_expected_revision IS NULL OR
+   p_name IS NULL OR length(btrim(p_name)) NOT BETWEEN 1 AND 120 OR
+   p_capabilities IS NULL OR NOT (p_capabilities <@ ARRAY['folder.read','folder.write']::text[]) OR
+   NOT ('folder.read'=ANY(p_capabilities)) OR cardinality(p_capabilities) NOT BETWEEN 1 AND 2 OR
+   array_position(p_capabilities,NULL) IS NOT NULL THEN
+   RAISE EXCEPTION 'host_invalid_folder' USING ERRCODE='22023';
+ END IF;
+ PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active' FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ SELECT * INTO updated FROM public.host_folders WHERE id=p_folder AND device_id=p_device AND state='active' FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ IF updated.display_name=btrim(p_name) AND updated.capabilities=p_capabilities THEN
+   RETURN jsonb_build_object('id',updated.id,'revision',updated.revision);
+ END IF;
+ IF updated.revision<>p_expected_revision THEN
+   -- Not 40001: PostgREST retries serialization failures; a stale revision is final.
+   RAISE EXCEPTION 'host_folder_changed' USING ERRCODE='PT409';
+ END IF;
+ UPDATE public.host_folders SET display_name=btrim(p_name),capabilities=p_capabilities,
+   revision=revision+1,updated_at=clock_timestamp()
+ WHERE id=p_folder RETURNING * INTO updated;
+ RETURN jsonb_build_object('id',updated.id,'revision',updated.revision);
+END $$;
+
 CREATE FUNCTION public.host_device_catalog(p_owner uuid)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
  SELECT coalesce(jsonb_agg(jsonb_build_object('id',d.id,'name',d.display_name,
    'platform',d.platform,'state',d.state,'revision',d.revision,
-   'online',coalesce(c.lease_until>clock_timestamp(),false),'last_seen_at',d.last_seen_at,
+   'online',coalesce(c.lease_until>clock_timestamp(),false),
+   'last_seen_at',greatest(d.last_seen_at,c.renewed_at),
    'folders',coalesce((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.display_name,
      'capabilities',f.capabilities,'state',f.state,'revision',f.revision) ORDER BY f.created_at,f.id)
      FROM public.host_folders f WHERE f.device_id=d.id AND f.state<>'removed'),'[]'::jsonb))
@@ -261,7 +306,9 @@ END $$;
 CREATE FUNCTION public.host_file_event_record(p_actor uuid,p_device uuid,p_folder uuid,p_operation text,p_outcome text)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
- IF p_operation NOT IN ('list','read','write') OR p_outcome NOT IN ('intended','succeeded','failed','unknown') THEN
+ IF p_operation IS NULL OR p_outcome IS NULL OR
+   p_operation NOT IN ('list','read','write','mkdir','move','remove','watch') OR
+   p_outcome NOT IN ('intended','succeeded','failed','unknown') THEN
   RAISE EXCEPTION 'host_invalid_audit' USING ERRCODE='22023'; END IF;
  INSERT INTO public.host_file_events(device_id,folder_id,actor_user_id,operation,outcome)
  SELECT d.id,f.id,p_actor,p_operation,p_outcome FROM public.host_devices d
@@ -276,11 +323,13 @@ GRANT EXECUTE ON FUNCTION public.host_file_event_record(uuid,uuid,uuid,text,text
 
 REVOKE ALL ON FUNCTION public.host_device_register(uuid,bytea,text,text),
  public.host_folder_register(uuid,uuid,uuid,text,text[]),public.host_device_catalog(uuid),
- public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
+ public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid),
+ public.host_folder_update(uuid,uuid,uuid,text,text[],bigint)
  FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.host_device_register(uuid,bytea,text,text),
  public.host_folder_register(uuid,uuid,uuid,text,text[]),public.host_device_catalog(uuid),
- public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
+ public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid),
+ public.host_folder_update(uuid,uuid,uuid,text,text[],bigint)
  TO service_role;
 
 REVOKE ALL ON FUNCTION public.host_connection_open(uuid,uuid,text,integer),

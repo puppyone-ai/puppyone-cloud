@@ -12,12 +12,11 @@ from fastapi import HTTPException
 
 from .repository import HostRepository
 
-
 MAX_PROOF_BYTES = 128
 
 
 def proof_message(owner: str, device: UUID, challenge: UUID, epoch: UUID, nonce: str) -> bytes:
-    return (f"puppyone-device-v1\n{owner}\n{device}\n{challenge}\n{epoch}\n{nonce}").encode("utf-8")
+    return (f"puppyone-device-v1\n{owner}\n{device}\n{challenge}\n{epoch}\n{nonce}").encode()
 
 
 class HostConnectionAuth:
@@ -32,7 +31,13 @@ class HostConnectionAuth:
             challenge = self.repository.command("host_challenge_issue", p_owner=owner,
                 p_device=str(device), p_epoch=str(epoch), p_nonce_hash="\\x" + digest)
         except Exception as exc:
-            raise HTTPException(403, "Device unavailable") from exc
+            # Only a definite denial is 403: a Desktop forgets a revoked device's
+            # key, so an outage must never look like revocation.
+            if getattr(exc, "code", "") == "42501":
+                raise HTTPException(403, {"code": "device_revoked"}) from exc
+            if getattr(exc, "code", "") == "22023":
+                raise HTTPException(429, {"code": "device_challenge_limit"}) from exc
+            raise HTTPException(503, {"code": "device_unavailable"}) from exc
         return {"challenge_id": challenge, "epoch": str(epoch), "nonce": nonce,
                 "expires_in": 60}
 

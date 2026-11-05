@@ -320,6 +320,20 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def enforce_device_gateway_safety(self):
+        """Device sockets live in one process; multi-worker APIs must forward to it."""
+        if self.APP_ENV in {"development", "test"} or not self.HOST_DEVICES_ENABLED:
+            return self
+        secret = (self.HOST_GATEWAY_INTERNAL_SECRET or "").strip()
+        if len(secret) < 32 or secret in {self.JWT_SECRET, self.INTERNAL_API_SECRET}:
+            raise ValueError("HOST_GATEWAY_INTERNAL_SECRET must be dedicated and >=32 chars")
+        if self.SERVICE_ROLE == "api" and not self.HOST_GATEWAY_INTERNAL_URL:
+            raise ValueError("HOST_GATEWAY_INTERNAL_URL is required when device hosts are enabled")
+        if not self.HOST_GATEWAY_PUBLIC_URL.startswith("https://"):
+            raise ValueError("HOST_GATEWAY_PUBLIC_URL must be an https origin")
+        return self
+
+    @model_validator(mode="after")
     def enforce_jwt_secret_safety(self):
         """Refuse to boot with a weak/default JWT_SECRET outside development/test.
 
@@ -427,6 +441,13 @@ class Settings(BaseSettings):
     NOTIFICATIONS_REDIS_URL: str = ""
     # Inventory APIs stay unavailable until the device gateway and host are accepted.
     HOST_DEVICES_ENABLED: bool = False
+    # API workers forward device file requests to the single-process device_gateway
+    # role at this private address. Empty runs the gateway in-process (dev/test only).
+    HOST_GATEWAY_INTERNAL_URL: str = ""
+    # Shared only between API workers and the device_gateway on the private network.
+    HOST_GATEWAY_INTERNAL_SECRET: str = ""
+    # Public origin devices dial for their outbound WebSocket (wss://...).
+    HOST_GATEWAY_PUBLIC_URL: str = ""
 
     # Anthropic configuration
     ANTHROPIC_API_KEY: str = ""

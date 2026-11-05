@@ -42,6 +42,9 @@ BEGIN
    BEGIN PERFORM public.host_challenge_consume(owner,device,challenge,old_epoch,decode(repeat('12',32),'hex'));
      RAISE EXCEPTION 'challenge replay accepted';
    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+   PERFORM public.host_challenge_issue(owner,device,new_epoch,decode(repeat('34',32),'hex'));
+   IF (SELECT count(*) FROM public.host_connection_challenges WHERE device_id=device)<>1 THEN
+     RAISE EXCEPTION 'used challenge retained'; END IF;
  END;
  PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30);
  PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30);
@@ -69,6 +72,17 @@ BEGIN
    THEN RAISE EXCEPTION 'public RPC'; END IF;
  IF has_table_privilege('service_role','public.host_devices','SELECT')
    THEN RAISE EXCEPTION 'direct table read'; END IF;
+ IF NOT public.host_connection_close(device,new_epoch,'gateway-2') THEN
+   RAISE EXCEPTION 'current epoch did not close'; END IF;
+ IF (SELECT last_seen_at FROM public.host_devices WHERE id=device) IS NULL THEN
+   RAISE EXCEPTION 'last seen missing'; END IF;
+ BEGIN PERFORM public.host_folder_admit(owner,folder,'read');
+   RAISE EXCEPTION 'offline read admitted';
+ EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL; END;
+ BEGIN PERFORM public.host_folder_admit(stranger,folder,'read');
+   RAISE EXCEPTION 'offline state leaked to another account';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+ PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30);
  UPDATE public.host_devices SET state='revoked' WHERE id=device;
  IF public.host_connection_renew(device,new_epoch,'gateway-2',30)
    THEN RAISE EXCEPTION 'revoked renewal'; END IF;

@@ -1,17 +1,20 @@
 {
   "paths": {
-    "/api/v1/hosts": "5309cae43900679f7a91089a477177cce75f7d190d0ec7d872510ce59345c18f",
-    "/api/v1/hosts/folders/{folder_id}/files": "f1336342c86e474f2b43bc8f30cb453dc5051c087037588ffe409385329c7928",
+    "/api/v1/hosts/folders/{folder_id}/files": "27e054426b7d1c91cc3eb5cdafd0d3eb8026e11dfccc936f7777b32e93bd6547",
     "/api/v1/hosts/folders/{folder_id}/file": "7f2941d56a34819ad2d27083d756b6f1da71d4c7015b75f75fa16413709f37f4",
-    "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",
+    "/api/v1/hosts/folders/{folder_id}/events": "14f6912e5f48e0eb7a554ea40bb0fbef10611ed88d3fa1ee16ed3cfed50ae2b0",
     "/api/v1/hosts/devices/{device_id}/challenge": "b8d2ff2ed466b9767dfb2a7e02129055a627d3211ae2f5c23048a2a169deada8",
+    "/api/v1/hosts": "5309cae43900679f7a91089a477177cce75f7d190d0ec7d872510ce59345c18f",
+    "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",
     "/api/v1/hosts/devices/{device_id}/folders": "49884d27b94cd2b916083816635fbac3010b159469fa402aee69c95fa16d9e98",
-    "/api/v1/hosts/devices/{device_id}": "f63e66abf4fd092aca7d252402f16f9cc43ebc7efefffdbac657e9b54f35d29a",
-    "/api/v1/hosts/devices/{device_id}/folders/{folder_id}": "3e5cab30f22b047a4d8160492d16cc88482d5ab3fcf43675f54dbfab7493fc94"
+    "/api/v1/hosts/devices/{device_id}/folders/{folder_id}": "991b5eb42a9b9ed94d857bcde61d40c353fbfce8c9a23b417266db43015b15a1",
+    "/api/v1/hosts/devices/{device_id}": "f63e66abf4fd092aca7d252402f16f9cc43ebc7efefffdbac657e9b54f35d29a"
   },
   "schemas": {
-    "FileWrite": "5cb0d3764492d381d8c5e211be0ee116aed2aa9d406604f1270ff295c65e038c",
     "DeviceRegistration": "269b5c3bf9fb882f6e29c3946b0c24194b3036b40c88e217a2e14d10cadfd41d",
-    "FolderRegistration": "8613dd10c9ba5809e3678642d6aa2ca2144059197fa43332f6fc4780dff99317"
+    "FolderRegistration": "8613dd10c9ba5809e3678642d6aa2ca2144059197fa43332f6fc4780dff99317",
+    "FileWrite": "d0b05f2a870c7d52a2a46ca4a0c1b0687062241f2f6349999398f94696951778",
+    "HostFolderUpdate": "7b407b45a63083ce59a0372dd6fb1422479ff745fee5131921628f25221dd746",
+    "HostDirectoryOperation": "c68ab2d93cdffcc9f137ebfac288ee1519d40909657a59ccf81f219f60f9156f"
   }
 }

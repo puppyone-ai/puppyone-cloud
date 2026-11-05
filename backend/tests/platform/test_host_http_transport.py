@@ -6,11 +6,11 @@ from uuid import UUID
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import src.platform.hosts.router as hosts_router
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.hosts.gateway import GATEWAY_INSTANCE, HostGateway
-import src.platform.hosts.router as hosts_router
 from src.platform.hosts.router import get_gateway, require_host_devices_enabled, router
 
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"

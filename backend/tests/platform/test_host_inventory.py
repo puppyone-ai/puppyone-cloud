@@ -1,6 +1,8 @@
 """Owner admission and request validation for the unexposed transport inventory."""
 
 import base64
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -8,7 +10,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.platform.auth.dependencies import get_current_user
-from src.platform.hosts.router import get_host_service, require_host_devices_enabled, router
+from src.platform.hosts import repository as host_repository
+from src.platform.hosts.router import (
+    get_gateway,
+    get_host_service,
+    require_host_devices_enabled,
+    router,
+)
 from src.platform.hosts.service import HostService
 
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -27,6 +35,14 @@ class FakeRepository:
                 "host_folder_remove": True}[name]
 
 
+class FakeGateway:
+    def __init__(self):
+        self.disconnected = []
+
+    async def disconnect(self, device):
+        self.disconnected.append(str(device))
+
+
 def make_client():
     repository = FakeRepository()
     app = FastAPI()
@@ -34,7 +50,11 @@ def make_client():
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id=OWNER)
     app.dependency_overrides[require_host_devices_enabled] = lambda: None
     app.dependency_overrides[get_host_service] = lambda: HostService(repository)
-    return TestClient(app), repository
+    gateway = FakeGateway()
+    app.dependency_overrides[get_gateway] = lambda: gateway
+    client = TestClient(app)
+    client.gateway = gateway
+    return client, repository
 
 
 def test_inventory_disabled_by_default():
@@ -80,4 +100,33 @@ def test_catalog_and_revoke_use_authenticated_owner():
     assert client.get("/api/v1/hosts").json() == {"devices": []}
     assert client.delete(f"/api/v1/hosts/devices/{DEVICE}").json() == {"revoked": True}
     assert repository.calls[-1] == ("host_device_revoke", {"p_owner": OWNER, "p_device": DEVICE})
-    assert UUID(DEVICE)
+    assert client.gateway.disconnected == [str(UUID(DEVICE))]
+
+
+def test_repository_allows_every_host_rpc_the_module_calls():
+    """Fakes bypass the allowlist; pin it to the migration and to every caller."""
+    backend = Path(__file__).resolve().parents[2]
+    called = set()
+    for source in (backend / "src/platform/hosts").glob("*.py"):
+        if source.name != "repository.py":
+            # Every RPC name passed to repository.command(...) / run_blocking(command, ...).
+            called |= set(re.findall(r"command[(,]\s*(?:self\.repository,\s*)?[\"'](host_[a-z_]+)[\"']",
+                                     source.read_text()))
+    migration = (backend.parent / "supabase/migrations/20261105120000_expand_device_hosts.sql").read_text()
+    defined = set(re.findall(r"CREATE FUNCTION public\.(host_[a-z_]+)\(", migration))
+    assert "host_file_event_record" in called
+    assert called <= host_repository.HOST_COMMANDS
+    assert defined == host_repository.HOST_COMMANDS
+
+    class Client:
+        def __init__(self):
+            self.names = []
+
+        def rpc(self, name, params):
+            self.names.append(name)
+            return SimpleNamespace(execute=lambda: SimpleNamespace(data=True))
+
+    client = Client()
+    for name in sorted(defined):
+        assert host_repository.HostRepository(client).command(name) is True
+    assert client.names == sorted(defined)

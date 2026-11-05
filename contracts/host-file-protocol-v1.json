@@ -1,0 +1,156 @@
+{
+  "contract": "puppyone.host-file-protocol",
+  "version": 1,
+  "status": "experimental; HOST_DEVICES_ENABLED=false until cross-device acceptance",
+  "identity": {
+    "folder": "server-registered folder_id (UUID); the host alone maps it to a local path",
+    "path": "folder-relative, '/'-separated; never absolute, never '.', '..', '\\\\', NUL or a '.git' segment",
+    "backend_stores_paths": false,
+    "backend_stores_content": false
+  },
+  "limits": {
+    "max_file_bytes": 8388608,
+    "max_directory_entries": 10000,
+    "max_path_characters": 4096,
+    "max_frame_bytes": 12582912,
+    "max_pending_requests_per_device": 64,
+    "request_timeout_seconds": 25,
+    "heartbeat_interval_seconds": 10,
+    "lease_seconds": 30,
+    "idle_close_seconds": 35,
+    "subscriber_queue_events": 64
+  },
+  "operations": {
+    "list": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/files?path=",
+      "request": {"path": "string, '' for the folder root"},
+      "result": {"entries": [{"name": "string", "kind": "directory | file", "size": "integer", "modified_ns": "decimal string"}]},
+      "excluded": [".git", "symbolic links", "special files"],
+      "order": "directories first, then name"
+    },
+    "read": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/file?path=",
+      "request": {"path": "string"},
+      "result": {"name": "string", "kind": "file", "size": "integer", "modified_ns": "decimal string",
+                 "content_base64": "standard base64", "revision": "lowercase sha256 hex of the bytes"}
+    },
+    "write": {
+      "capability": "folder.write",
+      "http": "PUT /api/v1/hosts/folders/{folder_id}/file",
+      "request": {"path": "string", "content_base64": "standard base64",
+                  "expected_revision": "sha256 hex to replace that exact content, or null to create a new file without overwriting"},
+      "result": {"revision": "sha256 hex", "size": "integer"},
+      "conflict": "the current content does not match expected_revision (or the file exists when creating)",
+      "replay": "never; a lost reply is outcome_unknown and the client keeps its draft"
+    },
+    "mkdir": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'mkdir', path}",
+      "result": {}
+    },
+    "move": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'move', path, destination}",
+      "result": {},
+      "overwrite": false
+    },
+    "remove": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'remove', path}",
+      "result": {},
+      "recursive": true,
+      "max_removed_entries": 10000
+    },
+    "watch": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/events (text/event-stream)",
+      "events": {
+        "change": {"paths": ["folder-relative paths"], "reset": false},
+        "reset": "change with {\"reset\": true}: rescan; sent first, on overflow and after a missed interval",
+        "unavailable": "{\"retryable\": true} when the host goes offline; {} when access ended"
+      },
+      "keepalive": ": keepalive comment every 15 seconds",
+      "coalescing_ms": 100
+    }
+  },
+  "errors": {
+    "invalid_path": 400,
+    "not_found": 404,
+    "already_exists": 409,
+    "conflict": 409,
+    "not_empty": 409,
+    "unsupported_file": 400,
+    "too_many_entries": 400,
+    "invalid_content": 400,
+    "revision_required": 400,
+    "folder_unavailable": 403,
+    "root_changed": 403,
+    "file_operation_failed": 400,
+    "device_offline": 503,
+    "device_busy": 503,
+    "device_disconnected": 503,
+    "device_timeout": 504,
+    "audit_unavailable": 503
+  },
+  "outcome_unknown": "503/504 detail.outcome_unknown=true after a mutating request was delivered; never replay it",
+  "device_frames": {
+    "proof": {"owner": "uuid", "challenge_id": "uuid", "epoch": "uuid", "nonce": "base64 32 bytes", "signature": "base64 Ed25519 over puppyone-device-v1\\n{owner}\\n{device}\\n{challenge}\\n{epoch}\\n{nonce}"},
+    "ready": {"type": "ready", "epoch": "uuid"},
+    "heartbeat": {"type": "heartbeat"},
+    "heartbeat_ack": {"type": "heartbeat_ack"},
+    "file": {"type": "file", "id": "uuid", "folder_id": "uuid", "action": "list | read | write | mkdir | move | remove", "...": "operation request fields"},
+    "reply": {"type": "reply", "id": "uuid", "result": "operation result", "error": "error code"},
+    "watch": {"type": "watch", "subscription": "uuid", "folder_id": "uuid"},
+    "unwatch": {"type": "unwatch", "subscription": "uuid"},
+    "event": {"type": "event", "subscription": "uuid", "paths": ["folder-relative paths"], "reset": "boolean"},
+    "close_codes": {"4001": "replaced by a newer connection", "4003": "invalid proof or frame", "4004": "device revoked: forget the key", "4008": "idle past the lease"}
+  },
+  "conformance": [
+    {"name": "list root hides git, links and special files",
+     "files": {"note.md": "hello", "sub/inner.md": "inner", ".git/config": "private"}, "symlinks": {"escape.md": "../outside.md"},
+     "request": {"action": "list", "path": ""},
+     "expect": {"entries": [{"name": "sub", "kind": "directory"}, {"name": "note.md", "kind": "file"}]}},
+    {"name": "read returns bytes and revision",
+     "files": {"note.md": "hello"},
+     "request": {"action": "read", "path": "note.md"},
+     "expect": {"content_base64": "aGVsbG8=", "revision": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}},
+    {"name": "parent traversal is refused",
+     "request": {"action": "read", "path": "../outside.md"}, "error": "invalid_path"},
+    {"name": "git metadata is refused",
+     "files": {".git/config": "private"}, "request": {"action": "read", "path": ".git/config"}, "error": "invalid_path"},
+    {"name": "symbolic link is refused",
+     "symlinks": {"escape.md": "../outside.md"}, "request": {"action": "read", "path": "escape.md"}, "error": "invalid_path"},
+    {"name": "missing file is not found",
+     "request": {"action": "read", "path": "missing.md"}, "error": "not_found"},
+    {"name": "stale write is a conflict",
+     "files": {"note.md": "hello"},
+     "request": {"action": "write", "path": "note.md", "content_base64": "bmV3", "expected_revision": "0000000000000000000000000000000000000000000000000000000000000000"},
+     "error": "conflict", "after": {"note.md": "hello"}},
+    {"name": "matching write replaces content",
+     "files": {"note.md": "hello"},
+     "request": {"action": "write", "path": "note.md", "content_base64": "bmV3", "expected_revision": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"},
+     "expect": {"revision": "11507a0e2f5e69d5dfa40a62a1bd7b6ee57e6bcd85c67c9b8431b36fff21c437", "size": 3}, "after": {"note.md": "new"}},
+    {"name": "create never overwrites",
+     "files": {"note.md": "hello"},
+     "request": {"action": "write", "path": "note.md", "content_base64": "bmV3", "expected_revision": null},
+     "error": "conflict", "after": {"note.md": "hello"}},
+    {"name": "create a new file",
+     "request": {"action": "write", "path": "fresh.md", "content_base64": "bmV3", "expected_revision": null},
+     "expect": {"size": 3}, "after": {"fresh.md": "new"}},
+    {"name": "mkdir refuses an existing name",
+     "files": {"sub/inner.md": "inner"}, "request": {"action": "mkdir", "path": "sub"}, "error": "already_exists"},
+    {"name": "move never overwrites",
+     "files": {"a.md": "a", "b.md": "b"},
+     "request": {"action": "move", "path": "a.md", "destination": "b.md"}, "error": "already_exists",
+     "after": {"a.md": "a", "b.md": "b"}},
+    {"name": "move into a folder",
+     "files": {"a.md": "a", "sub/inner.md": "inner"},
+     "request": {"action": "move", "path": "a.md", "destination": "sub/a.md"}, "expect": {}, "after": {"sub/a.md": "a"}},
+    {"name": "remove is recursive inside the folder",
+     "files": {"sub/inner.md": "inner"}, "request": {"action": "remove", "path": "sub"}, "expect": {}, "absent": ["sub"]},
+    {"name": "the folder root cannot be removed",
+     "request": {"action": "remove", "path": ""}, "error": "invalid_path"}
+  ]
+}
