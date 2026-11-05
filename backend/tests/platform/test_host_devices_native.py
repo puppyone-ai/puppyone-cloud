@@ -216,7 +216,7 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
     assert denied_write.status_code == 403
     actor["id"] = stranger
     assert client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md").status_code == 403
-    assert client.get("/api/v1/hosts").json() == {"devices": []}
+    assert client.get("/api/v1/hosts").json()["devices"] == []
     assert client.post(f"/api/v1/hosts/devices/{device}/challenge").status_code == 403
     actor["id"] = owner
 
@@ -286,7 +286,7 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
     assert closed.value.code == CLOSE_REVOKED
     assert client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md").status_code == 403
     assert client.post(f"/api/v1/hosts/devices/{device}/challenge").status_code == 403
-    assert client.get("/api/v1/hosts").json() == {"devices": []}
+    assert client.get("/api/v1/hosts").json()["devices"] == []
 
 
 DESKTOP = os.environ.get("PUPPYONE_DESKTOP_ROOT")
@@ -523,6 +523,117 @@ def test_desktop_host_modules_serve_a_folder_through_the_real_gateway(database, 
                 "SELECT count(*) FROM public.host_file_events WHERE outcome='unknown';") == "0"
         finally:
             host.close()
+
+
+def test_terminals_and_agents_run_only_with_consent_and_end_on_withdrawal(database, api, monkeypatch):
+    import src.platform.auth.dependencies as auth_dependencies
+    import src.platform.hosts.execution as execution
+
+    client, actor = api
+    owner = str(uuid4())
+    users(database, owner)
+    actor["id"] = owner
+
+    class Auth:
+        def get_current_user(self, token):
+            if token != "owner-token":
+                raise ValueError("bad token")
+            return CurrentUser(user_id=owner, role="authenticated")
+
+    monkeypatch.setattr(auth_dependencies, "get_auth_service", lambda: Auth())
+    monkeypatch.setattr(execution, "EXEC_RENEW_SECONDS", 0.2)
+    key = Ed25519PrivateKey.generate()
+    public = base64.b64encode(key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    device = client.post("/api/v1/hosts/devices", json={"public_key": public, "name": "Mac",
+                                                        "platform": "darwin"}).json()["device_id"]
+    folder = str(uuid4())
+    client.post(f"/api/v1/hosts/devices/{device}/folders", json={"folder_id": folder, "name": "Work", "writable": True})
+    exec_path = f"/api/v1/hosts/folders/{folder}/exec"
+
+    def folder_revision():
+        [listed] = client.get("/api/v1/hosts").json()["devices"]
+        return next(item for item in listed["folders"] if item["id"] == folder)["revision"]
+
+    def attach(sockets, start, token="owner-token"):
+        session = client.websocket_connect(exec_path, subprotocols=[f"version.bearer.{token}"])
+        terminal = session.__enter__()
+        sockets.callback(_exit, session)
+        terminal.send_json(start)
+        return terminal
+
+    with ExitStack() as sockets:
+        host = connect(client, sockets, owner, device, key)
+        shell = {"type": "start", "kind": "shell", "launcher": "shell", "cols": 100, "rows": 30}
+
+        # No server grant yet: nothing reaches the host.
+        refused = attach(sockets, shell)
+        assert refused.receive_json() == {"type": "error", "code": "not_allowed"}
+        with pytest.raises(WebSocketDisconnect):
+            attach(sockets, shell, token="stolen").receive_json()
+
+        # Execution needs an editable folder.
+        assert client.patch(f"/api/v1/hosts/devices/{device}/folders/{folder}", json={
+            "name": "Work", "writable": False, "terminal": True, "expected_revision": folder_revision()
+        }).status_code == 400
+        granted = client.patch(f"/api/v1/hosts/devices/{device}/folders/{folder}", json={
+            "name": "Work", "writable": True, "terminal": True, "agent": True, "expected_revision": folder_revision()})
+        assert granted.status_code == 200, granted.text
+
+        terminal = attach(sockets, shell)
+        opened = host.receive_json()
+        assert {key: opened[key] for key in ("type", "folder_id", "kind", "launcher", "cols", "rows")} == {
+            "type": "exec_open", "folder_id": folder, "kind": "shell", "launcher": "shell", "cols": 100, "rows": 30}
+        host.send_json({"type": "exec_opened", "session": opened["session"]})
+        assert terminal.receive_json() == {"type": "started", "session": opened["session"]}
+        terminal.send_json({"type": "input", "data": base64.b64encode(b"ls\n").decode()})
+        assert host.receive_json() == {"type": "exec_input", "session": opened["session"], "data": "bHMK"}
+        terminal.send_json({"type": "resize", "cols": 120, "rows": 40})
+        assert host.receive_json()["type"] == "exec_resize"
+        host.send_json({"type": "exec_output", "session": opened["session"], "data": "b3V0cHV0"})
+        assert terminal.receive_json() == {"type": "output", "data": "b3V0cHV0"}
+        host.send_json({"type": "exec_exit", "session": opened["session"], "status": 0})
+        assert terminal.receive_json() == {"type": "exit", "status": 0}
+        assert eventually(lambda: database.sql(
+            f"SELECT state||':'||exit_status FROM public.host_exec_sessions WHERE id='{opened['session']}';")
+            == "closed:0")
+
+        # An Agent launcher the host does not have is reported, not guessed.
+        agent = attach(sockets, {"type": "start", "kind": "agent", "launcher": "claude", "cols": 80, "rows": 24})
+        opened = host.receive_json()
+        assert (opened["kind"], opened["launcher"]) == ("agent", "claude")
+        host.send_json({"type": "exec_failed", "session": opened["session"], "error": "launcher_unavailable"})
+        assert agent.receive_json() == {"type": "error", "code": "launcher_unavailable"}
+        bad = attach(sockets, {"type": "start", "kind": "agent", "launcher": "rm -rf /", "cols": 80, "rows": 24})
+        assert bad.receive_json() == {"type": "error", "code": "invalid_start"}
+
+        # Withdrawing the grant ends a running terminal at its next renewal.
+        terminal = attach(sockets, shell)
+        opened = host.receive_json()
+        host.send_json({"type": "exec_opened", "session": opened["session"]})
+        assert terminal.receive_json()["type"] == "started"
+        assert client.patch(f"/api/v1/hosts/devices/{device}/folders/{folder}", json={
+            "name": "Work", "writable": True, "expected_revision": folder_revision()}).status_code == 200
+        assert terminal.receive_json() == {"type": "error", "code": "not_allowed"}
+        assert host.receive_json() == {"type": "exec_close", "session": opened["session"]}
+
+        # Revoking the device ends every session on it at once.
+        client.patch(f"/api/v1/hosts/devices/{device}/folders/{folder}", json={
+            "name": "Work", "writable": True, "terminal": True, "expected_revision": folder_revision()})
+        terminal = attach(sockets, shell)
+        opened = host.receive_json()
+        host.send_json({"type": "exec_opened", "session": opened["session"]})
+        assert terminal.receive_json()["type"] == "started"
+        assert client.delete(f"/api/v1/hosts/devices/{device}").json() == {"revoked": True}
+        assert terminal.receive_json() == {"type": "error", "code": "not_allowed"}
+
+    audit = database.sql(
+        "SELECT string_agg(operation||':'||outcome, ',' ORDER BY id) FROM public.host_file_events "
+        f"WHERE device_id='{device}';")
+    assert audit == ("shell:intended,shell:succeeded,agent:intended,agent:failed,"
+                     "shell:intended,shell:succeeded,shell:intended,shell:succeeded")
+    assert database.sql(
+        f"SELECT count(*) FROM public.host_exec_sessions WHERE device_id='{device}' AND state='active';") == "0"
 
 
 def test_every_host_rpc_is_service_only(database, repository):

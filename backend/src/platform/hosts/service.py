@@ -48,11 +48,15 @@ class HostService:
                              p_capabilities=["folder.read", "folder.write"] if writable else ["folder.read"])
 
     def update_folder(self, owner: str, device: UUID, folder: UUID, name: str, writable: bool,
-                      expected_revision: int):
+                      expected_revision: int, *, terminal: bool = False, git: bool = False, agent: bool = False):
+        capabilities = ["folder.read", "folder.write"] if writable else ["folder.read"]
+        if (terminal or git or agent) and not writable:
+            raise HTTPException(400, "Allow editing before running anything in this folder.")
+        capabilities += [capability for capability, on in (("folder.shell", terminal), ("folder.git", git),
+                                                           ("folder.agent", agent)) if on]
         return self._command(self.repository, "host_folder_update", p_owner=owner,
                              p_device=str(device), p_folder=str(folder), p_name=name,
-                             p_capabilities=["folder.read", "folder.write"] if writable else ["folder.read"],
-                             p_expected_revision=expected_revision)
+                             p_capabilities=capabilities, p_expected_revision=expected_revision)
 
     def revoke_device(self, owner: str, device: UUID):
         return self._command(self.repository, "host_device_revoke", p_owner=owner, p_device=str(device))

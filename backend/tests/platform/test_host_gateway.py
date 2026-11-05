@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -155,3 +156,34 @@ async def test_audit_failure_is_closed_before_delivery_and_unknown_after_write()
     assert uncertain.value.detail["outcome_unknown"] is True
     assert repository.events == ["intended"]
     assert len(socket.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_git_names_an_operation_and_writes_are_never_assumed_done():
+    repository = Repository()
+    gateway = HostGateway(repository, authentication=object())
+
+    class GitSocket(Socket):
+        async def send_json(self, frame):
+            self.sent.append(frame)
+
+    socket = GitSocket()
+    connection = DeviceConnection(DEVICE, EPOCH, socket)
+    socket.connection = connection
+    gateway.connections[DEVICE] = connection
+    with pytest.raises(HTTPException) as unknown:
+        await gateway.dispatch(OWNER, FOLDER, "git", {"op": "config", "args": ["--global"]})
+    assert unknown.value.status_code == 400 and socket.sent == []
+    repository.fail_audit = "unknown"
+    task = asyncio.create_task(gateway.dispatch(OWNER, FOLDER, "git", {"op": "commit", "message": "m"}))
+    for _ in range(200):  # Admission runs in a worker thread first.
+        if socket.sent:
+            break
+        await asyncio.sleep(0.01)
+    frame = socket.sent[-1]
+    assert (frame["action"], frame["op"]) == ("git", "commit")
+    connection.pending[frame["id"]].set_exception(HTTPException(503, {"code": "device_disconnected"}))
+    with pytest.raises(HTTPException) as lost:
+        await task
+    # The audit of a lost commit failed too: the client must not assume either way.
+    assert lost.value.detail == {"code": "audit_unavailable", "outcome_unknown": True}

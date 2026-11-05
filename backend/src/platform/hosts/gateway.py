@@ -23,6 +23,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from src.infra.execution.runner import run_blocking
 
 from .connection_auth import HostConnectionAuth
+from .execution import ExecRelay, device_exec_frame, end_sessions
 from .repository import HostRepository
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,11 @@ SUPPORTED_PROTOCOLS = frozenset({1})
 PROOF_FIELDS = frozenset({"owner", "challenge_id", "epoch", "nonce", "signature",
                           "protocol", "boot_id", "app_version"})
 APP_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
-FILE_ACTIONS = frozenset({"list", "read", "write", "mkdir", "move", "remove"})
+FILE_ACTIONS = frozenset({"list", "read", "write", "mkdir", "move", "remove", "git"})
 MUTATIONS = frozenset({"write", "mkdir", "move", "remove"})
+# Structured Git on the host: the client names an operation, never a command line.
+GIT_READS = frozenset({"status", "graph", "commit_detail", "file_diff"})
+GIT_WRITES = frozenset({"stage", "stage_all", "unstage", "unstage_all", "discard", "commit", "pull", "push"})
 # Device error codes the HTTP caller may see; anything else is a generic failure.
 DEVICE_ERRORS = {"conflict": 409, "already_exists": 409, "not_empty": 409, "not_found": 404,
                  "folder_unavailable": 403, "root_changed": 403, "invalid_path": 400,
@@ -101,6 +105,7 @@ class DeviceConnection:
     pending: dict[str, asyncio.Future] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     watches: dict[UUID, FolderWatch] = field(default_factory=dict)
+    exec_sessions: dict = field(default_factory=dict)
     closed: bool = False
     protocol: int = 1
     boot_id: UUID | None = None
@@ -139,6 +144,7 @@ class HostGateway:
         self.repository = repository or HostRepository()
         self.authentication = authentication or HostConnectionAuth(self.repository)
         self.connections: dict[UUID, DeviceConnection] = {}
+        self.exec = ExecRelay(self)
 
     async def connected(self, device: UUID, websocket: WebSocket):
         await websocket.accept()
@@ -187,6 +193,8 @@ class HostGateway:
                             future.set_result(message)
                 elif kind == "event" and isinstance(message.get("subscription"), str):
                     self._fan_out(connection, message)
+                elif device_exec_frame(connection, message):
+                    pass
                 else:
                     raise ValueError("Invalid device frame")
         except (WebSocketDisconnect, asyncio.CancelledError):
@@ -202,6 +210,7 @@ class HostGateway:
                     if not future.done():
                         future.set_exception(HTTPException(503, {"code": "device_disconnected",
                                                                  "outcome_unknown": True}))
+                end_sessions(connection, "device_disconnected")
                 for watch in connection.watches.values():
                     for subscriber in watch.subscribers:
                         subscriber.offer(_CLOSED)
@@ -229,6 +238,7 @@ class HostGateway:
         """Close this process's socket for a revoked device; new requests are already denied."""
         connection = self.connections.pop(device, None)
         if connection:
+            end_sessions(connection, "not_allowed")
             await _close(connection.websocket, CLOSE_REVOKED)
 
     async def _admit(self, owner: str, folder: UUID, action: str):
@@ -248,17 +258,17 @@ class HostGateway:
         return connection
 
     async def _audit(self, owner: str, device: UUID, folder: UUID, action: str, outcome: str,
-                     *, sent: bool = False):
+                     *, sent: bool = False, mutating: bool | None = None):
         try:
             await run_blocking(self.repository.command, "host_file_event_record",
                                p_actor=owner, p_device=str(device), p_folder=str(folder),
                                p_operation=action, p_outcome=outcome)
         except Exception as exc:
             raise HTTPException(503, {"code": "audit_unavailable",
-                                      "outcome_unknown": sent and action in MUTATIONS}) from exc
+                                      "outcome_unknown": sent and (action in MUTATIONS if mutating is None else mutating)}) from exc
 
     async def dispatch(self, owner: str, folder: UUID, action: str, operation: dict):
-        if action not in FILE_ACTIONS:
+        if action not in FILE_ACTIONS or (action == "git" and operation.get("op") not in GIT_READS | GIT_WRITES):
             raise HTTPException(400, {"code": "file_operation_failed"})
         started = time.monotonic()
         admitted = await self._admit(owner, folder, action)
@@ -267,7 +277,7 @@ class HostGateway:
         device = connection.device
         if len(connection.pending) >= MAX_PENDING:
             raise HTTPException(503, {"code": "device_busy"})
-        mutating = action in MUTATIONS
+        mutating = action in MUTATIONS or (action == "git" and operation.get("op") in GIT_WRITES)
         outcome = "failed"
         round_trip = time.monotonic()
         # Audit failure before delivery denies the operation. A failure after a
@@ -284,18 +294,18 @@ class HostGateway:
                 reply = await asyncio.wait_for(future, REQUEST_TIMEOUT)
             except TimeoutError as exc:
                 outcome = "unknown" if mutating else "failed"
-                await self._audit(owner, device, folder, action, outcome, sent=True)
+                await self._audit(owner, device, folder, action, outcome, sent=True, mutating=mutating)
                 raise HTTPException(504, {"code": "device_timeout", "outcome_unknown": mutating}) from exc
             except Exception:
                 outcome = "unknown" if mutating else "failed"
-                await self._audit(owner, device, folder, action, outcome, sent=True)
+                await self._audit(owner, device, folder, action, outcome, sent=True, mutating=mutating)
                 raise
             if reply.get("error"):
-                await self._audit(owner, device, folder, action, "failed", sent=True)
+                await self._audit(owner, device, folder, action, "failed", sent=True, mutating=mutating)
                 error = reply["error"]
                 code = error if isinstance(error, str) and error in DEVICE_ERRORS else "file_operation_failed"
                 raise HTTPException(DEVICE_ERRORS[code], {"code": code})
-            await self._audit(owner, device, folder, action, "succeeded", sent=True)
+            await self._audit(owner, device, folder, action, "succeeded", sent=True, mutating=mutating)
             outcome = "succeeded"
             result = reply.get("result")
             return result if isinstance(result, dict) else {}

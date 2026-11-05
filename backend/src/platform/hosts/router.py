@@ -19,6 +19,7 @@ from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 
 from .connection_auth import HostConnectionAuth
+from .execution import serve_exec
 from .gateway import HostGateway
 from .routing import ForwardingRoute, LocalRoute
 from .service import HostService
@@ -54,6 +55,21 @@ class HostFolderUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     writable: bool
     expected_revision: int = Field(ge=1)
+    # Running things in the folder; each also needs writable and the host's own consent.
+    terminal: bool = False
+    git: bool = False
+    agent: bool = False
+
+
+class HostGitOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    op: Literal["status", "graph", "commit_detail", "file_diff", "stage", "stage_all", "unstage",
+                "unstage_all", "discard", "commit", "pull", "push"]
+    paths: list[str] | None = Field(default=None, max_length=1000)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    scope: Literal["staged", "unstaged"] | None = None
+    commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,64}$")
+    message: str | None = Field(default=None, min_length=1, max_length=10000)
 
 
 class FileWrite(BaseModel):
@@ -180,6 +196,26 @@ async def folder_events(folder_id: UUID, request: Request,
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
+@router.post("/folders/{folder_id}/git")
+async def folder_git(folder_id: UUID, body: HostGitOperation,
+                     user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+    if body.paths and any(not isinstance(item, str) or not item or len(item) > 4096 for item in body.paths):
+        raise HTTPException(422, "Invalid paths.")
+    return await route.dispatch(user.user_id, folder_id, "git", body.model_dump(exclude_none=True))
+
+
+@router.websocket("/folders/{folder_id}/exec")
+async def folder_exec(websocket: WebSocket, folder_id: UUID):
+    # A terminal or Agent on the owner's computer. Served by the process that
+    # holds device sockets; with a device_gateway, clients connect there instead.
+    if not settings.HOST_DEVICES_ENABLED or forwarding():
+        await websocket.close(code=4003)
+        return
+    from src.platform.auth.dependencies import get_auth_service
+
+    await serve_exec(get_gateway(), websocket, folder_id, get_auth_service().get_current_user)
+
+
 @router.post("/devices/{device_id}/challenge")
 def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
               connection: HostConnectionAuth = Depends(get_connection_auth)):
@@ -194,7 +230,9 @@ def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
 def catalog(response: Response, user: CurrentUser = Depends(get_current_user),
             service: HostService = Depends(get_host_service)):
     response.headers["Cache-Control"] = "no-store"
-    return {"devices": service.catalog(user.user_id)}
+    # Where clients attach terminals: the device gateway when one is deployed.
+    return {"devices": service.catalog(user.user_id),
+            "gateway_url": settings.HOST_GATEWAY_PUBLIC_URL.rstrip("/") or None}
 
 
 @router.post("/devices", status_code=201)
@@ -217,7 +255,7 @@ def update_folder(device_id: UUID, folder_id: UUID, body: HostFolderUpdate,
                   user: CurrentUser = Depends(get_current_user),
                   service: HostService = Depends(get_host_service)):
     return service.update_folder(user.user_id, device_id, folder_id, body.name, body.writable,
-                                 body.expected_revision)
+                                 body.expected_revision, terminal=body.terminal, git=body.git, agent=body.agent)
 
 
 @router.delete("/devices/{device_id}")

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.platform.hosts import gateway
+from src.platform.hosts import execution, gateway
 
 CONTRACT_PATH = Path(__file__).resolve().parents[3] / "contracts/host-file-protocol-v1.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_text())
@@ -46,6 +46,16 @@ def test_handshake_rejects_malformed_fields_and_defers_unknown_versions():
             gateway.parse_proof({**proof, **broken})
     with pytest.raises(ValueError):
         gateway.parse_proof([proof])
+
+
+def test_execution_and_git_match_the_contract():
+    git = CONTRACT["operations"]["git"]
+    assert set(git["reads"]) == gateway.GIT_READS and set(git["writes"]) == gateway.GIT_WRITES
+    contract = CONTRACT["execution"]
+    assert set(contract["launchers"]) == execution.LAUNCHERS
+    assert contract["lease"]["seconds"] == execution.EXEC_LEASE_SECONDS
+    assert contract["lease"]["renew_every_seconds"] == execution.EXEC_RENEW_SECONDS
+    assert set(contract["client_frames"]["signal"]["signal"].split(" | ")) == execution.SIGNALS
 
 
 def test_device_error_statuses_match_the_contract():

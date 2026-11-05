@@ -9,6 +9,7 @@ HOST_COMMANDS = frozenset({
     "host_folder_register", "host_folder_update", "host_folder_remove", "host_challenge_issue",
     "host_challenge_consume", "host_connection_open", "host_connection_renew",
     "host_connection_close", "host_folder_admit", "host_file_event_record",
+    "host_exec_open", "host_exec_renew", "host_exec_close",
 })
 
 

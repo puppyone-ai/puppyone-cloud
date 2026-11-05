@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
 
+from .execution import serve_exec
 from .gateway import FILE_ACTIONS, HostGateway
 from .routing import SECRET_HEADER, gateway_secret_matches, listen_for_revocations
 
@@ -68,6 +69,17 @@ async def connect_device(websocket: WebSocket, device_id: UUID):
         await websocket.close(code=4003)
         return
     await gateway().connected(device_id, websocket)
+
+
+@app.websocket("/api/v1/hosts/folders/{folder_id}/exec")
+async def folder_exec(websocket: WebSocket, folder_id: UUID):
+    """A client terminal attaches here, where the device socket lives."""
+    if not settings.HOST_DEVICES_ENABLED:
+        await websocket.close(code=4003)
+        return
+    from src.platform.auth.dependencies import get_auth_service
+
+    await serve_exec(gateway(), websocket, folder_id, get_auth_service().get_current_user)
 
 
 @app.post("/internal/hosts/dispatch", dependencies=[Depends(internal)])

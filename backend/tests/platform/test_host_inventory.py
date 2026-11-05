@@ -97,7 +97,7 @@ def test_folder_defaults_read_only_and_never_accepts_a_path():
 
 def test_catalog_and_revoke_use_authenticated_owner():
     client, repository = make_client()
-    assert client.get("/api/v1/hosts").json() == {"devices": []}
+    assert client.get("/api/v1/hosts").json() == {"devices": [], "gateway_url": None}
     assert client.delete(f"/api/v1/hosts/devices/{DEVICE}").json() == {"revoked": True}
     assert repository.calls[-1] == ("host_device_revoke", {"p_owner": OWNER, "p_device": DEVICE})
     assert client.gateway.disconnected == [str(UUID(DEVICE))]
@@ -112,8 +112,11 @@ def test_repository_allows_every_host_rpc_the_module_calls():
             # Every RPC name passed to repository.command(...) / run_blocking(command, ...).
             called |= set(re.findall(r"command[(,]\s*(?:self\.repository,\s*)?[\"'](host_[a-z_]+)[\"']",
                                      source.read_text()))
-    migration = (backend.parent / "supabase/migrations/20261105120000_expand_device_hosts.sql").read_text()
-    defined = set(re.findall(r"CREATE FUNCTION public\.(host_[a-z_]+)\(", migration))
+    migrations = "".join(path.read_text() for path in sorted(
+        (backend.parent / "supabase/migrations").glob("*_expand_*host*.sql")))
+    # host_capability_for is an internal helper, never called by the service.
+    defined = set(re.findall(r"CREATE (?:OR REPLACE )?FUNCTION public\.(host_[a-z_]+)\(", migrations)) \
+        - {"host_capability_for"}
     assert "host_file_event_record" in called
     assert called <= host_repository.HOST_COMMANDS
     assert defined == host_repository.HOST_COMMANDS
