@@ -570,8 +570,8 @@ def create_app() -> FastAPI:
 
     # Keep lifecycle admission outside Version Engine internals while making
     # every FastAPI Product command hold a renewable Project write lease.
-    from src.platform.project.write_lease import get_leased_version_write_command_service
     from src.file_operations.dependencies import get_version_write_command_service
+    from src.platform.project.write_lease import get_leased_version_write_command_service
 
     app.dependency_overrides[get_version_write_command_service] = (
         get_leased_version_write_command_service
@@ -654,7 +654,9 @@ def create_app() -> FastAPI:
     from src.platform.access.lifecycle_router import router as access_lifecycle_router
 
     app.include_router(access_lifecycle_router)
-    from src.platform.access.agent_link_router import instructions_router as agent_instructions_router
+    from src.platform.access.agent_link_router import (
+        instructions_router as agent_instructions_router,
+    )
     from src.platform.access.agent_link_router import router as agent_link_router
 
     app.include_router(agent_link_router)
@@ -665,6 +667,11 @@ def create_app() -> FastAPI:
     from src.platform.hosts.router import router as hosts_router
 
     app.include_router(hosts_router)
+    from src.platform.access.adapters.api.host_directory_router import (
+        router as host_directory_router,
+    )
+
+    app.include_router(host_directory_router)
     from src.platform.auth.router import router as auth_router
 
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])

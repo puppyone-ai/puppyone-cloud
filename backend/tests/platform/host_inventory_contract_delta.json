@@ -9,7 +9,11 @@
     "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",
     "/api/v1/hosts/devices/{device_id}/folders": "49884d27b94cd2b916083816635fbac3010b159469fa402aee69c95fa16d9e98",
     "/api/v1/hosts/devices/{device_id}/folders/{folder_id}": "991b5eb42a9b9ed94d857bcde61d40c353fbfce8c9a23b417266db43015b15a1",
-    "/api/v1/hosts/devices/{device_id}": "f63e66abf4fd092aca7d252402f16f9cc43ebc7efefffdbac657e9b54f35d29a"
+    "/api/v1/hosts/devices/{device_id}": "f63e66abf4fd092aca7d252402f16f9cc43ebc7efefffdbac657e9b54f35d29a",
+    "/api/v1/host-directory": "cd780b50782483dac35472505bc3f744573ed1ee879c5b816dd1285efb758c48",
+    "/api/v1/host-directory/{host}/folders/{folder_id}/files": "2cb2632d277b47830fd8527dbc143d404df722039e6071be48bedf684261fff4",
+    "/api/v1/host-directory/{host}/folders/{folder_id}/file": "601238206430dbb70f53f5aa644dad41ec067aec3f1d543458c17a06f729d4f2",
+    "/api/v1/host-directory/{host}/folders/{folder_id}/events": "73a751e9d298894c32fbc116f31fe5a1300066c037a3a8dfd754a585aeb35a22"
   },
   "schemas": {
     "DeviceRegistration": "269b5c3bf9fb882f6e29c3946b0c24194b3036b40c88e217a2e14d10cadfd41d",

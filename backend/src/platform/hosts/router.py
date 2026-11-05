@@ -121,7 +121,7 @@ def get_route() -> LocalRoute | ForwardingRoute:
     return _forwarding
 
 
-def _route(gateway: HostGateway = Depends(get_gateway)) -> LocalRoute | ForwardingRoute:
+def get_file_route(gateway: HostGateway = Depends(get_gateway)) -> LocalRoute | ForwardingRoute:
     return get_route() if forwarding() else LocalRoute(gateway)
 
 
@@ -139,7 +139,7 @@ async def connect_device(websocket: WebSocket, device_id: UUID):
 @router.get("/folders/{folder_id}/files")
 async def list_folder(folder_id: UUID, response: Response,
                       path: str = Query(default="", max_length=4096),
-                      user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                      user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     response.headers["Cache-Control"] = "no-store"
     return await route.dispatch(user.user_id, folder_id, "list", {"path": path})
 
@@ -147,20 +147,20 @@ async def list_folder(folder_id: UUID, response: Response,
 @router.get("/folders/{folder_id}/file")
 async def read_folder_file(folder_id: UUID, response: Response,
                            path: str = Query(min_length=1, max_length=4096),
-                           user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                           user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     response.headers["Cache-Control"] = "no-store"
     return await route.dispatch(user.user_id, folder_id, "read", {"path": path})
 
 
 @router.put("/folders/{folder_id}/file")
 async def write_folder_file(folder_id: UUID, body: FileWrite,
-                            user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                            user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     return await route.dispatch(user.user_id, folder_id, "write", body.model_dump())
 
 
 @router.post("/folders/{folder_id}/files")
 async def change_folder_files(folder_id: UUID, body: HostDirectoryOperation,
-                              user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                              user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     if (body.action == "move") != (body.destination is not None):
         raise HTTPException(422, "A move needs a destination; other operations do not.")
     operation = body.model_dump(exclude={"action"}, exclude_none=True)
@@ -169,7 +169,7 @@ async def change_folder_files(folder_id: UUID, body: HostDirectoryOperation,
 
 @router.get("/folders/{folder_id}/events")
 async def folder_events(folder_id: UUID, request: Request,
-                        user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                        user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     stream = route.watch(user.user_id, folder_id)
     first = await anext(stream)  # Offline / denied answer as HTTP status, not as a stream.
 
@@ -198,7 +198,7 @@ async def folder_events(folder_id: UUID, request: Request,
 
 @router.post("/folders/{folder_id}/git")
 async def folder_git(folder_id: UUID, body: HostGitOperation,
-                     user: CurrentUser = Depends(get_current_user), route=Depends(_route)):
+                     user: CurrentUser = Depends(get_current_user), route=Depends(get_file_route)):
     if body.paths and any(not isinstance(item, str) or not item or len(item) > 4096 for item in body.paths):
         raise HTTPException(422, "Invalid paths.")
     return await route.dispatch(user.user_id, folder_id, "git", body.model_dump(exclude_none=True))
@@ -260,7 +260,7 @@ def update_folder(device_id: UUID, folder_id: UUID, body: HostFolderUpdate,
 
 @router.delete("/devices/{device_id}")
 async def revoke_device(device_id: UUID, user: CurrentUser = Depends(get_current_user),
-                        service: HostService = Depends(get_host_service), route=Depends(_route)):
+                        service: HostService = Depends(get_host_service), route=Depends(get_file_route)):
     revoked = bool(await run_blocking(service.revoke_device, user.user_id, device_id))
     if revoked:
         # New requests are already denied by the database; this closes the live
