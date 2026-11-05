@@ -26,6 +26,7 @@ INSTALLED_IN = {
     "src.main": None,
     "src.platform.agent.runtime.worker": "main",
     "src.platform.access.adapters.ssh.gateway": "main",
+    "src.platform.hosts.gateway_service": None,
     "src.platform.imports.worker": "startup",
     "src.platform.synchronize.worker": "startup",
     "src.platform.upload.worker": "startup",
