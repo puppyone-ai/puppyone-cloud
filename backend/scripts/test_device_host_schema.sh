@@ -5,10 +5,12 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container="puppyone-device-host-test-$$"
 docker run --rm -d --name "$container" -e POSTGRES_PASSWORD=fixture postgres:16 >/dev/null
 trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
-for _ in $(seq 1 30); do
-  if docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then break; fi
+ready=false
+for _ in $(seq 1 60); do
+  if docker exec "$container" pg_isready -U postgres >/dev/null 2>&1; then ready=true; break; fi
   sleep 1
 done
+if [[ "$ready" != true ]]; then echo 'Disposable PostgreSQL did not become ready' >&2; exit 1; fi
 docker exec -i "$container" psql -U postgres -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
 CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY);
@@ -54,6 +56,25 @@ BEGIN
    THEN RAISE EXCEPTION 'revoked renewal'; END IF;
  BEGIN PERFORM public.host_folder_admit(owner,folder,'read');
    RAISE EXCEPTION 'revoked read admitted';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+END $$;
+DO $$ DECLARE
+ owner uuid:='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+ stranger uuid:='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ device uuid; folder uuid;
+BEGIN
+ device:=public.host_device_register(owner,decode(repeat('cd',32),'hex'),'Laptop','darwin');
+ folder:=public.host_folder_register(owner,device,'Work',ARRAY['folder.read','folder.write']);
+ IF jsonb_array_length(public.host_device_catalog(owner))<>1 THEN RAISE EXCEPTION 'catalog missing device'; END IF;
+ IF jsonb_array_length(public.host_device_catalog(stranger))<>0 THEN RAISE EXCEPTION 'catalog leaked device'; END IF;
+ BEGIN PERFORM public.host_folder_register(stranger,device,'No',ARRAY['folder.read']);
+   RAISE EXCEPTION 'foreign folder registration';
+ EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+ IF public.host_folder_remove(stranger,device,folder) THEN RAISE EXCEPTION 'foreign folder removal'; END IF;
+ IF NOT public.host_folder_remove(owner,device,folder) THEN RAISE EXCEPTION 'folder removal failed'; END IF;
+ IF NOT public.host_device_revoke(owner,device) THEN RAISE EXCEPTION 'device revocation failed'; END IF;
+ BEGIN PERFORM public.host_connection_open(device,gen_random_uuid(),'gateway-3',30);
+   RAISE EXCEPTION 'revoked device connected';
  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END $$;
 SQL

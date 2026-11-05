@@ -425,6 +425,8 @@ class Settings(BaseSettings):
     # commit_update events are fanned out across replicas via Redis pub/sub.
     # Local development may leave this empty; hosted validation requires it.
     NOTIFICATIONS_REDIS_URL: str = ""
+    # Inventory APIs stay unavailable until the device gateway and host are accepted.
+    HOST_DEVICES_ENABLED: bool = False
 
     # Anthropic configuration
     ANTHROPIC_API_KEY: str = ""

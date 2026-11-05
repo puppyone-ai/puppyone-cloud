@@ -129,6 +129,88 @@ BEGIN
  RETURN admitted;
 END $$;
 
+-- Register from an authenticated human session. Possession of the private key
+-- is checked separately at connection time; registration alone grants no file access.
+CREATE FUNCTION public.host_device_register(p_owner uuid,p_key bytea,p_name text,p_platform text)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE result uuid;
+BEGIN
+ IF p_owner IS NULL OR p_key IS NULL OR octet_length(p_key)<>32 OR
+   p_name IS NULL OR length(btrim(p_name)) NOT BETWEEN 1 AND 120 OR
+   p_platform IS NULL OR p_platform NOT IN ('darwin','win32','linux') THEN
+   RAISE EXCEPTION 'host_invalid_device' USING ERRCODE='22023';
+ END IF;
+ -- Serialize registration count for this user, not across all tenants.
+ PERFORM pg_advisory_xact_lock(hashtextextended(p_owner::text,72343));
+ IF (SELECT count(*) FROM public.host_devices WHERE owner_user_id=p_owner AND state<>'revoked')>=16 THEN
+   RAISE EXCEPTION 'host_device_limit' USING ERRCODE='22023';
+ END IF;
+ INSERT INTO public.host_devices(owner_user_id,public_key,display_name,platform)
+ VALUES(p_owner,p_key,btrim(p_name),p_platform) RETURNING id INTO result;
+ RETURN result;
+END $$;
+
+CREATE FUNCTION public.host_folder_register(p_owner uuid,p_device uuid,p_name text,p_capabilities text[])
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE result uuid;
+BEGIN
+ IF p_owner IS NULL OR p_name IS NULL OR length(btrim(p_name)) NOT BETWEEN 1 AND 120 OR
+   p_capabilities IS NULL OR NOT (p_capabilities <@ ARRAY['folder.read','folder.write']::text[]) OR
+   NOT ('folder.read'=ANY(p_capabilities)) OR cardinality(p_capabilities) NOT BETWEEN 1 AND 2 OR
+   array_position(p_capabilities,NULL) IS NOT NULL THEN
+   RAISE EXCEPTION 'host_invalid_folder' USING ERRCODE='22023';
+ END IF;
+ PERFORM 1 FROM public.host_devices WHERE id=p_device AND owner_user_id=p_owner AND state='active' FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'host_access_denied' USING ERRCODE='42501'; END IF;
+ IF (SELECT count(*) FROM public.host_folders WHERE device_id=p_device AND state<>'removed')>=64 THEN
+   RAISE EXCEPTION 'host_folder_limit' USING ERRCODE='22023';
+ END IF;
+ INSERT INTO public.host_folders(device_id,display_name,capabilities)
+ VALUES(p_device,btrim(p_name),p_capabilities) RETURNING id INTO result;
+ RETURN result;
+END $$;
+
+CREATE FUNCTION public.host_device_catalog(p_owner uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+ SELECT coalesce(jsonb_agg(jsonb_build_object('id',d.id,'name',d.display_name,
+   'platform',d.platform,'state',d.state,'revision',d.revision,
+   'online',coalesce(c.lease_until>clock_timestamp(),false),'last_seen_at',d.last_seen_at,
+   'folders',coalesce((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.display_name,
+     'capabilities',f.capabilities,'state',f.state,'revision',f.revision) ORDER BY f.created_at,f.id)
+     FROM public.host_folders f WHERE f.device_id=d.id AND f.state<>'removed'),'[]'::jsonb))
+   ORDER BY d.created_at,d.id),'[]'::jsonb)
+ FROM public.host_devices d LEFT JOIN public.host_connections c ON c.device_id=d.id
+ WHERE d.owner_user_id=p_owner AND d.state<>'revoked'
+$$;
+
+CREATE FUNCTION public.host_device_revoke(p_owner uuid,p_device uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
+ UPDATE public.host_devices SET state='revoked',revision=revision+1,updated_at=clock_timestamp()
+ WHERE id=p_device AND owner_user_id=p_owner AND state<>'revoked';
+ IF NOT FOUND THEN RETURN false; END IF;
+ DELETE FROM public.host_connections WHERE device_id=p_device;
+ RETURN true;
+END $$;
+
+CREATE FUNCTION public.host_folder_remove(p_owner uuid,p_device uuid,p_folder uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
+ UPDATE public.host_folders f SET state='removed',revision=f.revision+1,updated_at=clock_timestamp()
+ FROM public.host_devices d WHERE f.id=p_folder AND f.device_id=p_device AND d.id=f.device_id
+ AND d.owner_user_id=p_owner AND d.state='active' AND f.state<>'removed';
+ RETURN FOUND;
+END $$;
+
+REVOKE ALL ON FUNCTION public.host_device_register(uuid,bytea,text,text),
+ public.host_folder_register(uuid,uuid,text,text[]),public.host_device_catalog(uuid),
+ public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
+ FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.host_device_register(uuid,bytea,text,text),
+ public.host_folder_register(uuid,uuid,text,text[]),public.host_device_catalog(uuid),
+ public.host_device_revoke(uuid,uuid),public.host_folder_remove(uuid,uuid,uuid)
+ TO service_role;
+
 REVOKE ALL ON FUNCTION public.host_connection_open(uuid,uuid,text,integer),
  public.host_connection_renew(uuid,uuid,text,integer),public.host_connection_close(uuid,uuid,text),
  public.host_folder_admit(uuid,uuid,text) FROM PUBLIC,anon,authenticated;

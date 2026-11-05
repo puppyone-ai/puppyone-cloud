@@ -502,6 +502,13 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         for name, digest in sandbox[category]["removed"].items():
             assert expected["contract"][category].pop(name) == digest
+    # Device inventory is additive and gated off until the transport is accepted.
+    hosts = json.loads(Path(__file__).with_name("host_inventory_contract_delta.json").read_text())
+    assert all(path.startswith("/api/v1/hosts") for path in hosts["paths"])
+    assert set(hosts["schemas"]) == {"DeviceRegistration", "FolderRegistration"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & hosts[category].keys()
+        expected["contract"][category].update(hosts[category])
     assert contract(app.openapi()) == expected["contract"]
 
 

@@ -662,6 +662,9 @@ def create_app() -> FastAPI:
     from src.platform.access.adapters.api.workbench_router import router as workbench_router
 
     app.include_router(workbench_router)
+    from src.platform.hosts.router import router as hosts_router
+
+    app.include_router(hosts_router)
     from src.platform.auth.router import router as auth_router
 
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
