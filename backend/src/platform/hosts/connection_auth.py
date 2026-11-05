@@ -42,7 +42,8 @@ class HostConnectionAuth:
                 "expires_in": 60}
 
     def accept(self, owner: str, device: UUID, challenge: UUID, epoch: UUID,
-               nonce: str, signature: str, gateway: str):
+               nonce: str, signature: str, gateway: str, *, protocol: int, boot_id: UUID,
+               app_version: str):
         try:
             raw_nonce = base64.b64decode(nonce, validate=True)
             raw_signature = base64.b64decode(signature, validate=True)
@@ -53,8 +54,11 @@ class HostConnectionAuth:
                 p_nonce_hash="\\x" + hashlib.sha256(raw_nonce).hexdigest())
             key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(result["public_key"]))
             key.verify(raw_signature, proof_message(owner, device, challenge, epoch, nonce))
+            # The challenge was consumed above; these are the signed-in host's own
+            # description, validated by the gateway and again by the database.
             self.repository.command("host_connection_open", p_device=str(device),
-                p_epoch=str(epoch), p_gateway=gateway, p_lease_seconds=30)
+                p_epoch=str(epoch), p_gateway=gateway, p_lease_seconds=30,
+                p_protocol=protocol, p_boot_id=str(boot_id), p_app_version=app_version)
             return epoch
         except (ValueError, KeyError, TypeError, binascii.Error, InvalidSignature) as exc:
             raise HTTPException(403, "Invalid device proof") from exc

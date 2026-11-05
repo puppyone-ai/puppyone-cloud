@@ -12,6 +12,8 @@ from src.platform.hosts.connection_auth import HostConnectionAuth, proof_message
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 DEVICE = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 CHALLENGE = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+BOOT = UUID("99999999-9999-4999-8999-999999999999")
+HELLO = {"protocol": 1, "boot_id": BOOT, "app_version": "1.4.0"}
 
 
 class FakeRepository:
@@ -31,7 +33,7 @@ class FakeRepository:
             self.consumed = True
             return {"public_key": self.key.hex()}
         if name == "host_connection_open":
-            self.opened = True
+            self.opened = params
             return {"epoch": params["p_epoch"]}
         raise AssertionError(name)
 
@@ -46,10 +48,11 @@ def test_one_use_device_proof_binds_owner_device_epoch_and_nonce():
     assert repository.issued["p_nonce_hash"] == "\\x" + hashlib.sha256(base64.b64decode(nonce)).hexdigest()
     epoch = UUID(challenge["epoch"])
     signature = base64.b64encode(private.sign(proof_message(OWNER, DEVICE, CHALLENGE, epoch, nonce))).decode()
-    assert auth.accept(OWNER, DEVICE, CHALLENGE, epoch, nonce, signature, "gateway-1") == epoch
-    assert repository.opened
+    assert auth.accept(OWNER, DEVICE, CHALLENGE, epoch, nonce, signature, "gateway-1", **HELLO) == epoch
+    assert (repository.opened["p_protocol"], repository.opened["p_boot_id"],
+            repository.opened["p_app_version"]) == (1, str(BOOT), "1.4.0")
     with pytest.raises(HTTPException) as replay:
-        auth.accept(OWNER, DEVICE, CHALLENGE, epoch, nonce, signature, "gateway-1")
+        auth.accept(OWNER, DEVICE, CHALLENGE, epoch, nonce, signature, "gateway-1", **HELLO)
     assert replay.value.status_code == 403
 
 
@@ -61,5 +64,5 @@ def test_wrong_signature_does_not_open_connection():
     challenge = auth.issue(OWNER, DEVICE)
     signature = base64.b64encode(private.sign(b"different payload")).decode()
     with pytest.raises(HTTPException):
-        auth.accept(OWNER, DEVICE, CHALLENGE, UUID(challenge["epoch"]), challenge["nonce"], signature, "gateway-1")
+        auth.accept(OWNER, DEVICE, CHALLENGE, UUID(challenge["epoch"]), challenge["nonce"], signature, "gateway-1", **HELLO)
     assert not repository.opened

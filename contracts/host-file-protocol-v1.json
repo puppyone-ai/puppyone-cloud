@@ -95,8 +95,13 @@
     "audit_unavailable": 503
   },
   "outcome_unknown": "503/504 detail.outcome_unknown=true after a mutating request was delivered; never replay it",
+  "protocol": {
+    "supported": [1],
+    "negotiation": "the host sends its version in the proof frame; a gateway that does not serve it closes with 4005 before consuming the challenge, and the host stops retrying until it is updated"
+  },
   "device_frames": {
-    "proof": {"owner": "uuid", "challenge_id": "uuid", "epoch": "uuid", "nonce": "base64 32 bytes", "signature": "base64 Ed25519 over puppyone-device-v1\\n{owner}\\n{device}\\n{challenge}\\n{epoch}\\n{nonce}"},
+    "proof": {"owner": "uuid", "challenge_id": "uuid", "epoch": "uuid", "nonce": "base64 32 bytes", "signature": "base64 Ed25519 over puppyone-device-v1\\n{owner}\\n{device}\\n{challenge}\\n{epoch}\\n{nonce}",
+              "protocol": "integer protocol version", "boot_id": "uuid, new on every App launch", "app_version": "App version, [0-9A-Za-z][0-9A-Za-z.+_-]{0,63}"},
     "ready": {"type": "ready", "epoch": "uuid"},
     "heartbeat": {"type": "heartbeat"},
     "heartbeat_ack": {"type": "heartbeat_ack"},
@@ -105,7 +110,7 @@
     "watch": {"type": "watch", "subscription": "uuid", "folder_id": "uuid"},
     "unwatch": {"type": "unwatch", "subscription": "uuid"},
     "event": {"type": "event", "subscription": "uuid", "paths": ["folder-relative paths"], "reset": "boolean"},
-    "close_codes": {"4001": "replaced by a newer connection", "4003": "invalid proof or frame", "4004": "device revoked: forget the key", "4008": "idle past the lease"}
+    "close_codes": {"4001": "replaced by a newer connection", "4003": "invalid proof or frame", "4004": "device revoked: forget the key", "4005": "protocol not served: update the App, do not retry", "4008": "idle past the lease"}
   },
   "conformance": [
     {"name": "list root hides git, links and special files",

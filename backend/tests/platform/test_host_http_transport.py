@@ -17,6 +17,7 @@ OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 DEVICE = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 FOLDER = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 EPOCH = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+BOOT = "99999999-9999-4999-8999-999999999999"
 
 
 class Repository:
@@ -39,7 +40,8 @@ class Repository:
 
 
 class Proof:
-    def accept(self, owner, device, challenge, epoch, nonce, signature, gateway):
+    def accept(self, owner, device, challenge, epoch, nonce, signature, gateway, **hello):
+        assert hello == {"protocol": 1, "boot_id": UUID(BOOT), "app_version": "1.4.0"}
         assert (owner, device, epoch, gateway) == (OWNER, DEVICE, EPOCH, GATEWAY_INSTANCE)
 
 
@@ -55,7 +57,8 @@ def test_websocket_to_http_file_route_and_owner_revocation(monkeypatch):
     app.dependency_overrides[get_gateway] = lambda: gateway
     with TestClient(app) as client, client.websocket_connect(f"/api/v1/hosts/devices/{DEVICE}/connect") as socket:
         socket.send_json({"owner": OWNER, "challenge_id": str(FOLDER), "epoch": str(EPOCH),
-                          "nonce": "proof", "signature": "signature"})
+                          "nonce": "proof", "signature": "signature",
+                          "protocol": 1, "boot_id": BOOT, "app_version": "1.4.0"})
         assert socket.receive_json() == {"type": "ready", "epoch": str(EPOCH)}
         with ThreadPoolExecutor(max_workers=1) as pool:
             request = pool.submit(client.get, f"/api/v1/hosts/folders/{FOLDER}/file?path=note.md")

@@ -32,7 +32,14 @@ DO $$ DECLARE
  stranger uuid:='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
  old_epoch uuid:='ffffffff-ffff-4fff-8fff-ffffffffffff';
  new_epoch uuid:='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+ boot uuid:='99999999-9999-4999-8999-999999999999';
 BEGIN
+ BEGIN PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30,1,boot,'1.0.0; drop');
+   RAISE EXCEPTION 'malformed app version accepted';
+ EXCEPTION WHEN invalid_parameter_value THEN NULL; END;
+ BEGIN PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30,0,boot,'1.0.0');
+   RAISE EXCEPTION 'protocol 0 accepted';
+ EXCEPTION WHEN invalid_parameter_value THEN NULL; END;
  DECLARE
    challenge uuid;
  BEGIN
@@ -46,14 +53,18 @@ BEGIN
    IF (SELECT count(*) FROM public.host_connection_challenges WHERE device_id=device)<>1 THEN
      RAISE EXCEPTION 'used challenge retained'; END IF;
  END;
- PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30);
- PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30);
+ PERFORM public.host_connection_open(device,old_epoch,'gateway-1',30,1,boot,'1.0.0');
+ PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30,1,boot,'1.0.0');
  IF public.host_connection_renew(device,old_epoch,'gateway-1',30) THEN
    RAISE EXCEPTION 'old epoch renewed'; END IF;
  IF public.host_connection_close(device,old_epoch,'gateway-1') THEN
    RAISE EXCEPTION 'old epoch closed new slot'; END IF;
  IF (public.host_folder_admit(owner,folder,'read')->>'epoch')::uuid<>new_epoch THEN
    RAISE EXCEPTION 'wrong epoch'; END IF;
+ IF (public.host_folder_admit(owner,folder,'read')->>'protocol')::int<>1 THEN
+   RAISE EXCEPTION 'admission lost the host protocol'; END IF;
+ IF public.host_device_catalog(owner)->0->>'app_version'<>'1.0.0' THEN
+   RAISE EXCEPTION 'catalog lost the online app version'; END IF;
  PERFORM public.host_file_event_record(owner,device,folder,'read','intended');
  IF (SELECT count(*) FROM public.host_file_events WHERE actor_user_id=owner AND outcome='intended')<>1
    THEN RAISE EXCEPTION 'audit missing'; END IF;
@@ -82,7 +93,7 @@ BEGIN
  BEGIN PERFORM public.host_folder_admit(stranger,folder,'read');
    RAISE EXCEPTION 'offline state leaked to another account';
  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
- PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30);
+ PERFORM public.host_connection_open(device,new_epoch,'gateway-2',30,1,boot,'1.0.0');
  UPDATE public.host_devices SET state='revoked' WHERE id=device;
  IF public.host_connection_renew(device,new_epoch,'gateway-2',30)
    THEN RAISE EXCEPTION 'revoked renewal'; END IF;
@@ -110,7 +121,7 @@ BEGIN
  IF public.host_folder_remove(stranger,device,folder) THEN RAISE EXCEPTION 'foreign folder removal'; END IF;
  IF NOT public.host_folder_remove(owner,device,folder) THEN RAISE EXCEPTION 'folder removal failed'; END IF;
  IF NOT public.host_device_revoke(owner,device) THEN RAISE EXCEPTION 'device revocation failed'; END IF;
- BEGIN PERFORM public.host_connection_open(device,gen_random_uuid(),'gateway-3',30);
+ BEGIN PERFORM public.host_connection_open(device,gen_random_uuid(),'gateway-3',30,1,gen_random_uuid(),'1.0.0');
    RAISE EXCEPTION 'revoked device connected';
  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END $$;

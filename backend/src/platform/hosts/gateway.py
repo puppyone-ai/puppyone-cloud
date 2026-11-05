@@ -10,6 +10,7 @@ The relay records operation metadata only: no paths, file content or keys.
 import asyncio
 import logging
 import os
+import re
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -43,7 +44,14 @@ MAX_WATCHES = 64
 CLOSE_REPLACED = 4001
 CLOSE_INVALID = 4003
 CLOSE_REVOKED = 4004
+CLOSE_UNSUPPORTED = 4005
 CLOSE_IDLE = 4008
+# Host file protocol versions this gateway serves. A host speaking anything else
+# is closed with 4005 before its challenge is consumed: it must update, not retry.
+SUPPORTED_PROTOCOLS = frozenset({1})
+PROOF_FIELDS = frozenset({"owner", "challenge_id", "epoch", "nonce", "signature",
+                          "protocol", "boot_id", "app_version"})
+APP_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}")
 FILE_ACTIONS = frozenset({"list", "read", "write", "mkdir", "move", "remove"})
 MUTATIONS = frozenset({"write", "mkdir", "move", "remove"})
 # Device error codes the HTTP caller may see; anything else is a generic failure.
@@ -94,6 +102,8 @@ class DeviceConnection:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     watches: dict[UUID, FolderWatch] = field(default_factory=dict)
     closed: bool = False
+    protocol: int = 1
+    boot_id: UUID | None = None
 
     async def send(self, frame: dict):
         async with self.send_lock:
@@ -101,6 +111,27 @@ class DeviceConnection:
 
     def watch_for(self, subscription) -> FolderWatch | None:
         return next((item for item in self.watches.values() if item.subscription == subscription), None)
+
+
+def parse_proof(proof) -> dict | None:
+    """The validated handshake, or None for a protocol this gateway does not serve.
+
+    The version is read before anything else so a newer or older host learns to
+    update instead of failing as an invalid proof. Anything malformed raises.
+    """
+    if not isinstance(proof, dict):
+        raise ValueError("Invalid proof")
+    protocol = proof.get("protocol")
+    if isinstance(protocol, bool) or not isinstance(protocol, int) or protocol not in SUPPORTED_PROTOCOLS:
+        return None
+    if set(proof) != PROOF_FIELDS or any(
+            not isinstance(proof[name], str) or len(proof[name]) > 128 for name in PROOF_FIELDS - {"protocol"}):
+        raise ValueError("Invalid proof")
+    if not APP_VERSION.fullmatch(proof["app_version"]):
+        raise ValueError("Invalid app version")
+    return {"owner": str(UUID(proof["owner"])), "challenge": UUID(proof["challenge_id"]),
+            "epoch": UUID(proof["epoch"]), "nonce": proof["nonce"], "signature": proof["signature"],
+            "protocol": protocol, "boot_id": UUID(proof["boot_id"]), "app_version": proof["app_version"]}
 
 
 class HostGateway:
@@ -113,23 +144,25 @@ class HostGateway:
         await websocket.accept()
         connection = None
         try:
-            proof = await asyncio.wait_for(websocket.receive_json(), 10)
-            if not isinstance(proof, dict) or set(proof) != {
-                "owner", "challenge_id", "epoch", "nonce", "signature"
-            } or any(not isinstance(value, str) or len(value) > 128 for value in proof.values()):
-                raise ValueError("Invalid proof")
-            owner = str(UUID(proof["owner"]))
-            challenge = UUID(proof["challenge_id"])
-            epoch = UUID(proof["epoch"])
-            await run_blocking(self.authentication.accept, owner, device, challenge, epoch,
-                               proof["nonce"], proof["signature"], GATEWAY_INSTANCE)
-            connection = DeviceConnection(device, epoch, websocket)
+            hello = parse_proof(await asyncio.wait_for(websocket.receive_json(), 10))
+            if hello is None:
+                await _close(websocket, CLOSE_UNSUPPORTED)
+                return
+            epoch = hello["epoch"]
+            await run_blocking(self.authentication.accept, hello["owner"], device, hello["challenge"], epoch,
+                               hello["nonce"], hello["signature"], GATEWAY_INSTANCE,
+                               protocol=hello["protocol"], boot_id=hello["boot_id"],
+                               app_version=hello["app_version"])
+            connection = DeviceConnection(device, epoch, websocket, protocol=hello["protocol"],
+                                          boot_id=hello["boot_id"])
             previous = self.connections.get(device)
             self.connections[device] = connection
             if previous:
                 await _close(previous.websocket, CLOSE_REPLACED)
             await connection.send({"type": "ready", "epoch": str(epoch)})
-            logger.info("host_device_connected", extra={"device": str(device)})
+            logger.info("host_device_connected", extra={
+                "device": str(device), "protocol": hello["protocol"], "boot_id": str(hello["boot_id"]),
+                "app_version": hello["app_version"]})
             while True:
                 try:
                     message = await asyncio.wait_for(websocket.receive_json(), HEARTBEAT_TIMEOUT)

@@ -41,7 +41,12 @@ CREATE TABLE public.host_connections (
  gateway_instance text NOT NULL CHECK (length(btrim(gateway_instance)) BETWEEN 1 AND 120),
  lease_until timestamptz NOT NULL,
  connected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- renewed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+ renewed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ -- What the connected host speaks, so a router never sends it an operation it
+ -- cannot serve; boot_id is per App launch and only distinguishes restarts.
+ protocol smallint NOT NULL CHECK (protocol BETWEEN 1 AND 100),
+ boot_id uuid NOT NULL,
+ app_version text NOT NULL CHECK (app_version ~ '^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$')
 );
 CREATE INDEX host_connections_lease ON public.host_connections(lease_until);
 
@@ -118,23 +123,27 @@ GRANT EXECUTE ON FUNCTION public.host_challenge_issue(uuid,uuid,uuid,bytea),
 
 -- The gateway has already verified a device-key challenge before calling open.
 -- A service-role caller is still not allowed to revive a revoked device.
-CREATE FUNCTION public.host_connection_open(p_device uuid,p_epoch uuid,p_gateway text,p_lease_seconds integer)
+CREATE FUNCTION public.host_connection_open(p_device uuid,p_epoch uuid,p_gateway text,p_lease_seconds integer,
+  p_protocol integer,p_boot_id uuid,p_app_version text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE device public.host_devices; connection public.host_connections;
 BEGIN
  IF p_epoch IS NULL OR p_gateway IS NULL OR length(btrim(p_gateway)) NOT BETWEEN 1 AND 120
-   OR p_lease_seconds NOT BETWEEN 10 AND 120 THEN
+   OR p_lease_seconds NOT BETWEEN 10 AND 120 OR p_protocol IS NULL OR p_protocol NOT BETWEEN 1 AND 100
+   OR p_boot_id IS NULL OR p_app_version IS NULL OR p_app_version !~ '^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$' THEN
    RAISE EXCEPTION 'host_invalid_connection' USING ERRCODE='22023';
  END IF;
  SELECT * INTO device FROM public.host_devices WHERE id=p_device FOR UPDATE;
  IF NOT FOUND OR device.state<>'active' THEN
    RAISE EXCEPTION 'host_unavailable' USING ERRCODE='42501';
  END IF;
- INSERT INTO public.host_connections(device_id,epoch,gateway_instance,lease_until)
- VALUES(p_device,p_epoch,p_gateway,clock_timestamp()+make_interval(secs=>p_lease_seconds))
+ INSERT INTO public.host_connections(device_id,epoch,gateway_instance,lease_until,protocol,boot_id,app_version)
+ VALUES(p_device,p_epoch,p_gateway,clock_timestamp()+make_interval(secs=>p_lease_seconds),
+   p_protocol,p_boot_id,p_app_version)
  ON CONFLICT (device_id) DO UPDATE SET epoch=EXCLUDED.epoch,
    gateway_instance=EXCLUDED.gateway_instance,lease_until=EXCLUDED.lease_until,
-   connected_at=clock_timestamp(),renewed_at=clock_timestamp()
+   connected_at=clock_timestamp(),renewed_at=clock_timestamp(),
+   protocol=EXCLUDED.protocol,boot_id=EXCLUDED.boot_id,app_version=EXCLUDED.app_version
  RETURNING * INTO connection;
  UPDATE public.host_devices SET last_seen_at=connection.connected_at WHERE id=p_device;
  RETURN jsonb_build_object('epoch',connection.epoch,'lease_until',connection.lease_until);
@@ -175,7 +184,7 @@ BEGIN
  END IF;
  SELECT jsonb_build_object('device_id',d.id,'folder_id',f.id,'epoch',c.epoch,
    'gateway_instance',c.gateway_instance,'device_revision',d.revision,
-   'folder_revision',f.revision,'lease_until',c.lease_until,
+   'folder_revision',f.revision,'lease_until',c.lease_until,'protocol',c.protocol,
    'online',coalesce(c.lease_until>clock_timestamp(),false)) INTO admitted
  FROM public.host_folders f JOIN public.host_devices d ON d.id=f.device_id
  LEFT JOIN public.host_connections c ON c.device_id=d.id
@@ -276,6 +285,9 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pu
    'platform',d.platform,'state',d.state,'revision',d.revision,
    'online',coalesce(c.lease_until>clock_timestamp(),false),
    'last_seen_at',greatest(d.last_seen_at,c.renewed_at),
+   -- What the online host speaks and runs, so its owner can be told to update it.
+   'protocol',CASE WHEN c.lease_until>clock_timestamp() THEN c.protocol END,
+   'app_version',CASE WHEN c.lease_until>clock_timestamp() THEN c.app_version END,
    'folders',coalesce((SELECT jsonb_agg(jsonb_build_object('id',f.id,'name',f.display_name,
      'capabilities',f.capabilities,'state',f.state,'revision',f.revision) ORDER BY f.created_at,f.id)
      FROM public.host_folders f WHERE f.device_id=d.id AND f.state<>'removed'),'[]'::jsonb))
@@ -332,10 +344,10 @@ GRANT EXECUTE ON FUNCTION public.host_device_register(uuid,bytea,text,text),
  public.host_folder_update(uuid,uuid,uuid,text,text[],bigint)
  TO service_role;
 
-REVOKE ALL ON FUNCTION public.host_connection_open(uuid,uuid,text,integer),
+REVOKE ALL ON FUNCTION public.host_connection_open(uuid,uuid,text,integer,integer,uuid,text),
  public.host_connection_renew(uuid,uuid,text,integer),public.host_connection_close(uuid,uuid,text),
  public.host_folder_admit(uuid,uuid,text) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.host_connection_open(uuid,uuid,text,integer),
+GRANT EXECUTE ON FUNCTION public.host_connection_open(uuid,uuid,text,integer,integer,uuid,text),
  public.host_connection_renew(uuid,uuid,text,integer),public.host_connection_close(uuid,uuid,text),
  public.host_folder_admit(uuid,uuid,text) TO service_role;
 COMMIT;

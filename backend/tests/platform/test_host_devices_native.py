@@ -35,7 +35,7 @@ from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.hosts.connection_auth import HostConnectionAuth, proof_message
-from src.platform.hosts.gateway import CLOSE_REPLACED, CLOSE_REVOKED, HostGateway
+from src.platform.hosts.gateway import CLOSE_REPLACED, CLOSE_REVOKED, CLOSE_UNSUPPORTED, HostGateway
 from src.platform.hosts.repository import HOST_COMMANDS, HostRepository
 from src.platform.hosts.router import (
     get_connection_auth,
@@ -109,7 +109,10 @@ def users(database, *identities):
     database.sql("INSERT INTO auth.users(id) VALUES " + ",".join(f"('{value}')" for value in identities) + ";")
 
 
-def connect(client, sockets, owner, device, key):
+BOOT = str(uuid4())
+
+
+def connect(client, sockets, owner, device, key, protocol=1):
     challenge = client.post(f"/api/v1/hosts/devices/{device}/challenge")
     assert challenge.status_code == 200, challenge.text
     body = challenge.json()
@@ -119,7 +122,10 @@ def connect(client, sockets, owner, device, key):
     # The gateway closes these itself (replacement, revocation); exit best-effort.
     sockets.callback(_exit, session)
     socket.send_json({"owner": owner, "challenge_id": body["challenge_id"], "epoch": body["epoch"],
-                      "nonce": body["nonce"], "signature": base64.b64encode(signature).decode()})
+                      "nonce": body["nonce"], "signature": base64.b64encode(signature).decode(),
+                      "protocol": protocol, "boot_id": BOOT, "app_version": "1.4.0"})
+    if protocol != 1:
+        return socket, body
     assert socket.receive_json() == {"type": "ready", "epoch": body["epoch"]}
     return socket
 
@@ -168,9 +174,21 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
     offline = client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md")
     assert (offline.status_code, offline.json()["detail"]) == (503, {"code": "device_offline"})
 
+    # A host speaking a protocol this gateway does not serve is told to update,
+    # and its one-use challenge is left unconsumed rather than burned.
+    outdated, attempt = connect(client, sockets, owner, device, key, protocol=2)
+    with pytest.raises(WebSocketDisconnect) as unsupported:
+        outdated.receive_json()
+    assert unsupported.value.code == CLOSE_UNSUPPORTED
+    assert database.sql(f"SELECT used_at IS NULL FROM public.host_connection_challenges "
+                        f"WHERE id='{attempt['challenge_id']}';") == "t"
+    assert client.get("/api/v1/hosts").json()["devices"][0]["online"] is False
+
     socket = connect(client, sockets, owner, device, key)
     [listed] = client.get("/api/v1/hosts").json()["devices"]
     assert listed["online"] is True and listed["last_seen_at"]
+    assert (listed["protocol"], listed["app_version"]) == (1, "1.4.0")
+    assert database.sql(f"SELECT boot_id FROM public.host_connections WHERE device_id='{device}';") == BOOT
 
     frame, read = serve_one(client, socket,
         lambda: client.get(f"/api/v1/hosts/folders/{folder}/file?path=note.md"),
@@ -256,9 +274,10 @@ def _routes_audits_fences_and_revokes(database, client, actor, sockets):
         "SELECT string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns "
         "WHERE table_schema='public' AND table_name='host_file_events';"
     ) == "id,device_id,folder_id,actor_user_id,operation,outcome,created_at"
-    # Two connections were made; issuing the second pruned the first used challenge.
+    # Issuing each challenge pruned the used ones: the last used challenge and the
+    # still-valid one the outdated host never consumed remain, nothing older.
     assert database.sql(
-        f"SELECT count(*) FROM public.host_connection_challenges WHERE device_id='{device}';") == "1"
+        f"SELECT count(*) FROM public.host_connection_challenges WHERE device_id='{device}';") == "2"
 
     revoked = client.delete(f"/api/v1/hosts/devices/{device}")
     assert revoked.json() == {"revoked": True}

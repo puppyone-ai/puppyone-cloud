@@ -25,7 +25,27 @@ def test_gateway_constants_match_the_contract():
                                  if operation["capability"] == "folder.write"} == gateway.MUTATIONS
     close_codes = CONTRACT["device_frames"]["close_codes"]
     assert {gateway.CLOSE_REPLACED, gateway.CLOSE_INVALID, gateway.CLOSE_REVOKED,
-            gateway.CLOSE_IDLE} == {int(code) for code in close_codes}
+            gateway.CLOSE_UNSUPPORTED, gateway.CLOSE_IDLE} == {int(code) for code in close_codes}
+    handshake = CONTRACT["device_frames"]["proof"]
+    assert set(handshake) == gateway.PROOF_FIELDS
+    assert set(CONTRACT["protocol"]["supported"]) == gateway.SUPPORTED_PROTOCOLS
+    assert CONTRACT["version"] in gateway.SUPPORTED_PROTOCOLS
+
+
+def test_handshake_rejects_malformed_fields_and_defers_unknown_versions():
+    proof = {"owner": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "challenge_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+             "epoch": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "nonce": "n", "signature": "s",
+             "protocol": 1, "boot_id": "99999999-9999-4999-8999-999999999999", "app_version": "1.4.0-beta.2"}
+    assert gateway.parse_proof(proof)["app_version"] == "1.4.0-beta.2"
+    for protocol in (2, 0, True, "1", None):
+        assert gateway.parse_proof({**proof, "protocol": protocol}) is None
+    assert gateway.parse_proof({key: value for key, value in proof.items() if key != "protocol"}) is None
+    for broken in ({"app_version": "1.0 beta"}, {"app_version": ""}, {"boot_id": "not-a-uuid"},
+                   {"extra": "x"}, {"nonce": 5}):
+        with pytest.raises(ValueError):
+            gateway.parse_proof({**proof, **broken})
+    with pytest.raises(ValueError):
+        gateway.parse_proof([proof])
 
 
 def test_device_error_statuses_match_the_contract():
