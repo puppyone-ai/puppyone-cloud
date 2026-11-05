@@ -43,6 +43,14 @@ class DeviceRegistration(BaseModel):
     platform: Literal["darwin", "win32", "linux"]
 
 
+class DeviceChallengeRequest(BaseModel):
+    """Signed by the device key over owner, device and time; no human JWT."""
+    model_config = ConfigDict(extra="forbid")
+    owner: UUID
+    timestamp: int = Field(ge=0, le=2**40)
+    signature: str = Field(min_length=86, max_length=128)
+
+
 class FolderRegistration(BaseModel):
     model_config = ConfigDict(extra="forbid")
     folder_id: UUID  # client-chosen: a lost response retries the same identity
@@ -219,7 +227,19 @@ async def folder_exec(websocket: WebSocket, folder_id: UUID):
 @router.post("/devices/{device_id}/challenge")
 def challenge(device_id: UUID, user: CurrentUser = Depends(get_current_user),
               connection: HostConnectionAuth = Depends(get_connection_auth)):
-    issued = connection.issue(user.user_id, device_id)
+    return with_connect_url(connection.issue(user.user_id, device_id), device_id)
+
+
+@router.post("/devices/{device_id}/device-challenge")
+def device_challenge(device_id: UUID, body: DeviceChallengeRequest,
+                     connection: HostConnectionAuth = Depends(get_connection_auth)):
+    # A host keeps sharing with its own key while nobody is signed in on it. The
+    # signature is checked against the registered key before anything is issued.
+    issued = connection.issue_for_device(str(body.owner), device_id, body.timestamp, body.signature)
+    return with_connect_url(issued, device_id)
+
+
+def with_connect_url(issued: dict, device_id: UUID) -> dict:
     if settings.HOST_GATEWAY_PUBLIC_URL:
         issued["connect_url"] = (settings.HOST_GATEWAY_PUBLIC_URL.rstrip("/") +
                                  f"/api/v1/hosts/devices/{device_id}/connect")

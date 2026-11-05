@@ -5,6 +5,7 @@
     "/api/v1/hosts/folders/{folder_id}/events": "14f6912e5f48e0eb7a554ea40bb0fbef10611ed88d3fa1ee16ed3cfed50ae2b0",
     "/api/v1/hosts/folders/{folder_id}/git": "6566f4f836c42b6d42f14476912fdc2e54b87275595d9033055852f37e849599",
     "/api/v1/hosts/devices/{device_id}/challenge": "b8d2ff2ed466b9767dfb2a7e02129055a627d3211ae2f5c23048a2a169deada8",
+    "/api/v1/hosts/devices/{device_id}/device-challenge": "2e46c89b296d5b848b84a2a4644b71a0f4be87154355055e5004a67407e31f76",
     "/api/v1/hosts": "5309cae43900679f7a91089a477177cce75f7d190d0ec7d872510ce59345c18f",
     "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",
     "/api/v1/hosts/devices/{device_id}/folders": "49884d27b94cd2b916083816635fbac3010b159469fa402aee69c95fa16d9e98",
@@ -17,6 +18,7 @@
   },
   "schemas": {
     "DeviceRegistration": "269b5c3bf9fb882f6e29c3946b0c24194b3036b40c88e217a2e14d10cadfd41d",
+    "DeviceChallengeRequest": "3ed3d967c0acc678c4e06ca6f3a7f92b3546affad9378f6d19664e10953db2c1",
     "FolderRegistration": "8613dd10c9ba5809e3678642d6aa2ca2144059197fa43332f6fc4780dff99317",
     "FileWrite": "d0b05f2a870c7d52a2a46ca4a0c1b0687062241f2f6349999398f94696951778",
     "HostFolderUpdate": "64c42c5b758ec6d7b53c9ac5244acd371cf51073d2e41b720cda18072391b4b8",

@@ -34,7 +34,7 @@ import src.platform.hosts.router as hosts_router
 from src.config import settings
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
-from src.platform.hosts.connection_auth import HostConnectionAuth, proof_message
+from src.platform.hosts.connection_auth import HostConnectionAuth, device_request_message, proof_message
 from src.platform.hosts.gateway import CLOSE_REPLACED, CLOSE_REVOKED, CLOSE_UNSUPPORTED, HostGateway
 from src.platform.hosts.repository import HOST_COMMANDS, HostRepository
 from src.platform.hosts.router import (
@@ -634,6 +634,60 @@ def test_terminals_and_agents_run_only_with_consent_and_end_on_withdrawal(databa
                      "shell:intended,shell:succeeded,shell:intended,shell:succeeded")
     assert database.sql(
         f"SELECT count(*) FROM public.host_exec_sessions WHERE device_id='{device}' AND state='active';") == "0"
+
+
+def test_a_host_comes_online_with_its_device_key_and_no_one_signed_in(database, api):
+    client, actor = api
+    owner, stranger = str(uuid4()), str(uuid4())
+    users(database, owner, stranger)
+    actor["id"] = owner
+    key = Ed25519PrivateKey.generate()
+    public = base64.b64encode(key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    device = client.post("/api/v1/hosts/devices", json={"public_key": public, "name": "Mac",
+                                                       "platform": "darwin"}).json()["device_id"]
+    # From here on nobody is signed in: every call below carries only the device key.
+    actor["id"] = None
+
+    def ask(signer=key, owner_id=owner, timestamp=None):
+        timestamp = int(time.time()) if timestamp is None else timestamp
+        signature = base64.b64encode(signer.sign(device_request_message(owner_id, device, timestamp))).decode()
+        return client.post(f"/api/v1/hosts/devices/{device}/device-challenge",
+                           json={"owner": owner_id, "timestamp": timestamp, "signature": signature})
+
+    issued = ask()
+    assert issued.status_code == 200, issued.text
+    body = issued.json()
+    proof = key.sign(proof_message(owner, device, body["challenge_id"], body["epoch"], body["nonce"]))
+    with ExitStack() as sockets:
+        session = client.websocket_connect(f"/api/v1/hosts/devices/{device}/connect")
+        socket = session.__enter__()
+        sockets.callback(_exit, session)
+        socket.send_json({"owner": owner, "challenge_id": body["challenge_id"], "epoch": body["epoch"],
+                          "nonce": body["nonce"], "signature": base64.b64encode(proof).decode(),
+                          "protocol": 1, "boot_id": BOOT, "app_version": "1.4.0"})
+        assert socket.receive_json() == {"type": "ready", "epoch": body["epoch"]}
+        assert database.sql(f"SELECT epoch FROM public.host_connections WHERE device_id='{device}';") == body["epoch"]
+
+    # Another key, another owner's claim or a stale clock never issue a challenge, and never
+    # look like revocation (403), which would make the host forget a key that is still valid.
+    before = database.sql(f"SELECT count(*) FROM public.host_connection_challenges WHERE device_id='{device}';")
+    forged = ask(signer=Ed25519PrivateKey.generate())
+    assert (forged.status_code, forged.json()["detail"]) == (401, {"code": "device_proof_invalid"})
+    claimed = ask(owner_id=stranger)
+    assert (claimed.status_code, claimed.json()["detail"]) == (403, {"code": "device_revoked"})
+    stale = ask(timestamp=int(time.time()) - 3600)
+    assert stale.status_code == 401 and stale.json()["detail"]["code"] == "device_clock_skew"
+    assert abs(stale.json()["detail"]["server_time"] - time.time()) < 60
+    assert database.sql(
+        f"SELECT count(*) FROM public.host_connection_challenges WHERE device_id='{device}';") == before
+
+    # Revoked by its owner: a definite denial.
+    actor["id"] = owner
+    assert client.delete(f"/api/v1/hosts/devices/{device}").status_code == 200
+    actor["id"] = None
+    revoked = ask()
+    assert (revoked.status_code, revoked.json()["detail"]) == (403, {"code": "device_revoked"})
 
 
 def test_every_host_rpc_is_service_only(database, repository):
