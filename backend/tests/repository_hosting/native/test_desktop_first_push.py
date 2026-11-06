@@ -23,82 +23,17 @@ from urllib.parse import urlsplit
 import pytest
 
 from tests.repository_hosting.harness.git import Git
-from tests.repository_hosting.integration.test_bare_repository_application import (
-    bare_application as bare_application,
-)
-from tests.repository_hosting.integration.test_bare_repository_application import (
+from tests.repository_hosting.native.support import (
+    SHAPES,
+    authorization,
+    parents,
     publish_entitlement,
+    scoped,
 )
 
 pytestmark = [pytest.mark.hosting_application, pytest.mark.hosting_s3]
 
 CONTRACT = Path(__file__).resolve().parents[4] / "contracts" / "cloud-git-acceptance-v1.json"
-
-
-def commit(client, name, content, message):
-    return client.commit({name: content.encode()}, message)
-
-
-def linear(client):
-    commit(client, "README.md", "first\n", "first")
-    commit(client, "notes.md", "second\n", "second")
-
-
-def merge_tip(client):
-    commit(client, "README.md", "base\n", "base")
-    client.run("checkout", "-q", "-b", "feature")
-    commit(client, "feature.md", "feature\n", "feature")
-    client.run("checkout", "-q", "main")
-    commit(client, "main.md", "main\n", "main")
-    client.run(
-        "merge", "-q", "--no-ff", "feature", "-m", "Merge pull request #1 from example/feature"
-    )
-
-
-def merge_in_history(client):
-    merge_tip(client)
-    commit(client, "after.md", "after the merge\n", "after the merge")
-
-
-def octopus_merge_tip(client):
-    commit(client, "README.md", "base\n", "base")
-    for name in ("one", "two", "three"):
-        client.run("checkout", "-q", "-b", name)
-        commit(client, f"{name}.md", f"{name}\n", name)
-        client.run("checkout", "-q", "main")
-    client.run("merge", "-q", "--no-ff", "one", "two", "three", "-m", "octopus")
-
-
-def unrelated_histories_merge(client):
-    commit(client, "README.md", "base\n", "base")
-    client.run("checkout", "-q", "--orphan", "imported")
-    client.run("rm", "-rq", "--cached", ".")
-    (client.path / "README.md").unlink()
-    commit(client, "imported.md", "imported\n", "imported")
-    client.run("checkout", "-q", "main")
-    client.run(
-        "merge",
-        "-q",
-        "--no-ff",
-        "--allow-unrelated-histories",
-        "imported",
-        "-m",
-        "bring in imported",
-    )
-
-
-def empty_snapshot(client):
-    client.run("commit", "-q", "--allow-empty", "-m", "Initial snapshot")
-
-
-SHAPES = {
-    "linear": (linear, 1),
-    "merge_tip": (merge_tip, 2),
-    "merge_in_history": (merge_in_history, 1),
-    "octopus_merge_tip": (octopus_merge_tip, 4),
-    "unrelated_histories_merge": (unrelated_histories_merge, 2),
-    "empty_snapshot": (empty_snapshot, 0),
-}
 
 
 def desktop_create(app):
@@ -133,19 +68,6 @@ def desktop_create(app):
     assert urlsplit(remote).path == f"/git/{project['id']}.git"
     assert issued["remote"]["target"] == {"kind": "project_root", "project_id": project["id"]}
     return project["id"], remote, secret
-
-
-def authorization(secret):
-    return "Basic " + base64.b64encode(f"x-puppyone-token:{secret}".encode()).decode()
-
-
-def scoped(remote, *headers):
-    """Desktop scopes every header to the canonical remote URL."""
-    return [arg for header in headers for arg in ("-c", f"http.{remote}.extraHeader={header}")]
-
-
-def parents(client, ref):
-    return client.text("rev-list", "--parents", "-n", "1", ref).split()[1:]
 
 
 @pytest.mark.parametrize("shape", sorted(SHAPES))

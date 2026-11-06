@@ -1,6 +1,6 @@
 """Desktop's own first-push code, run against a running Cloud.
 
-test_desktop_first_push_shapes.py replays Desktop's requests in Python. This
+test_desktop_first_push.py replays Desktop's requests in Python. This
 runs the code itself: the owned Docker runner mounts a Desktop checkout
 read-only (run_repository_hosting.py --docker --live --s3 --desktop <path>)
 and Node executes its coordinator, journal, Cloud publish API, Git service and
@@ -21,16 +21,11 @@ from urllib.parse import urlsplit
 import pytest
 
 from tests.repository_hosting.harness.git import Git
-from tests.repository_hosting.integration.test_bare_repository_application import (
-    bare_application as bare_application,
-)
-from tests.repository_hosting.integration.test_bare_repository_application import (
-    publish_entitlement,
-)
-from tests.repository_hosting.integration.test_desktop_first_push_shapes import (
+from tests.repository_hosting.native.support import (
     SHAPES,
     authorization,
     parents,
+    publish_entitlement,
     scoped,
 )
 

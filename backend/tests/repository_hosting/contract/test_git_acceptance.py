@@ -31,7 +31,7 @@ from src.shared_types.git_pack_limits import (
 from src.version_engine.storage import git_process
 from src.version_engine.storage.git_pack import GitPack
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 CONTRACT_PATH = ROOT / "contracts" / "cloud-git-acceptance-v1.json"
 CONTRACT_SHA256 = "49f66fd7df22c8a7d266afb2d27a87296b638f232b4cb44581a5aae9fe02cf54"
 RECEIVE_PATH_SOURCES = [
