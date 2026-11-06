@@ -1,6 +1,8 @@
 """Human-authorized live workspace API. Published content routes stay Git-native."""
 
 import json
+import logging
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -11,8 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
-from src.platform.workspace.errors import WorkspaceError
-from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
+from src.platform.workspace.errors import WorkspaceError, opening_failure
+from src.utils.request_context import request_id_var
+
+logger = logging.getLogger(__name__)
 
 
 def public_workbench(row):
@@ -38,6 +42,38 @@ def public_workbench(row):
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])
 
 
+@asynccontextmanager
+async def _opening(stage, project_id):
+    """Every way an opening stops reaches the caller with a code, and is counted."""
+    try:
+        yield
+    except Exception as exc:
+        failure = exc if isinstance(exc, WorkspaceError) else opening_failure(exc)
+        # An error with its own HTTP contract (billing, auth) keeps it; only an
+        # unclassified one is a server error.
+        source = failure if failure is not None else exc
+        status = getattr(source, "status_code", 500)
+        detail = getattr(source, "detail", None)
+        detail = detail if isinstance(detail, dict) else {}
+        logger.warning(
+            "workbench_open_failed",
+            extra={
+                "workbench_open": {
+                    "stage": stage,
+                    "project_id": project_id,
+                    "code": detail.get("code") or ("unclassified" if status >= 500 else None),
+                    "status": status,
+                    "retryable": detail.get("retryable"),
+                    "error_type": type(exc).__name__,
+                    "request_id": request_id_var.get(),
+                }
+            },
+        )
+        if failure is None or failure is exc:
+            raise
+        raise failure from exc
+
+
 class FileOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(max_length=4096)
@@ -54,7 +90,10 @@ async def status(
     service=Depends(get_workbench_service),
 ):
     response.headers["Cache-Control"] = "no-store"
-    row, root = await service.opening.status(user.user_id, project_id, wait_seconds=wait_seconds)
+    async with _opening("status", project_id):
+        row, root = await service.opening.status(
+            user.user_id, project_id, wait_seconds=wait_seconds
+        )
     return {"workspace": public_workbench(row), **(root or {})}
 
 
@@ -65,10 +104,8 @@ async def open_workspace(
     user=Depends(get_current_user),
     service=Depends(get_workbench_service),
 ):
-    try:
+    async with _opening("open", project_id):
         row = await service.request_open(user.user_id, project_id)
-    except WorkspaceUnavailable as exc:
-        raise HTTPException(503, {"code": exc.code, "retryable": exc.retryable}) from exc
     response.status_code = 200 if row["state"] == "running" else 202
     return public_workbench(row)
 
