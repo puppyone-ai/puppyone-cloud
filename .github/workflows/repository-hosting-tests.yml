@@ -8,6 +8,7 @@ on:
       - 'backend/src/config.py'
       - 'backend/src/platform/access/adapters/git/**'
       - 'backend/tests/repository_hosting/**'
+      - 'contracts/cloud-git-acceptance-v1.json'
       - 'backend/tests/conflicts/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
@@ -88,7 +89,7 @@ jobs:
         run: |
           backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
             --live --s3 --docker --target --output backend/.standard-pack-s3-results \
-            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes or test_docker_native_git_canonical_auth_refs_policy_cold_restart' -q
+            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes or test_docker_native_git_canonical_auth_refs_policy_cold_restart or test_cloud_accepts_desktop_first_push' -q
       - name: Report owned acceptance evidence
         if: always()
         run: |
