@@ -17,7 +17,7 @@ from src.infra.execution.runner import run_blocking
 from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
 
-from .errors import access_failure
+from .errors import access_failure, context_changed
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
 from .execution.worker_port import WorkerDisconnected, WorkerLost
 from .opening import awaiting_files
@@ -133,6 +133,18 @@ class WorkbenchLifecycle:
             await self.filesystem.operation(host, {"action": "list", "path": ""})
 
     async def request(self, user, project, row=None):
+        try:
+            return await self._request(user, project, row)
+        except Exception as exc:
+            if not context_changed(exc):
+                raise
+        # Provider preflight can take seconds between reading authorization and
+        # recording intent. A membership or access change in that window moves
+        # the revision; decide once more on fresh facts instead of failing the
+        # open. Every step before the recorded intent is safe to repeat.
+        return await self._request(user, project, row)
+
+    async def _request(self, user, project, row):
         context, _ = await run_blocking(self.context, user, project, ProjectAction.AGENT_RUN)
         row = (
             row
