@@ -222,14 +222,57 @@ async def test_other_refusals_are_not_retried():
     assert request_open.call_count == 1
 
 
+def handoff_service():
+    """A workspace whose durable opening waits in checking_files for its consumer."""
+    from contextlib import asynccontextmanager
+
+    from src.platform.workspace.service import WorkbenchService
+
+    row = dict(
+        id="workspace",
+        user_id="owner",
+        project_id="project",
+        generation="one",
+        compute_epoch=1,
+        state="resuming",
+        binding={"provider": "fly"},
+        resource={"id": "machine"},
+        open_requested=True,
+        operation_phase="checking_files",
+        owner_deleted_at=None,
+        open_deadline=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+        operation_until=(datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+    )
+    context = {"workbench": row, "facts": {}, "revision": {"project": "project", "version": 1}}
+    host = SimpleNamespace(admitted_row=row)
+
+    @asynccontextmanager
+    async def borrow(_):
+        yield host
+
+    service = WorkbenchService(
+        Mock(),
+        Mock(operation=AsyncMock(return_value={"entries": []})),
+        Mock(check_session=AsyncMock()),
+        repository=Mock(),
+        authorization=Mock(),
+    )
+    service.context = Mock(return_value=(context, object()))
+    service.channels = Mock(borrow=Mock(side_effect=borrow))
+    service.repository.finish_open.return_value = {
+        **row,
+        "state": "running",
+        "open_requested": False,
+    }
+    return service
+
+
 @pytest.mark.asyncio
 async def test_a_failed_handoff_leaves_the_opening_for_the_next_request_to_finish():
     # Marking the durable operation failed would send the start through
     # failed-start preservation (retained); a non-terminal error would make the
     # next poll fail at once. The operation stays as it was instead.
-    from tests.agent.runtime.test_workspace_consumer_opening import fixture
-
-    service, _, _ = fixture()
+    service = handoff_service()
     service.filesystem.operation = AsyncMock(
         side_effect=[WorkerDisconnected("machine connection dropped"), {"entries": []}]
     )
