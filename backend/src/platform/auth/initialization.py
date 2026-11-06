@@ -62,8 +62,7 @@ class UserInitializationService:
         is_new_org = False
 
         if not orgs:
-            org = self._create_default_org(user_id, name)
-            is_new_org = True
+            org, is_new_org = self._create_default_org(user_id, name)
             log_info(f"Created default org {org.id} for user {user_id}")
         else:
             org = orgs[0]
@@ -81,23 +80,11 @@ class UserInitializationService:
         return {"org_id": org.id, "is_new_org": is_new_org}
 
     def _create_default_org(self, user_id: str, name: str):
-        slug = f"personal-{user_id}"
-
-        org = self._org_repo.create(
-            name=f"{name}'s Workspace",
-            slug=slug,
-            created_by=user_id,
-        )
-
-        self._org_repo.add_member(
-            org_id=org.id,
-            user_id=user_id,
-            role="owner",
-        )
+        org, created = self._org_repo.ensure_personal(user_id, name)
 
         from src.config import settings
 
-        if settings.ENTITLEMENTS_MODE == "db":
+        if created and settings.ENTITLEMENTS_MODE == "db":
             try:
                 from src.platform.billing.provisioning import EntitlementProvisioningService
 
@@ -111,4 +98,4 @@ class UserInitializationService:
                     f"org={org.id} error_type={type(exc).__name__}"
                 )
 
-        return org
+        return org, created

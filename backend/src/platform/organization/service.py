@@ -57,6 +57,16 @@ class OrganizationService:
             raise NotFoundException(f"Organization not found: {org_id}", code=ErrorCode.NOT_FOUND)
         return org
 
+    def ensure_personal(self, user_id: str, name: str) -> Organization:
+        org, created = self._repo.ensure_personal(user_id, name)
+        if created:
+            self._enqueue_entitlement_provisioning(org.id, user_id)
+        return org
+
+    def _require_team(self, org_id: str) -> None:
+        if self.get_by_id(org_id).personal_owner_id is not None:
+            raise ForbiddenException("Personal Cloud cannot be shared, transferred or deleted as a team")
+
     def create(self, name: str, slug: str | None, user_id: str) -> Organization:
         if not slug:
             slug = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
@@ -102,6 +112,8 @@ class OrganizationService:
         outcome = str(result.get("outcome") or "")
         if outcome == "deleted":
             return
+        if outcome == "personal_organization":
+            raise ForbiddenException("Personal Cloud cannot be deleted through team management")
         if outcome == "only_organization":
             raise AppException(
                 code=ErrorCode.FORBIDDEN,
@@ -164,6 +176,7 @@ class OrganizationService:
         self, org_id: str, target_user_id: str, new_role: str, current_user_id: str
     ) -> OrgMember:
         self._require_owner(org_id, current_user_id)
+        self._require_team(org_id)
 
         if target_user_id == current_user_id:
             raise ForbiddenException("Cannot change your own role")
@@ -208,6 +221,7 @@ class OrganizationService:
 
     def remove_member(self, org_id: str, target_user_id: str, current_user_id: str) -> None:
         self._require_owner(org_id, current_user_id)
+        self._require_team(org_id)
 
         if target_user_id == current_user_id:
             raise ForbiddenException("Cannot remove yourself. Transfer ownership first.")
@@ -229,6 +243,7 @@ class OrganizationService:
         current_user_id: str,
     ) -> None:
         self._require_owner(org_id, current_user_id)
+        self._require_team(org_id)
         if target_user_id == current_user_id:
             raise ForbiddenException("Ownership is already assigned to this user")
         target = self._repo.get_member(org_id, target_user_id)
@@ -283,6 +298,7 @@ class OrganizationService:
         request's frontend URL (background jobs, tests).
         """
         self._require_owner(org_id, inviter_id)
+        self._require_team(org_id)
 
         if role not in ("member", "viewer"):
             raise ForbiddenException("Can only invite as member or viewer")
@@ -380,6 +396,7 @@ class OrganizationService:
         # The final RPC rechecks all admission facts after commercial admission.
         existing = self._repo.get_member(invitation.org_id, user_id)
         org = self.get_by_id(invitation.org_id)
+        self._require_team(invitation.org_id)
         from src.config import settings
         from src.platform.billing.seats import is_billable_human_role
 

@@ -44,6 +44,10 @@ class OrganizationRepository:
                 orgs.append(Organization(**row["organizations"]))
         return orgs
 
+    def ensure_personal(self, user_id: str, name: str) -> tuple[Organization, bool]:
+        result = self._client.rpc("ensure_personal_cloud_space", {"p_user": user_id, "p_name": name}).execute().data
+        return Organization(**result["organization"]), result["created"] is True
+
     def create(self, name: str, slug: str, created_by: str) -> Organization:
         data = {
             "id": generate_uuid_v7(),

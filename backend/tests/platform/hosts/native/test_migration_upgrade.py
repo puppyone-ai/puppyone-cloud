@@ -46,8 +46,9 @@ WHERE table_type = 'BASE TABLE' AND table_schema IN ('public', 'auth') AND table
 def test_host_migrations_upgrade_the_accepted_release_without_touching_existing_data():
     module = native()
     current = sorted(path.name for path in (ROOT / "supabase/migrations").glob("*.sql"))
-    # This branch adds exactly the host migrations after the accepted release.
-    assert current[current.index(LAST_ACCEPTED) + 1:] == HOST_MIGRATIONS
+    # Pin this domain's complete upgrade interval; later independent migrations
+    # have their own populated-upgrade proofs and must not invalidate this one.
+    assert current[current.index(LAST_ACCEPTED) + 1:current.index(HOST_MIGRATIONS[-1]) + 1] == HOST_MIGRATIONS
     with module.native_postgres(through=LAST_ACCEPTED) as cluster:
         url = cluster["url"]
         assert cluster["migrations"][-1] == LAST_ACCEPTED
