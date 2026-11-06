@@ -220,3 +220,25 @@ async def test_other_refusals_are_not_retried():
     with pytest.raises(APIError):
         await owner.request("user", "project")
     assert request_open.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_handoff_leaves_the_opening_for_the_next_request_to_finish():
+    # Marking the durable operation failed would send the start through
+    # failed-start preservation (retained); a non-terminal error would make the
+    # next poll fail at once. The operation stays as it was instead.
+    from tests.agent.runtime.test_workspace_consumer_opening import fixture
+
+    service, _, _ = fixture()
+    service.filesystem.operation = AsyncMock(
+        side_effect=[WorkerDisconnected("machine connection dropped"), {"entries": []}]
+    )
+    with pytest.raises(WorkerDisconnected):
+        await service.opening.status("owner", "project")
+    service.repository.progress.assert_not_called()
+    service.repository.finish_open.assert_not_called()
+
+    row, root = await service.opening.status("owner", "project")
+    assert row["state"] == "running" and root == {"entries": []}
+    service.repository.finish_open.assert_called_once()
+    service.repository.progress.assert_not_called()
