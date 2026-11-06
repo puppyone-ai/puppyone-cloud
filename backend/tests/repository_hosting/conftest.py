@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 
@@ -45,6 +47,7 @@ def pytest_configure(config):
         "hosting_application: actual authenticated application process with owned Docker dependencies",
         "hosting_migration: whole-inventory migration requires its dedicated clean stack",
         "hosting_final_contract: commit final schema in a separately owned fresh stack",
+        "hosting_desktop: Desktop's own code from a checkout mounted with --desktop",
         "hosting_gap(reason): executable unmet target contract; never counted as support",
     ):
         config.addinivalue_line("markers", marker)
@@ -55,6 +58,13 @@ def pytest_collection_modifyitems(config, items):
     # corrupt/partial tenants. Its separate CI job owns a fresh stack.
     if not config.getoption("--hosting-migration", default=False):
         excluded = [item for item in items if item.get_closest_marker("hosting_migration")]
+        items[:] = [item for item in items if item not in excluded]
+        if excluded:
+            config.hook.pytest_deselected(items=excluded)
+    # Desktop's own code runs only when the runner mounted a checkout. Without
+    # one these tests are deselected, not skipped: strict runs count skips.
+    if not os.environ.get("HOSTING_TEST_DESKTOP"):
+        excluded = [item for item in items if item.get_closest_marker("hosting_desktop")]
         items[:] = [item for item in items if item not in excluded]
         if excluded:
             config.hook.pytest_deselected(items=excluded)

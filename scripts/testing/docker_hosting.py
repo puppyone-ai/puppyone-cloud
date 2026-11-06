@@ -26,6 +26,25 @@ def check_source(root):
             raise ValueError('Docker acceptance refuses source worktrees containing dotenv files')
 
 
+DESKTOP_DRIVER = 'tests/support/cloud/firstPushLiveDriver.mjs'
+
+
+def desktop_source(path):
+    """A Desktop checkout mounted read-only so its own first-push code can run.
+
+    Only source is shared: no dotenv, and never the backend tree itself.
+    """
+    path = Path(path).resolve()
+    if not (path / 'electron/main/cloud-initialization/coordinator.mjs').is_file():
+        raise ValueError('--desktop must be a Desktop checkout')
+    if not (path / DESKTOP_DRIVER).is_file():
+        raise ValueError('--desktop checkout has no first-push live driver')
+    for relative in ('.env', '.env.local', '.env.production'):
+        if (path / relative).exists():
+            raise ValueError('Docker acceptance refuses a Desktop checkout containing dotenv files')
+    return path
+
+
 def local_docker(environ):
     host = environ.get('DOCKER_HOST') or subprocess.check_output(
         ['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
@@ -106,9 +125,12 @@ def owned_network(stack, environ):
     return expected
 
 
-def run_tests(root, output, command, environ, cli_env, image, result):
+def run_tests(root, output, command, environ, cli_env, image, result, desktop=None):
     check_source(root)
     values = container_environment(environ)
+    desktop = desktop_source(desktop) if desktop is not None else None
+    if desktop is not None and (desktop == root or root in desktop.parents or desktop in root.parents):
+        raise ValueError('the Desktop checkout must be separate from the backend source')
     network = owned_network(values['HOSTING_TEST_STACK'], cli_env)
     if output == root or output in root.parents or output == root / 'backend':
         raise ValueError('evidence mount must not expose the source tree for writing')
@@ -119,6 +141,8 @@ def run_tests(root, output, command, environ, cli_env, image, result):
     resource_receipt = output / 'container-resources.json'
     resource_receipt.unlink(missing_ok=True)
     redis_name = 'issue-062-redis-' + values['HOSTING_TEST_STACK'].removeprefix('puppy-baseline-')
+    if desktop is not None:
+        values['HOSTING_TEST_DESKTOP'] = '/desktop'
     values.update(
                   AUTH_SECURITY_REDIS_URL=f'redis://{redis_name}:6379/3',
                   NOTIFICATIONS_REDIS_URL=f'redis://{redis_name}:6379/2',
@@ -133,6 +157,7 @@ def run_tests(root, output, command, environ, cli_env, image, result):
                '--memory=4g', '--cpus=4', '--pids-limit=1024', '--tmpfs', '/tmp:rw,nosuid,exec,size=2g',
                '--mount', f'type=bind,src={root},dst=/source,readonly',
                '--mount', f'type=bind,src={output},dst=/evidence',
+               *(['--mount', f'type=bind,src={desktop},dst=/desktop,readonly'] if desktop else []),
                '--env-file', str(path), image, *args]
         try:
             subprocess.run(['docker', 'run', '-d', '--rm', '--name', redis_name,

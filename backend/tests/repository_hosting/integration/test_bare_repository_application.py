@@ -1,24 +1,17 @@
 """Bare phase acceptance through formal creation, billing and credential APIs."""
 
 import base64
-import hashlib
-import json
 import secrets
 import uuid
-from datetime import UTC, datetime
 
 import pytest
 
-from src.platform.entitlements.models import (
-    REQUIRED_ENTITLEMENT_FEATURES,
-    REQUIRED_ENTITLEMENT_LIMITS,
-    EntitlementUpsert,
-)
 from tests.repository_hosting.harness.application import Application
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.postgres import Postgres, literal
 from tests.repository_hosting.harness.workflows import WORKFLOWS
 from tests.repository_hosting.integration.test_docker_application import authorize_git
+from tests.repository_hosting.native.support import publish_entitlement
 
 pytestmark = pytest.mark.hosting_application
 
@@ -34,48 +27,6 @@ def bare_application(tmp_path_factory):
         yield app
     finally:
         app.close()
-
-
-def publish_entitlement(app, org, *, max_file_bytes=8 * 1024**2, max_storage_bytes=64 * 1024**2):
-    # Simulate the billing publisher at its real authenticated ingress; no SQL
-    # entitlement/enrollment fixtures and no external billing network calls.
-    limits = {key: 100 for key in REQUIRED_ENTITLEMENT_LIMITS}
-    limits.update(
-        {
-            "storage.max_bytes": max_storage_bytes,
-            "upload.max_single_file_bytes": max_file_bytes,
-            "seats.purchased": 1,
-        }
-    )
-    payload = EntitlementUpsert(
-        org_id=org,
-        schema_version="1.0",
-        plan_id="test-bare",
-        status="active",
-        source="puppypay",
-        entitlements={
-            "features": {key: True for key in REQUIRED_ENTITLEMENT_FEATURES},
-            "limits": limits,
-            "allow": {"access_surface_kinds": "*"},
-        },
-        seat_quantity=1,
-        catalog_version="test-1",
-        source_revision=1,
-        effective_at=datetime.now(UTC),
-        payload_hash="0" * 64,
-    ).model_dump(mode="json")
-    unsigned = {key: value for key, value in payload.items() if key != "payload_hash"}
-    if unsigned.get("source_quote_id") is None:
-        unsigned.pop("source_quote_id", None)
-    payload["payload_hash"] = hashlib.sha256(
-        json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
-    response = app.client.post(
-        "/internal/billing/entitlements/upsert",
-        json=payload,
-        headers={"X-Internal-Secret": app.env["INTERNAL_API_SECRET"]},
-    )
-    assert response.status_code == 200, response.text
 
 
 def create_bare(app, *, format="sha1", branch="trunk"):

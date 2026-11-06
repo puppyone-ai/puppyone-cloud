@@ -365,6 +365,11 @@ def main():
         help="Dedicated whole-inventory data migration profile; does not claim application HTTP acceptance",
     )
     parser.add_argument(
+        "--desktop",
+        type=Path,
+        help="Mount this Desktop checkout read-only so its own first-push code runs (requires --docker)",
+    )
+    parser.add_argument(
         "--output", type=Path, default=ROOT / "backend/.hosting-test-results"
     )
     args, pytest_args = parser.parse_known_args()
@@ -374,6 +379,8 @@ def main():
         parser.error("--s3 requires --live; never use an ambient object service")
     if args.docker and not (args.live and args.s3):
         parser.error("--docker requires --live --s3")
+    if args.desktop and not args.docker:
+        parser.error("--desktop requires --docker")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     # Do not accidentally attribute an older successful artifact to a failed startup.
@@ -424,6 +431,18 @@ def main():
                 ["git", "status", "--porcelain"], cwd=ROOT, text=True
             ).strip()
         ),
+        "desktop_source": {
+            "commit": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=args.desktop, text=True
+            ).strip(),
+            "dirty": bool(
+                subprocess.check_output(
+                    ["git", "status", "--porcelain"], cwd=args.desktop, text=True
+                ).strip()
+            ),
+        }
+        if args.desktop
+        else None,
         "schema_sha256": {
             path.name: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted((ROOT / "supabase/migrations").glob("*.sql"))
@@ -586,6 +605,7 @@ def main():
                                 cli_env,
                                 result["docker_image"],
                                 result,
+                                desktop=args.desktop,
                             ),
                         )
                     else:
