@@ -91,15 +91,7 @@ router = APIRouter(
 
 
 def _org_to_out(org) -> OrganizationOut:
-    return OrganizationOut(
-        id=org.id,
-        name=org.name,
-        slug=org.slug,
-        avatar_url=org.avatar_url,
-        plan=org.plan,
-        seat_limit=org.seat_limit,
-        created_at=org.created_at.isoformat(),
-    )
+    return OrganizationOut.for_member(org)
 
 
 @router.get("/", response_model=ApiResponse[list[OrganizationOut]])

@@ -513,6 +513,16 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & hosts[category].keys()
         expected["contract"][category].update(hosts[category])
+    # Explicit personal-space discovery expands OrganizationOut; keep every
+    # unrelated historical path/schema immutable rather than re-recording all.
+    spaces = json.loads(Path(__file__).with_name("personal_spaces_contract_delta.json").read_text())
+    assert set(spaces["paths"]) == {"/api/v1/auth/personal-space"}
+    assert set(spaces["schemas"]) == {"OrganizationOut"}
+    assert not expected["contract"]["paths"].keys() & spaces["paths"].keys()
+    expected["contract"]["paths"].update(spaces["paths"])
+    for name, change in spaces["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
     assert contract(app.openapi()) == expected["contract"]
 
 

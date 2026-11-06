@@ -9,6 +9,8 @@ class Organization(BaseModel):
     slug: str
     avatar_url: str | None = None
     type: str = "team"
+    # Only this explicit binding denotes personal ownership; legacy type does not.
+    personal_owner_id: str | None = None
     plan: str = "free"
     seat_limit: int = 5
     stripe_customer_id: str | None = None

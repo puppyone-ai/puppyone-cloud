@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel
+
+from src.platform.organization.models import Organization
 
 
 class CreateOrganization(BaseModel):
@@ -26,6 +30,8 @@ class TransferOwnership(BaseModel):
 
 class OrganizationOut(BaseModel):
     id: str
+    kind: Literal["personal", "team"] = "team"
+    can_create_projects: bool = True
     name: str
     slug: str
     avatar_url: str | None = None
@@ -33,6 +39,15 @@ class OrganizationOut(BaseModel):
     seat_limit: int
     created_at: str
     member_count: int | None = None
+
+    @classmethod
+    def for_member(cls, org: Organization) -> "OrganizationOut":
+        """Only call after membership admission; Project creation rechecks it in SQL."""
+        return cls(
+            id=org.id, kind="personal" if org.personal_owner_id is not None else "team",
+            can_create_projects=True, name=org.name, slug=org.slug, avatar_url=org.avatar_url,
+            plan=org.plan, seat_limit=org.seat_limit, created_at=org.created_at.isoformat(),
+        )
 
 
 class OrganizationSeatUsageOut(BaseModel):
