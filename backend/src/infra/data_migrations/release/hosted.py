@@ -34,7 +34,9 @@ ROLES = {
     "mcp_server",
 }
 # Optional roles join the inventory when the environment deploys them.
-OPTIONAL_ROLES = {"ssh_gateway"}
+# device_gateway is private (the API forwards device sockets to it), so a
+# breaking release stops it with the workers, after the API.
+OPTIONAL_ROLES = {"ssh_gateway", "device_gateway"}
 INGRESS_ROLES = ("api", "mcp_server", "frontend", "ssh_gateway")
 # Images published by the release workflow's `images` job, pinned by digest.
 # "versioning" (default) recovers object bytes from bucket versions. "snapshot"

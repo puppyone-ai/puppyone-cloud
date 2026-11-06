@@ -33,9 +33,12 @@ case "${SERVICE_ROLE:-api}" in
   ssh_gateway)
     exec python -m src.platform.access.adapters.ssh.gateway
     ;;
+  # Exactly one worker: this process owns every device socket it accepted.
+  # Reached only over Railway's private network (IPv6), never publicly, so it
+  # listens on "::". asyncio makes that socket IPv6-only: no public proxy, and
+  # no HTTP healthcheck over IPv4.
   device_gateway)
-    # Exactly one worker: this process owns every device socket it accepted.
-    exec uvicorn src.platform.hosts.gateway_service:app --host 0.0.0.0 \
+    exec uvicorn src.platform.hosts.gateway_service:app --host :: \
       --port "${PORT:?PORT must be set for the HTTP role}" --workers 1 --no-access-log
     ;;
   *)

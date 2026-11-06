@@ -11,7 +11,7 @@ ROLES = {
     "api", "frontend", "agent_worker", "upload_worker", "import_worker",
     "synchronize_worker", "mcp_server",
 }
-OPTIONAL_ROLES = {"ssh_gateway"}
+OPTIONAL_ROLES = {"ssh_gateway", "device_gateway"}
 
 
 def release_images(source: dict[str, str]) -> dict[str, str] | None:
