@@ -505,9 +505,11 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     # Device inventory is additive and gated off until the transport is accepted.
     hosts = json.loads(Path(__file__).with_name("host_inventory_contract_delta.json").read_text())
     assert all(path.startswith(("/api/v1/hosts", "/api/v1/host-directory")) for path in hosts["paths"])
+    # Folder content travels only inside SSH that ends on the device: no plaintext file routes for devices.
     assert set(hosts["schemas"]) == {"DeviceRegistration", "DeviceChallengeRequest", "FolderRegistration",
                                      "FileWrite", "HostFolderUpdate", "HostDirectoryOperation",
-                                     "HostGitOperation", "HostSshCertificateRequest"}
+                                     "HostSshCertificateRequest"}
+    assert not any(path.startswith("/api/v1/hosts/folders/") and not path.endswith("/tunnel") for path in hosts["paths"])
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & hosts[category].keys()
         expected["contract"][category].update(hosts[category])

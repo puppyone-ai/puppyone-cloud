@@ -96,9 +96,11 @@ def test_directory_lists_computers_and_opened_hosted_workspaces(monkeypatch):
 
 def test_file_api_is_addressed_by_host_and_keeps_each_authority(monkeypatch):
     client, workbench, route = make_client(monkeypatch)
+    # A computer's folders are reached only end to end (SSH from the Desktop), never through this API.
     device = client.get(f"/api/v1/host-directory/device:{DEVICE}/folders/{DEVICE_FOLDER}/files?path=docs")
-    assert device.json()["entries"][0]["name"] == "x.md"
-    assert route.calls == [(OWNER, DEVICE_FOLDER, "list", {"path": "docs"})]
+    assert (device.status_code, device.json()["detail"]) == (410, {"code": "device_folders_are_end_to_end"})
+    events = client.get(f"/api/v1/host-directory/device:{DEVICE}/folders/{DEVICE_FOLDER}/events")
+    assert events.status_code == 410
 
     hosted = client.put(f"/api/v1/host-directory/workspace:{OPENED}/folders/{OPENED}/file?generation={GENERATION}",
                         json={"path": "a.md", "content_base64": "bmV3", "expected_revision": None})
@@ -112,7 +114,7 @@ def test_file_api_is_addressed_by_host_and_keeps_each_authority(monkeypatch):
     assert client.get(f"/api/v1/host-directory/cloud:{OPENED}/folders/{OPENED}/files").status_code == 404
     moved = client.post(f"/api/v1/host-directory/device:{DEVICE}/folders/{DEVICE_FOLDER}/files",
                         json={"action": "move", "path": "a.md", "destination": "b/a.md"})
-    assert moved.status_code == 200 and route.calls[-1][2:] == ("move", {"path": "a.md", "destination": "b/a.md"})
+    assert moved.status_code == 410 and route.calls == []
 
 
 def test_hosted_workspace_events_use_the_device_shape(monkeypatch):

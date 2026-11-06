@@ -90,7 +90,7 @@ def deployed(database, repository, monkeypatch):
         yield {"owner": owner, "api": address}
 
 
-def test_device_sockets_files_tunnels_and_revocation_cross_the_api_to_the_gateway(deployed):
+def test_device_sockets_tunnels_and_revocation_cross_the_api_to_the_gateway(deployed):
     owner, address = deployed["owner"], deployed["api"]
     key = Ed25519PrivateKey.generate()
     raw = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -116,17 +116,9 @@ def test_device_sockets_files_tunnels_and_revocation_cross_the_api_to_the_gatewa
                 "protocol": 1, "boot_id": str(uuid4()), "app_version": "1.4.0"}))
             assert __import__("json").loads(await host.recv()) == {"type": "ready", "epoch": challenge["epoch"]}
 
-            # A file request: API worker -> gateway (internal) -> device socket (forwarded) -> back.
-            async def serve_file():
-                frame = __import__("json").loads(await host.recv())
-                assert frame["type"] == "file" and frame["folder_id"] == folder
-                await host.send(__import__("json").dumps({"type": "reply", "id": frame["id"],
-                    "result": {"content_base64": base64.b64encode(b"hello").decode(), "revision": "a" * 64}}))
-
-            reply, read = await asyncio.gather(serve_file(), asyncio.to_thread(
-                http.get, f"/hosts/folders/{folder}/file", params={"path": "note.md"}))
-            assert read.status_code == 200, read.text
-            assert base64.b64decode(read.json()["content_base64"]) == b"hello"
+            # No plaintext file route: content crosses only as tunnel bytes.
+            missing = await asyncio.to_thread(http.get, f"/hosts/folders/{folder}/file", params={"path": "note.md"})
+            assert missing.status_code == 404
 
             # A tunnel: bytes cross both forwarded sockets untouched, as binary.
             async with websockets.connect(f"ws://{address}/api/v1/hosts/folders/{folder}/tunnel",

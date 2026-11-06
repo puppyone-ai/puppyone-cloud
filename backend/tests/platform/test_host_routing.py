@@ -1,11 +1,9 @@
 """API workers reach the single device gateway; nothing else can reach its internals."""
 
-import json
 from uuid import UUID
 
 import httpx
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import src.platform.hosts.gateway_service as gateway_service
@@ -62,42 +60,22 @@ def route(handler):
 
 
 @pytest.mark.asyncio
-async def test_forwarding_relays_results_and_device_errors():
+async def test_revocation_reaches_the_gateway_with_the_shared_secret(monkeypatch):
     seen = []
 
     def handler(request):
-        seen.append((request.url.path, request.headers.get(SECRET_HEADER), json.loads(request.content)))
-        if json.loads(request.content)["action"] == "read":
-            return httpx.Response(200, json={"revision": "a" * 64})
-        return httpx.Response(409, json={"detail": {"code": "conflict"}})
+        seen.append((request.method, request.url.path, request.headers.get(SECRET_HEADER)))
+        return httpx.Response(200, json={"disconnected": True})
 
-    forward = route(handler)
-    assert await forward.dispatch(OWNER, FOLDER, "read", {"path": "a.md"}) == {"revision": "a" * 64}
-    with pytest.raises(HTTPException) as conflict:
-        await forward.dispatch(OWNER, FOLDER, "write", {"path": "a.md"})
-    assert (conflict.value.status_code, conflict.value.detail) == (409, {"code": "conflict"})
-    assert seen[0] == ("/internal/hosts/dispatch", SECRET,
-                       {"owner": OWNER, "folder_id": str(FOLDER), "action": "read", "operation": {"path": "a.md"}})
+    published = []
+    monkeypatch.setattr("src.platform.hosts.routing.publish_revocation", lambda device: published.append(device) or _done())
+    await route(handler).revoked(UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+    assert seen == [("POST", "/internal/hosts/devices/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/disconnect", SECRET)]
+    assert published
 
 
-@pytest.mark.asyncio
-async def test_unreachable_gateway_is_offline_but_a_lost_reply_is_outcome_unknown():
-    def refused(request):
-        raise httpx.ConnectError("refused", request=request)
-
-    with pytest.raises(HTTPException) as offline:
-        await route(refused).dispatch(OWNER, FOLDER, "write", {"path": "a.md"})
-    assert offline.value.detail == {"code": "device_offline"}
-
-    def dropped(request):
-        raise httpx.ReadError("reset", request=request)
-
-    with pytest.raises(HTTPException) as unknown:
-        await route(dropped).dispatch(OWNER, FOLDER, "write", {"path": "a.md"})
-    assert unknown.value.detail == {"code": "device_disconnected", "outcome_unknown": True}
-    with pytest.raises(HTTPException) as read:
-        await route(dropped).dispatch(OWNER, FOLDER, "read", {"path": "a.md"})
-    assert read.value.detail["outcome_unknown"] is False
+async def _done():
+    return None
 
 
 def test_gateway_internals_require_the_shared_secret(monkeypatch):
@@ -107,22 +85,18 @@ def test_gateway_internals_require_the_shared_secret(monkeypatch):
         def __init__(self):
             self.connections = {}
 
-        async def dispatch(self, owner, folder, action, operation):
-            return {"owner": owner, "action": action}
-
         async def disconnect(self, device):
             self.disconnected = device
 
     fake = Gateway()
     monkeypatch.setattr(gateway_service, "_gateway", fake)
     client = TestClient(gateway_service.app)
-    body = {"owner": OWNER, "folder_id": str(FOLDER), "action": "read", "operation": {"path": "a.md"}}
-    assert client.post("/internal/hosts/dispatch", json=body).status_code == 404
-    assert client.post("/internal/hosts/dispatch", json=body,
-                       headers={SECRET_HEADER: "wrong"}).status_code == 404
-    allowed = client.post("/internal/hosts/dispatch", json=body, headers={SECRET_HEADER: SECRET})
-    assert allowed.json() == {"owner": OWNER, "action": "read"}
-    assert client.post("/internal/hosts/dispatch", json={**body, "action": "chmod"},
-                       headers={SECRET_HEADER: SECRET}).status_code == 400
+    path = "/internal/hosts/devices/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/disconnect"
+    assert client.post(path).status_code == 404
+    assert client.post(path, headers={SECRET_HEADER: "wrong"}).status_code == 404
+    assert client.post(path, headers={SECRET_HEADER: SECRET}).json() == {"disconnected": True}
+    # The relay's internal routes are gone.
+    assert client.post("/internal/hosts/dispatch", json={}, headers={SECRET_HEADER: SECRET}).status_code == 404
+    assert client.get("/internal/hosts/events", headers={SECRET_HEADER: SECRET}).status_code == 404
     assert client.get("/health").json()["role"] == "device_gateway"
     assert client.get("/openapi.json").status_code == 404

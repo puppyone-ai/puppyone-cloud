@@ -25,7 +25,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 
 from src.infra.execution.runner import run_blocking
 
-from .execution import is_person, token_from
+from .socket_auth import is_person, token_from
 
 logger = logging.getLogger(__name__)
 
