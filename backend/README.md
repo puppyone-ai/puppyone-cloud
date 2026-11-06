@@ -41,6 +41,7 @@ Every backend process starts from the same code. `SERVICE_ROLE` selects which on
 | `import_worker` | One-time imports |
 | `synchronize_worker` | Synchronize runs and GitHub pulls |
 | `ssh_gateway` | SSH gateway |
+| `device_gateway` | Device sockets for the owner's other computers; one worker, private network only |
 
 ## Test
 

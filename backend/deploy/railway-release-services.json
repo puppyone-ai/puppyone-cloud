@@ -39,6 +39,9 @@
   "optional_services": {
     "ssh_gateway": {
       "root_directory": "backend"
+    },
+    "device_gateway": {
+      "root_directory": "backend"
     }
   }
 }

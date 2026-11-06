@@ -787,6 +787,7 @@ from src.infra.data_migrations.release.hosted import OPTIONAL_ROLES  # noqa: E40
 def test_optional_gateway_receives_the_backend_digest():
     images = release_images({"backend": BACKEND, "frontend": FRONTEND}, ROLES | OPTIONAL_ROLES)
     assert images["ssh_gateway"] == BACKEND and images["frontend"] == FRONTEND
+    assert images["device_gateway"] == BACKEND
 
 
 def test_breaking_release_stops_the_gateway_with_the_other_entry_points(monkeypatch):
@@ -801,3 +802,5 @@ def test_breaking_release_stops_the_gateway_with_the_other_entry_points(monkeypa
     target.quiesce()
     assert stopped[0] == {"api", "mcp_server", "frontend", "ssh_gateway"}
     assert "ssh_gateway" not in stopped[1]
+    # The device gateway is private: it stops with the workers, after the API.
+    assert "device_gateway" in stopped[1]

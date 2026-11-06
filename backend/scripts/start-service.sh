@@ -33,8 +33,8 @@ case "${SERVICE_ROLE:-api}" in
   ssh_gateway)
     exec python -m src.platform.access.adapters.ssh.gateway
     ;;
+  # Exactly one worker: this process owns every device socket it accepted.
   device_gateway)
-    # Exactly one worker: this process owns every device socket it accepted.
     exec uvicorn src.platform.hosts.gateway_service:app --host 0.0.0.0 \
       --port "${PORT:?PORT must be set for the HTTP role}" --workers 1 --no-access-log
     ;;
