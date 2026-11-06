@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from src.infra.execution.context import checkpoint
+from src.shared_types.git_pack_limits import GitLimitExceeded
 from src.version_engine.storage import git_process as proc
 from src.version_engine.storage.git_pack_limits import configured_pack_limits
 from src.version_engine.write_engine.git_object_format import encode_object, hash_object
@@ -81,7 +82,10 @@ class GitPack:
                 checkpoint()
                 size += len(block)
                 if size > input_limit:
-                    raise ValueError(f"Git pack exceeds the {input_limit}-byte limit for this operation")
+                    raise GitLimitExceeded(
+                        "git_pack_too_large",
+                        f"Git pack exceeds the {input_limit}-byte limit for this operation",
+                    )
                 output.write(block)
         if size == 0:
             source.unlink()
@@ -110,7 +114,10 @@ class GitPack:
             raise ValueError("Git did not produce one complete pack")
         self.path = packs[0]
         if self.path.stat().st_size > self.limits.stored_bytes:
-            raise ValueError("completed Git pack exceeds the storage processing budget")
+            raise GitLimitExceeded(
+                "git_stored_pack_too_large",
+                "completed Git pack exceeds the storage processing budget",
+            )
         # index-pack already validated the stream and object hashes. Read its
         # index instead of running verify-pack (which inflates the pack again).
         with self.path.with_suffix(".idx").open("rb") as index:
@@ -126,7 +133,7 @@ class GitPack:
                 raise ValueError("invalid Git object index")
             positions.append((int(row[0]), row[1].decode()))
             if len(positions) > proc.MAX_OBJECTS:
-                raise ValueError("Git object count budget exceeded")
+                raise GitLimitExceeded("git_object_count_limit", "Git object count budget exceeded")
         positions.sort()
         if not positions:
             # Valid ref-only pushes carry an empty pack; no object write needed.
@@ -155,7 +162,7 @@ class GitPack:
                 kind not in {"blob", "tree", "commit", "tag"}
                 or not 0 <= int(size) <= proc.MAX_OBJECT_BYTES
             ):
-                raise ValueError("Git single-object budget exceeded")
+                raise GitLimitExceeded("git_single_object_limit", "Git single-object budget exceeded")
             self.objects[oid] = (kind, offset, int(size), packed_size)
             count += 1
         if count != len(self.objects):
