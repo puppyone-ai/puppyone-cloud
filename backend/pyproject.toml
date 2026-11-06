@@ -131,7 +131,7 @@ layers = [
     "src.platform.idempotency : src.platform.query_contract",
 ]
 # Existing violations. Remove an entry when its import is fixed; never add one.
-# tests/platform/test_import_layers.py pins the count.
+# tests/architecture/test_import_layers.py pins the count.
 ignore_imports = [
     "src.platform.auth.initialization -> src.platform.billing.provisioning",
     "src.platform.authorization.dependencies -> src.platform.project.dependencies",
@@ -196,6 +196,12 @@ markers = [
     "e2e: end-to-end tests that may call real external services",
     "integration: integration tests that call live third-party APIs or require explicit operator opt-in",
     "network: tests that require public internet access and should run only in non-blocking smoke jobs",
+    # Test kinds, set from the directory a test lives in (tests/conftest.py); see tests/README.md.
+    "unit: fakes only, no service of any kind",
+    "contract: a published contract (protocol, OpenAPI, database) checked against the code",
+    "native: real services started on this machine (PostgreSQL 17, PostgREST, S3, Redis)",
+    "live: real third-party services",
+    "acceptance: a deployed environment",
 ]
 
 [dependency-groups]
