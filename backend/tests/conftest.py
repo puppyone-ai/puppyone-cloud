@@ -54,3 +54,19 @@ def _project_write_admission():
     install_storage_write_admission()
     install_agent()
     install_project_entry_points()
+
+
+# Test kind = the directory a test lives in: tests/<area>/<domain>/<kind>/test_<capability>.py.
+# The marker follows the directory, so a test cannot claim to be a unit test
+# while it starts a database. CI selects kinds with -m (see tests/README.md).
+TEST_KINDS = ("unit", "contract", "native", "live", "acceptance")
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        parts = Path(str(item.fspath)).parts
+        for kind in TEST_KINDS:
+            if kind in parts:
+                item.add_marker(getattr(pytest.mark, kind))
+                break
+

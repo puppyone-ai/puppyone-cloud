@@ -106,7 +106,7 @@ def test_catalog_and_revoke_use_authenticated_owner():
 
 def test_repository_allows_every_host_rpc_the_module_calls():
     """Fakes bypass the allowlist; pin it to the migration and to every caller."""
-    backend = Path(__file__).resolve().parents[2]
+    backend = Path(__file__).resolve().parents[4]
     called = set()
     for source in (backend / "src/platform/hosts").glob("*.py"):
         if source.name != "repository.py":

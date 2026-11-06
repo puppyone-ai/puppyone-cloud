@@ -19,14 +19,7 @@ import src.platform.auth.dependencies as auth_dependencies
 import src.platform.hosts.router as hosts_router
 from src.platform.auth.models import CurrentUser
 from src.platform.hosts.ssh_authority import HostSshAuthority
-from tests.platform.test_host_devices_native import (  # noqa: F401  (fixtures)
-    _exit,
-    api,
-    connect,
-    database,
-    repository,
-    users,
-)
+from tests.platform.hosts.native.support import _exit, connect, users
 
 
 @pytest.fixture
