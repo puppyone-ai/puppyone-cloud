@@ -1,7 +1,7 @@
 {
   "contract": "puppyone.host-file-protocol",
   "version": 1,
-  "status": "experimental; HOST_DEVICES_ENABLED=false until cross-device acceptance",
+  "status": "experimental; HOST_DEVICES_ENABLED=false until cross-device acceptance. Since 2026-11-06 the operations run only inside SSH that ends on the host (see transport); the Cloud relays bytes",
   "identity": {
     "folder": "server-registered folder_id (UUID); the host alone maps it to a local path",
     "path": "folder-relative, '/'-separated; never absolute, never '.', '..', '\\\\', NUL or a '.git' segment",
@@ -12,13 +12,16 @@
     "max_file_bytes": 8388608,
     "max_directory_entries": 10000,
     "max_path_characters": 4096,
-    "max_frame_bytes": 12582912,
-    "max_pending_requests_per_device": 64,
-    "request_timeout_seconds": 25,
     "heartbeat_interval_seconds": 10,
     "lease_seconds": 30,
     "idle_close_seconds": 35,
-    "subscriber_queue_events": 64
+    "max_line_bytes": 12582912,
+    "max_requests_in_flight_per_channel": 16,
+    "max_watches_per_channel": 4,
+    "max_tunnels_per_device": 16,
+    "max_tunnel_chunk_bytes": 65536,
+    "client_read_timeout_seconds": 20,
+    "client_write_timeout_seconds": 45
   },
   "operations": {
     "list": {
@@ -150,7 +153,7 @@
     "device_timeout": 504,
     "audit_unavailable": 503
   },
-  "outcome_unknown": "503/504 detail.outcome_unknown=true after a mutating request was delivered; never replay it",
+  "outcome_unknown": "a mutation whose SSH connection ended before its reply (status 0 or 504, outcomeUnknown true): the host may have applied it; keep the draft and never replay it",
   "protocol": {
     "supported": [
       1
@@ -178,43 +181,37 @@
     "heartbeat_ack": {
       "type": "heartbeat_ack"
     },
-    "file": {
-      "type": "file",
-      "id": "uuid",
-      "folder_id": "uuid",
-      "action": "list | read | write | mkdir | move | remove",
-      "...": "operation request fields"
-    },
-    "reply": {
-      "type": "reply",
-      "id": "uuid",
-      "result": "operation result",
-      "error": "error code"
-    },
-    "watch": {
-      "type": "watch",
-      "subscription": "uuid",
-      "folder_id": "uuid"
-    },
-    "unwatch": {
-      "type": "unwatch",
-      "subscription": "uuid"
-    },
-    "event": {
-      "type": "event",
-      "subscription": "uuid",
-      "paths": [
-        "folder-relative paths"
-      ],
-      "reset": "boolean"
-    },
     "close_codes": {
       "4001": "replaced by a newer connection",
       "4003": "invalid proof or frame",
       "4004": "device revoked: forget the key",
       "4005": "protocol not served: update the App, do not retry",
       "4008": "idle past the lease"
-    }
+    },
+    "tunnel_open": {
+      "type": "tunnel_open",
+      "stream": "gateway id, [0-9A-Za-z_-]{1,64}",
+      "folder_id": "uuid: the folder the Cloud admitted; the SSH user name must be this folder"
+    },
+    "tunnel_opened": {
+      "type": "tunnel_opened",
+      "stream": "id"
+    },
+    "tunnel_refused": {
+      "type": "tunnel_refused",
+      "stream": "id",
+      "error": "folder_unavailable | not_allowed | tunnel_limit | tunnel_unavailable"
+    },
+    "tunnel_data": {
+      "type": "tunnel_data",
+      "stream": "id",
+      "data": "base64, at most max_tunnel_chunk_bytes raw bytes"
+    },
+    "tunnel_close": {
+      "type": "tunnel_close",
+      "stream": "id"
+    },
+    "retired": "file, reply, watch, unwatch, event and exec_* frames: the plaintext relay and the custom execution frames are gone; a host refuses them"
   },
   "conformance": [
     {
@@ -429,121 +426,83 @@
       "error": "invalid_path"
     }
   ],
-  "execution": {
-    "capabilities": {
-      "shell": "folder.shell",
-      "agent": "folder.agent"
+  "transport": {
+    "client_tunnel": "WSS /api/v1/hosts/folders/{folder_id}/tunnel with the person's bearer token (header or version.bearer.<jwt> subprotocol); after {\"type\": \"ready\"} every binary message is tunnel bytes; a refusal is {\"type\": \"error\", \"code\"}",
+    "ssh": {
+      "client_key": "a fresh Ed25519 key per connection",
+      "certificate": "POST /api/v1/hosts/devices/{device_id}/ssh-certificate: an Ed25519 user certificate from GET /api/v1/hosts/ssh-authority, key id user:{owner}, principal = device id, valid 5 minutes, no critical options, no forwarding",
+      "host_key": "the device's registered Ed25519 key (host_key in the certificate response); the client accepts no other, never trust on first use",
+      "user": "the folder id",
+      "allowed": [
+        "session: subsystem puppyone-files",
+        "session: pty + shell",
+        "session: exec <command> (binary safe, exit status)",
+        "session: pty + exec puppyone-agent <launcher>"
+      ],
+      "refused": [
+        "sftp",
+        "scp",
+        "port forwarding (local, remote, streamlocal)",
+        "agent forwarding",
+        "x11",
+        "env other than TERM, LANG, LC_*, COLORTERM"
+      ]
     },
-    "requires": "folder.write and the host's own per-folder consent, which is off by default",
-    "client_websocket": "WSS {gateway_url or API origin}/api/v1/hosts/folders/{folder_id}/exec; bearer JWT in Authorization or Sec-WebSocket-Protocol version.bearer.<jwt>",
-    "launchers": [
-      "shell",
-      "codex",
-      "claude",
-      "cursor",
-      "opencode",
-      "pi",
-      "hermes"
-    ],
-    "client_frames": {
-      "start": {
-        "type": "start",
-        "kind": "shell | agent",
-        "launcher": "shell for kind shell, an Agent launcher for kind agent",
-        "cols": "20..400",
-        "rows": "8..120"
+    "files_subsystem": {
+      "framing": "one JSON object per line (UTF-8, \\n), both directions",
+      "request": {
+        "id": "integer",
+        "op": "request",
+        "request": {
+          "action": "list | read | write | mkdir | move | remove | git",
+          "...": "operation fields"
+        }
       },
-      "input": {
-        "type": "input",
-        "data": "base64, at most 64 KiB decoded"
+      "reply": {
+        "id": "integer",
+        "result": "operation result",
+        "error": "error code"
       },
-      "resize": {
-        "type": "resize",
-        "cols": "integer",
-        "rows": "integer"
+      "watch": {
+        "id": "integer",
+        "op": "watch"
       },
-      "signal": {
-        "type": "signal",
-        "signal": "INT | TERM | HUP | KILL"
+      "watching": {
+        "id": "integer",
+        "result": {
+          "watching": true
+        }
       },
-      "close": {
-        "type": "close"
+      "event": {
+        "watch": "integer",
+        "paths": [
+          "folder-relative paths"
+        ],
+        "reset": "boolean",
+        "ended": "true when the watch ended"
+      },
+      "unwatch": {
+        "id": "integer",
+        "op": "unwatch"
       }
     },
-    "server_frames": {
-      "started": {
-        "type": "started",
-        "session": "uuid"
+    "execution": {
+      "capabilities": {
+        "shell and exec": "folder.shell",
+        "agent": "folder.agent",
+        "git": "folder.git"
       },
-      "output": {
-        "type": "output",
-        "data": "base64"
-      },
-      "exit": {
-        "type": "exit",
-        "status": "integer or null"
-      },
-      "error": {
-        "type": "error",
-        "code": "device_offline | not_allowed | session_limit | launcher_unavailable | start_failed | slow_client | device_disconnected | device_timeout | invalid_start | invalid_frame | folder_unavailable"
-      }
-    },
-    "device_frames": {
-      "exec_open": {
-        "type": "exec_open",
-        "session": "uuid",
-        "folder_id": "uuid",
-        "kind": "shell | agent",
-        "launcher": "launcher id",
-        "cols": "integer",
-        "rows": "integer"
-      },
-      "exec_opened": {
-        "type": "exec_opened",
-        "session": "uuid"
-      },
-      "exec_failed": {
-        "type": "exec_failed",
-        "session": "uuid",
-        "error": "folder_unavailable | not_allowed | launcher_unavailable | session_limit"
-      },
-      "exec_input": {
-        "type": "exec_input",
-        "session": "uuid",
-        "data": "base64"
-      },
-      "exec_resize": {
-        "type": "exec_resize",
-        "session": "uuid",
-        "cols": "integer",
-        "rows": "integer"
-      },
-      "exec_signal": {
-        "type": "exec_signal",
-        "session": "uuid",
-        "signal": "INT | TERM | HUP | KILL"
-      },
-      "exec_close": {
-        "type": "exec_close",
-        "session": "uuid"
-      },
-      "exec_output": {
-        "type": "exec_output",
-        "session": "uuid",
-        "data": "base64"
-      },
-      "exec_exit": {
-        "type": "exec_exit",
-        "session": "uuid",
-        "status": "integer or null"
-      }
-    },
-    "lease": {
-      "seconds": 30,
-      "renew_every_seconds": 10,
-      "fence": "device connection epoch, folder capability, device state",
-      "per_device_limit": 8
-    },
-    "backpressure": "a client that falls 512 frames behind loses its session with slow_client; the device socket is never blocked"
+      "requires": "folder.write and the host's own per-folder consent, which is off by default; everything runs in the folder sandbox",
+      "launchers": [
+        "shell",
+        "codex",
+        "claude",
+        "cursor",
+        "opencode",
+        "pi",
+        "hermes"
+      ],
+      "ends": "withdrawing consent, unsharing the folder, revoking the device or losing the device socket ends the sessions at once"
+    }
   }
 }

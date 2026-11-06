@@ -1,5 +1,6 @@
 """Single-process ASGI transport test; not a deployed two-device acceptance test."""
 
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
@@ -45,32 +46,46 @@ class Proof:
         assert (owner, device, epoch, gateway) == (OWNER, DEVICE, EPOCH, GATEWAY_INSTANCE)
 
 
-def test_websocket_to_http_file_route_and_owner_revocation(monkeypatch):
+def test_device_socket_carries_tunnel_bytes_and_owner_revocation_ends_access(monkeypatch):
     monkeypatch.setattr(settings, "HOST_DEVICES_ENABLED", True)
     repository = Repository()
     gateway = HostGateway(repository, Proof())
     monkeypatch.setattr(hosts_router, "_gateway", gateway)
+
+    class Auth:
+        def get_current_user(self, token):
+            return CurrentUser(user_id=OWNER, role="authenticated") if token == "owner-token" else None
+
+    import src.platform.auth.dependencies as auth_dependencies
+    monkeypatch.setattr(auth_dependencies, "get_auth_service", lambda: Auth())
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[require_host_devices_enabled] = lambda: None
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(user_id=OWNER, role="authenticated")
     app.dependency_overrides[get_gateway] = lambda: gateway
+    tunnel_path = f"/api/v1/hosts/folders/{FOLDER}/tunnel"
     with TestClient(app) as client, client.websocket_connect(f"/api/v1/hosts/devices/{DEVICE}/connect") as socket:
         socket.send_json({"owner": OWNER, "challenge_id": str(FOLDER), "epoch": str(EPOCH),
                           "nonce": "proof", "signature": "signature",
                           "protocol": 1, "boot_id": BOOT, "app_version": "1.4.0"})
         assert socket.receive_json() == {"type": "ready", "epoch": str(EPOCH)}
+        # No plaintext file route exists for a computer's folder.
+        assert client.get(f"/api/v1/hosts/folders/{FOLDER}/file?path=note.md").status_code == 404
         with ThreadPoolExecutor(max_workers=1) as pool:
-            request = pool.submit(client.get, f"/api/v1/hosts/folders/{FOLDER}/file?path=note.md")
-            frame = socket.receive_json()
-            assert frame["type"] == "file"
-            assert (frame["folder_id"], frame["action"], frame["path"]) == (str(FOLDER), "read", "note.md")
-            socket.send_json({"type": "reply", "id": frame["id"],
-                              "result": {"content_base64": "bm90ZQ==", "revision": "a" * 64}})
-            response = request.result(timeout=5)
-            assert response.status_code == 200
-            assert response.json()["content_base64"] == "bm90ZQ=="
-            assert response.headers["cache-control"] == "no-store"
+            def device_side():
+                frame = socket.receive_json()
+                assert frame == {"type": "tunnel_open", "stream": frame["stream"], "folder_id": str(FOLDER)}
+                socket.send_json({"type": "tunnel_opened", "stream": frame["stream"]})
+                data = socket.receive_json()
+                assert data["type"] == "tunnel_data" and data["stream"] == frame["stream"]
+                socket.send_json({"type": "tunnel_data", "stream": frame["stream"], "data": "U1NILTIuMA=="})
+                return base64.b64decode(data["data"])
+            served = pool.submit(device_side)
+            with client.websocket_connect(tunnel_path, subprotocols=["version.bearer.owner-token"]) as tunnel:
+                assert tunnel.receive_json() == {"type": "ready"}
+                tunnel.send_bytes(b"ciphertext")
+                assert tunnel.receive_bytes() == b"SSH-2.0"
+                assert served.result(timeout=5) == b"ciphertext"
         repository.revoked = True
-        denied = client.get(f"/api/v1/hosts/folders/{FOLDER}/file?path=note.md")
-        assert denied.status_code == 403
+        with client.websocket_connect(tunnel_path, subprotocols=["version.bearer.owner-token"]) as denied:
+            assert denied.receive_json() == {"type": "error", "code": "folder_unavailable"}

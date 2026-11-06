@@ -145,6 +145,7 @@ def test_hosts_serve_only_a_persons_own_sign_in():
         for response in (client.get("/api/v1/hosts"),
                          client.post("/api/v1/hosts/devices", json={"public_key": "A" * 44, "name": "Mac",
                                                                     "platform": "darwin"}),
-                         client.get(f"/api/v1/hosts/folders/{DEVICE}/file?path=a.md")):
+                         client.post(f"/api/v1/hosts/devices/{DEVICE}/ssh-certificate",
+                                     json={"public_key": "ssh-ed25519 " + "A" * 68})):
             assert (response.status_code, response.json()["detail"]) == (403, {"code": "person_required"})
         assert repository.calls == []

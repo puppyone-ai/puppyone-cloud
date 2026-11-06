@@ -1,9 +1,5 @@
 {
   "paths": {
-    "/api/v1/hosts/folders/{folder_id}/files": "27e054426b7d1c91cc3eb5cdafd0d3eb8026e11dfccc936f7777b32e93bd6547",
-    "/api/v1/hosts/folders/{folder_id}/file": "7f2941d56a34819ad2d27083d756b6f1da71d4c7015b75f75fa16413709f37f4",
-    "/api/v1/hosts/folders/{folder_id}/events": "14f6912e5f48e0eb7a554ea40bb0fbef10611ed88d3fa1ee16ed3cfed50ae2b0",
-    "/api/v1/hosts/folders/{folder_id}/git": "6566f4f836c42b6d42f14476912fdc2e54b87275595d9033055852f37e849599",
     "/api/v1/hosts/devices/{device_id}/device-challenge": "2e46c89b296d5b848b84a2a4644b71a0f4be87154355055e5004a67407e31f76",
     "/api/v1/hosts": "5309cae43900679f7a91089a477177cce75f7d190d0ec7d872510ce59345c18f",
     "/api/v1/hosts/devices": "850b1abba2d9fe638fafc66b83ea8d4ec4df9e6858201ac0a7d7fe9d8059b0a1",
@@ -24,7 +20,6 @@
     "FileWrite": "d0b05f2a870c7d52a2a46ca4a0c1b0687062241f2f6349999398f94696951778",
     "HostFolderUpdate": "64c42c5b758ec6d7b53c9ac5244acd371cf51073d2e41b720cda18072391b4b8",
     "HostDirectoryOperation": "c68ab2d93cdffcc9f137ebfac288ee1519d40909657a59ccf81f219f60f9156f",
-    "HostGitOperation": "faaceaac3872376bfa7b0eaf83c9c046e1ac0ff26f103e385dfea7734fd1a464",
     "HostSshCertificateRequest": "8e997bd10e7003344ef54e31e13352e916710f58a219e336cdcc78b82fca7959"
   }
 }

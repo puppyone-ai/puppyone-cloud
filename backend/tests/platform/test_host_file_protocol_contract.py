@@ -1,4 +1,4 @@
-"""The gateway and router speak exactly the published host file protocol v1."""
+"""The gateway and tunnels speak exactly the published host file protocol v1 (inside SSH)."""
 
 import json
 import os
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.platform.hosts import execution, gateway
+from src.platform.hosts import gateway, ssh_authority, tunnel
 
 CONTRACT_PATH = Path(__file__).resolve().parents[3] / "contracts/host-file-protocol-v1.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_text())
@@ -14,15 +14,12 @@ CONTRACT = json.loads(CONTRACT_PATH.read_text())
 
 def test_gateway_constants_match_the_contract():
     limits = CONTRACT["limits"]
-    assert limits["max_pending_requests_per_device"] == gateway.MAX_PENDING
-    assert limits["max_frame_bytes"] == gateway.MAX_RESPONSE_BYTES
-    assert limits["request_timeout_seconds"] == gateway.REQUEST_TIMEOUT
     assert limits["lease_seconds"] == gateway.LEASE_SECONDS
     assert limits["idle_close_seconds"] == gateway.HEARTBEAT_TIMEOUT
-    assert limits["subscriber_queue_events"] == gateway.SUBSCRIBER_QUEUE
-    assert set(CONTRACT["operations"]) - {"watch"} == gateway.FILE_ACTIONS
-    assert {name for name, operation in CONTRACT["operations"].items()
-                                 if operation["capability"] == "folder.write"} == gateway.MUTATIONS
+    assert limits["max_tunnels_per_device"] == tunnel.MAX_TUNNELS_PER_DEVICE
+    assert limits["max_tunnel_chunk_bytes"] == tunnel.MAX_CHUNK
+    refusals = CONTRACT["device_frames"]["tunnel_refused"]["error"].split(" | ")
+    assert set(refusals) == tunnel.TUNNEL_REFUSALS
     close_codes = CONTRACT["device_frames"]["close_codes"]
     assert {gateway.CLOSE_REPLACED, gateway.CLOSE_INVALID, gateway.CLOSE_REVOKED,
             gateway.CLOSE_UNSUPPORTED, gateway.CLOSE_IDLE} == {int(code) for code in close_codes}
@@ -48,19 +45,22 @@ def test_handshake_rejects_malformed_fields_and_defers_unknown_versions():
         gateway.parse_proof([proof])
 
 
-def test_execution_and_git_match_the_contract():
-    git = CONTRACT["operations"]["git"]
-    assert set(git["reads"]) == gateway.GIT_READS and set(git["writes"]) == gateway.GIT_WRITES
-    contract = CONTRACT["execution"]
-    assert set(contract["launchers"]) == execution.LAUNCHERS
-    assert contract["lease"]["seconds"] == execution.EXEC_LEASE_SECONDS
-    assert contract["lease"]["renew_every_seconds"] == execution.EXEC_RENEW_SECONDS
-    assert set(contract["client_frames"]["signal"]["signal"].split(" | ")) == execution.SIGNALS
+def test_the_plaintext_relay_and_execution_frames_are_retired():
+    """Only tunnels cross the device socket; the Cloud never carries file content or commands."""
+    frames = CONTRACT["device_frames"]
+    assert not {"file", "reply", "watch", "unwatch", "event"} & set(frames)
+    assert "execution" not in CONTRACT and "execution" in CONTRACT["transport"]
+    for retired in ("FILE_ACTIONS", "MUTATIONS", "DEVICE_ERRORS", "MAX_PENDING"):
+        assert not hasattr(gateway, retired), retired
+    from src.platform.hosts import router
+    paths = {route.path for route in router.router.routes}
+    assert not {path for path in paths if path.endswith(("/files", "/file", "/events", "/git", "/exec"))}
+    assert "/api/v1/hosts/folders/{folder_id}/tunnel" in paths
 
 
-def test_device_error_statuses_match_the_contract():
-    for code, status in gateway.DEVICE_ERRORS.items():
-        assert CONTRACT["errors"][code] == status, code
+def test_certificates_match_the_transport_contract():
+    assert ssh_authority.CERTIFICATE_SECONDS == 300
+    assert "principal = device id" in CONTRACT["transport"]["ssh"]["certificate"]
 
 
 @pytest.mark.skipif(not os.environ.get("PUPPYONE_DESKTOP_ROOT"),
