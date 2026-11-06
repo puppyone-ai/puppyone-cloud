@@ -7,7 +7,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
 
-from src.platform.hosts.connection_auth import HostConnectionAuth, device_request_message, proof_message
+from src.platform.hosts.connection_auth import (
+    HostConnectionAuth,
+    device_request_message,
+    proof_message,
+)
 
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 DEVICE = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")

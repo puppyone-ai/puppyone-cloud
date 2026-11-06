@@ -8,7 +8,7 @@ import pytest
 
 from src.platform.hosts import gateway, ssh_authority, tunnel
 
-CONTRACT_PATH = Path(__file__).resolve().parents[3] / "contracts/host-file-protocol-v1.json"
+CONTRACT_PATH = Path(__file__).resolve().parents[5] / "contracts/host-file-protocol-v1.json"
 CONTRACT = json.loads(CONTRACT_PATH.read_text())
 
 
