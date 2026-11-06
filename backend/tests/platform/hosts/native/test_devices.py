@@ -4,134 +4,20 @@ Supplementary evidence only: one API process and a simulated device in this
 process. The Desktop's host and SSH client are accepted across two computers
 against the real deployment (Desktop tests/acceptance/two-computers).
 """
-
 import base64
-import importlib.util
-import shutil
-import subprocess
 import time
-from contextlib import ExitStack, suppress
-from pathlib import Path
+from contextlib import ExitStack
 from uuid import uuid4
 
-import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-import src.platform.hosts.router as hosts_router
-from src.config import settings
-from src.platform.auth.dependencies import get_current_user
-from src.platform.auth.models import CurrentUser
-from src.platform.hosts.connection_auth import HostConnectionAuth, device_request_message, proof_message
-from src.platform.hosts.gateway import CLOSE_REPLACED, CLOSE_REVOKED, CLOSE_UNSUPPORTED, HostGateway
-from src.platform.hosts.repository import HOST_COMMANDS, HostRepository
-from src.platform.hosts.router import (
-    get_connection_auth,
-    get_gateway,
-    get_host_service,
-    require_host_devices_enabled,
-    router,
-)
-from src.platform.hosts.service import HostService
-
-ROOT = Path(__file__).resolve().parents[3]
-PSQL = str(
-    Path(shutil.which("postgres") or "/opt/homebrew/opt/postgresql@17/bin/postgres").with_name("psql")
-)
-
-
-class Database:
-    def __init__(self, url):
-        self.url = url
-
-    def sql(self, statement):
-        result = subprocess.run([PSQL, self.url, "-X", "-qAt", "-v", "ON_ERROR_STOP=1"],
-                                input=statement, capture_output=True, text=True, timeout=60)
-        if result.returncode:
-            raise RuntimeError(result.stderr)
-        return result.stdout.strip()
-
-
-@pytest.fixture(scope="module")
-def database():
-    spec = importlib.util.spec_from_file_location(
-        "host_native_postgres", ROOT / "scripts/testing/native_postgres.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    with module.native_postgres() as cluster:
-        yield Database(cluster["url"])
-
-
-@pytest.fixture(scope="module")
-def repository(database):
-    """Actual PostgREST as service_role against the owned database, never a remote service."""
-    from postgrest import SyncPostgrestClient
-
-    from src.infra.supabase.instrumentation import DatabaseTransport
-    from tests.agent.runtime.owned_http import owned_http_service
-
-    with (owned_http_service("postgrest", database_url=database.url) as url,
-          httpx.Client(trust_env=False, transport=DatabaseTransport(path_prefix="/")) as http):
-        yield HostRepository(SyncPostgrestClient(url, http_client=http))
-
-
-@pytest.fixture
-def api(repository, monkeypatch):
-    actor = {"id": None}
-    gateway = HostGateway(repository)
-    monkeypatch.setattr(settings, "HOST_DEVICES_ENABLED", True)
-    monkeypatch.setattr(hosts_router, "_gateway", gateway)
-    app = FastAPI()
-    app.include_router(router)
-    app.dependency_overrides[require_host_devices_enabled] = lambda: None
-    app.dependency_overrides[get_current_user] = lambda: CurrentUser(user_id=actor["id"], role="authenticated")
-    app.dependency_overrides[get_host_service] = lambda: HostService(repository)
-    app.dependency_overrides[get_connection_auth] = lambda: HostConnectionAuth(repository)
-    app.dependency_overrides[get_gateway] = lambda: gateway
-    with TestClient(app) as client:
-        yield client, actor
-
-
-def users(database, *identities):
-    database.sql("INSERT INTO auth.users(id) VALUES " + ",".join(f"('{value}')" for value in identities) + ";")
-
-
-BOOT = str(uuid4())
-
-
-def device_challenge(client, owner, device, key):
-    """A challenge requested the way a host does: signed by its device key, no human JWT."""
-    timestamp = int(time.time())
-    signature = base64.b64encode(key.sign(device_request_message(owner, device, timestamp))).decode()
-    return client.post(f"/api/v1/hosts/devices/{device}/device-challenge",
-                       json={"owner": owner, "timestamp": timestamp, "signature": signature})
-
-
-def connect(client, sockets, owner, device, key, protocol=1):
-    challenge = device_challenge(client, owner, device, key)
-    assert challenge.status_code == 200, challenge.text
-    body = challenge.json()
-    signature = key.sign(proof_message(owner, device, body["challenge_id"], body["epoch"], body["nonce"]))
-    session = client.websocket_connect(f"/api/v1/hosts/devices/{device}/connect")
-    socket = session.__enter__()
-    # The gateway closes these itself (replacement, revocation); exit best-effort.
-    sockets.callback(_exit, session)
-    socket.send_json({"owner": owner, "challenge_id": body["challenge_id"], "epoch": body["epoch"],
-                      "nonce": body["nonce"], "signature": base64.b64encode(signature).decode(),
-                      "protocol": protocol, "boot_id": BOOT, "app_version": "1.4.0"})
-    if protocol != 1:
-        return socket, body
-    assert socket.receive_json() == {"type": "ready", "epoch": body["epoch"]}
-    return socket
-
-
-def _exit(session):
-    with suppress(Exception):
-        session.__exit__(None, None, None)
+from src.platform.hosts.connection_auth import device_request_message, proof_message
+from src.platform.hosts.gateway import CLOSE_REPLACED, CLOSE_REVOKED, CLOSE_UNSUPPORTED
+from src.platform.hosts.repository import HOST_COMMANDS
+from tests.platform.hosts.native.support import BOOT, _exit, connect, device_challenge, users
 
 
 def test_real_database_routes_audits_fences_and_revokes(database, api):

@@ -6,7 +6,12 @@ import pytest
 from fastapi import HTTPException
 
 from src.platform.hosts import gateway as gateway_module
-from src.platform.hosts.gateway import CLOSE_INVALID, GATEWAY_INSTANCE, DeviceConnection, HostGateway
+from src.platform.hosts.gateway import (
+    CLOSE_INVALID,
+    GATEWAY_INSTANCE,
+    DeviceConnection,
+    HostGateway,
+)
 
 OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 DEVICE = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")

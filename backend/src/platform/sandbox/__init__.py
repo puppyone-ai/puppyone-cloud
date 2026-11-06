@@ -1,6 +1,6 @@
 """Sandbox: pluggable compute providers behind one RuntimeProvider interface.
 
-Layout rules (enforced by tests/platform/test_entrypoint_architecture.py):
+Layout rules (enforced by tests/architecture/test_entrypoint_architecture.py):
 
 - Callers outside this package import only from ``src.platform.sandbox``,
   never from ``src.platform.sandbox.providers.*``.
