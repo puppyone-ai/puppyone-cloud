@@ -28,6 +28,8 @@ class RuntimeCapabilities:
     preserves_processes: bool = True
     files_require_compute: bool = True
     connection_preparation: bool = False
+    # True only when machines cannot reach each other even as root, outside the machine.
+    dedicated_network: bool = False
 
 
 def resource_identity(resource: dict) -> str:

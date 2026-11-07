@@ -206,8 +206,8 @@ class FlySSHConnections:
             raise
 
     async def _reserve(self, resource, address):
-        if resource.get("app") != self.app and not dedicated(resource):
-            raise PermissionError("Fly SSH application mismatch")
+        if not dedicated(resource):
+            raise PermissionError("Fly SSH requires a Workspace on its own private network")
         try:
             valid = ipaddress.ip_address(address) in ipaddress.ip_network("fdaa::/16")
         except (ValueError, TypeError):

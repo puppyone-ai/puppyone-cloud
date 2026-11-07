@@ -36,7 +36,7 @@ from src.platform.workspace.service import WorkbenchService
 from tests.agent.runtime.test_live_workbench_control import default, rpc, transition
 
 pytestmark = pytest.mark.integration
-IMAGE = "puppyone-workspace-ssh-acceptance:local"
+IMAGE = os.environ.get("CLOUD_AGENT_TEST_SSH_IMAGE", "puppyone-workspace-ssh-acceptance:local")
 PROVIDER = os.environ.get("CLOUD_AGENT_TEST_SSH_PROVIDER", "docker")
 # A first connection waits for a new machine, which takes over a minute on a VM.
 FIRST_CONNECTION_S = 240 if PROVIDER == "fly" else 60
