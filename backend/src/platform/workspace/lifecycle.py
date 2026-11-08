@@ -32,6 +32,20 @@ SAVE_BUDGET_SECONDS = 150
 PAUSE_LIMIT_SECONDS = 600
 
 
+def meter_source(row):
+    """Who a compute epoch works for, which decides whose hours it spends.
+
+    An external Agent's machine and an automation's workspace run only for
+    agents. The interactive default workspace serves a person; an agent chat
+    inside it is metered separately by its run.
+    """
+    if row.get("agent_registration_id"):
+        return "external_agent"
+    if not row.get("is_default"):
+        return "automation"
+    return "workspace"
+
+
 def meter_id(row):
     return f"cloud-workbench:{row['id']}:{row['generation']}:{row['compute_epoch']}"
 
@@ -324,7 +338,7 @@ class WorkbenchLifecycle:
         # One meter per compute epoch, shared by every Chat and file channel.
         await self.billing.ensure_session(
             audit_context={
-                "source": "sandbox",
+                "source": meter_source(row),
                 "run_id": meter_id(row),
                 "project_id": row["project_id"],
                 "user_id": row["user_id"],

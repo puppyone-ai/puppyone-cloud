@@ -665,3 +665,18 @@ async def test_workspace_stop_does_not_ack_an_unconfirmed_settlement(monkeypatch
         assert repository.get(identity).metadata["runtime_seconds"] == original_seconds
     finally:
         await service.detach_session(identity)
+
+
+def test_only_agent_work_is_metered_as_an_agent_runtime_kind() -> None:
+    from src.platform.billing.runtime import _source_kind
+    from src.platform.workspace.lifecycle import meter_source
+
+    person = {"is_default": True, "agent_registration_id": None}
+    external_agent = {"is_default": False, "agent_registration_id": "registration-1"}
+    automation = {"is_default": False, "agent_registration_id": None}
+
+    assert _source_kind(meter_source(person)) == "workspace"
+    assert _source_kind(meter_source(external_agent)) == "agent"
+    assert _source_kind(meter_source(automation)) == "automation"
+    assert _source_kind("chat_agent") == "agent"
+    assert _source_kind("schedule_agent") == "automation"

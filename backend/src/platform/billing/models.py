@@ -40,3 +40,9 @@ class TopUpRequest(StrictRequest):
 class RuntimeOverageRequest(StrictRequest):
     enabled: bool
     monthly_limit_cents: int = Field(ge=0, le=10_000_000)
+
+
+class AddOnChangeRequest(StrictRequest):
+    """How many packs of one add-on to hold; zero cancels at the period end."""
+
+    quantity: int = Field(ge=0, le=1000)
