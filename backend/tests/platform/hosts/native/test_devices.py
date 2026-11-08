@@ -211,3 +211,47 @@ def test_connection_records_are_kept_thirty_days(database, repository):
     kept = database.sql("SELECT string_agg(operation || ':' || (created_at > now() - interval '30 days')::text, ',' "
                         f"ORDER BY id) FROM public.host_file_events WHERE device_id='{device}';")
     assert kept == "tunnel:true,watch:true"
+
+
+def test_stopping_a_share_takes_only_that_folder_off_my_computers(database, api):
+    client, actor = api
+    owner, stranger = str(uuid4()), str(uuid4())
+    users(database, owner, stranger)
+    actor["id"] = owner
+    key = Ed25519PrivateKey.generate()
+    public = base64.b64encode(key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+    device = client.post("/api/v1/hosts/devices", json={"public_key": public, "name": "Mac",
+                                                       "platform": "darwin"}).json()["device_id"]
+    notes, reference = str(uuid4()), str(uuid4())
+    for folder, name in ((notes, "Notes"), (reference, "Reference")):
+        assert client.post(f"/api/v1/hosts/devices/{device}/folders",
+                           json={"folder_id": folder, "name": name, "writable": True}).status_code == 201
+
+    def shared():
+        return {item["id"] for listed in client.get("/api/v1/hosts").json()["devices"] for item in listed["folders"]}
+
+    [listed] = client.get("/api/v1/hosts").json()["devices"]
+    revision = next(item for item in listed["folders"] if item["id"] == notes)["revision"]
+    # Someone else cannot stop my share; they learn nothing and change nothing.
+    actor["id"] = stranger
+    assert client.delete(f"/api/v1/hosts/devices/{device}/folders/{notes}").json() == {"removed": False}
+    actor["id"] = owner
+    assert shared() == {notes, reference}
+
+    # Stopping takes that folder, and only that folder, off my other computers.
+    assert client.delete(f"/api/v1/hosts/devices/{device}/folders/{notes}").json() == {"removed": True}
+    assert shared() == {reference}
+    # Desktop retries a lost reply: stopping again is answered, not an error.
+    again = client.delete(f"/api/v1/hosts/devices/{device}/folders/{notes}")
+    assert again.status_code == 200 and again.json() == {"removed": False}
+    # A stopped share cannot be revived: not by a stale edit, nor by registering its identity again.
+    assert client.patch(f"/api/v1/hosts/devices/{device}/folders/{notes}",
+                        json={"name": "Notes", "writable": True, "expected_revision": revision}).status_code == 403
+    assert client.post(f"/api/v1/hosts/devices/{device}/folders",
+                       json={"folder_id": notes, "name": "Notes", "writable": True}).status_code == 409
+    # Sharing the folder again is a new identity, as Desktop's registry makes one.
+    again_shared = str(uuid4())
+    assert client.post(f"/api/v1/hosts/devices/{device}/folders",
+                       json={"folder_id": again_shared, "name": "Notes", "writable": True}).status_code == 201
+    assert shared() == {reference, again_shared}
