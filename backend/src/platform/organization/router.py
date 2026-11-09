@@ -100,7 +100,21 @@ def list_organizations(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     orgs = org_service.list_my_orgs(current_user.user_id)
-    return ApiResponse.success(data=[_org_to_out(org) for org in orgs])
+    outs = [_org_to_out(org) for org in orgs]
+    plans = _published_plans([out.id for out in outs])
+    for out in outs:
+        out.billing_plan_id = plans.get(out.id)
+    return ApiResponse.success(data=outs)
+
+
+def _published_plans(org_ids: list[str]) -> dict[str, str]:
+    # A label on the Homepage must never fail the list it decorates.
+    try:
+        from src.platform.entitlements.repository import EntitlementRepository
+
+        return EntitlementRepository().plan_ids_by_org(org_ids)
+    except Exception:
+        return {}
 
 
 @router.post("/", response_model=ApiResponse[OrganizationOut], status_code=status.HTTP_201_CREATED)

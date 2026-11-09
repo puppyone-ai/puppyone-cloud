@@ -39,6 +39,9 @@ class OrganizationOut(BaseModel):
     seat_limit: int
     created_at: str
     member_count: int | None = None
+    # The plan billing published for this space, so the Homepage can say which
+    # plan its projects use. Absent until billing has published one.
+    billing_plan_id: str | None = None
 
     @classmethod
     def for_member(cls, org: Organization) -> "OrganizationOut":
