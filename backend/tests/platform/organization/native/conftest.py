@@ -44,4 +44,10 @@ def database():
         before = json.loads(sql(f"SELECT jsonb_build_object('org',(SELECT to_jsonb(o) FROM organizations o WHERE id='{team}'),"
                                 f"'project',(SELECT to_jsonb(p) FROM projects p WHERE id='{project}'))"))
         sql((ROOT / "supabase/migrations" / MIGRATION).read_text())
-        yield SimpleNamespace(sql=sql, url=cluster["url"], owner=owner, colleague=colleague, team=team, project=project, before=before)
+        personal = json.loads(sql(f"SELECT ensure_personal_cloud_space('{owner}', 'Original personal')"))['organization']['id']
+        personal_project = str(uuid4())
+        sql(f"BEGIN; INSERT INTO projects(id,name,org_id,created_by,lifecycle_status) VALUES('{personal_project}','Private before expansion','{personal}','{owner}','ready');"
+            f"INSERT INTO project_members(project_id,org_id,user_id,role) VALUES('{personal_project}','{personal}','{owner}','admin'); COMMIT;")
+        sql((ROOT / "supabase/migrations/20261109140000_expand_unified_spaces.sql").read_text())
+        yield SimpleNamespace(sql=sql, url=cluster["url"], owner=owner, colleague=colleague, team=team, project=project,
+                              personal=personal, personal_project=personal_project, before=before)

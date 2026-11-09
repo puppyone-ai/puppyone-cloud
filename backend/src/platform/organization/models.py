@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Organization(BaseModel):
@@ -11,6 +11,9 @@ class Organization(BaseModel):
     type: str = "team"
     # Only this explicit binding denotes personal ownership; legacy type does not.
     personal_owner_id: str | None = None
+    # Caller-specific discovery facts; never persisted as organization columns.
+    is_default: bool = Field(default=False, exclude=True)
+    member_role: str | None = Field(default=None, exclude=True)
     plan: str = "free"
     seat_limit: int = 5
     stripe_customer_id: str | None = None

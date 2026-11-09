@@ -19,7 +19,7 @@ from src.platform.onboarding.router import router as onboarding_router
 from src.platform.organization.dependencies import get_org_service
 from src.platform.organization.repository import OrganizationRepository
 from src.platform.organization.router import router as organization_router
-from src.platform.organization.service import OrganizationService
+from src.platform.organization.service import InviteEmailResult, OrganizationService
 from src.platform.profile.repository import ProfileRepositorySupabase
 from tests.agent.runtime.owned_http import owned_http_service
 
@@ -32,6 +32,7 @@ def test_personal_space_http_composition_and_team_guards(database, monkeypatch):
         repo = OrganizationRepository(client)
         initialization = UserInitializationService(ProfileRepositorySupabase(client), repo)
         orgs = OrganizationService(repo)
+        monkeypatch.setattr(orgs, "send_invite_email", lambda *args, **kwargs: InviteEmailResult(sent=False))
         app = FastAPI()
         app.include_router(onboarding_router)
         app.include_router(organization_router)
@@ -41,19 +42,18 @@ def test_personal_space_http_composition_and_team_guards(database, monkeypatch):
         app.dependency_overrides[get_initialization_service] = lambda: initialization
         app.dependency_overrides[get_org_service] = lambda: orgs
         with TestClient(app) as api:
-            first = api.post("/auth/personal-space", json={"user_id": database.colleague})
+            first = api.post("/auth/default-space", json={"user_id": database.colleague})
             assert first.status_code == 200, first.text
             personal = first.json()["data"]
-            assert personal["kind"] == "personal" and personal["can_create_projects"]
-            assert repo.get_by_id(personal["id"]).personal_owner_id == database.owner
+            assert personal["id"] == database.team and personal["is_default"] and personal["can_create_projects"]
+            assert personal["role"] == "owner" and personal["can_manage_space"]
             assert api.post("/auth/personal-space").json()["data"]["id"] == personal["id"]
             listing = api.get("/organizations/").json()["data"]
-            assert {row["id"]: row["kind"] for row in listing} == {database.team: "team", personal["id"]: "personal"}
-            assert api.delete(f"/organizations/{personal['id']}").status_code == 403
-            assert api.post(f"/organizations/{personal['id']}/invite", json={"email": "colleague@example.test", "role": "member"}).status_code == 403
+            assert {row["id"] for row in listing} == {database.team, database.personal}
+            assert api.post(f"/organizations/{database.personal}/invite", json={"email": "new@example.test", "role": "viewer"}).status_code == 200
             actor["id"] = database.colleague
             other = api.post("/auth/personal-space")
             assert other.status_code == 200, other.text
-            assert other.json()["data"]["id"] != personal["id"]
-            assert personal["id"] not in {row["id"] for row in api.get("/organizations/").json()["data"]}
+            assert other.json()["data"]["id"] == database.team
+            assert database.personal not in {row["id"] for row in api.get("/organizations/").json()["data"]}
         assert database.sql(f"SELECT default_org_id FROM profiles WHERE user_id='{database.owner}'") == database.team

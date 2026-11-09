@@ -39,26 +39,14 @@ def test_service_provisions_entitlements_only_for_new_space(personal):
     service._enqueue_entitlement_provisioning.assert_called_once_with("space", "owner")
 
 
-@pytest.mark.parametrize("operation", ["invite", "transfer_ownership", "update_member_role", "remove_member"])
-def test_personal_team_management_is_rejected_before_mutation(personal, operation):
+def test_default_space_owner_can_invite_without_replacing_the_space(personal):
     repo = Mock()
     repo.get_by_id.return_value = personal
     repo.get_member.return_value = OrgMember(id="membership", org_id="space", user_id="owner", role="owner", joined_at=datetime.now(UTC))
     service = OrganizationService(repo)
-    arguments = {
-        "invite": ("space", "other@example.test", "member", "owner"),
-        "transfer_ownership": ("space", "other", "owner"),
-        "delete": ("space", "owner"),
-        "update_member_role": ("space", "other", "viewer", "owner"),
-        "remove_member": ("space", "other", "owner"),
-    }
-    with pytest.raises(ForbiddenException, match="Personal Cloud"):
-        getattr(service, operation)(*arguments[operation])
-    repo.create_invitation.assert_not_called()
-    repo.transfer_ownership.assert_not_called()
-    repo.delete_empty_control_plane.assert_not_called()
-    repo.update_member_role.assert_not_called()
-    repo.remove_member.assert_not_called()
+    service.invite("space", "other@example.test", "viewer", "owner")
+    repo.create_invitation.assert_called_once_with("space", "other@example.test", "viewer", "owner")
+    repo.create.assert_not_called()
 
 
 @pytest.mark.asyncio

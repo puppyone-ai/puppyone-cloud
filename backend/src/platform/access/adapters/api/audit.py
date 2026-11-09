@@ -13,12 +13,14 @@ from pydantic import BaseModel
 
 from src.common_schemas import ApiResponse
 from src.infra.supabase.client import SupabaseClient
-from src.version_engine.infrastructure.supabase.audit_repository import AuditRepository
 from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.authorization.dependencies import get_authorization_service
-from src.shared_types.grants import ProjectAction
 from src.platform.authorization.service import AuthorizationService
+from src.platform.entitlements.dependencies import get_entitlement_service
+from src.platform.entitlements.service import EntitlementService
+from src.shared_types.grants import ProjectAction
+from src.version_engine.infrastructure.supabase.audit_repository import AuditRepository
 
 router = APIRouter(prefix="/nodes", tags=["audit-logs"])
 
@@ -72,12 +74,14 @@ def _get_audit_repo() -> AuditRepository:
 
 
 def _ensure_project_access(
-    authorization: AuthorizationService, current_user: CurrentUser, project_id: str
+    authorization: AuthorizationService, current_user: CurrentUser, project_id: str,
+    entitlements: EntitlementService,
 ):
     """Authorize audit/history read through the canonical Project PDP."""
-    authorization.authorize(
+    grant = authorization.authorize(
         project_id, current_user.user_id, ProjectAction.HISTORY_READ
     )
+    entitlements.require_feature(grant.org_id, "activity.log")
 
 
 # ============================================================
@@ -92,9 +96,10 @@ def get_project_audit_logs(
     audit_repo: AuditRepository = Depends(_get_audit_repo),
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
+    entitlements: EntitlementService = Depends(get_entitlement_service),
 ):
     """Get all audit logs for a project (clone/push/pull/rollback events)"""
-    _ensure_project_access(authorization, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id, entitlements)
 
     rows = audit_repo.list_by_project(project_id, limit, offset)
     total = audit_repo.count_by_project(project_id)
@@ -115,9 +120,10 @@ def get_node_audit_logs(
     audit_repo: AuditRepository = Depends(_get_audit_repo),
     authorization: AuthorizationService = Depends(get_authorization_service),
     current_user: CurrentUser = Depends(get_current_user),
+    entitlements: EntitlementService = Depends(get_entitlement_service),
 ):
     """Get audit logs for a node"""
-    _ensure_project_access(authorization, current_user, project_id)
+    _ensure_project_access(authorization, current_user, project_id, entitlements)
 
     rows = audit_repo.list_by_path(path, limit, offset, project_id=project_id)
     total = audit_repo.count_by_path(path, project_id=project_id)

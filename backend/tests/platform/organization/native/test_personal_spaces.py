@@ -16,8 +16,8 @@ def test_populated_upgrade_preserves_team_projects_members_and_default(database)
     assert org == db.before['org']
     assert json.loads(db.sql(f"SELECT to_jsonb(p) FROM projects p WHERE id='{db.project}'")) == db.before['project']
     assert db.sql(f"SELECT count(*) FROM org_members WHERE org_id='{db.team}'") == '2'
-    personal = ensure(db)['organization']
-    assert personal['id'] != db.team
+    default = ensure(db)['organization']
+    assert default['id'] == db.team
     assert db.sql(f"SELECT default_org_id FROM profiles WHERE user_id='{db.owner}'") == db.team
     assert db.sql(f"SELECT org_id FROM projects WHERE id='{db.project}'") == db.team
 
@@ -31,7 +31,8 @@ def test_concurrent_creation_is_atomic_and_idempotent(database):
     assert sum(row['created'] for row in results) == 1
     assert len({row['organization']['id'] for row in results}) == 1
     org = results[0]['organization']
-    assert org['personal_owner_id'] == user and org['type'] == 'personal'
+    assert org['personal_owner_id'] is None and org['type'] == 'team'
+    assert db.sql(f"SELECT default_org_id FROM profiles WHERE user_id='{user}'") == org['id']
     assert json.loads(db.sql(f"SELECT jsonb_agg(jsonb_build_array(user_id,role)) FROM org_members WHERE org_id='{org['id']}'")) == [[user, 'owner']]
 
 
@@ -46,25 +47,20 @@ def test_uninitialized_identity_cannot_create_a_space(database):
         ensure(database, str(uuid4()))
 
 
-def test_personal_membership_cannot_be_widened_or_transferred(database):
+def test_former_personal_space_can_grow_without_widening_old_projects(database):
     db = database
-    org = ensure(db)['organization']['id']
-    changes = [
-        f"INSERT INTO org_members(org_id,user_id,role) VALUES('{org}','{db.colleague}','member')",
-        f"UPDATE org_members SET user_id='{db.colleague}' WHERE org_id='{org}'",
-        f"UPDATE org_members SET role='viewer' WHERE org_id='{org}'",
-        f"DELETE FROM org_members WHERE org_id='{org}'",
-        f"DELETE FROM organizations WHERE id='{org}'",
-        f"UPDATE organizations SET personal_owner_id=NULL WHERE id='{org}'",
-        f"UPDATE organizations SET personal_owner_id='{db.owner}' WHERE id='{db.team}'",
-        f"INSERT INTO org_invitations(org_id,email,role,token,invited_by,expires_at) VALUES('{org}','other@example.test','member','personal-test','{db.owner}',now()+interval '1 day')",
-    ]
-    for statement in changes:
-        with pytest.raises(RuntimeError, match=r'[Pp]ersonal|Only the owner'):
-            db.sql(statement)
-    assert db.sql(f"SELECT count(*) FROM org_members WHERE org_id='{org}'") == '1'
-    result = json.loads(db.sql(f"SELECT delete_empty_organization_control_plane('{org}','{db.owner}')"))
-    assert result['outcome'] == 'personal_organization'
+    org = db.personal
+    assert db.sql(f"SELECT visibility FROM projects WHERE id='{db.personal_project}'") == 'private'
+    assert db.sql(f"SELECT org_id FROM projects WHERE id='{db.personal_project}'") == org
+    db.sql(f"INSERT INTO org_members(org_id,user_id,role) VALUES('{org}','{db.colleague}','viewer');"
+           f"INSERT INTO org_invitations(org_id,email,role,token,invited_by,expires_at) VALUES('{org}','other@example.test','member','unified-test','{db.owner}',now()+interval '1 day');")
+    assert db.sql(f"SELECT count(*) FROM org_members WHERE org_id='{org}'") == '2'
+    assert db.sql(f"SELECT count(*) FROM project_members WHERE project_id='{db.personal_project}' AND user_id='{db.colleague}'") == '0'
+    assert db.sql(f"SELECT transfer_organization_ownership('{org}','{db.owner}','{db.colleague}')") == 't'
+    result = json.loads(db.sql(f"SELECT delete_empty_organization_control_plane('{org}','{db.colleague}')"))
+    assert result['outcome'] == 'organization_not_empty'
+    # Historical creator identity cannot cascade-delete a collaborating Space.
+    assert db.sql("SELECT confdeltype FROM pg_constraint WHERE conname='organizations_personal_owner_id_fkey'") == 'n'
 
 
 def test_ordinary_team_membership_still_works(database):

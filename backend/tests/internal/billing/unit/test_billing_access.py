@@ -1,5 +1,6 @@
-"""PuppyPay asks Cloud who may change an organization's plan, and what kind of
-space it is: Personal is sold only to a personal space, Team only to a team."""
+"""Owner authority plus legacy space-kind metadata remain compatible for billing.
+New seat plans accept either historical kind.
+"""
 
 from __future__ import annotations
 
