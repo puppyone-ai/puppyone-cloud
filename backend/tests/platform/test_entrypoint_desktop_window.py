@@ -76,11 +76,14 @@ def canonical(request, monkeypatch):
     @app.get("/api/v1/auth/config")
     def auth_config(request: Request):
         import base64
+
         role = base64.urlsafe_b64encode(b'{"role":"anon"}').decode().rstrip("=")
-        return ApiResponse.success({
-            "supabase_url": str(request.base_url).rstrip("/"),
-            "supabase_anon_key": f"header.{role}.signature",
-        })
+        return ApiResponse.success(
+            {
+                "supabase_url": str(request.base_url).rstrip("/"),
+                "supabase_anon_key": f"header.{role}.signature",
+            }
+        )
 
     @app.post("/auth/v1/token")
     async def refresh(request: Request):
@@ -242,3 +245,91 @@ def test_creation_real_window_reload_and_failed_retry_keep_binding_and_history(
         "/integrations" in r["path"] or "/connectors" in r["path"]
         for r in canonical[0].state.window_probe["requests"]
     )
+
+
+def test_space_navigation_scopes_home_settings_and_windows(http_server, canonical, tmp_path):
+    """Production Main/preload/App; owned backend facts, two real windows."""
+    app = canonical[0]
+    app.router.routes = [
+        r
+        for r in app.routes
+        if getattr(r, "path", "") not in {"/api/v1/organizations/", "/api/v1/projects/"}
+    ]
+    spaces = [
+        {"id": "org-1", "name": "Studio", "slug": "studio", "kind": "personal", "is_default": True},
+        {
+            "id": "org-2",
+            "name": "Research",
+            "slug": "research",
+            "kind": "team",
+            "is_default": False,
+        },
+    ]
+    for space in spaces:
+        space.update(role="owner", can_manage_space=True, can_create_projects=True)
+    first = {
+        "id": "project-1",
+        "name": "Window acceptance",
+        "org_id": "org-1",
+        "effective_role": "admin",
+        "capabilities": ["project.read", "project.manage"],
+    }
+    second = {**first, "id": "project-b", "name": "Space B only", "org_id": "org-2"}
+    app.add_api_route("/api/v1/organizations/", lambda: ApiResponse.success(spaces))
+    app.add_api_route(
+        "/api/v1/auth/default-space", lambda: ApiResponse.success(spaces[0]), methods=["POST"]
+    )
+    app.add_api_route("/api/v1/projects/", lambda: ApiResponse.success([first, second]))
+    app.add_api_route("/api/v1/projects/project-b", lambda: ApiResponse.success(second))
+    app.add_api_route(
+        "/api/v1/projects/project-b/repository-context",
+        lambda: ApiResponse.success(
+            {
+                "project": second,
+                "target": {"kind": "project_root", "project_id": "project-b"},
+                "scope": None,
+            }
+        ),
+        methods=["POST"],
+    )
+    app.add_api_route(
+        "/api/v1/organizations/org-1/members",
+        lambda: ApiResponse.success(
+            [{"user_id": "user-1", "role": "owner", "display_name": "Owner"}]
+        ),
+    )
+    app.add_api_route(
+        "/api/v1/organizations/org-1/access",
+        lambda: ApiResponse.success(
+            {"org_id": "org-1", "user_id": "user-1", "role": "owner", "can_manage_billing": True}
+        ),
+    )
+    root = Path(os.environ["PUPPYONE_DESKTOP_SOURCE"]).resolve()
+    try:
+        result = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import electron from 'electron';import {spawn} from 'node:child_process';"
+                "const child=spawn(electron,[process.argv[1]],{stdio:'inherit',env:process.env});"
+                "child.on('exit',(code)=>process.exit(code??1));",
+                str(root / "tests/e2e/cloud/space-switching.smoke.mjs"),
+            ],
+            cwd=root,
+            env={
+                **os.environ,
+                "PUPPYONE_ENTRYPOINT_TEST_ORIGIN": http_server,
+                "PUPPYONE_ENTRYPOINT_TEST_REPORT": str(tmp_path / "space-report.json"),
+                "PUPPYONE_ENTRYPOINT_TEST_WORKSPACE": str(tmp_path / "space-runtime"),
+            },
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+    finally:
+        shutil.rmtree(tmp_path / "space-runtime", ignore_errors=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((tmp_path / "space-report.json").read_text())
+    assert report["ok"] and report["window_count"] == 2
+    assert report["current_spaces"] == ["org-1", "org-2"]
