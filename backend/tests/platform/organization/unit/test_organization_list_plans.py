@@ -35,10 +35,10 @@ def _list(plans):
 
 def test_each_space_carries_the_plan_billing_published() -> None:
     assert _list(lambda ids: {"me": "personal", "acme": "team"}) == {
-        "me": ("personal", "personal"),
-        "acme": ("team", "team"),
+        "me": ("space", "personal"),
+        "acme": ("space", "team"),
     }
 
 
 def test_a_space_without_a_published_plan_is_unlabelled_not_missing() -> None:
-    assert _list(lambda ids: {}) == {"me": ("personal", None), "acme": ("team", None)}
+    assert _list(lambda ids: {}) == {"me": ("space", None), "acme": ("space", None)}

@@ -9,7 +9,7 @@ class Organization(BaseModel):
     slug: str
     avatar_url: str | None = None
     type: str = "team"
-    # Only this explicit binding denotes personal ownership; legacy type does not.
+    # Historical provisioning provenance only; every current organization is a Space.
     personal_owner_id: str | None = None
     # Caller-specific discovery facts; never persisted as organization columns.
     is_default: bool = Field(default=False, exclude=True)

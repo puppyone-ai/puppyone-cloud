@@ -256,12 +256,12 @@ def test_space_navigation_scopes_home_settings_and_windows(http_server, canonica
         if getattr(r, "path", "") not in {"/api/v1/organizations/", "/api/v1/projects/"}
     ]
     spaces = [
-        {"id": "org-1", "name": "Studio", "slug": "studio", "kind": "personal", "is_default": True},
+        {"id": "org-1", "name": "Studio", "slug": "studio", "kind": "space", "is_default": True},
         {
             "id": "org-2",
             "name": "Research",
             "slug": "research",
-            "kind": "team",
+            "kind": "space",
             "is_default": False,
         },
     ]

@@ -47,9 +47,12 @@ def test_personal_space_http_composition_and_team_guards(database, monkeypatch):
             personal = first.json()["data"]
             assert personal["id"] == database.team and personal["is_default"] and personal["can_create_projects"]
             assert personal["role"] == "owner" and personal["can_manage_space"]
+            assert personal["kind"] == "space"
             assert api.post("/auth/personal-space").json()["data"]["id"] == personal["id"]
             listing = api.get("/organizations/").json()["data"]
             assert {row["id"] for row in listing} == {database.team, database.personal}
+            assert {row["kind"] for row in listing} == {"space"}
+            assert all("personal_owner_id" not in row and "type" not in row for row in listing)
             assert api.post(f"/organizations/{database.personal}/invite", json={"email": "new@example.test", "role": "viewer"}).status_code == 200
             actor["id"] = database.colleague
             other = api.post("/auth/personal-space")

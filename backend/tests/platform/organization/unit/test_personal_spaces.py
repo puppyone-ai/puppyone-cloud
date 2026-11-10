@@ -21,9 +21,9 @@ def personal():
 
 def test_legacy_personal_label_is_not_private_identity(personal):
     old = personal.model_copy(update={"personal_owner_id": None})
-    assert OrganizationOut.for_member(old).kind == "team"
+    assert OrganizationOut.for_member(old).kind == "space"
     out = OrganizationOut.for_member(personal)
-    assert out.kind == "personal" and out.can_create_projects
+    assert out.kind == "space" and out.can_create_projects
     assert "personal_owner_id" not in out.model_dump()
 
 
@@ -66,7 +66,7 @@ async def test_ensure_uses_current_identity_not_payload(personal, monkeypatch):
     init, orgs = Mock(), Mock()
     orgs.ensure_personal.return_value = personal
     response = await ensure_personal_space(CurrentUser(user_id="owner", email="alex@example.test", role="authenticated"), init, orgs)
-    assert response.data.id == "space" and response.data.kind == "personal"
+    assert response.data.id == "space" and response.data.kind == "space"
     orgs.ensure_personal.assert_called_once_with("owner", "alex")
 
 

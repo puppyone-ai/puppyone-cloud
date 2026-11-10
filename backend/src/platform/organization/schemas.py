@@ -30,7 +30,7 @@ class TransferOwnership(BaseModel):
 
 class OrganizationOut(BaseModel):
     id: str
-    kind: Literal["personal", "team"] = "team"
+    kind: Literal["space"] = "space"
     is_default: bool = False
     role: str | None = None
     can_manage_space: bool = False
@@ -51,7 +51,7 @@ class OrganizationOut(BaseModel):
         """Only call after membership admission; Project creation rechecks it in SQL."""
         role = role or getattr(org, "member_role", None)
         return cls(
-            id=org.id, kind="personal" if org.personal_owner_id is not None else "team",
+            id=org.id,
             is_default=getattr(org, "is_default", False), role=role, can_manage_space=role == "owner",
             can_create_projects=role in (None, "owner", "member"), name=org.name, slug=org.slug, avatar_url=org.avatar_url,
             plan=org.plan, seat_limit=org.seat_limit, created_at=org.created_at.isoformat(),
