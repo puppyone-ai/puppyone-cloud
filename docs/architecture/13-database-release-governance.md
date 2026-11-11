@@ -329,6 +329,18 @@ following infrastructure contract:
   nothing was pinned. Environments without `CLOUD_AGENT_FLY_APP` skip it.
 - GitHub environment deployment-branch policies limit each environment's secrets
   to its protected branches.
+- An active Workspace SSH gateway must also join the application inventory. Set
+  the protected environment variable `RAILWAY_SSH_GATEWAY_SERVICE_ID` to its
+  exact Railway service UUID; configuration preparation adds `ssh_gateway` to
+  that environment's coordinated image deployment. A conflicting existing
+  binding or an ID already assigned to another role fails before credentials
+  are materialized. An unset variable preserves the original inventory.
+- Environments serving Plan also set `RELEASE_BILLING_READS_REQUIRED=true`.
+  Their owned acceptance account signs in normally and reads the public
+  catalog, its organization summary and usage through the human API. The
+  accepted receipt records all three checks; missing account data, an owner
+  mismatch or unavailable reads blocks application acceptance. This check
+  does not initiate a purchase or become a standalone database prerequisite.
 - Disabled independent Railway and Supabase schema deployment bindings. The
   shared workflow is the only normal schema writer; its full coordinator owns
   data cutovers and configured application deployment.
