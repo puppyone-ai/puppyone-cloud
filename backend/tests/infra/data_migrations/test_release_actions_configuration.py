@@ -213,6 +213,8 @@ def test_images_job_builds_once_and_publishes_with_the_workflow_token_only():
     assert names.index("Smoke-test the frontend image") < names.index("Publish the images")
     configuration = next(s for s in jobs["release"]["steps"] if s.get("id") == "configuration")
     assert configuration["env"]["RELEASE_BACKEND_IMAGE"] == "${{ needs.images.outputs.backend }}"
+    assert configuration["env"]["RAILWAY_SSH_GATEWAY_SERVICE_ID"] == "${{ vars.RAILWAY_SSH_GATEWAY_SERVICE_ID }}"
+    assert configuration["env"]["RELEASE_BILLING_READS_REQUIRED"] == "${{ vars.RELEASE_BILLING_READS_REQUIRED }}"
 
 
 def test_workflows_fetch_the_postgresql_signing_key_from_its_published_location():
@@ -239,3 +241,71 @@ def test_inventory_accepts_only_known_optional_roles(source, extra, accepted):
     else:
         with pytest.raises(ValueError, match="inventory"):
             module.prepare(source)
+
+
+@pytest.mark.parametrize("environment,branch", [("staging", "qubits"), ("production", "main")])
+def test_active_ssh_gateway_joins_the_environment_release_inventory(source, environment, branch):
+    config = json.loads(source["RELEASE_CONFIG_JSON"])
+    config["environment"] = environment
+    source.update(TARGET_ENVIRONMENT=environment, GITHUB_REF="refs/heads/" + branch,
+                  RELEASE_CONFIG_JSON=json.dumps(config),
+                  RAILWAY_SSH_GATEWAY_SERVICE_ID="00000000-0000-0000-0000-000000000001")
+    raw = source["RELEASE_CONFIG_JSON"]
+    prepared = json.loads(module.prepare(source).read_text())
+    assert prepared["railway"]["services"]["ssh_gateway"] == {
+        "id": source["RAILWAY_SSH_GATEWAY_SERVICE_ID"],
+    }
+    assert set(prepared["railway"]["services"]) == module.ROLES | {"ssh_gateway"}
+    assert source["RELEASE_CONFIG_JSON"] == raw
+
+
+def test_matching_gateway_binding_preserves_its_existing_configuration(source):
+    service = "00000000-0000-0000-0000-000000000001"
+    config = json.loads(source["RELEASE_CONFIG_JSON"])
+    entry = {"id": service, "ready_url": "https://ssh.example.test/health"}
+    config["railway"]["services"]["ssh_gateway"] = entry
+    source.update(RELEASE_CONFIG_JSON=json.dumps(config), RAILWAY_SSH_GATEWAY_SERVICE_ID=service)
+    prepared = json.loads(module.prepare(source).read_text())
+    assert prepared["railway"]["services"]["ssh_gateway"] == entry
+
+
+@pytest.mark.parametrize("existing_role,error", [("ssh_gateway", "conflicts"), ("api", "duplicates")])
+def test_gateway_binding_cannot_replace_or_alias_an_existing_role(source, existing_role, error):
+    service = "00000000-0000-0000-0000-000000000001"
+    config = json.loads(source["RELEASE_CONFIG_JSON"])
+    config["railway"]["services"][existing_role] = {"id": service}
+    source.update(RELEASE_CONFIG_JSON=json.dumps(config), RAILWAY_SSH_GATEWAY_SERVICE_ID=(
+        "00000000-0000-0000-0000-000000000002" if existing_role == "ssh_gateway" else service
+    ))
+    with pytest.raises(ValueError, match=error):
+        module.prepare(source)
+    assert not list(Path(source["RUNNER_TEMP"]).iterdir())
+
+
+@pytest.mark.parametrize("service", ["gateway", "../service", "https://example.test/service"])
+def test_invalid_gateway_service_binding_fails_before_materializing_credentials(source, service):
+    source["RAILWAY_SSH_GATEWAY_SERVICE_ID"] = service
+    with pytest.raises(ValueError, match="UUID"):
+        module.prepare(source)
+    assert not list(Path(source["RUNNER_TEMP"]).iterdir())
+
+
+def test_required_billing_reads_use_the_protected_acceptance_account(source):
+    source["RELEASE_BILLING_READS_REQUIRED"] = "true"
+    prepared = json.loads(module.prepare(source).read_text())
+    assert prepared["acceptance"]["billing_reads"] is True
+    assert prepared["acceptance"]["email"] == "release@example.test"
+
+
+def test_false_environment_flag_does_not_weaken_existing_billing_acceptance(source):
+    config = json.loads(source["RELEASE_CONFIG_JSON"])
+    config["acceptance"]["billing_reads"] = True
+    source.update(RELEASE_CONFIG_JSON=json.dumps(config), RELEASE_BILLING_READS_REQUIRED="false")
+    assert json.loads(module.prepare(source).read_text())["acceptance"]["billing_reads"] is True
+
+
+def test_invalid_billing_acceptance_flag_fails_before_credentials_are_written(source):
+    source["RELEASE_BILLING_READS_REQUIRED"] = "typo"
+    with pytest.raises(ValueError, match="Billing read acceptance"):
+        module.prepare(source)
+    assert not list(Path(source["RUNNER_TEMP"]).iterdir())

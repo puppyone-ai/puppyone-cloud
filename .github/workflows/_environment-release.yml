@@ -345,6 +345,8 @@ jobs:
           RELEASE_BACKEND_IMAGE: ${{ needs.images.outputs.backend }}
           RELEASE_FRONTEND_IMAGE: ${{ needs.images.outputs.frontend }}
           RELEASE_IMAGES_SOURCE: ${{ needs.images.outputs.enabled == 'true' && github.sha || '' }}
+          RAILWAY_SSH_GATEWAY_SERVICE_ID: ${{ vars.RAILWAY_SSH_GATEWAY_SERVICE_ID }}
+          RELEASE_BILLING_READS_REQUIRED: ${{ vars.RELEASE_BILLING_READS_REQUIRED }}
         run: python3 supabase/releases/github_actions.py
       - name: Record an environment release attempt
         id: attempt

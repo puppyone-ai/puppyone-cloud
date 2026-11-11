@@ -72,6 +72,22 @@ def prepare(source: dict[str, str]) -> Path:
     ):
         raise ValueError("Release configuration object_recovery is invalid")
     railway = config.get("railway", {})
+    # Gateways can be activated after the original protected JSON was issued.
+    # Bind their explicit environment-scoped service instead of silently leaving
+    # a public SSH entrypoint on an older backend image. Never override a
+    # conflicting inventory or bind one service to two process roles.
+    ssh_service = source.get("RAILWAY_SSH_GATEWAY_SERVICE_ID", "").strip()
+    if ssh_service:
+        if not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", ssh_service):
+            raise ValueError("SSH gateway service binding must be a UUID")
+        services = railway.get("services", {})
+        existing = services.get("ssh_gateway")
+        if existing is not None and existing.get("id") != ssh_service:
+            raise ValueError("SSH gateway service binding conflicts with the protected inventory")
+        if any(role != "ssh_gateway" and item.get("id") == ssh_service
+               for role, item in services.items()):
+            raise ValueError("SSH gateway service binding duplicates another role")
+        services.setdefault("ssh_gateway", {"id": ssh_service})
     roles = set(railway.get("services", {}))
     if not all(railway.get(key) for key in ("project_id", "environment_id")) or not (
         ROLES <= roles <= ROLES | OPTIONAL_ROLES
@@ -87,6 +103,11 @@ def prepare(source: dict[str, str]) -> Path:
     for key in ("api_url", "org_id", "email", "password"):
         if not config["acceptance"].get(key):
             raise ValueError("Release acceptance configuration is incomplete")
+    billing_reads = source.get("RELEASE_BILLING_READS_REQUIRED", "").strip()
+    if billing_reads not in {"", "false", "true"}:
+        raise ValueError("Billing read acceptance must be true or false")
+    if billing_reads == "true":
+        config["acceptance"]["billing_reads"] = True
     for key in ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_PROJECT_ID", "SUPABASE_SERVICE_ROLE_KEY"):
         if not source.get(key):
             raise ValueError("Protected database configuration is missing " + key)
