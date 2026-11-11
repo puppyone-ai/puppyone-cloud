@@ -1,5 +1,9 @@
 """Railway staging smoke runner — hits the real deployed backend.
 
+The protected scheduled Git check uses scripts/testing/hosted_git_stress.py
+with a fresh login and an explicit owned organization. This remains a manual
+diagnostic; it does not replace the shared environment-release acceptance.
+
 Reads a user JWT from ``QUBITS_TOKEN`` env (or ``/tmp/jwt.txt``) and
 exercises the deployed V2 surface end-to-end:
 
@@ -483,11 +487,12 @@ class Smoke:
                 pid = r.json()["data"]["id"]
             except Exception as exc:
                 print(f"  [iter {i:2d}] project create failed: {exc}")
+                bug_hits += 1
                 continue
 
             try:
                 # bulk_write of 3 files (forces a multi-object bundle)
-                self.client.post(
+                written = self.client.post(
                     f"/api/v1/content/{pid}/bulk-write",
                     json={"files": [
                         {"path": f"x{j}.md", "content": str(j),
@@ -495,29 +500,33 @@ class Smoke:
                         for j in range(3)
                     ]},
                 )
+                self._expect_ok(written, hint="stress bulk write")
                 # move (the trigger op)
-                self.client.post(
+                moved = self.client.post(
                     f"/api/v1/content/{pid}/mv",
                     json={"old_path": "x0.md", "new_path": "renamed-x0.md"},
                 )
+                self._expect_ok(moved, hint="stress move")
                 # immediate health check
                 h = self.client.get(
                     f"/api/v1/projects/{pid}/git-view/health",
                     headers=REPOSITORY_CONTRACT_HEADERS,
                 )
-                state = h.json().get("data", {}).get("health")
-                git_usable = h.json().get("data", {}).get("git_usable")
+                health = self._expect_ok(h, hint="stress health").get("data", {})
+                state = health.get("health")
+                git_usable = health.get("git_usable")
                 marker = "  ✓" if state in {"healthy", "history_degraded"} else "  ✗"
-                if state == "current_corrupt":
+                if state not in {"healthy", "history_degraded"} or git_usable is not True:
                     bug_hits += 1
-                print(f"{marker} [iter {i:2d}] state={state:18s} usable={git_usable}")
+                print(f"{marker} [iter {i:2d}] state={str(state):18s} usable={git_usable}")
             finally:
                 # Cleanup
-                self.client.delete(f"/api/v1/projects/{pid}")
+                self._expect_ok(self.client.delete(f"/api/v1/projects/{pid}"),
+                                want=(200, 202, 204), hint="stress cleanup")
 
         print(
-            f"\n  STRESS RESULT: {bug_hits}/{iterations} hit current_corrupt"
-            + ("  ← RACE OPEN" if bug_hits else "  ← race not observed")
+            f"\n  STRESS RESULT: {bug_hits}/{iterations} failed verification"
+            + ("  ← includes setup/HTTP/health errors" if bug_hits else "  ← all verified")
         )
         return bug_hits
 

@@ -1,22 +1,8 @@
-name: Post-deploy Stress (Bundled Exists Race)
+name: Hosted Git consistency stress
 
-# Smoke-stress the deployed backend immediately after a release to
-# verify the bundled-object exists_many race (commit 986c540d) stays
-# closed. Empirical pre-fix hit rate was 0/15 to 1/3 depending on
-# Supabase replica state; post-fix it should be 0/N. Drift here means
-# the fix regressed or a NEW concurrency window opened.
-#
-# Triggers:
-#   - workflow_dispatch (manual) — operator runs after each prod deploy
-#   - schedule (daily 04:00 UTC) — catches slow regressions across
-#                                  Supabase / S3 backend changes the
-#                                  app code itself can't see
-#
-# Required secrets:
-#   QUBITS_TOKEN — a long-lived user JWT for the test account that
-#                  has at least one writable project. The script
-#                  creates a fresh project per iteration and deletes
-#                  it; no test data persists.
+# Exercise native write → move → read → Git health on one owned project.
+# Use the staging release account for a fresh normal login, not a stored JWT.
+# Every requested iteration must finish and project deletion must be requested.
 
 on:
   workflow_dispatch:
@@ -26,9 +12,9 @@ on:
         required: false
         default: '30'
       api_url:
-        description: 'Override deploy URL'
+        description: 'Must match the protected staging acceptance URL'
         required: false
-        default: 'https://qubits-api.puppyone.ai'
+        default: ''
   schedule:
     # 04:00 UTC daily — low-traffic window
     - cron: '0 4 * * *'
@@ -36,11 +22,18 @@ on:
 permissions:
   contents: read
 
+# Share staging's release queue: do not restart services underneath a stress
+# run or compete with release acceptance for the same protected account.
+concurrency:
+  group: database-release-staging
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   stress:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/qubits'
     environment: staging
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -56,20 +49,31 @@ jobs:
         working-directory: backend
         run: uv sync --locked
 
+      - name: Prepare a private acceptance account file
+        working-directory: backend
+        env:
+          RELEASE_CONFIG_JSON: ${{ secrets.PUPPYONE_RELEASE_CONFIG }}
+        run: >-
+          uv run python ../scripts/testing/hosted_git_stress.py
+          --prepare-account "$RUNNER_TEMP/hosted-git-smoke-account.json"
+
       - name: Run stress
         working-directory: backend
         env:
-          QUBITS_TOKEN: ${{ secrets.QUBITS_TOKEN }}
           STRESS_ITERATIONS: ${{ inputs.iterations || '30' }}
-          PUPPYONE_API_URL: ${{ github.event.inputs.api_url || 'https://qubits-api.puppyone.ai' }}
+          PUPPYONE_API_URL: ${{ inputs.api_url || '' }}
         run: |
           set -euo pipefail
           python -c 'import os, re; value = os.environ["STRESS_ITERATIONS"]; assert re.fullmatch(r"[0-9]{1,3}", value) and 1 <= int(value) <= 100, "iterations must be 1..100"'
-          uv run python scripts/railway_smoke.py --stress "$STRESS_ITERATIONS"
+          uv run python ../scripts/testing/hosted_git_stress.py \
+            --account-file "$RUNNER_TEMP/hosted-git-smoke-account.json" \
+            --iterations "$STRESS_ITERATIONS"
 
-      - name: Run 17-step canonical smoke
-        working-directory: backend
-        env:
-          QUBITS_TOKEN: ${{ secrets.QUBITS_TOKEN }}
-          PUPPYONE_API_URL: ${{ github.event.inputs.api_url || 'https://qubits-api.puppyone.ai' }}
-        run: uv run python scripts/railway_smoke.py
+      - name: Remove the private acceptance account file
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          (Path(os.environ['RUNNER_TEMP']) / 'hosted-git-smoke-account.json').unlink(missing_ok=True)
+          PY

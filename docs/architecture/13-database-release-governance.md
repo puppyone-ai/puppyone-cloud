@@ -341,6 +341,12 @@ following infrastructure contract:
   accepted receipt records all three checks; missing account data, an owner
   mismatch or unavailable reads blocks application acceptance. This check
   does not initiate a purchase or become a standalone database prerequisite.
+- The scheduled `Hosted Git consistency stress` workflow uses only the
+  acceptance-account section of that protected staging configuration. It logs
+  in afresh, binds the target URL and organization, and verifies every native
+  write/move/read/health iteration on one owned project before requesting its
+  deletion. Setup, HTTP, consistency and cleanup failures fail the check;
+  a missing long-lived JWT must never be represented as a successful stress run.
 - Disabled independent Railway and Supabase schema deployment bindings. The
   shared workflow is the only normal schema writer; its full coordinator owns
   data cutovers and configured application deployment.
