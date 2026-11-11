@@ -102,7 +102,9 @@ def _decode_for_index(data: bytes) -> str | None:
     """
     if not data:
         return ""
-    if b"\x00" in data[:8192]:
+    # PostgreSQL text/jsonb cannot represent NUL at any offset. A binary
+    # trailer after a text-looking prefix must not poison the whole projection.
+    if b"\x00" in data:
         return None
     try:
         text = data.decode("utf-8")
