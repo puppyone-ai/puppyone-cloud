@@ -14,6 +14,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from src.infra.execution.context import checkpoint
+from src.shared_types.git_pack_limits import GitLimitExceeded
 from src.version_engine.storage.git_pack_limits import (
     MAX_METADATA_BYTES,
     configured_pack_limits,
@@ -74,7 +75,9 @@ def check(deadline, directory, *, limits=None):
             with suppress(FileNotFoundError):
                 size += os.stat(os.path.join(root, name)).st_size
         if size > limits.scratch_bytes:
-            raise ValueError("Git pack temporary disk budget exceeded")
+            raise GitLimitExceeded(
+                "git_processing_disk_limit", "Git pack temporary disk budget exceeded"
+            )
 
 
 def git_command(args):
@@ -106,12 +109,16 @@ def command(directory, args, *, input=None, stdin=None, check_result=True, limit
             while process.poll() is None:
                 check(deadline, directory, limits=limits)
                 if os.fstat(output.fileno()).st_size > MAX_METADATA_BYTES:
-                    raise ValueError("Git pack metadata budget exceeded")
+                    raise GitLimitExceeded(
+                        "git_processing_metadata_limit", "Git pack metadata budget exceeded"
+                    )
                 with suppress(subprocess.TimeoutExpired):
                     process.wait(timeout=0.05)
             check(deadline, directory, limits=limits)
             if os.fstat(output.fileno()).st_size > MAX_METADATA_BYTES:
-                raise ValueError("Git pack metadata budget exceeded")
+                raise GitLimitExceeded(
+                    "git_processing_metadata_limit", "Git pack metadata budget exceeded"
+                )
             output.seek(0)
             errors.seek(0)
             result = subprocess.CompletedProcess(

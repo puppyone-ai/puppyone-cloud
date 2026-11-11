@@ -18,6 +18,53 @@ MAX_SECONDS = 300
 MAX_METADATA_BYTES = 32 * MIB
 MAX_RECEIVE_COMMAND_BYTES = 16 * MIB
 
+# Stable codes for a push refused by a fixed budget. They are the cross-
+# repository contract contracts/cloud-git-acceptance-v1.json: Desktop tells a
+# user to reduce the content instead of retrying, because the same content can
+# never pass. Add a code here and in the contract together.
+GIT_PACK_TOO_LARGE = "git_pack_too_large"
+GIT_STORED_PACK_TOO_LARGE = "git_stored_pack_too_large"
+GIT_OBJECT_COUNT_LIMIT = "git_object_count_limit"
+GIT_SINGLE_OBJECT_LIMIT = "git_single_object_limit"
+GIT_GRAPH_LIMIT = "git_graph_limit"
+GIT_PUBLISHED_OBJECT_COUNT_LIMIT = "git_published_object_count_limit"
+GIT_PROCESSING_DISK_LIMIT = "git_processing_disk_limit"
+GIT_PROCESSING_METADATA_LIMIT = "git_processing_metadata_limit"
+GIT_PROCESSING_OUTPUT_LIMIT = "git_processing_output_limit"
+GIT_LIMIT_CODES = frozenset(
+    {
+        GIT_PACK_TOO_LARGE,
+        GIT_STORED_PACK_TOO_LARGE,
+        GIT_OBJECT_COUNT_LIMIT,
+        GIT_SINGLE_OBJECT_LIMIT,
+        GIT_GRAPH_LIMIT,
+        GIT_PUBLISHED_OBJECT_COUNT_LIMIT,
+        GIT_PROCESSING_DISK_LIMIT,
+        GIT_PROCESSING_METADATA_LIMIT,
+        GIT_PROCESSING_OUTPUT_LIMIT,
+    }
+)
+
+
+class GitLimitExceeded(ValueError):
+    """Work exceeds a fixed budget; retrying the same content cannot pass.
+
+    A ValueError with an unchanged message, so every existing refusal path and
+    reader keeps working; ``code`` is what a client may rely on.
+    """
+
+    def __init__(self, code, message):
+        if code not in GIT_LIMIT_CODES:
+            raise AssertionError(f"unregistered Git limit code {code!r}")
+        super().__init__(message)
+        self.code = code
+
+
+def refusal_reason(error):
+    """The human reason for a Git client, with its stable code appended."""
+    code = error.code if isinstance(error, GitLimitExceeded) else None
+    return f"{error} (puppyone-refusal={code})" if code else str(error)
+
 
 @dataclass(frozen=True)
 class PackLimits:

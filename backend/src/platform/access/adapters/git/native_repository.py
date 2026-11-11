@@ -21,6 +21,7 @@ from src.platform.access.adapters.git.native_wire import (
 from src.platform.access.adapters.git.object_pack import IncomingPack
 from src.platform.access.adapters.git.object_reader import PublishedObjectReader
 from src.platform.access.adapters.git.protocol import flush_pkt, pkt_line
+from src.shared_types.git_pack_limits import refusal_reason
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.write_engine.git_object_graph import object_edges
 from src.version_engine.write_engine.ref_transaction import (
@@ -147,7 +148,7 @@ class NativeGitRepository:
                         incoming.read(handle, max_input_bytes=max_pack_bytes)
                     except (ValueError, KeyError, PermissionError) as exc:
                         return self.report(
-                            edits, capabilities, {}, unpack="invalid pack: " + str(exc)
+                            edits, capabilities, {}, unpack="invalid pack: " + refusal_reason(exc)
                         )
                     accepted, roots = [], {}
                     for edit in edits:
@@ -210,7 +211,7 @@ class NativeGitRepository:
                                     )
                             accepted.append(edit)
                         except (ValueError, KeyError, PermissionError) as exc:
-                            outcomes[edit.name] = str(exc)
+                            outcomes[edit.name] = refusal_reason(exc)
                     if "atomic" in capabilities and len(accepted) != len(edits):
                         accepted = []
                         outcomes.update({edit.name: "atomic receive rejected" for edit in edits})

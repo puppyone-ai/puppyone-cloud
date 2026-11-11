@@ -9,6 +9,7 @@ from src.platform.access.adapters.git.execution import (
     MAX_NATIVE_GRAPH_BYTES as MAX_GRAPH_BYTES,
     MAX_OBJECT_BYTES, MAX_OBJECTS,
 )
+from src.shared_types.git_pack_limits import GitLimitExceeded
 
 
 class PublishedObjectReader:
@@ -55,14 +56,14 @@ class PublishedObjectReader:
             self.total_bytes += len(body)
             self.verified[oid] = len(body)
             if self.total_bytes > MAX_GRAPH_BYTES or len(self.verified) > MAX_OBJECTS:
-                raise ValueError("Git graph budget exceeded")
+                raise GitLimitExceeded("git_graph_limit", "Git graph budget exceeded")
         self.allowed[oid] = kind
         for child, expected in object_edges(kind, body, object_format=self.format):
             if self.allowed.get(child) not in (None, expected):
                 raise ValueError("transport edge type mismatch")
             self.allowed[child] = expected
         if len(self.allowed) > MAX_OBJECTS:
-            raise ValueError("Git object count budget exceeded")
+            raise GitLimitExceeded("git_object_count_limit", "Git object count budget exceeded")
         if len(body) <= self.CACHE_BYTES:
             while self.cache and self.cache_bytes + len(body) > self.CACHE_BYTES:
                 _, (_, removed) = self.cache.popitem(last=False)
@@ -98,7 +99,9 @@ class PublishedObjectReader:
                         raise ValueError("published root type mismatch")
                     self.allowed[oid] = kind
                 if len(self.allowed) > MAX_OBJECTS:
-                    raise ValueError("published object count budget exceeded")
+                    raise GitLimitExceeded(
+                        "git_published_object_count_limit", "published object count budget exceeded"
+                    )
                 self.history_loaded = True
             stack = [
                 oid

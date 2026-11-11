@@ -1,0 +1,36 @@
+{
+  "contract": "puppyone.cloud-git-acceptance",
+  "version": 1,
+  "owner": "puppyone-cloud native Version Engine; Desktop pins a byte-identical copy",
+  "change_rule": "Change what a push may contain here first, in both repositories; the pinned digests then fail until each side adapts",
+  "commit_graph": {
+    "merge_commits": "accepted",
+    "octopus_merges": "accepted",
+    "unrelated_histories": "accepted",
+    "server_rewrites_history": false
+  },
+  "content": {
+    "git_lfs": "unsupported",
+    "git_lfs_client_policy": "refuse LFS pointer files before any Cloud mutation"
+  },
+  "limits": {
+    "receive_pack_bytes": 2147483648,
+    "oversized_request_http_status": 413
+  },
+  "refusals": {
+    "carrier": "the unpack reason or the ng reason of the refused ref",
+    "format": "<human reason> (puppyone-refusal=<code>)",
+    "same_content_can_pass": false,
+    "codes": [
+      "git_graph_limit",
+      "git_object_count_limit",
+      "git_pack_too_large",
+      "git_processing_disk_limit",
+      "git_processing_metadata_limit",
+      "git_processing_output_limit",
+      "git_published_object_count_limit",
+      "git_single_object_limit",
+      "git_stored_pack_too_large"
+    ]
+  }
+}
