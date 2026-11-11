@@ -76,14 +76,18 @@ derived projection jobs.**
   与 credential management control plane。
 - canonical PuppyOne remote 是本地到 Cloud 的唯一 locator。Desktop 在本地解析
   Project-root/Scope target；Backend 只接收结构化 target，并用当前 JWT 的
-  ProjectGrant 再授权。Cloud 不登记 device、folder、checkout 或 workspace instance；
-  Git URL、Scope key 与本地路径都不是 authority。新增 Project-scoped route 必须
+  ProjectGrant 再授权。Cloud 不登记 checkout 或 workspace instance，也不保存本地路径
+  和文件内容；Git URL、Scope key 与本地路径都不是 authority。例外：用户明确共享的电脑
+  与文件夹（`src/platform/hosts`），只登记设备 ID、公钥、显示名、在线状态，以及文件夹
+  ID、显示名和权限，供该用户的其他电脑找到并访问。hosts 只接受真人登录会话；Agent、
+  Sandbox、MCP、CLI 等运行时凭证与 PuppyOne 云端 Agent 不得访问用户电脑。个人电脑上的
+  文件操作不逐次记录，只保留不含文件信息的连接记录（30 天）；托管工作区按其自身规则记录。新增 Project-scoped route 必须
   登记在 `src/platform/authorization/manifest.py`。
 
 ## 依赖方向
 
 依赖只能从上往下。`uv run lint-imports` 负责检查，CI 通过
-`tests/platform/test_import_layers.py` 执行：
+`tests/architecture/test_import_layers.py` 执行：
 
 1. 入口与组装：`src.main`、`src.composition`（唯一可以认识所有模块的地方）
 2. 业务层：`platform`、`content`、`tool`、`context_publish`、`file_operations`、`ingest`、`internal`

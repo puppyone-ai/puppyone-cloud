@@ -34,15 +34,26 @@ class OrganizationRepository:
     def list_by_user(self, user_id: str) -> list[Organization]:
         resp = (
             self._client.table("org_members")
-            .select("org_id, organizations(*)")
+            .select("org_id, role, organizations(*)")
             .eq("user_id", user_id)
             .execute()
         )
+        profile = self._client.table("profiles").select("default_org_id").eq("user_id", user_id).execute()
+        default_id = (profile.data[0] if profile.data else {}).get("default_org_id")
         orgs = []
         for row in resp.data:
             if row.get("organizations"):
-                orgs.append(Organization(**row["organizations"]))
+                orgs.append(Organization(**row["organizations"],
+                                        member_role=row.get("role"),
+                                        is_default=row["organizations"]["id"] == default_id))
         return orgs
+
+    def ensure_personal(self, user_id: str, name: str) -> tuple[Organization, bool]:
+        """Compatibility name; default Space can have any number of members."""
+        result = self._client.rpc("ensure_default_cloud_space", {"p_user": user_id, "p_name": name}).execute().data
+        org = Organization(**result["organization"], is_default=True)
+        member = self.get_member(org.id, user_id)
+        return org.model_copy(update={"member_role": member.role if member else None}), result["created"] is True
 
     def create(self, name: str, slug: str, created_by: str) -> Organization:
         data = {

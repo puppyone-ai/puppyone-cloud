@@ -17,7 +17,7 @@ from src.infra.execution.runner import run_blocking
 from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
 
-from .errors import access_failure
+from .errors import access_failure, context_changed
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
 from .execution.worker_port import WorkerDisconnected, WorkerLost
 from .opening import awaiting_files
@@ -30,6 +30,20 @@ SAVE_RETRY_SECONDS = 5
 SAVE_BUDGET_SECONDS = 150
 # Past this a pause stops retrying: the machine goes back to running, or to retained.
 PAUSE_LIMIT_SECONDS = 600
+
+
+def meter_source(row):
+    """Who a compute epoch works for, which decides whose hours it spends.
+
+    An external Agent's machine and an automation's workspace run only for
+    agents. The interactive default workspace serves a person; an agent chat
+    inside it is metered separately by its run.
+    """
+    if row.get("agent_registration_id"):
+        return "external_agent"
+    if not row.get("is_default"):
+        return "automation"
+    return "workspace"
 
 
 def meter_id(row):
@@ -133,6 +147,18 @@ class WorkbenchLifecycle:
             await self.filesystem.operation(host, {"action": "list", "path": ""})
 
     async def request(self, user, project, row=None):
+        try:
+            return await self._request(user, project, row)
+        except Exception as exc:
+            if not context_changed(exc):
+                raise
+        # Provider preflight can take seconds between reading authorization and
+        # recording intent. A membership or access change in that window moves
+        # the revision; decide once more on fresh facts instead of failing the
+        # open. Every step before the recorded intent is safe to repeat.
+        return await self._request(user, project, row)
+
+    async def _request(self, user, project, row):
         context, _ = await run_blocking(self.context, user, project, ProjectAction.AGENT_RUN)
         row = (
             row
@@ -324,7 +350,7 @@ class WorkbenchLifecycle:
         # One meter per compute epoch, shared by every Chat and file channel.
         await self.billing.ensure_session(
             audit_context={
-                "source": "sandbox",
+                "source": meter_source(row),
                 "run_id": meter_id(row),
                 "project_id": row["project_id"],
                 "user_id": row["user_id"],

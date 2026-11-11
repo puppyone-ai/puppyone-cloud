@@ -1,0 +1,11 @@
+{
+  "paths": {
+    "/api/v1/auth/personal-space": "4b1b1a5647b978c3e8e05a8e210d4c49bbd09bb799ef313add547fb483081674"
+  },
+  "schemas": {
+    "OrganizationOut": {
+      "before": "6c374ce22146e414c92b6243e0f5e231c7ffa291fccf5b0ba96b197309e755e8",
+      "after": "ad75015e7a1f37b473ec965a0b550d5c7e2f4c30670df97921ec9bc401484525"
+    }
+  }
+}

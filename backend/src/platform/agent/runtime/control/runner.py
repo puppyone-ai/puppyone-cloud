@@ -79,6 +79,8 @@ class RunSupervisor:
         self.workspace = workspace
         self.lock = asyncio.Lock()
         self.worker = None
+        # Agent time inside a person's shared workspace, metered per run.
+        self.activity_meter = None
         self.models = {}
         self.model_progress = ModelProgress()
         self.durable = None
@@ -128,6 +130,11 @@ class RunSupervisor:
     async def check_billing(self, billing_run_id):
         if self.shared_tasks:
             await self.shared_tasks.check()
+            if self.activity_meter:
+                try:
+                    await self.billing.check_session(self.activity_meter)
+                except Exception as exc:
+                    raise EndRun("failed", "runtime_credit_unavailable") from exc
             return
         if billing_run_id:
             try:
@@ -284,6 +291,9 @@ class RunSupervisor:
                         await (
                             self.worker.stop()
                         )  # Only the captured old UID; no successor/VM cleanup.
+                    if self.activity_meter:
+                        # The successor reattaches to the same meter.
+                        await self.billing.detach_session(self.activity_meter)
                 elif self.run["billing_run_id"]:
                     await self.billing.detach_session(self.run["billing_run_id"])
                 return
@@ -538,6 +548,7 @@ class RunSupervisor:
             self.worker, self.value = await self.shared_tasks.acquire(self.run, self.value)
             self.durable = await self.checkpoints.save(self.run, self.value)
             billing_id = None  # The lifecycle owner reserved/checks the one shared meter.
+            self.activity_meter = await self.start_activity_meter()
         else:
             billing_id = await self.start_legacy_billing()
             self.worker = (
@@ -602,6 +613,27 @@ class RunSupervisor:
         await self.loop.start(self.worker, config)
         await self.consume()
         await self.publish(self.context.grant)
+
+    async def start_activity_meter(self):
+        """Meter this run's agent time inside a person's workspace.
+
+        The workspace's own compute epoch is the platform's cost of keeping it
+        open for a person; an agent chat working in it spends the
+        organization's agent hours, measured from here to the run's end.
+        """
+        try:
+            return await self.billing.ensure_session(
+                audit_context={
+                    "source": "chat_agent",
+                    "run_id": "cloud-agent-activity:" + self.run["id"],
+                    "project_id": self.run["project_id"],
+                    "user_id": self.run["user_id"],
+                    "org_id": self.context.grant.org_id,
+                    "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
+                }
+            )
+        except Exception as exc:
+            raise EndRun("failed", "runtime_credit_unavailable") from exc
 
     async def start_legacy_billing(self):
         if self.run["billing_run_id"]:
@@ -932,6 +964,9 @@ class RunSupervisor:
                     await run_blocking(self.repo.cleaned, execution["id"])
         if self.run["billing_run_id"] and not retain_resource:
             await self.billing.finish_session(self.run["billing_run_id"])
+        if self.activity_meter:
+            # The run is over whatever happens to its workspace.
+            await self.billing.finish_session(self.activity_meter)
         if self.workspace and self.workspace.row is None and not retain_resource:
             await run_blocking(self.repo.workspace_recovered, self.run)
         snapshot = {**self.run["snapshot"], "code": code, "resource_retained": retain_resource}

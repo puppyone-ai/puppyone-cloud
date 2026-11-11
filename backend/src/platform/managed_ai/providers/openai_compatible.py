@@ -71,12 +71,16 @@ class OpenAICompatibleProvider:
 
     def _log_failure(self, **evidence):
         # Status only: a provider error body can echo the customer's prompt.
+        report = {
+            "provider": self._profile.provider,
+            "provider_account_ref": self._profile.account_ref,
+            **evidence,
+        }
         logger.warning(
             "managed_ai_provider_request_failed",
             extra={
-                "provider": self._profile.provider,
-                "provider_account_ref": self._profile.account_ref,
-                **evidence,
+                **report,
+                "provider_failure": report,
             },
         )
 

@@ -106,3 +106,11 @@ async def test_gateway_rejects_paths_outside_fixed_billing_surface() -> None:
     ):
         with pytest.raises(ValueError):
             await gateway.request("GET", path)
+
+
+def test_gateway_allows_add_on_changes_but_not_arbitrary_segments() -> None:
+    from src.platform.billing.gateway import _path_is_allowed
+
+    assert _path_is_allowed("/api/v1/billing/organizations/org-1/add-ons/agent_hours_100")
+    assert not _path_is_allowed("/api/v1/billing/organizations/org-1/add-ons/../portal")
+    assert not _path_is_allowed("/api/v1/billing/organizations/org-1/add-ons/Bad%20Id")

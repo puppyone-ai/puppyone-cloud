@@ -19,6 +19,7 @@ from starlette.responses import StreamingResponse
 from src.config import settings
 from src.infra.execution.context import MAX_SECONDS, Execution, checkpoint, current_execution
 from src.infra.execution.runner import run_cleanup, run_owned
+from src.shared_types.git_pack_limits import GitLimitExceeded
 from src.version_engine.storage.git_pack_limits import (
     MAX_OBJECT_BYTES as MAX_OBJECT_BYTES,
 )
@@ -171,7 +172,7 @@ def run_git(command, *, env, directory, timeout, input=None, stdin=None, stdout=
                 raise TimeoutError("Git subprocess deadline exceeded")
             sizes = os.fstat(target.fileno()).st_size + os.fstat(errors.fileno()).st_size
             if sizes > MAX_GRAPH_BYTES + MAX_PACK_BYTES:
-                raise ValueError("Git output budget exceeded")
+                raise GitLimitExceeded("git_processing_output_limit", "Git output budget exceeded")
             for root, _directories, files in os.walk(directory):
                 for name in files:
                     try:
@@ -179,7 +180,9 @@ def run_git(command, *, env, directory, timeout, input=None, stdin=None, stdout=
                     except FileNotFoundError:
                         continue
                     if sizes > MAX_DISK_BYTES:
-                        raise ValueError("Git temporary disk budget exceeded")
+                        raise GitLimitExceeded(
+                            "git_processing_disk_limit", "Git temporary disk budget exceeded"
+                        )
 
         try:
             while process.poll() is None:

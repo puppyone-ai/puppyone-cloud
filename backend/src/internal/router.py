@@ -148,11 +148,17 @@ def verify_billing_organization_access(
             status_code=403,
             detail="Organization owner role is required for billing changes",
         )
+    organization = OrganizationRepository().get_by_id(org_id)
     return {
         "ok": True,
         "org_id": org_id,
         "user_id": user_id,
         "role": member.role,
+        # Plans belong to spaces: PuppyPay sells Personal only to a personal
+        # space and Team only to a team.
+        "space_kind": (
+            "personal" if organization and organization.personal_owner_id is not None else "team"
+        ),
     }
 
 

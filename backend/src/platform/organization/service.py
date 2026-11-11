@@ -57,6 +57,12 @@ class OrganizationService:
             raise NotFoundException(f"Organization not found: {org_id}", code=ErrorCode.NOT_FOUND)
         return org
 
+    def ensure_personal(self, user_id: str, name: str) -> Organization:
+        org, created = self._repo.ensure_personal(user_id, name)
+        if created:
+            self._enqueue_entitlement_provisioning(org.id, user_id)
+        return org
+
     def create(self, name: str, slug: str | None, user_id: str) -> Organization:
         if not slug:
             slug = re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
@@ -102,6 +108,8 @@ class OrganizationService:
         outcome = str(result.get("outcome") or "")
         if outcome == "deleted":
             return
+        if outcome == "personal_organization":
+            raise ForbiddenException("Personal Cloud cannot be deleted through team management")
         if outcome == "only_organization":
             raise AppException(
                 code=ErrorCode.FORBIDDEN,

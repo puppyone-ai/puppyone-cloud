@@ -252,7 +252,7 @@ export default function TeamPage() {
 
   return (
     <OrganizationPageShell
-      title="Team"
+      title="Space"
       description={`Manage members and their access to ${currentOrg.name}.`}
       actions={
         isOwner && !showInvite ? (

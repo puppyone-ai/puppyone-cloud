@@ -43,5 +43,20 @@ jobs:
         run: |
           python -m pip install "uv==0.5.11"
           uv sync --locked
+      - name: Prepare owned PostgreSQL and object services
+        working-directory: .
+        timeout-minutes: 10
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --show-error --silent --retry 3 --connect-timeout 10 --max-time 60 \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y postgresql-17 postgresql-17-pgtap
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          docker build --target build -t puppyone-entrypoint-minio-build:local -f docker/Dockerfile.minio .
+          docker pull postgrest/postgrest:v14.13
       - name: Run backend tests without live third-party services
         run: uv run pytest -q -m 'not e2e and not integration and not network'

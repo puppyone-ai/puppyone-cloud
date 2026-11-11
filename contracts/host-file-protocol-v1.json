@@ -1,0 +1,508 @@
+{
+  "contract": "puppyone.host-file-protocol",
+  "version": 1,
+  "status": "experimental; HOST_DEVICES_ENABLED=false until cross-device acceptance. Since 2026-11-06 the operations run only inside SSH that ends on the host (see transport); the Cloud relays bytes",
+  "identity": {
+    "folder": "server-registered folder_id (UUID); the host alone maps it to a local path",
+    "path": "folder-relative, '/'-separated; never absolute, never '.', '..', '\\\\', NUL or a '.git' segment",
+    "backend_stores_paths": false,
+    "backend_stores_content": false
+  },
+  "limits": {
+    "max_file_bytes": 8388608,
+    "max_directory_entries": 10000,
+    "max_path_characters": 4096,
+    "heartbeat_interval_seconds": 10,
+    "lease_seconds": 30,
+    "idle_close_seconds": 35,
+    "max_line_bytes": 12582912,
+    "max_requests_in_flight_per_channel": 16,
+    "max_watches_per_channel": 4,
+    "max_tunnels_per_device": 16,
+    "max_tunnel_chunk_bytes": 65536,
+    "client_read_timeout_seconds": 20,
+    "client_write_timeout_seconds": 45
+  },
+  "operations": {
+    "list": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/files?path=",
+      "request": {
+        "path": "string, '' for the folder root"
+      },
+      "result": {
+        "entries": [
+          {
+            "name": "string",
+            "kind": "directory | file",
+            "size": "integer",
+            "modified_ns": "decimal string"
+          }
+        ]
+      },
+      "excluded": [
+        ".git",
+        "symbolic links",
+        "special files"
+      ],
+      "order": "directories first, then name"
+    },
+    "read": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/file?path=",
+      "request": {
+        "path": "string"
+      },
+      "result": {
+        "name": "string",
+        "kind": "file",
+        "size": "integer",
+        "modified_ns": "decimal string",
+        "content_base64": "standard base64",
+        "revision": "lowercase sha256 hex of the bytes"
+      }
+    },
+    "write": {
+      "capability": "folder.write",
+      "http": "PUT /api/v1/hosts/folders/{folder_id}/file",
+      "request": {
+        "path": "string",
+        "content_base64": "standard base64",
+        "expected_revision": "sha256 hex to replace that exact content, or null to create a new file without overwriting"
+      },
+      "result": {
+        "revision": "sha256 hex",
+        "size": "integer"
+      },
+      "conflict": "the current content does not match expected_revision (or the file exists when creating)",
+      "replay": "never; a lost reply is outcome_unknown and the client keeps its draft"
+    },
+    "mkdir": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'mkdir', path}",
+      "result": {}
+    },
+    "move": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'move', path, destination}",
+      "result": {},
+      "overwrite": false
+    },
+    "remove": {
+      "capability": "folder.write",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/files {action:'remove', path}",
+      "result": {},
+      "recursive": true,
+      "max_removed_entries": 10000
+    },
+    "watch": {
+      "capability": "folder.read",
+      "http": "GET /api/v1/hosts/folders/{folder_id}/events (text/event-stream)",
+      "events": {
+        "change": {
+          "paths": [
+            "folder-relative paths"
+          ],
+          "reset": false
+        },
+        "reset": "change with {\"reset\": true}: rescan; sent first, on overflow and after a missed interval",
+        "unavailable": "{\"retryable\": true} when the host goes offline; {} when access ended"
+      },
+      "keepalive": ": keepalive comment every 15 seconds",
+      "coalescing_ms": 100
+    },
+    "git": {
+      "capability": "folder.git",
+      "http": "POST /api/v1/hosts/folders/{folder_id}/git {op, paths?, path?, scope?, commit?, message?}",
+      "reads": [
+        "status",
+        "graph",
+        "commit_detail",
+        "file_diff"
+      ],
+      "writes": [
+        "stage",
+        "stage_all",
+        "unstage",
+        "unstage_all",
+        "discard",
+        "commit",
+        "pull",
+        "push"
+      ],
+      "runs": "the host's own Git and credentials in the registered folder; the client never sends a command line",
+      "replay": "never for writes; a lost reply is outcome_unknown"
+    }
+  },
+  "errors": {
+    "invalid_path": 400,
+    "not_found": 404,
+    "already_exists": 409,
+    "conflict": 409,
+    "not_empty": 409,
+    "unsupported_file": 400,
+    "too_many_entries": 400,
+    "invalid_content": 400,
+    "revision_required": 400,
+    "folder_unavailable": 403,
+    "root_changed": 403,
+    "file_operation_failed": 400,
+    "device_offline": 503,
+    "device_busy": 503,
+    "device_disconnected": 503,
+    "device_timeout": 504,
+    "audit_unavailable": 503
+  },
+  "outcome_unknown": "a mutation whose SSH connection ended before its reply (status 0 or 504, outcomeUnknown true): the host may have applied it; keep the draft and never replay it",
+  "protocol": {
+    "supported": [
+      1
+    ],
+    "negotiation": "the host sends its version in the proof frame; a gateway that does not serve it closes with 4005 before consuming the challenge, and the host stops retrying until it is updated"
+  },
+  "device_frames": {
+    "proof": {
+      "owner": "uuid",
+      "challenge_id": "uuid",
+      "epoch": "uuid",
+      "nonce": "base64 32 bytes",
+      "signature": "base64 Ed25519 over puppyone-device-v1\\n{owner}\\n{device}\\n{challenge}\\n{epoch}\\n{nonce}",
+      "protocol": "integer protocol version",
+      "boot_id": "uuid, new on every App launch",
+      "app_version": "App version, [0-9A-Za-z][0-9A-Za-z.+_-]{0,63}"
+    },
+    "ready": {
+      "type": "ready",
+      "epoch": "uuid"
+    },
+    "heartbeat": {
+      "type": "heartbeat"
+    },
+    "heartbeat_ack": {
+      "type": "heartbeat_ack"
+    },
+    "close_codes": {
+      "4001": "replaced by a newer connection",
+      "4003": "invalid proof or frame",
+      "4004": "device revoked: forget the key",
+      "4005": "protocol not served: update the App, do not retry",
+      "4008": "idle past the lease"
+    },
+    "tunnel_open": {
+      "type": "tunnel_open",
+      "stream": "gateway id, [0-9A-Za-z_-]{1,64}",
+      "folder_id": "uuid: the folder the Cloud admitted; the SSH user name must be this folder"
+    },
+    "tunnel_opened": {
+      "type": "tunnel_opened",
+      "stream": "id"
+    },
+    "tunnel_refused": {
+      "type": "tunnel_refused",
+      "stream": "id",
+      "error": "folder_unavailable | not_allowed | tunnel_limit | tunnel_unavailable"
+    },
+    "tunnel_data": {
+      "type": "tunnel_data",
+      "stream": "id",
+      "data": "base64, at most max_tunnel_chunk_bytes raw bytes"
+    },
+    "tunnel_close": {
+      "type": "tunnel_close",
+      "stream": "id"
+    },
+    "retired": "file, reply, watch, unwatch, event and exec_* frames: the plaintext relay and the custom execution frames are gone; a host refuses them"
+  },
+  "conformance": [
+    {
+      "name": "list root hides git, links and special files",
+      "files": {
+        "note.md": "hello",
+        "sub/inner.md": "inner",
+        ".git/config": "private"
+      },
+      "symlinks": {
+        "escape.md": "../outside.md"
+      },
+      "request": {
+        "action": "list",
+        "path": ""
+      },
+      "expect": {
+        "entries": [
+          {
+            "name": "sub",
+            "kind": "directory"
+          },
+          {
+            "name": "note.md",
+            "kind": "file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "read returns bytes and revision",
+      "files": {
+        "note.md": "hello"
+      },
+      "request": {
+        "action": "read",
+        "path": "note.md"
+      },
+      "expect": {
+        "content_base64": "aGVsbG8=",
+        "revision": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+      }
+    },
+    {
+      "name": "parent traversal is refused",
+      "request": {
+        "action": "read",
+        "path": "../outside.md"
+      },
+      "error": "invalid_path"
+    },
+    {
+      "name": "git metadata is refused",
+      "files": {
+        ".git/config": "private"
+      },
+      "request": {
+        "action": "read",
+        "path": ".git/config"
+      },
+      "error": "invalid_path"
+    },
+    {
+      "name": "symbolic link is refused",
+      "symlinks": {
+        "escape.md": "../outside.md"
+      },
+      "request": {
+        "action": "read",
+        "path": "escape.md"
+      },
+      "error": "invalid_path"
+    },
+    {
+      "name": "missing file is not found",
+      "request": {
+        "action": "read",
+        "path": "missing.md"
+      },
+      "error": "not_found"
+    },
+    {
+      "name": "stale write is a conflict",
+      "files": {
+        "note.md": "hello"
+      },
+      "request": {
+        "action": "write",
+        "path": "note.md",
+        "content_base64": "bmV3",
+        "expected_revision": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "error": "conflict",
+      "after": {
+        "note.md": "hello"
+      }
+    },
+    {
+      "name": "matching write replaces content",
+      "files": {
+        "note.md": "hello"
+      },
+      "request": {
+        "action": "write",
+        "path": "note.md",
+        "content_base64": "bmV3",
+        "expected_revision": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+      },
+      "expect": {
+        "revision": "11507a0e2f5e69d5dfa40a62a1bd7b6ee57e6bcd85c67c9b8431b36fff21c437",
+        "size": 3
+      },
+      "after": {
+        "note.md": "new"
+      }
+    },
+    {
+      "name": "create never overwrites",
+      "files": {
+        "note.md": "hello"
+      },
+      "request": {
+        "action": "write",
+        "path": "note.md",
+        "content_base64": "bmV3",
+        "expected_revision": null
+      },
+      "error": "conflict",
+      "after": {
+        "note.md": "hello"
+      }
+    },
+    {
+      "name": "create a new file",
+      "request": {
+        "action": "write",
+        "path": "fresh.md",
+        "content_base64": "bmV3",
+        "expected_revision": null
+      },
+      "expect": {
+        "size": 3
+      },
+      "after": {
+        "fresh.md": "new"
+      }
+    },
+    {
+      "name": "mkdir refuses an existing name",
+      "files": {
+        "sub/inner.md": "inner"
+      },
+      "request": {
+        "action": "mkdir",
+        "path": "sub"
+      },
+      "error": "already_exists"
+    },
+    {
+      "name": "move never overwrites",
+      "files": {
+        "a.md": "a",
+        "b.md": "b"
+      },
+      "request": {
+        "action": "move",
+        "path": "a.md",
+        "destination": "b.md"
+      },
+      "error": "already_exists",
+      "after": {
+        "a.md": "a",
+        "b.md": "b"
+      }
+    },
+    {
+      "name": "move into a folder",
+      "files": {
+        "a.md": "a",
+        "sub/inner.md": "inner"
+      },
+      "request": {
+        "action": "move",
+        "path": "a.md",
+        "destination": "sub/a.md"
+      },
+      "expect": {},
+      "after": {
+        "sub/a.md": "a"
+      }
+    },
+    {
+      "name": "remove is recursive inside the folder",
+      "files": {
+        "sub/inner.md": "inner"
+      },
+      "request": {
+        "action": "remove",
+        "path": "sub"
+      },
+      "expect": {},
+      "absent": [
+        "sub"
+      ]
+    },
+    {
+      "name": "the folder root cannot be removed",
+      "request": {
+        "action": "remove",
+        "path": ""
+      },
+      "error": "invalid_path"
+    }
+  ],
+  "transport": {
+    "client_tunnel": "WSS /api/v1/hosts/folders/{folder_id}/tunnel with the person's bearer token (header or version.bearer.<jwt> subprotocol); after {\"type\": \"ready\"} every binary message is tunnel bytes; a refusal is {\"type\": \"error\", \"code\"}",
+    "ssh": {
+      "client_key": "a fresh Ed25519 key per connection",
+      "certificate": "POST /api/v1/hosts/devices/{device_id}/ssh-certificate: an Ed25519 user certificate from GET /api/v1/hosts/ssh-authority, key id user:{owner}, principal = device id, valid 5 minutes, no critical options, no forwarding",
+      "host_key": "the device's registered Ed25519 key (host_key in the certificate response); the client accepts no other, never trust on first use",
+      "user": "the folder id",
+      "allowed": [
+        "session: subsystem puppyone-files",
+        "session: pty + shell",
+        "session: exec <command> (binary safe, exit status)",
+        "session: pty + exec puppyone-agent <launcher>"
+      ],
+      "refused": [
+        "sftp",
+        "scp",
+        "port forwarding (local, remote, streamlocal)",
+        "agent forwarding",
+        "x11",
+        "env other than TERM, LANG, LC_*, COLORTERM"
+      ]
+    },
+    "files_subsystem": {
+      "framing": "one JSON object per line (UTF-8, \\n), both directions",
+      "request": {
+        "id": "integer",
+        "op": "request",
+        "request": {
+          "action": "list | read | write | mkdir | move | remove | git",
+          "...": "operation fields"
+        }
+      },
+      "reply": {
+        "id": "integer",
+        "result": "operation result",
+        "error": "error code"
+      },
+      "watch": {
+        "id": "integer",
+        "op": "watch"
+      },
+      "watching": {
+        "id": "integer",
+        "result": {
+          "watching": true
+        }
+      },
+      "event": {
+        "watch": "integer",
+        "paths": [
+          "folder-relative paths"
+        ],
+        "reset": "boolean",
+        "ended": "true when the watch ended"
+      },
+      "unwatch": {
+        "id": "integer",
+        "op": "unwatch"
+      }
+    },
+    "execution": {
+      "capabilities": {
+        "shell and exec": "folder.shell",
+        "agent": "folder.agent",
+        "git": "folder.git"
+      },
+      "requires": "folder.write and the host's own per-folder consent, which is off by default; everything runs in the folder sandbox",
+      "launchers": [
+        "shell",
+        "codex",
+        "claude",
+        "cursor",
+        "opencode",
+        "pi",
+        "hermes"
+      ],
+      "ends": "withdrawing consent, unsharing the folder, revoking the device or losing the device socket ends the sessions at once"
+    }
+  }
+}

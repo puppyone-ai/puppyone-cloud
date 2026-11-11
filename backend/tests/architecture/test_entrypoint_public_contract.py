@@ -502,7 +502,43 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         for name, digest in sandbox[category]["removed"].items():
             assert expected["contract"][category].pop(name) == digest
-    assert contract(app.openapi()) == expected["contract"]
+    # Device inventory is additive and gated off until the transport is accepted.
+    hosts = json.loads(Path(__file__).with_name("host_inventory_contract_delta.json").read_text())
+    assert all(path.startswith(("/api/v1/hosts", "/api/v1/host-directory")) for path in hosts["paths"])
+    # Folder content travels only inside SSH that ends on the device: no plaintext file routes for devices.
+    assert set(hosts["schemas"]) == {"DeviceRegistration", "DeviceChallengeRequest", "FolderRegistration",
+                                     "FileWrite", "HostFolderUpdate", "HostDirectoryOperation",
+                                     "HostSshCertificateRequest"}
+    assert not any(path.startswith("/api/v1/hosts/folders/") and not path.endswith("/tunnel") for path in hosts["paths"])
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & hosts[category].keys()
+        expected["contract"][category].update(hosts[category])
+    # Explicit personal-space discovery expands OrganizationOut; keep every
+    # unrelated historical path/schema immutable rather than re-recording all.
+    spaces = json.loads(Path(__file__).with_name("personal_spaces_contract_delta.json").read_text())
+    assert set(spaces["paths"]) == {"/api/v1/auth/personal-space"}
+    assert set(spaces["schemas"]) == {"OrganizationOut"}
+    assert not expected["contract"]["paths"].keys() & spaces["paths"].keys()
+    expected["contract"]["paths"].update(spaces["paths"])
+    for name, change in spaces["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
+    unified = json.loads(Path(__file__).with_name("unified_spaces_contract_delta.json").read_text())
+    expected["contract"]["paths"].update(unified["paths"])
+    expected["contract"]["schemas"].update(unified["schemas"])
+    classification = json.loads(Path(__file__).with_name("space_classification_contract_delta.json").read_text())
+    assert classification["paths"] == {} and set(classification["schemas"]) == {"OrganizationOut"}
+    for name, change in classification["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
+    assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
+        "const": "space", "default": "space", "title": "Kind", "type": "string",
+    }
+    actual = contract(app.openapi())
+    differences = {category: {name: [expected["contract"][category].get(name), actual[category].get(name)]
+        for name in expected["contract"][category].keys() | actual[category].keys()
+        if expected["contract"][category].get(name) != actual[category].get(name)} for category in actual}
+    assert actual == expected["contract"], json.dumps(differences, sort_keys=True)
 
 
 @pytest.mark.parametrize("retired", ["/synchronize", "/sandbox-endpoint"])

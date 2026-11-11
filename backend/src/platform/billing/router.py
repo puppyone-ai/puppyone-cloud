@@ -18,6 +18,7 @@ from src.platform.billing.gateway import (
     get_billing_gateway,
 )
 from src.platform.billing.models import (
+    AddOnChangeRequest,
     CancellationRequest,
     CheckoutRequest,
     PlanQuoteRequest,
@@ -1178,6 +1179,35 @@ async def runtime_overage(
     return await _idempotent_mutation(
         org_id=org_id,
         suffix="runtime/overage",
+        payload=payload,
+        authorization=authorization,
+        idempotency_key=idempotency_key,
+        current_user=current_user,
+        org_service=org_service,
+        gateway=gateway,
+        method="PUT",
+    )
+
+
+@router.put("/organizations/{org_id}/add-ons/{add_on_id}")
+async def add_on(
+    org_id: str,
+    add_on_id: str,
+    payload: AddOnChangeRequest,
+    authorization: Annotated[str, Header(alias="Authorization")],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    org_service: OrganizationService = Depends(get_org_service),
+    gateway: PuppyPayGateway = Depends(get_billing_gateway),
+) -> dict[str, Any]:
+    """Hold a number of packs of one add-on (extra agent hours or storage).
+
+    PuppyPay decides whether this opens a checkout or changes an existing
+    add-on; the provider webhook stays the authority for what is held.
+    """
+    return await _idempotent_mutation(
+        org_id=org_id,
+        suffix=f"add-ons/{quote(add_on_id, safe='')}",
         payload=payload,
         authorization=authorization,
         idempotency_key=idempotency_key,

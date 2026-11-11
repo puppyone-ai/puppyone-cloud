@@ -13,7 +13,7 @@ The checked-out `qubits` code runs in the existing owned Linux/Supabase/S3 runne
 | Real SQL CAS, atomic multi-ref publication, lost database ACK and rediscovery | `integration/test_native_s3_transactions.py`, `test_ref_authority.py` |
 | Native Product retries, process death, object durability, quotas and billing | `integration/test_native_s3_product_*.py`, `test_native_s3_*` |
 | Cancellation joins storage before releasing read pins; cache disabled; no server Git/temp repo | `unit/test_direct_object_transport.py` |
-| Public API names/schemas, retired aliases, four entrypoint ownership and queues | `tests/platform/test_entrypoint_public_contract.py`, `test_entrypoint_architecture.py`, `test_entrypoint_retired_source.py`, `test_entrypoint_queue_cutover.py` |
+| Public API names/schemas, retired aliases, four entrypoint ownership and queues | `tests/architecture/test_entrypoint_public_contract.py`, `test_entrypoint_architecture.py`, `test_entrypoint_retired_source.py`, `tests/platform/test_entrypoint_queue_cutover.py` |
 
 Stock Git workspace/oracle tests alone do not establish Cloud support. The
 formal application and PG/S3 layers remain separate, explicit acceptance layers.

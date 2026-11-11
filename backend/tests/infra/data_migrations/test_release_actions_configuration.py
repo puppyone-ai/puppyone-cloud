@@ -224,13 +224,18 @@ def test_workflows_fetch_the_postgresql_signing_key_from_its_published_location(
     assert "https://www.postgresql.org/media/keys/ACCC4CF8.asc" in release
 
 
-@pytest.mark.parametrize("extra,accepted", [({"ssh_gateway": {"id": "gateway"}}, True), ({"unknown": {"id": "x"}}, False)])
+@pytest.mark.parametrize("extra,accepted", [
+    ({"ssh_gateway": {"id": "gateway"}}, True),
+    ({"device_gateway": {"id": "devices"}}, True),
+    ({"ssh_gateway": {"id": "gateway"}, "device_gateway": {"id": "devices"}}, True),
+    ({"unknown": {"id": "x"}}, False),
+])
 def test_inventory_accepts_only_known_optional_roles(source, extra, accepted):
     config = json.loads(source["RELEASE_CONFIG_JSON"])
     config["railway"]["services"].update(extra)
     source["RELEASE_CONFIG_JSON"] = json.dumps(config)
     if accepted:
-        assert "ssh_gateway" in json.loads(module.prepare(source).read_text())["railway"]["services"]
+        assert set(extra) <= set(json.loads(module.prepare(source).read_text())["railway"]["services"])
     else:
         with pytest.raises(ValueError, match="inventory"):
             module.prepare(source)

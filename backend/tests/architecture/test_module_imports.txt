@@ -1,0 +1,23 @@
+# Structured tests that still import another test module (from before the layout). This list only
+# shrinks: move the shared fixture to a conftest.py or the helper to a support module, then delete the line.
+repository_hosting/unit/test_capacity_admission.py
+repository_hosting/unit/test_direct_object_transport.py
+repository_hosting/unit/test_docker_runner.py
+repository_hosting/unit/test_history_read_budgets.py
+repository_hosting/unit/test_initial_push_identity.py
+repository_hosting/unit/test_native_file_policy.py
+repository_hosting/unit/test_native_history_diff.py
+repository_hosting/unit/test_native_product_reads.py
+repository_hosting/unit/test_native_ref_metadata.py
+repository_hosting/unit/test_native_size_limits.py
+repository_hosting/unit/test_native_transport_protocol.py
+repository_hosting/unit/test_prepared_ingestion.py
+repository_hosting/unit/test_read_preserves_acknowledged_root.py
+repository_hosting/unit/test_readback_receipts.py
+repository_hosting/unit/test_repository_management.py
+repository_hosting/unit/test_repository_snapshot.py
+repository_hosting/unit/test_s3_environment.py
+repository_hosting/unit/test_standard_git_pack.py
+repository_hosting/unit/test_streamed_storage.py
+repository_hosting/unit/test_usage_reconciliation.py
+repository_hosting/unit/test_workspace_resources.py

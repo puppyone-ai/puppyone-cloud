@@ -547,3 +547,34 @@ def test_linked_seat_operation_cannot_regress_from_a_terminal_state(
         )
 
     assert caught.value.details["code"] == "billing_operation_terminal"
+
+
+@pytest.mark.asyncio
+async def test_add_on_change_is_an_owner_only_idempotent_put(enabled) -> None:
+    from src.platform.billing.models import AddOnChangeRequest
+    from src.platform.billing.router import add_on
+
+    gateway = _Gateway({"outcome": "checkout", "checkout_url": "https://checkout.example/1"})
+    arguments = {
+        "org_id": "org-1",
+        "add_on_id": "agent_hours_100",
+        "payload": AddOnChangeRequest(quantity=2),
+        "authorization": "Bearer desktop-token",
+        "current_user": SimpleNamespace(user_id="user-1", email="owner@example.com"),
+        "gateway": gateway,
+    }
+    with pytest.raises(ForbiddenException):
+        await add_on(**arguments, org_service=_Organizations("member"), idempotency_key="k-1")
+    with pytest.raises(AppException):
+        await add_on(**arguments, org_service=_Organizations("owner"), idempotency_key=None)
+    assert gateway.calls == []
+
+    result = await add_on(**arguments, org_service=_Organizations("owner"), idempotency_key="k-1")
+    method, path, kwargs = gateway.calls[0]
+    assert (method, path) == (
+        "PUT",
+        "/api/v1/billing/organizations/org-1/add-ons/agent_hours_100",
+    )
+    assert kwargs["body"] == {"quantity": 2}
+    assert kwargs["idempotency_key"] == "k-1"
+    assert result["checkout_url"] == "https://checkout.example/1"

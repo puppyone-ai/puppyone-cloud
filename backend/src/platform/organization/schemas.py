@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel
+
+from src.platform.organization.models import Organization
 
 
 class CreateOrganization(BaseModel):
@@ -26,6 +30,11 @@ class TransferOwnership(BaseModel):
 
 class OrganizationOut(BaseModel):
     id: str
+    kind: Literal["space"] = "space"
+    is_default: bool = False
+    role: str | None = None
+    can_manage_space: bool = False
+    can_create_projects: bool = True
     name: str
     slug: str
     avatar_url: str | None = None
@@ -33,6 +42,20 @@ class OrganizationOut(BaseModel):
     seat_limit: int
     created_at: str
     member_count: int | None = None
+    # The plan billing published for this space, so the Homepage can say which
+    # plan its projects use. Absent until billing has published one.
+    billing_plan_id: str | None = None
+
+    @classmethod
+    def for_member(cls, org: Organization, *, role: str | None = None) -> "OrganizationOut":
+        """Only call after membership admission; Project creation rechecks it in SQL."""
+        role = role or getattr(org, "member_role", None)
+        return cls(
+            id=org.id,
+            is_default=getattr(org, "is_default", False), role=role, can_manage_space=role == "owner",
+            can_create_projects=role in (None, "owner", "member"), name=org.name, slug=org.slug, avatar_url=org.avatar_url,
+            plan=org.plan, seat_limit=org.seat_limit, created_at=org.created_at.isoformat(),
+        )
 
 
 class OrganizationSeatUsageOut(BaseModel):

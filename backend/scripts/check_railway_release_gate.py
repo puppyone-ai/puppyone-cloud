@@ -14,8 +14,8 @@ REQUIRED_ROLES = {
     "synchronize_worker",
     "mcp_server",
 }
-# Deployed when the environment exposes Hosted Workspace SSH.
-OPTIONAL_ROLES = {"ssh_gateway"}
+# Deployed when the environment exposes Hosted Workspace SSH or device hosts.
+OPTIONAL_ROLES = {"ssh_gateway", "device_gateway"}
 
 
 def validate_contract(repo_root: Path) -> list[str]:
@@ -34,7 +34,7 @@ def validate_contract(repo_root: Path) -> list[str]:
     if set(manifest.get("services", {})) != REQUIRED_ROLES | {"frontend"}:
         errors.append("Release inventory must include every worker, API, MCP and frontend")
     if set(manifest.get("optional_services", {})) != OPTIONAL_ROLES:
-        errors.append("Release inventory must declare the optional SSH gateway")
+        errors.append("Release inventory must declare the optional SSH and device gateways")
     if (
         manifest.get("deployment_owner") != "environment-release"
         or manifest.get("independent_autodeploy") is not False

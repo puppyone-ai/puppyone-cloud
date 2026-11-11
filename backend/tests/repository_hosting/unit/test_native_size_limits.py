@@ -181,6 +181,8 @@ def test_protocol_command_budget_cannot_be_used_for_pack_bytes(tmp_path):
                         + b"0000" + payload)
     response = NativeGitRepository(service).receive(grant("p"), request, max_pack_bytes=len(payload) - 1)
     assert b"unpack invalid pack:" in response.body and b"byte limit" in response.body
+    # The stable code Desktop relies on (contracts/cloud-git-acceptance-v1.json).
+    assert b"(puppyone-refusal=git_pack_too_large)" in response.body
     assert not pins
     # The fake service has no publisher: reaching publication would fail this test.
 
