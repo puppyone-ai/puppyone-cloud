@@ -85,8 +85,13 @@ def test_product_producer_retry_history_and_stale_cas(tmp_path):
                     with pytest.raises(FileNotFoundError):
                         ops.read_file(a.project, "new.txt")
                     assert ops.read_file(a.project, "before.txt") == b"before"
-                    await ops.bulk_write(a.project, {"two.txt": b"two"}, deleted=["before.txt"])
+                    await ops.bulk_write(
+                        a.project,
+                        {"two.txt": b"two", "late-nul.bin": b"a" * 8192 + b"\x00binary"},
+                        deleted=["before.txt"],
+                    )
                     assert ops.read_file(a.project, "two.txt") == b"two"
+                    assert ops.read_file(a.project, "late-nul.bin") == b"a" * 8192 + b"\x00binary"
 
             asyncio.run(write())
             import uuid
@@ -115,9 +120,14 @@ def test_product_producer_retry_history_and_stale_cas(tmp_path):
                 pg.value(
                     "SELECT full_path FROM public.fs_path_index WHERE project_id="
                     + literal(a.project)
+                    + " ORDER BY full_path"
                 )
-                == "two.txt"
+                == "late-nul.bin\ntwo.txt"
             )
+            assert pg.value(
+                "SELECT file_path || ':' || text FROM public.version_text_index WHERE project_id="
+                + literal(a.project)
+            ) == "two.txt:two"
             sdk.rpc(
                 "finish_native_projection_events",
                 dict(p_project=a.project, p_token=token, p_sequence=sequence),
