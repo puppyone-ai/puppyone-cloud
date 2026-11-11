@@ -9,6 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from src.platform.idempotency import require_idempotency_key
+
 ROOT = Path(__file__).resolve().parents[5]
 
 
@@ -52,6 +54,8 @@ def handler(seen, fail=None):
         if request.method == "DELETE":
             return httpx.Response(503 if fail == "cleanup" else 202, json={})
         if path == "/projects/":
+            key = request.headers["Idempotency-Key"]
+            assert require_idempotency_key(key) == key
             assert json.loads(request.content)["org_id"] == "owned-org"
             return httpx.Response(503 if fail == "create" else 201,
                                   json={"data": {"id": "owned-project"}})
