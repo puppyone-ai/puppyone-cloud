@@ -117,6 +117,16 @@ def test_default_target_is_derived_from_the_same_protected_account():
     assert result["passed_iterations"] == 1
 
 
+def test_failed_login_reports_only_fixed_check_name_and_http_status():
+    def reject(request):
+        return httpx.Response(429, json={"detail": "private-login-response"})
+
+    with pytest.raises(stress.HostedCheckFailure) as error:
+        stress.run(account(), 1, transport=httpx.MockTransport(reject))
+    assert str(error.value) == "login: HTTP 429"
+    assert "private-login-response" not in str(error.value)
+
+
 @pytest.mark.parametrize("iterations", [0, 101, True])
 def test_iteration_budget_is_checked_before_contacting_the_host(iterations):
     with pytest.raises(ValueError, match=r"1\.\.100"):

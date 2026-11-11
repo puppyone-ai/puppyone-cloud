@@ -13,6 +13,10 @@ from uuid import uuid4
 import httpx
 
 
+class HostedCheckFailure(RuntimeError):
+    """Only fixed check names and HTTP status codes; safe to report in CI."""
+
+
 def prepare_account(raw: str, destination: Path) -> None:
     config = json.loads(raw)
     account = config.get("acceptance") or {}
@@ -43,56 +47,59 @@ def run(account: dict, iterations: int, *, api_url: str = "", transport=None) ->
                       transport=transport, follow_redirects=False) as client:
         client.headers["X-PuppyOne-Repository-Contract"] = "2"
 
-        def call(method, path, *, statuses=(200,), **kwargs):
+        def call(method, path, *, check, statuses=(200,), **kwargs):
             response = client.request(method, "/api/v1" + path, **kwargs)
             if response.status_code not in statuses:
-                raise RuntimeError(f"Hosted Git check HTTP {response.status_code}")
+                raise HostedCheckFailure(f"{check}: HTTP {response.status_code}")
             if not response.content:
                 return {}
             body = response.json()
             return body.get("data", body) if isinstance(body, dict) else body
 
-        login = call("POST", "/auth/login", json={
+        login = call("POST", "/auth/login", check="login", json={
             "email": account["email"], "password": account["password"],
         })
         if not isinstance(login.get("access_token"), str) or not login["access_token"]:
-            raise RuntimeError("Hosted Git login returned no session")
+            raise HostedCheckFailure("login: no session")
         client.headers["Authorization"] = "Bearer " + login["access_token"]
         nonce = uuid4().hex
         project = call("POST", "/projects/", statuses=(200, 201),
+                       check="create-project",
                        headers={"Idempotency-Key": nonce},
                        json={"name": "Hosted Git stress " + nonce[:12],
                              "org_id": account["org_id"]})
         if not isinstance(project.get("id"), str) or not project["id"]:
-            raise RuntimeError("Hosted Git check created no owned project")
+            raise HostedCheckFailure("create-project: no owned project")
         project_id = project["id"]
         project_path = "/projects/" + quote(project_id, safe="")
         content_path = "/content/" + quote(project_id, safe="")
         completed = 0
         try:
-            surfaces = call("POST", project_path + "/access/surfaces/enable-target", json={
+            surfaces = call("POST", project_path + "/access/surfaces/enable-target", check="enable-access", json={
                 "target": {"kind": "project_root", "project_id": project_id},
             })
             if not {"git_remote", "cli"} <= {row.get("kind") for row in surfaces}:
-                raise RuntimeError("Hosted Git access was not enabled")
+                raise HostedCheckFailure("enable-access: missing entry points")
             for iteration in range(iterations):
                 files = [{"path": f"stress-{nonce}-{iteration}-{index}.md",
                           "content": f"{nonce}:{iteration}:{index}", "node_type": "markdown"}
                          for index in range(3)]
                 call("POST", content_path + "/bulk-write", statuses=(200, 201),
+                     check="bulk-write",
                      json={"files": files})
                 renamed = "renamed-" + files[0]["path"]
                 call("POST", content_path + "/mv", statuses=(200, 201),
+                     check="move",
                      json={"old_path": files[0]["path"], "new_path": renamed})
-                body = call("GET", content_path + "/cat", params={"path": renamed})
+                body = call("GET", content_path + "/cat", check="read", params={"path": renamed})
                 if body.get("content_text") != files[0]["content"]:
-                    raise RuntimeError("Hosted Git moved file differs from acknowledged write")
-                health = call("GET", project_path + "/git-view/health")
+                    raise HostedCheckFailure("read: acknowledged content mismatch")
+                health = call("GET", project_path + "/git-view/health", check="git-health")
                 if health.get("health") not in {"healthy", "history_degraded"} or health.get("git_usable") is not True:
-                    raise RuntimeError("Hosted Git repository is not usable after a move")
+                    raise HostedCheckFailure("git-health: repository unusable after move")
                 completed += 1
         finally:
-            call("DELETE", project_path, statuses=(200, 202, 204))
+            call("DELETE", project_path, check="cleanup", statuses=(200, 202, 204))
     return {"iterations": iterations, "passed_iterations": completed,
             "git_read_after_move": True, "cleanup_requested": True}
 
@@ -119,6 +126,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except HostedCheckFailure as error:
+        raise SystemExit(f"Hosted Git stress failed ({error})") from None
     except (ValueError, RuntimeError, OSError, httpx.HTTPError) as error:
         # Never echo passwords, bearer tokens, response bodies or customer rows.
         raise SystemExit(f"Hosted Git stress failed ({type(error).__name__})") from None
