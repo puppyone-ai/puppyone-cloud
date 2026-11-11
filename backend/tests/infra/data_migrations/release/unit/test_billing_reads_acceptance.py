@@ -55,6 +55,9 @@ def test_hosted_probe_uses_normal_login_bearer_and_fails_before_mutations(monkey
     def respond(request):
         path = request.url.path.removeprefix("/api/v1")
         seen.append((request.method, path))
+        if path == "/health":
+            assert "Authorization" not in request.headers
+            return httpx.Response(200, json={"status": "ready"})
         if path == "/auth/login":
             return httpx.Response(200, json={"access_token": "owned-test-login"})
         assert request.headers["Authorization"] == "Bearer owned-test-login"
