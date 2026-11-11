@@ -4,12 +4,32 @@ from __future__ import annotations
 
 import base64
 import time
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
 
 # Initial allocation budget for a first workspace (machine, volume, checkout).
 WORKBENCH_START_SECONDS = 240
+
+
+def accept_billing_reads(call, org_id: str) -> dict:
+    """Use the signed-in owner's normal read routes; never request a purchase."""
+    catalog = call("GET", "/billing/catalog")
+    endpoint = "/billing/organizations/" + quote(org_id, safe="")
+    summary = call("GET", endpoint + "/summary")
+    usage = call("GET", endpoint + "/usage")
+    runtime = usage.get("runtime") or {}
+    if (
+        not isinstance(catalog.get("plans"), list) or not catalog["plans"]
+        or summary.get("org_id") != org_id
+        or not isinstance(summary.get("plan_id"), str) or not summary["plan_id"]
+        or runtime.get("org_id") != org_id
+        or any(type(runtime.get(key)) is not int
+               for key in ("available_units", "reserved_units", "consumed_units"))
+    ):
+        raise RuntimeError("Release billing reads returned an incomplete account")
+    return {"billing_catalog_read": True, "billing_summary_read": True, "billing_usage_read": True}
 
 
 def open_workbench(call, endpoint: str, *, clock=time.monotonic) -> dict:
@@ -97,6 +117,9 @@ def accept(config: dict) -> dict:
         # Agent calls are prepaid. This account starts like any new user, with
         # its one-time trial; claiming again changes nothing.
         call("POST", "/ai/trial", json={})
+        billing_reads = (
+            accept_billing_reads(call, config["org_id"]) if config.get("billing_reads") else {}
+        )
         project = call(
             "POST",
             "/projects/",
@@ -159,6 +182,7 @@ def accept(config: dict) -> dict:
                     ):
                         raise RuntimeError("Agent did not retain the opened workspace")
                     return {
+                        **billing_reads,
                         "authenticated_read_write": True,
                         "git_commit_created": True,
                         "agent_reply": True,
