@@ -9,10 +9,14 @@ from src.config import settings
 from src.exceptions import AppException, ForbiddenException
 from src.platform.billing.gateway import BillingGatewayError
 from src.platform.billing.models import (
+    AddOnChangeRequest,
+    CancellationRequest,
     CheckoutRequest,
     PlanQuoteRequest,
     QuoteApplyRequest,
+    RuntimeOverageRequest,
     SeatQuoteRequest,
+    TopUpRequest,
 )
 from src.platform.billing.operations import BillingOperation
 from src.platform.billing.router import (
@@ -179,6 +183,120 @@ class _Operations:
 def enabled(monkeypatch):
     monkeypatch.setattr(settings, "BILLING_UI_ENABLED", True)
     monkeypatch.setattr(settings, "BILLING_WRITES_ENABLED", True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowlist", ["", "org-10"])
+@pytest.mark.parametrize(
+    "name,payload,extra",
+    [
+        ("plan_quote", PlanQuoteRequest(target_plan_id="plus", seat_quantity=1), {}),
+        ("seat_quote", SeatQuoteRequest(seat_quantity=1), {}),
+        ("checkout", CheckoutRequest(plan_id="plus", quote_id="old-quote"), {}),
+        ("plan_change", QuoteApplyRequest(quote_id="old-quote"), {}),
+        ("seats_change", QuoteApplyRequest(quote_id="old-quote"), {}),
+        ("cancel", CancellationRequest(cancel_at_period_end=False), {}),
+        ("portal", None, {}),
+        ("runtime_top_up", TopUpRequest(pack_id="ru_1000"), {}),
+        ("runtime_overage", RuntimeOverageRequest(enabled=True, monthly_limit_cents=100), {}),
+        ("add_on", AddOnChangeRequest(quantity=1), {"add_on_id": "extra-hours"}),
+    ],
+)
+async def test_all_purchase_routes_reject_outside_rollout_before_upstream(
+    enabled,
+    monkeypatch,
+    allowlist,
+    name,
+    payload,
+    extra,
+):
+    monkeypatch.setattr(settings, "BILLING_PURCHASE_ORG_IDS", allowlist)
+    gateway = _Gateway()
+    extra = dict(extra)
+    args = ("org-1",) if payload is None else ("org-1", payload)
+    if name == "add_on":
+        args = ("org-1", extra.pop("add_on_id"), payload)
+    with pytest.raises(AppException) as error:
+        await getattr(billing_router, name)(
+            *args,
+            **extra,
+            authorization="Bearer desktop-token",
+            idempotency_key="purchase",
+            current_user=SimpleNamespace(user_id="user-1", email="owner@example.com"),
+            org_service=_Organizations("owner"),
+            gateway=gateway,
+        )
+    assert error.value.status_code == 503
+    assert error.value.details["code"] == "billing_rollout_not_enabled"
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["owner", "member"])
+@pytest.mark.parametrize(
+    "name,payload,extra",
+    [
+        ("cancel", CancellationRequest(cancel_at_period_end=True), {}),
+        ("add_on", AddOnChangeRequest(quantity=0), {"add_on_id": "extra-hours"}),
+        ("runtime_overage", RuntimeOverageRequest(enabled=False, monthly_limit_cents=0), {}),
+    ],
+)
+async def test_stopping_charges_preserves_owner_checks_when_purchases_are_closed(
+    enabled,
+    monkeypatch,
+    role,
+    name,
+    payload,
+    extra,
+):
+    monkeypatch.setattr(settings, "BILLING_PURCHASE_ORG_IDS", "")
+    monkeypatch.setattr(settings, "BILLING_WRITES_ENABLED", False)
+    gateway = _Gateway()
+    extra = dict(extra)
+    args = ("org-1", payload)
+    if name == "add_on":
+        args = ("org-1", extra.pop("add_on_id"), payload)
+
+    async def call():
+        return await getattr(billing_router, name)(
+            *args,
+            **extra,
+            authorization="Bearer desktop-token",
+            idempotency_key="stop",
+            current_user=SimpleNamespace(user_id="user-1", email="owner@example.com"),
+            org_service=_Organizations(role),
+            gateway=gateway,
+        )
+
+    if role == "owner":
+        assert await call() == {"ok": True}
+        assert len(gateway.calls) == 1
+    else:
+        with pytest.raises(ForbiddenException):
+            await call()
+        assert gateway.calls == []
+
+
+@pytest.mark.asyncio
+async def test_rollout_allows_selected_owner_quote_and_preserves_reads(enabled, monkeypatch):
+    monkeypatch.setattr(settings, "BILLING_PURCHASE_ORG_IDS", "org-1")
+    gateway = _Gateway()
+    kwargs = dict(
+        authorization="Bearer desktop-token",
+        current_user=SimpleNamespace(user_id="user-1", email="owner@example.com"),
+        org_service=_Organizations("owner"),
+        gateway=gateway,
+    )
+    await plan_quote(
+        "org-1",
+        PlanQuoteRequest(target_plan_id="plus", seat_quantity=1),
+        idempotency_key="quote",
+        **kwargs,
+    )
+    monkeypatch.setattr(settings, "BILLING_PURCHASE_ORG_IDS", "")
+    await summary("org-1", **kwargs)
+    await catalog(gateway=gateway)
+    assert [row[0] for row in gateway.calls] == ["POST", "GET", "GET"]
 
 
 @pytest.mark.asyncio

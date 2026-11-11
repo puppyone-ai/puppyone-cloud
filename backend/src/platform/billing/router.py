@@ -57,14 +57,24 @@ def _require_ui() -> None:
         )
 
 
-def _require_writes() -> None:
+def _require_writes(org_id: str, *, cancellation: bool = False) -> None:
     _require_ui()
+    # Stopping renewal remains available when new purchases are paused.
+    if cancellation:
+        return
     if not settings.BILLING_WRITES_ENABLED:
         raise AppException(
             code=ErrorCode.FORBIDDEN,
             status_code=503,
             message="Billing changes are temporarily disabled",
             details={"code": "billing_writes_disabled"},
+        )
+    if not settings.billing_purchase_allowed(org_id):
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            status_code=503,
+            message="Purchases are not available for this workspace yet",
+            details={"code": "billing_rollout_not_enabled"},
         )
 
 
@@ -143,7 +153,13 @@ async def _authorized_org_call(
     idempotency_key: str | None = None,
     write: bool = False,
 ) -> dict[str, Any]:
-    _require_writes() if write else _require_ui()
+    if write:
+        _require_writes(
+            org_id,
+            cancellation=_stops_future_charges(suffix, body),
+        )
+    else:
+        _require_ui()
     await _require_owner(org_service, org_id, current_user.user_id)
     # The Desktop bearer token terminates at PuppyOne. PuppyPay receives a
     # service-authenticated acting principal and independently rechecks billing
@@ -157,6 +173,16 @@ async def _authorized_org_call(
         actor_email=current_user.email,
         idempotency_key=idempotency_key,
         body=body,
+    )
+
+
+def _stops_future_charges(suffix: str, body: dict[str, Any] | None) -> bool:
+    if body is None:
+        return False
+    return (
+        (suffix == "subscription/cancel" and body.get("cancel_at_period_end") is True)
+        or (suffix == "runtime/overage" and body.get("enabled") is False)
+        or (suffix.startswith("add-ons/") and body.get("quantity") == 0)
     )
 
 
@@ -786,7 +812,7 @@ async def seat_quote(
     org_service: OrganizationService = Depends(get_org_service),
     gateway: PuppyPayGateway = Depends(get_billing_gateway),
 ) -> dict[str, Any]:
-    _require_writes()
+    _require_writes(org_id)
     await _require_owner(org_service, org_id, current_user.user_id)
     del authorization
     repository: BillingOperationRepository | None = None
@@ -885,7 +911,7 @@ async def checkout(
     org_service: OrganizationService = Depends(get_org_service),
     gateway: PuppyPayGateway = Depends(get_billing_gateway),
 ) -> dict[str, Any]:
-    _require_writes()
+    _require_writes(org_id)
     await _require_owner(org_service, org_id, current_user.user_id)
     del authorization
     key = _idempotency_key(idempotency_key)
@@ -980,7 +1006,7 @@ async def plan_change(
     org_service: OrganizationService = Depends(get_org_service),
     gateway: PuppyPayGateway = Depends(get_billing_gateway),
 ) -> dict[str, Any]:
-    _require_writes()
+    _require_writes(org_id)
     await _require_owner(org_service, org_id, current_user.user_id)
     del authorization
     key = _idempotency_key(idempotency_key)
@@ -1034,7 +1060,7 @@ async def seats_change(
     org_service: OrganizationService = Depends(get_org_service),
     gateway: PuppyPayGateway = Depends(get_billing_gateway),
 ) -> dict[str, Any]:
-    _require_writes()
+    _require_writes(org_id)
     await _require_owner(org_service, org_id, current_user.user_id)
     del authorization
     key = _idempotency_key(idempotency_key)
