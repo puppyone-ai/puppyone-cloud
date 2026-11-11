@@ -1,8 +1,9 @@
-"""Actual Desktop Main/preload/renderer reload against local canonical services.
+"""Current Desktop routes and Space ownership against local canonical services.
 
 Opt-in E2E gate: launch Electron with temporary userData and a loopback server.
-Binding/run persistence, auth identity and worker/Provider IO are isolated facts;
-this is not a production, PostgreSQL, Provider or signed-installer receipt.
+Automation is intentionally unregistered; stale flags must not restore it.
+Identity and backend facts are isolated. This is not a production, PostgreSQL,
+Provider or signed-installer receipt.
 """
 
 import json
@@ -194,7 +195,7 @@ def canonical(request, monkeypatch):
     return app, bindings, runs, queue
 
 
-def test_creation_real_window_reload_and_failed_retry_keep_binding_and_history(
+def test_retired_automation_stays_unregistered_after_real_window_reload(
     http_server, canonical, tmp_path
 ):
     source = os.environ.get("PUPPYONE_DESKTOP_SOURCE")
@@ -233,14 +234,12 @@ def test_creation_real_window_reload_and_failed_retry_keep_binding_and_history(
     assert not (tmp_path / "desktop-runtime").exists()
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads((tmp_path / "window-report.json").read_text())
-    assert report["ok"] and report["window_reloads"] == 3
+    assert report["ok"] and report["window_reloads"] == 2
     assert len(set(report["document_ids"])) == report["window_reloads"]
     _, bindings, runs, queue = canonical
-    assert len(bindings.items) == 1 and set(runs.items) == {"run-1", "run-2"}
-    binding_id = next(iter(bindings.items))
-    assert report["binding_id"] == binding_id
-    assert all(r.synchronize_binding_id == binding_id for r in runs.items.values())
-    assert queue.enqueue_sync_run.call_count == 2
+    assert report["automation_route_registered"] is False
+    assert not bindings.items and not runs.items
+    assert queue.enqueue_sync_run.call_count == 0
     assert not any(
         "/integrations" in r["path"] or "/connectors" in r["path"]
         for r in canonical[0].state.window_probe["requests"]
