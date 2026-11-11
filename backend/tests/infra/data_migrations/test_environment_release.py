@@ -427,6 +427,8 @@ def test_acceptance_requires_stored_file_and_real_reply_and_always_cleans_up(
     def handler(request):
         path = request.url.path
         calls.append((request.method, path))
+        if path == "/health":
+            return httpx.Response(200, json={"status": "ready"})
         body = json.loads(request.content) if request.content else None
         result = {}
         if path.endswith("/auth/login"):
