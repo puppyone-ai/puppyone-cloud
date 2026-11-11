@@ -202,7 +202,66 @@ async def sleep_until_settled(live, identity):  # noqa: F811
 @pytest.mark.parametrize(
     "command",
     [
-        # What an Agent can leave behind; none of it may stop the machine from sleeping.
+        "git switch -c feature",
+        "git checkout -b feature",
+        "git checkout --detach",
+        "git checkout HEAD~0",
+        "git rebase HEAD",
+        "git worktree add ../elsewhere",
+    ],
+)
+async def test_a_refused_command_changes_nothing_and_the_machine_still_sleeps(
+    prepared,
+    live,  # noqa: F811
+    command,
+):
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        wrote = await shell(live, context, "printf 'work\\n' > agent.md")
+        assert wrote.exit_status == 0, wrote.stderr
+        before = await shell(live, context, "cat .git/HEAD; git status --porcelain")
+        refused = await shell(live, context, command)
+        assert refused.exit_status != 0
+        assert b"stays on one branch" in refused.stderr, refused.stderr
+        after = await shell(live, context, "cat .git/HEAD; git status --porcelain")
+        assert after.stdout == before.stdout
+
+        slept = await sleep_until_settled(live, machine["id"])
+        assert slept["state"] == "paused"
+        assert slept["save_status"] == "saved"
+        assert slept["unpublished_changes"] is False
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+async def test_the_task_user_cannot_unlock_or_rewrite_head(prepared, live):  # noqa: F811
+    case = prepared
+    await native_write(case, "seed.md", b"seed")
+    authorities(live)
+    context, machine = await enroll(live)
+    async with agent_machines(live, case.publication.transport):
+        await start(live, machine)
+        for command in (
+            "printf 'ref: refs/heads/x\\n' > .git/HEAD",
+            "rm -f .git/HEAD",
+            "mv .git/HEAD .git/moved",
+            "chattr -i .git/HEAD",
+        ):
+            attempt = await shell(live, context, command)
+            assert attempt.exit_status != 0, command
+        head = await shell(live, context, "cat .git/HEAD")
+        assert head.stdout.strip().decode() == "ref: " + machine["target_ref"]
+
+
+@pytest.mark.parametrize("prepared", ["native"], indirect=True)
+@pytest.mark.parametrize(
+    "command",
+    [
+        # What an Agent can leave behind, past the one-branch gate; none of it may stop
+        # the machine from sleeping.
         "printf 'two\\n' > agent.md && : > .git/index.lock",
         "printf 'two\\n' > agent.md && /usr/bin/git switch -c feature",
     ],
