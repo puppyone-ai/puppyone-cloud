@@ -97,20 +97,8 @@ jobs:
         # Match the other workflows without GHCR's shared pull limit.
         run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
 
-      - name: Use Ubuntu primary package mirrors
-        # The hosted Azure mirror can fail DNS while other registries work.
-        # Playwright's system dependencies still come from signed Ubuntu repos.
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
-          fi
-          if [ -f /etc/apt/apt-mirrors-security.txt ]; then
-            printf '%s\n' 'https://security.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors-security.txt > /dev/null
-          fi
-          printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' \
-            | sudo tee /etc/apt/apt.conf.d/80puppyone-ci-network > /dev/null
+      - name: Select a reachable Ubuntu-signed package mirror
+        run: bash harness/e2e/desktop-login/configure-ubuntu-mirrors.sh
 
       - name: Start auth-only Supabase
         run: supabase start --workdir harness/e2e/desktop-login
