@@ -637,6 +637,36 @@ class Settings(BaseSettings):
     MANAGED_AI_PROVIDERS: Annotated[tuple[ManagedAIProviderProfile, ...], NoDecode] = ()
     BILLING_UI_ENABLED: bool = False
     BILLING_WRITES_ENABLED: bool = False
+    # Additional purchase fence. "*" preserves the explicit global rollout;
+    # a CSV selects canary organizations, and an empty value admits none.
+    BILLING_PURCHASE_ORG_IDS: str = Field(default="*", max_length=25_728)
+
+    @field_validator("BILLING_PURCHASE_ORG_IDS")
+    @classmethod
+    def normalize_billing_purchase_org_ids(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        values = [item.strip() for item in value.split(",")]
+        if (
+            len(values) > 128
+            or any(
+                not item
+                or len(item) > 200
+                or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in item)
+                or ("*" in item and item != "*")
+                for item in values
+            )
+            or ("*" in values and len(values) != 1)
+        ):
+            raise ValueError("BILLING_PURCHASE_ORG_IDS requires explicit IDs or a single wildcard")
+        return ",".join(dict.fromkeys(values))
+
+    def billing_purchase_allowed(self, org_id: str) -> bool:
+        return bool(org_id) and (
+            self.BILLING_PURCHASE_ORG_IDS == "*"
+            or org_id in self.BILLING_PURCHASE_ORG_IDS.split(",")
+        )
+
     SEAT_BILLING_MODE: Literal["disabled", "shadow", "required"] = "disabled"
     RUNTIME_METERING_MODE: Literal["disabled", "shadow", "required"] = "disabled"
     STORAGE_ENFORCEMENT_MODE: Literal["disabled", "shadow", "required"] = "disabled"

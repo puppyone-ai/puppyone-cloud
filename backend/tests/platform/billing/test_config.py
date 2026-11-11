@@ -10,6 +10,28 @@ def settings(**overrides):
     return Settings(_env_file=None, **overrides)
 
 
+def test_purchase_rollout_is_exact_and_empty_is_closed():
+    value = settings(BILLING_PURCHASE_ORG_IDS=" org-1, org-2,org-1 ")
+    assert value.BILLING_PURCHASE_ORG_IDS == "org-1,org-2"
+    assert value.billing_purchase_allowed("org-1")
+    assert not value.billing_purchase_allowed("org-10")
+    assert not settings(BILLING_PURCHASE_ORG_IDS="").billing_purchase_allowed("org-1")
+    assert settings(BILLING_PURCHASE_ORG_IDS="*").billing_purchase_allowed("org-1")
+
+
+def test_empty_environment_purchase_rollout_overrides_default_wildcard(monkeypatch):
+    monkeypatch.setenv("BILLING_PURCHASE_ORG_IDS", "")
+    assert not settings().billing_purchase_allowed("org-1")
+
+
+@pytest.mark.parametrize(
+    "value", ["org-1,,org-2", "org-1,*", "org*", "org 1", "org\x00", "x" * 201]
+)
+def test_malformed_purchase_rollout_rejects_startup(value):
+    with pytest.raises(ValidationError, match="BILLING_PURCHASE_ORG_IDS"):
+        settings(BILLING_PURCHASE_ORG_IDS=value)
+
+
 def test_self_hosted_defaults_have_no_puppypay_dependency() -> None:
     value = settings()
     assert value.ENTITLEMENTS_MODE == "disabled"
