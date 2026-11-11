@@ -29,6 +29,7 @@ _ALLOWED_PATHS = (
         r"seats/change|subscription/cancel|portal|runtime/top-up|runtime/overage)$"
     ),
     re.compile(r"^/api/v1/billing/organizations/[^/?#]+/quotes/[^/?#]+$"),
+    re.compile(r"^/api/v1/billing/organizations/[^/?#]+/add-ons/[a-z][a-z0-9_-]{0,63}$"),
     re.compile(r"^/internal/v1/billing/seat-proposals$"),
     re.compile(r"^/internal/v1/billing/organizations/provision$"),
     re.compile(r"^/internal/v1/billing/runtime/reservations$"),

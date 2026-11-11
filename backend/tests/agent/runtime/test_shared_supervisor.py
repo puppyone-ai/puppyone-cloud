@@ -148,11 +148,16 @@ async def shared_case(postgres, submitted, control_api, request):
         publish=AsyncMock(return_value={"status": "no_changes"}),
     )
     forbidden = AsyncMock(side_effect=AssertionError("Run touched whole-computer ownership"))
+    # The workspace's compute epoch belongs to its lifecycle owner, so a Run never
+    # starts, resumes or finishes it. With metering disabled the Run's own agent
+    # activity meter is absent too.
     billing = SimpleNamespace(
         start_session=forbidden,
         resume_session=forbidden,
         finish_session=forbidden,
         detach_session=forbidden,
+        ensure_session=AsyncMock(return_value=None),
+        check_session=AsyncMock(),
     )
     lifecycle = SimpleNamespace(cleanup=forbidden, attach=forbidden)
 
@@ -438,3 +443,32 @@ async def test_unconfigured_supervisor_rejects_shared_claim_before_any_cleanup(s
     with pytest.raises(PermissionError, match="shared"):
         await value.run_claim(case.run)
     case.forbidden.assert_not_awaited()
+
+
+async def test_agent_chat_in_a_persons_workspace_spends_agent_hours(shared_case):
+    """The person's workspace is ours to keep open; the agent's run is theirs."""
+    case = shared_case
+    meter = "cloud-agent-activity:" + case.run["id"]
+    case.billing.ensure_session = AsyncMock(return_value=meter)
+    case.billing.finish_session = AsyncMock(return_value=True)
+
+    await case.supervisor().run_claim(case.run)
+
+    final = case.repo.get(case.run["id"])
+    assert final["state"] == "succeeded", final
+    assert final["billing_run_id"] is None
+    context = case.billing.ensure_session.await_args.kwargs["audit_context"]
+    assert (context["source"], context["run_id"]) == ("chat_agent", meter)
+    assert context["org_id"]
+    case.billing.check_session.assert_awaited_with(meter)
+    case.billing.finish_session.assert_awaited_once_with(meter)
+
+
+async def test_agent_chat_without_hours_ends_before_touching_the_workspace(shared_case):
+    case = shared_case
+    case.billing.ensure_session = AsyncMock(side_effect=RuntimeError("runtime_credit_insufficient"))
+
+    await case.supervisor().run_claim(case.run)
+
+    final = case.repo.get(case.run["id"])
+    assert (final["state"], final["snapshot"]["code"]) == ("failed", "runtime_credit_unavailable")

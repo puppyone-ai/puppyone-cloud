@@ -19,13 +19,14 @@ from src.platform.organization.service import OrganizationService
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/personal-space", response_model=ApiResponse[OrganizationOut])
+@router.post("/default-space", response_model=ApiResponse[OrganizationOut])
+@router.post("/personal-space", response_model=ApiResponse[OrganizationOut], deprecated=True)
 async def ensure_personal_space(
     current_user: CurrentUser = Depends(get_current_user),
     initialization: UserInitializationService = Depends(get_initialization_service),
     organizations: OrganizationService = Depends(get_org_service),
 ):
-    """Ensure the signed-in person's destination, never migrate existing content."""
+    """Ensure the caller's accessible default Space without moving content."""
     if current_user.is_anonymous or current_user.role != "authenticated":
         raise ForbiddenException("A signed-in person is required")
     name = str((current_user.user_metadata or {}).get("full_name")

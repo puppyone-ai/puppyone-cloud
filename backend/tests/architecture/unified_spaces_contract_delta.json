@@ -1,0 +1,11 @@
+{
+  "paths": {
+    "/api/v1/auth/personal-space": "0573d7761afbdf2b4cb9404721e0d0818b286f4eada6df1bbe9a6b4e6c9f5494",
+    "/api/v1/auth/default-space": "a3025827a6eb0ab7efcb239a757f31449010b49024ebf11ccf13b74dabf4a22d",
+    "/api/v1/billing/organizations/{org_id}/add-ons/{add_on_id}": "78a95a5b5140860c6fca7a4cdfcfcc33936b762b96ee086346814c2917d79a27"
+  },
+  "schemas": {
+    "OrganizationOut": "bc80ac03b78aa92d81ae657ba5e99724c7cb0aeb4da54307365a61e97b8be58d",
+    "AddOnChangeRequest": "5f4bec6a864e13b59a390029820b11a4c2280b86ee3f57f125a8f2870bdbf9a4"
+  }
+}

@@ -8,6 +8,7 @@ on:
       - 'backend/src/config.py'
       - 'backend/src/platform/access/adapters/git/**'
       - 'backend/tests/repository_hosting/**'
+      - 'contracts/cloud-git-acceptance-v1.json'
       - 'backend/tests/conflicts/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
@@ -84,11 +85,25 @@ jobs:
           sudo apt-get install -y postgresql-client
           python -m pip install 'uv==0.5.11'
           cd backend && uv sync --locked
+      # Desktop's own first-push code (puppy-issues ISSUE-127). The Desktop
+      # repository is public; the runner refuses a checkout inside this tree.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: puppyone-ai/puppyone
+          ref: qubits
+          path: desktop-checkout
+          persist-credentials: false
       - name: Verify standard packs on owned S3 and PostgreSQL
         run: |
+          mv desktop-checkout "$RUNNER_TEMP/desktop"
+          desktop=()
+          # Until Desktop carries the driver, its tests stay deselected, not skipped.
+          if [ -f "$RUNNER_TEMP/desktop/tests/support/cloud/firstPushLiveDriver.mjs" ]; then
+            desktop=(--desktop "$RUNNER_TEMP/desktop")
+          fi
           backend/.venv/bin/python scripts/testing/run_repository_hosting.py \
-            --live --s3 --docker --target --output backend/.standard-pack-s3-results \
-            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes or test_docker_native_git_canonical_auth_refs_policy_cold_restart' -q
+            --live --s3 --docker --target "${desktop[@]}" --output backend/.standard-pack-s3-results \
+            -k 'standard_git_pack or direct_object_transport or native_size_limits or test_stock_push_durable_native_refs_and_cold_clone or test_native_http_atomic_refs_tags_rewrites_and_delete or native_s3_product_writes or test_docker_native_git_canonical_auth_refs_policy_cold_restart or test_cloud_accepts_desktop_first_push or test_desktops_own_first_push' -q
       - name: Report owned acceptance evidence
         if: always()
         run: |
@@ -114,7 +129,7 @@ jobs:
           retention-days: 14
 
   hosting:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

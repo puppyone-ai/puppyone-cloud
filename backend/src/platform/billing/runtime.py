@@ -156,7 +156,15 @@ class RuntimeRunRepository:
 
 
 def _source_kind(source: str) -> str:
-    if source in {"chat_agent", "schedule_agent", "automation"}:
+    """The PuppyPay runtime kind, which decides whose allowance pays.
+
+    ``agent`` and ``automation`` are an agent working and draw on the
+    organization's agent hours; ``workspace`` is a person's hosted workspace
+    and is metered for cost only.
+    """
+    if source in {"agent", "chat_agent", "external_agent"}:
+        return "agent"
+    if source in {"schedule_agent", "automation"}:
         return "automation"
     if source == "workspace":
         return "workspace"

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   rehearse:
     name: Populated upgrade (${{ matrix.environment }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -114,7 +114,7 @@ jobs:
     name: Release upgrade rehearsal
     if: always()
     needs: rehearse
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require both deployed baselines to upgrade
         env:

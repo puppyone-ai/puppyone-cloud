@@ -1,6 +1,8 @@
 import { apiRequest } from './apiClient';
 
 export type OrganizationInfo = {
+  /** Unified Space; historical server fields do not select another membership model. */
+  kind?: "space";
   id: string;
   name: string;
   slug: string;

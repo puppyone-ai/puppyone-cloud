@@ -960,7 +960,7 @@ export default function UserMenuPanel({
                     Workspace
                   </div>
                   {[
-                    { label: 'Team', path: '/team' },
+                    { label: 'Spaces', path: '/team' },
                     { label: 'Billing', path: '/billing' },
                     { label: 'Templates', path: '/templates' },
                   ].map(item => (

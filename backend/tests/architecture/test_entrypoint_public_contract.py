@@ -523,7 +523,22 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in spaces["schemas"].items():
         assert expected["contract"]["schemas"][name] == change["before"]
         expected["contract"]["schemas"][name] = change["after"]
-    assert contract(app.openapi()) == expected["contract"]
+    unified = json.loads(Path(__file__).with_name("unified_spaces_contract_delta.json").read_text())
+    expected["contract"]["paths"].update(unified["paths"])
+    expected["contract"]["schemas"].update(unified["schemas"])
+    classification = json.loads(Path(__file__).with_name("space_classification_contract_delta.json").read_text())
+    assert classification["paths"] == {} and set(classification["schemas"]) == {"OrganizationOut"}
+    for name, change in classification["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
+    assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
+        "const": "space", "default": "space", "title": "Kind", "type": "string",
+    }
+    actual = contract(app.openapi())
+    differences = {category: {name: [expected["contract"][category].get(name), actual[category].get(name)]
+        for name in expected["contract"][category].keys() | actual[category].keys()
+        if expected["contract"][category].get(name) != actual[category].get(name)} for category in actual}
+    assert actual == expected["contract"], json.dumps(differences, sort_keys=True)
 
 
 @pytest.mark.parametrize("retired", ["/synchronize", "/sandbox-endpoint"])

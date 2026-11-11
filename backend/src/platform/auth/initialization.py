@@ -57,25 +57,15 @@ class UserInitializationService:
             log_error(f"Failed to get/create profile for user {user_id}")
             raise RuntimeError(f"Cannot initialize user {user_id}: profile creation failed")
 
-        # 2. Ensure at least one organization exists
+        # 2. Resolve the accessible default; the SQL provisioner serializes
+        # missing/stale defaults and never imposes a single-person Space type.
         orgs = self._org_repo.list_by_user(user_id)
         is_new_org = False
 
-        if not orgs:
+        org = next((item for item in orgs if item.id == profile.default_org_id), None)
+        if org is None:
             org, is_new_org = self._create_default_org(user_id, name)
             log_info(f"Created default org {org.id} for user {user_id}")
-        else:
-            org = orgs[0]
-
-        # 3. Ensure profile.default_org_id is set
-        if not profile.default_org_id:
-            from src.platform.profile.models import ProfileUpdate
-
-            self._profile_repo.update(
-                user_id,
-                ProfileUpdate(default_org_id=org.id),
-            )
-            log_info(f"Set default_org_id={org.id} for user {user_id}")
 
         return {"org_id": org.id, "is_new_org": is_new_org}
 

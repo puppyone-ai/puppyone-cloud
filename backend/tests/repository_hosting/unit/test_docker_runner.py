@@ -143,3 +143,68 @@ def test_docker_acceptance_requires_actual_container_evidence(image, metadata):
     result = dict(execution_environment='docker', docker_image=image, container_environment=metadata,
                   pytest_exit=0, target=True, layers={'hosting_component': {'passed': 1}})
     assert runner.result_exit_code(result) != 0
+
+
+def desktop_checkout(path):
+    for relative in ('electron/main/cloud-initialization/coordinator.mjs',
+                     'tests/support/cloud/firstPushLiveDriver.mjs'):
+        (path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (path / relative).write_text('// fixture')
+    return path
+
+
+def test_a_desktop_checkout_is_mounted_read_only_and_named_to_the_tests(tmp_path, monkeypatch):
+    backend, desktop, output = tmp_path / 'backend', desktop_checkout(tmp_path / 'desktop'), tmp_path / 'evidence'
+    backend.mkdir()
+    output.mkdir()
+    captured = {}
+    monkeypatch.setattr(docker, 'owned_network', lambda *_: 'owned-network')
+
+    def run(command, **kwargs):
+        if '--env-file' in command:
+            captured['command'] = command
+            path = Path(command[command.index('--env-file') + 1])
+            captured.update(line.split('=', 1) for line in path.read_text().splitlines())
+            (output / 'container-environment.json').write_text(json.dumps({'git': 'g', 'python': 'p'}))
+            (output / 'container-resources.json').write_text(json.dumps({'failures': []}))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(docker.subprocess, 'run', run)
+    assert docker.run_tests(backend, output, ['python', '-m', 'pytest'], environment(), {},
+                            'sha256:test', {}, desktop=desktop) == 0
+    assert f'type=bind,src={desktop.resolve()},dst=/desktop,readonly' in captured['command']
+    assert captured['HOSTING_TEST_DESKTOP'] == '/desktop'
+
+
+def test_without_a_desktop_checkout_nothing_extra_is_mounted(tmp_path, monkeypatch):
+    output = tmp_path / 'evidence'
+    output.mkdir()
+    commands = []
+    monkeypatch.setattr(docker, 'owned_network', lambda *_: 'owned-network')
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if '--env-file' in command:
+            (output / 'container-environment.json').write_text(json.dumps({'git': 'g', 'python': 'p'}))
+            (output / 'container-resources.json').write_text(json.dumps({'failures': []}))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(docker.subprocess, 'run', run)
+    docker.run_tests(tmp_path, output, ['python', '-m', 'pytest'], environment(), {}, 'sha256:test', {})
+    assert not any('/desktop' in part for command in commands for part in command)
+
+
+@pytest.mark.parametrize('problem', ['not-desktop', 'no-driver', 'dotenv', 'inside-backend'])
+def test_an_unsuitable_desktop_checkout_is_refused(tmp_path, problem):
+    backend = tmp_path / 'backend'
+    backend.mkdir()
+    desktop = desktop_checkout((backend if problem == 'inside-backend' else tmp_path) / 'desktop')
+    if problem == 'not-desktop':
+        (desktop / 'electron/main/cloud-initialization/coordinator.mjs').unlink()
+    if problem == 'no-driver':
+        (desktop / 'tests/support/cloud/firstPushLiveDriver.mjs').unlink()
+    if problem == 'dotenv':
+        (desktop / '.env').write_text('not-a-test-secret')
+    with pytest.raises(ValueError):
+        docker.run_tests(backend, tmp_path / 'evidence', ['python'], environment(), {},
+                         'sha256:test', {}, desktop=desktop)

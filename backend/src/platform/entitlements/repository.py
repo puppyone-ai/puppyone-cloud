@@ -34,6 +34,23 @@ class EntitlementRepository:
         rows = resp.data or []
         return EntitlementSnapshot(**rows[0]) if rows else None
 
+    def plan_ids_by_org(self, org_ids: list[str]) -> dict[str, str]:
+        """The published plan of each organization, in one read; missing ones are absent."""
+
+        if not org_ids:
+            return {}
+        resp = (
+            self._client.table(self.TABLE)
+            .select("org_id,plan_id")
+            .in_("org_id", org_ids)
+            .execute()
+        )
+        return {
+            str(row["org_id"]): str(row["plan_id"])
+            for row in resp.data or []
+            if row.get("org_id") and row.get("plan_id")
+        }
+
     def publish(self, payload: EntitlementUpsert) -> EntitlementPublicationAck:
         """Atomically publish a monotonic snapshot and its audit event."""
 

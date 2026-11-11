@@ -1,8 +1,9 @@
-"""Actual Desktop Main/preload/renderer reload against local canonical services.
+"""Current Desktop routes and Space ownership against local canonical services.
 
 Opt-in E2E gate: launch Electron with temporary userData and a loopback server.
-Binding/run persistence, auth identity and worker/Provider IO are isolated facts;
-this is not a production, PostgreSQL, Provider or signed-installer receipt.
+Automation is intentionally unregistered; stale flags must not restore it.
+Identity and backend facts are isolated. This is not a production, PostgreSQL,
+Provider or signed-installer receipt.
 """
 
 import json
@@ -76,11 +77,14 @@ def canonical(request, monkeypatch):
     @app.get("/api/v1/auth/config")
     def auth_config(request: Request):
         import base64
+
         role = base64.urlsafe_b64encode(b'{"role":"anon"}').decode().rstrip("=")
-        return ApiResponse.success({
-            "supabase_url": str(request.base_url).rstrip("/"),
-            "supabase_anon_key": f"header.{role}.signature",
-        })
+        return ApiResponse.success(
+            {
+                "supabase_url": str(request.base_url).rstrip("/"),
+                "supabase_anon_key": f"header.{role}.signature",
+            }
+        )
 
     @app.post("/auth/v1/token")
     async def refresh(request: Request):
@@ -191,7 +195,7 @@ def canonical(request, monkeypatch):
     return app, bindings, runs, queue
 
 
-def test_creation_real_window_reload_and_failed_retry_keep_binding_and_history(
+def test_retired_automation_stays_unregistered_after_real_window_reload(
     http_server, canonical, tmp_path
 ):
     source = os.environ.get("PUPPYONE_DESKTOP_SOURCE")
@@ -230,15 +234,151 @@ def test_creation_real_window_reload_and_failed_retry_keep_binding_and_history(
     assert not (tmp_path / "desktop-runtime").exists()
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads((tmp_path / "window-report.json").read_text())
-    assert report["ok"] and report["window_reloads"] == 3
+    assert report["ok"] and report["window_reloads"] == 2
     assert len(set(report["document_ids"])) == report["window_reloads"]
     _, bindings, runs, queue = canonical
-    assert len(bindings.items) == 1 and set(runs.items) == {"run-1", "run-2"}
-    binding_id = next(iter(bindings.items))
-    assert report["binding_id"] == binding_id
-    assert all(r.synchronize_binding_id == binding_id for r in runs.items.values())
-    assert queue.enqueue_sync_run.call_count == 2
+    assert report["automation_route_registered"] is False
+    assert not bindings.items and not runs.items
+    assert queue.enqueue_sync_run.call_count == 0
     assert not any(
         "/integrations" in r["path"] or "/connectors" in r["path"]
         for r in canonical[0].state.window_probe["requests"]
     )
+
+
+def test_space_navigation_scopes_home_settings_and_windows(http_server, canonical, tmp_path):
+    """Production Main/preload/App; owned backend facts, two real windows."""
+    app = canonical[0]
+    app.router.routes = [
+        r
+        for r in app.routes
+        if getattr(r, "path", "") not in {"/api/v1/organizations/", "/api/v1/projects/"}
+    ]
+    spaces = [
+        {"id": "org-1", "name": "Studio", "slug": "studio", "kind": "space", "is_default": True},
+        {
+            "id": "org-2",
+            "name": "Research",
+            "slug": "research",
+            "kind": "space",
+            "is_default": False,
+        },
+    ]
+    for space in spaces:
+        space.update(role="owner", can_manage_space=True, can_create_projects=True)
+    first = {
+        "id": "project-1",
+        "name": "Window acceptance",
+        "org_id": "org-1",
+        "effective_role": "admin",
+        "capabilities": ["project.read", "project.manage"],
+    }
+    second = {**first, "id": "project-b", "name": "Space B only", "org_id": "org-2"}
+    app.add_api_route("/api/v1/organizations/", lambda: ApiResponse.success(spaces))
+    app.add_api_route(
+        "/api/v1/auth/default-space", lambda: ApiResponse.success(spaces[0]), methods=["POST"]
+    )
+    app.add_api_route("/api/v1/projects/", lambda: ApiResponse.success([first, second]))
+    app.add_api_route("/api/v1/projects/project-b", lambda: ApiResponse.success(second))
+    app.add_api_route(
+        "/api/v1/projects/project-b/repository-context",
+        lambda: ApiResponse.success(
+            {
+                "project": second,
+                "target": {"kind": "project_root", "project_id": "project-b"},
+                "scope": None,
+            }
+        ),
+        methods=["POST"],
+    )
+    app.add_api_route(
+        "/api/v1/organizations/org-1/members",
+        lambda: ApiResponse.success(
+            [{"user_id": "user-1", "role": "owner", "display_name": "Owner"}]
+        ),
+    )
+    app.add_api_route(
+        "/api/v1/organizations/org-1/access",
+        lambda: ApiResponse.success(
+            {"org_id": "org-1", "user_id": "user-1", "role": "owner", "can_manage_billing": True}
+        ),
+    )
+    # Synthetic billing facts prove that Plan renders usage, rather than only
+    # displaying an error while the surrounding navigation happens to work.
+    @app.get("/api/v1/billing/catalog")
+    def billing_catalog():
+        features = dict.fromkeys(("access_surface.agent", "access_surface.mcp",
+            "access_surface.sandbox", "automation.hosted", "remote_workspace.create",
+            "scope_sandbox.connect"), True)
+        plans = []
+        for plan_id, name, cents, units in (("free", "Free", 0, 300),
+                ("team_v2", "Team", 2000, 2400), ("enterprise_v2", "Enterprise", 4000, 2400)):
+            plans.append(dict(id=plan_id, aliases=[], name=name, description="Owned window fixture",
+                public=True, purchasable=cents > 0, highlighted=False, currency="USD",
+                interval="month" if cents else "none", price_per_seat_cents=cents,
+                seats=dict(minimum=1, maximum=None), features=features, allow={},
+                runtime=dict(fixed_units=units, units_per_seat=0),
+                fixed_limits={"projects.max": 20, "storage.max_bytes": 1000000000,
+                              "history.retention_days": 30}, per_seat_limits={}))
+        return ApiResponse.success(dict(schema_version="1.1", catalog_version="window-1",
+            effective_at="2026-11-01T00:00:00Z", currency="USD", plans=plans, add_ons=[],
+            runtime=dict(top_ups_enabled=False, overage_enabled=False, unit_seconds=60,
+                minimum_units=1, overage_price_cents_per_unit=0, profiles=[], top_up_packs=[])))
+
+    @app.get("/api/v1/billing/organizations/{org_id}/summary")
+    def billing_summary(org_id: str):
+        assert org_id in {"org-1", "org-2"}
+        consumed = 120 if org_id == "org-2" else 60
+        return ApiResponse.success(dict(org_id=org_id, plan_id="free", status="free",
+            seat_quantity=1, pending_plan_id=None, cancel_at_period_end=False,
+            current_period_end=None, catalog_version="window-1", source_revision=1,
+            portal_available=False, seat_changes_available=False, runtime_available_units=300-consumed,
+            runtime_reserved_units=0, runtime_overage_enabled=False,
+            runtime_monthly_limit_cents=0, add_ons=[]))
+
+    @app.get("/api/v1/billing/organizations/{org_id}/usage")
+    def billing_usage(org_id: str):
+        assert org_id in {"org-1", "org-2"}
+        consumed = 120 if org_id == "org-2" else 60
+        return ApiResponse.success(dict(runtime=dict(org_id=org_id, available_units=300-consumed,
+            reserved_units=0, granted_units=300, consumed_units=consumed,
+            postpaid_available_units=0, postpaid_consumed_units=0, buckets=[],
+            allowance=dict(granted_units=300, consumed_units=consumed, reserved_units=0,
+                resets_at="2026-12-01T00:00:00Z", unit_seconds=60)),
+            storage=dict(logical_bytes=100, limit_bytes=1000000000, percent=0,
+                threshold_percent=0, version=1)))
+
+    @app.get("/api/v1/organizations/org-2/access")
+    def research_access():
+        return ApiResponse.success(dict(org_id="org-2", user_id="user-1", role="owner",
+            can_manage_billing=True))
+
+    root = Path(os.environ["PUPPYONE_DESKTOP_SOURCE"]).resolve()
+    try:
+        result = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import electron from 'electron';import {spawn} from 'node:child_process';"
+                "const child=spawn(electron,[process.argv[1]],{stdio:'inherit',env:process.env});"
+                "child.on('exit',(code)=>process.exit(code??1));",
+                str(root / "tests/e2e/cloud/space-switching.smoke.mjs"),
+            ],
+            cwd=root,
+            env={
+                **os.environ,
+                "PUPPYONE_ENTRYPOINT_TEST_ORIGIN": http_server,
+                "PUPPYONE_ENTRYPOINT_TEST_REPORT": str(tmp_path / "space-report.json"),
+                "PUPPYONE_ENTRYPOINT_TEST_WORKSPACE": str(tmp_path / "space-runtime"),
+            },
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+    finally:
+        shutil.rmtree(tmp_path / "space-runtime", ignore_errors=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((tmp_path / "space-report.json").read_text())
+    assert report["ok"] and report["window_count"] == 2
+    assert report["current_spaces"] == ["org-1", "org-2"]

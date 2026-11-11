@@ -51,7 +51,7 @@ concurrency:
 jobs:
   email-sign-in:
     name: Desktop email sign-in
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       WEB_ORIGIN: http://localhost:3000
