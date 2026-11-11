@@ -303,6 +303,56 @@ def test_space_navigation_scopes_home_settings_and_windows(http_server, canonica
             {"org_id": "org-1", "user_id": "user-1", "role": "owner", "can_manage_billing": True}
         ),
     )
+    # Synthetic billing facts prove that Plan renders usage, rather than only
+    # displaying an error while the surrounding navigation happens to work.
+    @app.get("/api/v1/billing/catalog")
+    def billing_catalog():
+        features = dict.fromkeys(("access_surface.agent", "access_surface.mcp",
+            "access_surface.sandbox", "automation.hosted", "remote_workspace.create",
+            "scope_sandbox.connect"), True)
+        plans = []
+        for plan_id, name, cents, units in (("free", "Free", 0, 300),
+                ("team_v2", "Team", 2000, 2400), ("enterprise_v2", "Enterprise", 4000, 2400)):
+            plans.append(dict(id=plan_id, aliases=[], name=name, description="Owned window fixture",
+                public=True, purchasable=cents > 0, highlighted=False, currency="USD",
+                interval="month" if cents else "none", price_per_seat_cents=cents,
+                seats=dict(minimum=1, maximum=None), features=features, allow={},
+                runtime=dict(fixed_units=units, units_per_seat=0),
+                fixed_limits={"projects.max": 20, "storage.max_bytes": 1000000000,
+                              "history.retention_days": 30}, per_seat_limits={}))
+        return ApiResponse.success(dict(schema_version="1.1", catalog_version="window-1",
+            effective_at="2026-11-01T00:00:00Z", currency="USD", plans=plans, add_ons=[],
+            runtime=dict(top_ups_enabled=False, overage_enabled=False, unit_seconds=60,
+                minimum_units=1, overage_price_cents_per_unit=0, profiles=[], top_up_packs=[])))
+
+    @app.get("/api/v1/billing/organizations/{org_id}/summary")
+    def billing_summary(org_id: str):
+        assert org_id in {"org-1", "org-2"}
+        consumed = 120 if org_id == "org-2" else 60
+        return ApiResponse.success(dict(org_id=org_id, plan_id="free", status="free",
+            seat_quantity=1, pending_plan_id=None, cancel_at_period_end=False,
+            current_period_end=None, catalog_version="window-1", source_revision=1,
+            portal_available=False, seat_changes_available=False, runtime_available_units=300-consumed,
+            runtime_reserved_units=0, runtime_overage_enabled=False,
+            runtime_monthly_limit_cents=0, add_ons=[]))
+
+    @app.get("/api/v1/billing/organizations/{org_id}/usage")
+    def billing_usage(org_id: str):
+        assert org_id in {"org-1", "org-2"}
+        consumed = 120 if org_id == "org-2" else 60
+        return ApiResponse.success(dict(runtime=dict(org_id=org_id, available_units=300-consumed,
+            reserved_units=0, granted_units=300, consumed_units=consumed,
+            postpaid_available_units=0, postpaid_consumed_units=0, buckets=[],
+            allowance=dict(granted_units=300, consumed_units=consumed, reserved_units=0,
+                resets_at="2026-12-01T00:00:00Z", unit_seconds=60)),
+            storage=dict(logical_bytes=100, limit_bytes=1000000000, percent=0,
+                threshold_percent=0, version=1)))
+
+    @app.get("/api/v1/organizations/org-2/access")
+    def research_access():
+        return ApiResponse.success(dict(org_id="org-2", user_id="user-1", role="owner",
+            can_manage_billing=True))
+
     root = Path(os.environ["PUPPYONE_DESKTOP_SOURCE"]).resolve()
     try:
         result = subprocess.run(
