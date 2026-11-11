@@ -15,6 +15,8 @@ execFileSync('nft', ['-f', '-'], {
 });
 // Fly's resolver sits on the private network the task user cannot reach.
 if (internet === 'open') await writeFile('/etc/resolv.conf', PUBLIC_DNS);
+// Fly's in-machine API is a Unix socket, which no firewall sees. Only root keeps it.
+await chmod('/.fly', 0o700).catch(error => { if (error.code !== 'ENOENT') throw error; });
 await mkdir('/data/workspace', {recursive: true});
 await mkdir('/data/control', {recursive: true});
 await chmod('/data', 0o755); await chmod('/data/control', 0o700);

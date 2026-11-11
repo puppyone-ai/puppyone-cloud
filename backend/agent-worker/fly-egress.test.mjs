@@ -3,9 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { egressRules } from './fly-egress.mjs';
 
-const SEALED = 'meta skuid 1000 counter reject with icmpx type admin-prohibited';
+const SEALED = 'meta skuid != 0 counter reject with icmpx type admin-prohibited';
 
-test('anything but an explicit open keeps the task user on loopback', () => {
+test('anything but an explicit open keeps every account but root on loopback', () => {
   for (const value of [undefined, '', '1', 'true', 'OPEN', ' open']) {
     assert.ok(egressRules(value).includes(SEALED), String(value));
   }
@@ -21,6 +21,16 @@ test('open keeps every private range closed and leaves the rest to the accept po
     assert.ok(rules.includes(range), range);
   }
   assert.ok(rules.indexOf('127.0.0.0/8 accept') < rules.indexOf('10.0.0.0/8'));
+});
+
+test('nothing reaches the machine except its provider control connection', () => {
+  for (const value of [undefined, 'open']) {
+    const rules = egressRules(value);
+    assert.match(rules, /hook input priority 0; policy drop;/);
+    assert.match(rules, /ct state established,related accept/);
+    assert.match(rules, /ip6 saddr fdaa::\/16 tcp dport 22 accept/);
+    assert.doesNotMatch(rules, /skuid 1000/);
+  }
 });
 
 test('a firewall that cannot be installed stops the boot', () => {

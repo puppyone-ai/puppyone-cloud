@@ -14,6 +14,7 @@ import pytest
 
 from src.config import settings
 from src.platform.sandbox import WorkerLost, WorkspaceDiskLost, WorkspaceUnavailable
+from src.platform.sandbox.providers.fly.naming import workspace_app
 from src.platform.sandbox.providers.fly.provider import FlyRuntimeProvider
 from src.platform.workspace.lifecycle import WorkbenchLifecycle
 
@@ -21,12 +22,13 @@ IMAGE = "registry.fly.io/app@sha256:" + "a" * 64
 
 
 def resource(**overrides):
+    workbench_id = str(uuid4())
     value = dict(
         provider="fly",
-        app="app",
+        app=workspace_app(workbench_id),
         resource_id="machine-lost",
         project_id="project",
-        workbench_id=str(uuid4()),
+        workbench_id=workbench_id,
         workbench_generation=str(uuid4()),
         volume_id="disk-one",
         image_id=IMAGE,
@@ -144,7 +146,7 @@ async def test_recreate_requires_a_persisted_intent(monkeypatch):
 
 
 async def test_destroy_removes_every_machine_and_the_disk_of_one_generation(monkeypatch):
-    binding, deleted = resource(), []
+    binding, deleted = resource(app="app"), []
     orphan = FlyRuntimeProvider._volume_name(binding["workbench_generation"])
 
     def handle(request):
@@ -356,6 +358,8 @@ async def test_maintenance_pauses_a_running_workspace_whose_compute_was_lost():
     )
     runtime.connect_task = AsyncMock(side_effect=WorkerLost("Machine was destroyed"))
     runtime.renew = AsyncMock()
+    runtime.capabilities = SimpleNamespace(dedicated_network=True)
+    runtime.verify_isolation = AsyncMock()
     lifecycle.channel_factory = Mock(
         return_value=SimpleNamespace(runtime=runtime, resource=row["resource"])
     )
@@ -365,6 +369,40 @@ async def test_maintenance_pauses_a_running_workspace_whose_compute_was_lost():
     await lifecycle.reap()
     repo.lifecycle_claim.assert_called_once_with(row, suspend=True)
     lifecycle.pause.assert_awaited_once_with(owned)
+
+
+async def test_maintenance_pauses_a_machine_that_cannot_prove_its_network():
+    row = running_row()
+    owned = {**row, "state": "pausing", "version": 8}
+    lifecycle, _, runtime = owner(
+        [row],
+        idle=Mock(return_value={"acquired": False, "workbench": row}),
+        lifecycle_claim=Mock(return_value={"acquired": True, "workbench": owned}),
+    )
+    runtime.capabilities = SimpleNamespace(dedicated_network=True)
+    runtime.verify_isolation = AsyncMock(side_effect=PermissionError("shared network"))
+    runtime.connect_task = AsyncMock()
+    runtime.renew = AsyncMock()
+    lifecycle.channel_factory = Mock(
+        return_value=SimpleNamespace(runtime=runtime, resource=row["resource"])
+    )
+    lifecycle.service.connection = AsyncMock()
+    lifecycle.billing.resume_session = AsyncMock()
+    lifecycle.pause = AsyncMock()
+    await lifecycle.reap()
+    runtime.connect_task.assert_not_awaited()
+    lifecycle.pause.assert_awaited_once_with(owned)
+
+
+async def test_the_network_audit_runs_on_a_schedule_not_every_pass():
+    row = running_row()
+    lifecycle, _, runtime = owner([row])
+    runtime.capabilities = SimpleNamespace(dedicated_network=True)
+    runtime.verify_isolation = AsyncMock()
+    host = SimpleNamespace(runtime=runtime)
+    await lifecycle._audit_network(host, row)
+    await lifecycle._audit_network(host, row)
+    runtime.verify_isolation.assert_awaited_once_with(row["resource"])
 
 
 async def test_opening_a_running_workspace_with_lost_compute_is_retryable():

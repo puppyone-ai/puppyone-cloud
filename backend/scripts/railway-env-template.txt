@@ -29,6 +29,7 @@ ETL_REDIS_URL=redis://default:xxx@redis.railway.internal:6379
 NOTIFICATIONS_REDIS_URL=redis://default:xxx@redis.railway.internal:6379
 
 # 应用配置
+# Required. A process without APP_ENV refuses to start.
 APP_ENV=production
 DEBUG=False
 APP_NAME=ContextBase
@@ -114,3 +115,10 @@ LINEAR_REDIRECT_URI=https://your-frontend.com/oauth/callback/linear
 AIRTABLE_CLIENT_ID=your-airtable-client-id
 AIRTABLE_CLIENT_SECRET=your-airtable-client-secret
 AIRTABLE_REDIRECT_URI=https://your-frontend.com/oauth/callback/airtable
+
+# Workspace 隔离（api、agent_worker、ssh_gateway 必填，缺任何一项都拒绝启动）
+CLOUD_AGENT_SANDBOX_PROVIDER=fly
+CLOUD_AGENT_FLY_ORG=
+CLOUD_AGENT_FLY_APP=
+CLOUD_AGENT_FLY_TOKEN=
+CLOUD_AGENT_FLY_IMAGE=

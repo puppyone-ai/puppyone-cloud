@@ -215,7 +215,7 @@ jobs:
           set -euo pipefail
           image="$BACKEND_REPOSITORY:$GITHUB_SHA"
           # Every role's entry module imports and the external clients exist.
-          docker run --rm -e INTERNAL_API_SECRET=image-smoke-test-only --entrypoint sh "$image" -c '
+          docker run --rm -e APP_ENV=development -e INTERNAL_API_SECRET=image-smoke-test-only --entrypoint sh "$image" -c '
             set -e
             /opt/venv/bin/fly version
             git --version
