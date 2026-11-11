@@ -11,6 +11,36 @@ import httpx
 
 # Initial allocation budget for a first workspace (machine, volume, checkout).
 WORKBENCH_START_SECONDS = 240
+API_READY_SECONDS = 60
+
+
+def wait_api_ready(client, *, timeout_seconds=API_READY_SECONDS, clock=time.monotonic, sleep=time.sleep):
+    """Wait for the public edge, which may lag provider deployment success.
+
+    Only this read-only probe retries. Login and business mutations retain
+    their original failure behavior and are never submitted before readiness.
+    """
+    deadline = clock() + timeout_seconds
+    while (remaining := deadline - clock()) > 0:
+        try:
+            response = client.get("/health", timeout=min(10, remaining))
+        except httpx.TransportError:
+            pass
+        else:
+            if response.status_code == 200:
+                try:
+                    body = response.json()
+                except ValueError:
+                    raise RuntimeError("Public API health returned invalid JSON") from None
+                if not isinstance(body, dict) or body.get("status") != "ready":
+                    raise RuntimeError("Public API health did not report ready")
+                return
+            if response.status_code not in {502, 503, 504}:
+                raise RuntimeError(f"Public API readiness HTTP {response.status_code}")
+        remaining = deadline - clock()
+        if remaining > 0:
+            sleep(min(2, remaining))
+    raise TimeoutError("Public API did not become ready before acceptance")
 
 
 def accept_billing_reads(call, org_id: str) -> dict:
@@ -101,6 +131,7 @@ def accept(config: dict) -> dict:
     with httpx.Client(
         base_url=config["api_url"].rstrip("/"), timeout=45, trust_env=False
     ) as client:
+        wait_api_ready(client)
 
         def call(method, path, **kwargs):
             response = client.request(method, "/api/v1" + path, **kwargs)
