@@ -65,7 +65,7 @@ def run(account: dict, iterations: int, *, api_url: str = "", transport=None) ->
         nonce = uuid4().hex
         project = call("POST", "/projects/", statuses=(200, 201),
                        check="create-project",
-                       headers={"Idempotency-Key": nonce},
+                       headers={"Idempotency-Key": str(uuid4())},
                        json={"name": "Hosted Git stress " + nonce[:12],
                              "org_id": account["org_id"]})
         if not isinstance(project.get("id"), str) or not project["id"]:
