@@ -31,6 +31,7 @@ REPORT_FIELDS = (
     "agent_api_performance",
     "agent_dispatch",
     "dependency_failure",
+    "provider_failure",
     "worker_stats",
     "workspace_performance",
 )

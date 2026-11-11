@@ -209,6 +209,24 @@ async def test_upstream_status_is_logged_without_body_or_key(status, error, capl
 
     record = next(r for r in caplog.records if r.message == "managed_ai_provider_request_failed")
     assert (record.provider, record.status_code) == ("example", status)
+    # The production stdlib -> Loguru bridge only forwards named safe reports.
+    from loguru import logger
+
+    from src.utils.logging_setup import InterceptHandler
+
+    records = []
+    sink = logger.add(lambda message: records.append(message.record), level="WARNING")
+    try:
+        InterceptHandler().emit(record)
+    finally:
+        logger.remove(sink)
+    assert records[-1]["extra"]["provider_failure"] == {
+        "provider": "example",
+        "provider_account_ref": "managed-default",
+        "status_code": status,
+    }
+    assert "secret-key" not in str(records)
+    assert "customer prompt" not in str(records)
     assert "secret-key" not in caplog.text
     assert "customer prompt" not in caplog.text
 
