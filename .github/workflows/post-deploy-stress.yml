@@ -22,6 +22,13 @@ on:
 permissions:
   contents: read
 
+# Share staging's release queue: do not restart services underneath a stress
+# run or compete with release acceptance for the same protected account.
+concurrency:
+  group: database-release-staging
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   stress:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/qubits'
