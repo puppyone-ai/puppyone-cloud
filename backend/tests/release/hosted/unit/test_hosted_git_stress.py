@@ -111,6 +111,12 @@ def test_url_override_cannot_receive_protected_account_credentials():
     assert seen == []
 
 
+def test_default_target_is_derived_from_the_same_protected_account():
+    seen = []
+    result = stress.run(account(), 1, transport=httpx.MockTransport(handler(seen)))
+    assert result["passed_iterations"] == 1
+
+
 @pytest.mark.parametrize("iterations", [0, 101, True])
 def test_iteration_budget_is_checked_before_contacting_the_host(iterations):
     with pytest.raises(ValueError, match=r"1\.\.100"):

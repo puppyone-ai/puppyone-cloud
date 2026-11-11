@@ -14,7 +14,7 @@ on:
       api_url:
         description: 'Must match the protected staging acceptance URL'
         required: false
-        default: 'https://qubits-api.puppyone.ai'
+        default: ''
   schedule:
     # 04:00 UTC daily — low-traffic window
     - cron: '0 4 * * *'
@@ -54,7 +54,7 @@ jobs:
         working-directory: backend
         env:
           STRESS_ITERATIONS: ${{ inputs.iterations || '30' }}
-          PUPPYONE_API_URL: ${{ github.event.inputs.api_url || 'https://qubits-api.puppyone.ai' }}
+          PUPPYONE_API_URL: ${{ inputs.api_url || '' }}
         run: |
           set -euo pipefail
           python -c 'import os, re; value = os.environ["STRESS_ITERATIONS"]; assert re.fullmatch(r"[0-9]{1,3}", value) and 1 <= int(value) <= 100, "iterations must be 1..100"'
