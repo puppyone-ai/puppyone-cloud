@@ -26,7 +26,7 @@ def prepare_account(raw: str, destination: Path) -> None:
         json.dump({key: account[key] for key in keys}, output)
 
 
-def run(account: dict, iterations: int, *, api_url: str, transport=None) -> dict:
+def run(account: dict, iterations: int, *, api_url: str = "", transport=None) -> dict:
     if type(iterations) is not int or not 1 <= iterations <= 100:
         raise ValueError("Stress iterations must be 1..100")
     if not all(isinstance(account.get(key), str) and account[key]
@@ -36,7 +36,7 @@ def run(account: dict, iterations: int, *, api_url: str, transport=None) -> dict
     parsed = urlsplit(expected)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or parsed.path
-            or api_url.rstrip("/") != expected):
+            or (api_url and api_url.rstrip("/") != expected)):
         raise ValueError("Stress URL must match the protected acceptance account")
 
     with httpx.Client(base_url=expected, timeout=45, trust_env=False,
