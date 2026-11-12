@@ -12,7 +12,7 @@ from src.config import settings
 from src.infra.dependency_diagnostics import dependency_failure, network_environment
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.repository import AuthorizationRepository
-from src.platform.sandbox import runtime_provider
+from src.platform.sandbox import default_profile, profile_artifact, runtime_provider
 
 from ..repository import WorkbenchRepository
 from .runtime_contract import FILE_PROTOCOL, RUNTIME_PROTOCOL
@@ -30,7 +30,9 @@ async def check():
     stage = "provider_configuration"
     try:
         provider = runtime_provider()
-        artifact = provider.artifact(settings.CLOUD_AGENT_IMAGE)
+        # New workspaces pin the default Profile's image; preflight that one.
+        profile = default_profile()
+        artifact = profile_artifact(profile, provider)
         if not provider.capabilities.shared_workspace or not provider.capabilities.native_files:
             raise ValueError("Configured provider does not support hosted workspaces")
         async with asyncio.timeout(25):
@@ -53,6 +55,7 @@ async def check():
             await run_blocking(WorkbenchRepository().verify_opening_contract)
         return dict(
             provider=provider.name,
+            profile=profile.id,
             artifact=artifact,
             runtime_protocol=RUNTIME_PROTOCOL,
             file_protocol=FILE_PROTOCOL,

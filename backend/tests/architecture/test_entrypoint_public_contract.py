@@ -531,6 +531,17 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in classification["schemas"].items():
         assert expected["contract"]["schemas"][name] == change["before"]
         expected["contract"]["schemas"][name] = change["after"]
+    # The Cloud Computer adds its owner settings and the screen ticket; the
+    # screen stream itself is a WebSocket and has no OpenAPI operation.
+    computer = json.loads(Path(__file__).with_name("cloud_computer_contract_delta.json").read_text())
+    assert set(computer["paths"]) == {
+        "/api/v1/projects/{project_id}/workbench/sandbox",
+        "/api/v1/projects/{project_id}/workbench/screen/session",
+    }
+    assert set(computer["schemas"]) == {"SandboxSettings"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & computer[category].keys()
+        expected["contract"][category].update(computer[category])
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }

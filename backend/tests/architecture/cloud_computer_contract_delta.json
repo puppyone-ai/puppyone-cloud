@@ -1,0 +1,9 @@
+{
+  "paths": {
+    "/api/v1/projects/{project_id}/workbench/sandbox": "6d039934a284367bcdda8990dab88e7c240fa08d458663b112c80f426f94216c",
+    "/api/v1/projects/{project_id}/workbench/screen/session": "8c455d840531ad81bf9f6f9bd7054001ebca1a13838cff3b28e93ce213d70431"
+  },
+  "schemas": {
+    "SandboxSettings": "553985cc2b864b9aa07711ea158d693ffd8b9761969babc0f9b2456f16d17cb6"
+  }
+}

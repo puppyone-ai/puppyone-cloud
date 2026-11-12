@@ -3,6 +3,7 @@ import { mkdir, chmod, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { egressRules, PUBLIC_DNS } from './fly-egress.mjs';
 import { superviseFiles } from './workbench-files-supervisor.mjs';
+import { desktopEnabled, superviseDesktop } from './desktop-supervisor.mjs';
 // Fly supports native nftables but not the iptables xt_owner kernel match.
 // Install both IP families atomically, before admitting any task. SSH/provider
 // control runs as root; UID 1000 reaches local model and Git relays, and the
@@ -23,7 +24,16 @@ await chmod('/data', 0o755); await chmod('/data/control', 0o700);
 execFileSync('mount', ['--bind', '/data/workspace', '/workspace']);
 await mkdir('/run/puppyone-workbench', {recursive: true});
 execFileSync('mount', ['--bind', '/data/control', '/run/puppyone-workbench']);
+// A desktop keeps its user state (browser profile, settings) on the workspace
+// disk; system files still come from the image on every boot.
+const desktop = desktopEnabled();
+if (desktop) {
+  await mkdir('/data/home/.pi', {recursive: true});
+  execFileSync('chown', ['1000:1000', '/data/home', '/data/home/.pi']);
+  execFileSync('mount', ['--bind', '/data/home', '/home/node']);
+}
 // Machine "started" precedes application readiness. A boot-specific receipt
 // prevents SSH channels from racing disk mounts or trusting an earlier boot.
 await superviseFiles();
 await writeFile('/run/puppyone-fly-ready', await readFile('/proc/sys/kernel/random/boot_id'), {mode: 0o600});
+if (desktop) await superviseDesktop();

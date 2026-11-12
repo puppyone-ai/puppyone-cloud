@@ -15,7 +15,14 @@ from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
 from src.shared_types.grants import ProjectAction
-from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
+from src.platform.sandbox import (
+    WorkspaceDiskLost,
+    profile_artifact,
+    profile_provider,
+    settings_profile,
+    workspace_providers,
+    workspace_stage,
+)
 
 from .errors import access_failure, context_changed
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
@@ -67,6 +74,23 @@ def failure(exc):
     return "workbench_connection_unavailable", True
 
 
+def new_binding(provider, row=None):
+    """A new computer pins provider, sandbox Profile and that Profile's image.
+
+    The owner's install choice selects the Profile; an existing binding is
+    never rebuilt to follow a later change.
+    """
+    selected = settings_profile((row or {}).get("sandbox_settings"))
+    # A Profile the default provider does not ship (a desktop on Sprites) goes
+    # to a configured provider that does; preflight then validates that one.
+    name = profile_provider(selected, provider.name, workspace_providers(provider.name))
+    return {
+        "provider": name,
+        "profile": selected.id,
+        "artifact": profile_artifact(selected, provider, name),
+    }
+
+
 def pending_snapshot(rows):
     """(count, age of the oldest request in seconds) for a pending-open listing."""
     now = datetime.now(UTC)
@@ -99,12 +123,13 @@ class WorkbenchLifecycle:
 
     async def preflight(self, row=None, *, connected=False):
         provider = self.providers(None)
-        binding = (
-            (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
-        ) or {
-            "provider": provider.name,
-            "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
-        }
+        try:
+            binding = (
+                (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
+            ) or new_binding(provider, row)
+        except ValueError as exc:
+            await provider.aclose()
+            raise WorkspaceUnavailable("workbench_provider_not_configured") from exc
         if binding["provider"] not in workspace_providers(provider.name):
             raise WorkspaceUnavailable("workbench_provider_not_configured")
         if binding["provider"] != provider.name:
@@ -190,10 +215,9 @@ class WorkbenchLifecycle:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
             return row
-        binding = (row["binding"] if row["state"] != "retired" else None) or {
-            "provider": provider.name,
-            "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
-        }
+        binding = (row["binding"] if row["state"] != "retired" else None) or new_binding(
+            provider, row
+        )
         return await run_blocking(
             self.repository.request_open,
             row,

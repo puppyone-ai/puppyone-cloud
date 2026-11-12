@@ -410,6 +410,8 @@ class Settings(BaseSettings):
                     raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
             elif not self.E2B_API_KEY:
                 raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
+            if self.APP_ENV == "production" and self.CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES.strip():
+                raise ValueError("Sandbox preview features are not allowed in production")
             if not self.SANDBOX_REAPER_ENABLED:
                 raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
         return self
@@ -475,6 +477,14 @@ class Settings(BaseSettings):
     CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
     # Existing bindings remain on their provider; new workspaces use the default above.
     CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
+    # Profile (platform/sandbox/catalog.py) pinned by new workspaces. Existing
+    # bindings keep theirs; bindings without one are "base".
+    CLOUD_AGENT_SANDBOX_PROFILE: str = Field(default="base", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    # Comma-separated Features withdrawn from every workspace without rebuilding machines.
+    CLOUD_AGENT_SANDBOX_DISABLED_FEATURES: str = ""
+    # Comma-separated Features reported as previews on Profiles that lack them, for
+    # client layout work before their image exists. Never set in production.
+    CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES: str = ""
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
@@ -484,12 +494,16 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""
+    # Image for the "desktop" sandbox profile; empty leaves that profile unavailable.
+    CLOUD_AGENT_FLY_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_SPRITES_TOKEN: str = ""
     # Immutable Linux worker bundle, built by agent-worker/build_sprites_bundle.py.
     CLOUD_AGENT_SPRITES_BUNDLE: str = ""
     CLOUD_AGENT_SPRITES_SHA256: str = ""
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
+    # Local Docker image for the "desktop" sandbox profile (agent-worker --target desktop).
+    CLOUD_AGENT_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""
     CLOUD_AGENT_MAX_TOKENS: int = Field(default=4096, ge=1, le=32768)

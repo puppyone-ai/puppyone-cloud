@@ -64,6 +64,7 @@ BEGIN
         'public.agent_run_dispatch(jsonb,boolean)',
         'public.agent_run_release(uuid,uuid,bigint,text)',
         'public.cloud_workbench_request_open_in_pool(uuid,uuid,text,jsonb,jsonb,text)',
+        'public.cloud_workbench_set_sandbox_settings(uuid,uuid,text,jsonb,jsonb)',
         'public.cloud_workbench_pending_in_pool(text,text,integer)',
         'public.cloud_workbench_maintenance_in_pool(text,text,integer)',
         'public.agent_run_workspace_due_in_pool(text,integer)',
