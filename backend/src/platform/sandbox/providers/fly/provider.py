@@ -38,6 +38,8 @@ from .transport import acquire_transport, close_transports
 # A deleted app frees its name asynchronously, and two owners can race to create it.
 APP_CREATE_ATTEMPTS = 15
 APP_CREATE_RETRY_SECONDS = 2
+# Compute when the channel carries no resolved Profile (the "base" shape).
+DEFAULT_GUEST = {"cpus": 1, "memory_mb": 1024}
 
 
 def _transport_app(resource):
@@ -190,6 +192,11 @@ class FlyRuntimeProvider:
         resource = host.resource
         # Only a machine alone on its private network may open the internet.
         internet = getattr(host, "internet_access", False) and dedicated(resource)
+        env = {"PUPPYONE_TASK_INTERNET": "open"} if internet else {}
+        features = getattr(host, "sandbox_features", ())
+        if features:
+            # fly-init.mjs starts in-machine services for the enabled Features.
+            env["PUPPYONE_SANDBOX_FEATURES"] = ",".join(features)
         machine = await self._request(
             resource,
             "POST",
@@ -200,13 +207,16 @@ class FlyRuntimeProvider:
                 "config": {
                     "image": host.artifact,
                     "metadata": self._metadata(resource),
-                    "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 1024},
+                    "guest": {
+                        "cpu_kind": "shared",
+                        **getattr(host, "machine_guest", DEFAULT_GUEST),
+                    },
                     "mounts": [{"volume": volume["id"], "path": "/data"}],
                     "services": [],
                     "auto_destroy": False,
                     "restart": {"policy": "no"},
                     "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
-                    "env": {"PUPPYONE_TASK_INTERNET": "open"} if internet else {},
+                    "env": env,
                 },
             },
         )

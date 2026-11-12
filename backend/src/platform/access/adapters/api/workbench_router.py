@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
+from src.platform.sandbox import binding_profile, default_profile, resolve_features
 from src.platform.workspace.errors import WorkspaceError, opening_failure
 from src.utils.request_context import request_id_var
 
@@ -36,7 +37,19 @@ def public_workbench(row):
             "error": "workbench_start_timeout" if expired else row.get("operation_error"),
             "retryable": expired or row.get("operation_retryable", False),
         },
+        "sandbox": public_sandbox(row.get("binding")),
     }
+
+
+def public_sandbox(binding):
+    """Profile and Feature policy for client entry points; a workspace not yet
+    bound is shown with the Profile it would receive."""
+    try:
+        profile = binding_profile(binding) if binding else default_profile()
+    except ValueError:
+        # A Profile unknown to this deployment offers no Feature entry points.
+        return {"profile": (binding or {}).get("profile"), "features": []}
+    return {"profile": profile.id, "features": resolve_features(profile)}
 
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])

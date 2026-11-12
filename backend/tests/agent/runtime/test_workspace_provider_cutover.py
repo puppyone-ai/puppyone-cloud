@@ -64,6 +64,7 @@ async def test_retired_workspace_selects_sprites_for_the_next_generation(cutover
     await owner.request("user", "project", row)
     assert owner.repository.request_open.call_args.args[1] == {
         "provider": "sprites",
+        "profile": "base",
         "artifact": "new-worker",
     }
     sprite.validate.assert_called_once()

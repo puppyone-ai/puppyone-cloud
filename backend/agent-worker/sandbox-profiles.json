@@ -1,0 +1,4 @@
+{
+  "base": {"capabilities": []},
+  "desktop": {"capabilities": ["desktop_screen", "browser"]}
+}

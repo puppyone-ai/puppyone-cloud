@@ -15,7 +15,14 @@ async function visit(directory) {
   }
 }
 await visit(root);
+// Profile Features come from sandbox-profiles.json, kept equal to the backend
+// catalog (platform/sandbox/catalog.py) by a backend test.
+const profiles = JSON.parse(await readFile(new URL('./sandbox-profiles.json', import.meta.url), 'utf8'));
+const profile = process.env.PUPPYONE_SANDBOX_PROFILE || 'base';
+if (!Object.hasOwn(profiles, profile)) throw new Error(`Unknown sandbox profile: ${profile}`);
+hash.update(profile);
 await writeFile(new URL('./runtime-manifest.json', import.meta.url), JSON.stringify({
   runtime_protocol: 1, file_protocol: 1,
-  capabilities: ['workspace_lifecycle', 'native_files', 'file_watch', 'workspace_shell'], build_id: hash.digest('hex')
+  capabilities: ['workspace_lifecycle', 'native_files', 'file_watch', 'workspace_shell', ...profiles[profile].capabilities],
+  profile, build_id: hash.digest('hex')
 }) + '\n');

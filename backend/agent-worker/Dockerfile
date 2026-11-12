@@ -12,7 +12,9 @@ COPY shared-git.mjs workbench-git-layout.mjs workbench-state.mjs workbench-initi
 COPY workbench-files.mjs workbench-files.py workbench-file-client.mjs workbench-files-supervisor.mjs fly-init.mjs fly-egress.mjs ./
 COPY sprites-init.mjs sprites-control.py ./
 COPY providers/docker-recovery.mjs ./providers/
-COPY runtime-contract.mjs write-runtime-manifest.mjs ./
+COPY runtime-contract.mjs write-runtime-manifest.mjs sandbox-profiles.json ./
+# Build arguments reach RUN as environment: selects the sandbox-profiles.json entry.
+ARG PUPPYONE_SANDBOX_PROFILE=base
 RUN node write-runtime-manifest.mjs
 RUN mkdir -p /workspace /home/node/.pi && chown node:node /workspace /home/node/.pi
 USER root

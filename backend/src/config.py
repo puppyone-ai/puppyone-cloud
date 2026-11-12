@@ -475,6 +475,11 @@ class Settings(BaseSettings):
     CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
     # Existing bindings remain on their provider; new workspaces use the default above.
     CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
+    # Profile (platform/sandbox/catalog.py) pinned by new workspaces. Existing
+    # bindings keep theirs; bindings without one are "base".
+    CLOUD_AGENT_SANDBOX_PROFILE: str = Field(default="base", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    # Comma-separated Features withdrawn from every workspace without rebuilding machines.
+    CLOUD_AGENT_SANDBOX_DISABLED_FEATURES: str = ""
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
@@ -484,6 +489,8 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""
+    # Image for the "desktop" sandbox profile; empty leaves that profile unavailable.
+    CLOUD_AGENT_FLY_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_SPRITES_TOKEN: str = ""
     # Immutable Linux worker bundle, built by agent-worker/build_sprites_bundle.py.

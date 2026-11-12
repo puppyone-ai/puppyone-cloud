@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from src.platform.sandbox import workspace_event, workspace_stage
+from src.platform.sandbox import binding_profile, enabled_features, workspace_event, workspace_stage
 
 from .control_channel import ControlChannel
 from .runtime_contract import validate_runtime
@@ -29,6 +29,10 @@ class WorkbenchChannel(ControlChannel):
             else None
         )
         self.internet_access = row.get("internet_access") is True
+        # Resolved Profile values for allocation; providers never read the catalog.
+        profile = binding_profile(binding)
+        self.machine_guest = profile.guest.as_dict()
+        self.sandbox_features = enabled_features(profile)
         super().__init__(
             str(UUID(row["generation"])),
             row["project_id"],

@@ -19,9 +19,22 @@ idle ones through each provider's ``cleanup``. ``resources`` destroys and
 verifies a resource known only by id (Project deletion); ``legacy_scope``
 retires machines left by the removed Scope Sandbox product. ``bindings``
 proves this process's configuration can operate a persisted binding.
+``catalog`` registers sandbox Profiles (machine shape) and Features (optional
+capabilities); Providers receive resolved values and never import it.
 """
 
 from .bindings import require_binding
+from .catalog import (
+    FEATURES,
+    PROFILES,
+    SandboxFeature,
+    SandboxProfile,
+    binding_profile,
+    default_profile,
+    enabled_features,
+    profile_artifact,
+    resolve_features,
+)
 from .errors import WorkerDisconnected, WorkerLost, WorkspaceDiskLost, WorkspaceUnavailable
 from .port import (
     RESOURCE_POOLS,
@@ -45,6 +58,8 @@ from .store import ExecutionSession, ExecutionSessionStore, durable_execution_st
 from .timing import workspace_event, workspace_stage
 
 __all__ = [
+    "FEATURES",
+    "PROFILES",
     "PROVIDERS",
     "RESOURCE_POOLS",
     "SEND_TIMEOUT",
@@ -54,16 +69,23 @@ __all__ = [
     "RuntimeConnection",
     "RuntimeProvider",
     "RuntimeTransition",
+    "SandboxFeature",
+    "SandboxProfile",
     "WorkerDisconnected",
     "WorkerLost",
     "WorkspaceDiskLost",
     "WorkspaceUnavailable",
+    "binding_profile",
     "close_provider_transports",
+    "default_profile",
     "default_provider",
     "destroy_resource",
     "durable_execution_store",
+    "enabled_features",
+    "profile_artifact",
     "reclamation_passes",
     "require_binding",
+    "resolve_features",
     "resource_absent",
     "resource_identity",
     "run_execution_reaper_once",
