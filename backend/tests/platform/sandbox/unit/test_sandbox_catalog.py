@@ -79,8 +79,14 @@ def test_deployment_switch_disables_a_feature_everywhere(monkeypatch):
     desktop = PROFILES["desktop"]
     monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_DISABLED_FEATURES", " desktop_screen ,")
     assert resolve_features(desktop) == [
-        {"id": "desktop_screen", "surface": "screen", "enabled": False, "reason": "disabled"},
-        {"id": "browser", "surface": None, "enabled": True, "reason": None},
+        {
+            "id": "desktop_screen",
+            "surface": "screen",
+            "enabled": False,
+            "reason": "disabled",
+            "preview": False,
+        },
+        {"id": "browser", "surface": None, "enabled": True, "reason": None, "preview": False},
     ]
     assert enabled_features(desktop) == ("browser",)
 
@@ -103,3 +109,23 @@ def test_client_view_of_base_and_unknown_profiles(monkeypatch):
         "profile": "from-newer-release",
         "features": [],
     }
+
+
+def test_preview_features_reach_the_client_but_never_the_machine(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_DISABLED_FEATURES", "")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES", "desktop_screen")
+    base = PROFILES["base"]
+    assert resolve_features(base) == [
+        {
+            "id": "desktop_screen",
+            "surface": "screen",
+            "enabled": True,
+            "reason": None,
+            "preview": True,
+        }
+    ]
+    assert enabled_features(base) == ()
+    assert [item["preview"] for item in resolve_features(PROFILES["desktop"])] == [False, False]
+    monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES", "unknown")
+    with pytest.raises(ValueError):
+        resolve_features(base)

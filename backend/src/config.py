@@ -410,6 +410,8 @@ class Settings(BaseSettings):
                     raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
             elif not self.E2B_API_KEY:
                 raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
+            if self.APP_ENV == "production" and self.CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES.strip():
+                raise ValueError("Sandbox preview features are not allowed in production")
             if not self.SANDBOX_REAPER_ENABLED:
                 raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
         return self
@@ -480,6 +482,9 @@ class Settings(BaseSettings):
     CLOUD_AGENT_SANDBOX_PROFILE: str = Field(default="base", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     # Comma-separated Features withdrawn from every workspace without rebuilding machines.
     CLOUD_AGENT_SANDBOX_DISABLED_FEATURES: str = ""
+    # Comma-separated Features reported as previews on Profiles that lack them, for
+    # client layout work before their image exists. Never set in production.
+    CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES: str = ""
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""

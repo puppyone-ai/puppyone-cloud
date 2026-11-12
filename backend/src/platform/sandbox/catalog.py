@@ -112,15 +112,31 @@ def disabled_features() -> frozenset[str]:
     )
 
 
+def preview_features() -> tuple[str, ...]:
+    names = [
+        name.strip()
+        for name in settings.CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES.split(",")
+        if name.strip()
+    ]
+    unknown = set(names) - set(FEATURES)
+    if unknown:
+        raise ValueError(f"Unknown sandbox preview features: {sorted(unknown)}")
+    return tuple(dict.fromkeys(names))
+
+
 def resolve_features(
     selected: SandboxProfile, entitled: Callable[[str], bool] | None = None
 ) -> list[dict]:
     """Policy view of a Profile's Features. It never contacts the machine; using a
     Feature still requires the running image to declare its runtime capability.
+
+    Preview Features are reported for client layout work on Profiles that do not
+    ship them; the machine has nothing behind them.
     """
     disabled = disabled_features()
     resolved = []
-    for name in selected.features:
+    previews = [name for name in preview_features() if name not in selected.features]
+    for name in (*selected.features, *previews):
         feature = FEATURES[name]
         reason = None
         if name in disabled:
@@ -133,11 +149,17 @@ def resolve_features(
                 "surface": feature.surface,
                 "enabled": reason is None,
                 "reason": reason,
+                "preview": name in previews,
             }
         )
     return resolved
 
 
 def enabled_features(selected: SandboxProfile, entitled=None) -> tuple[str, ...]:
-    return tuple(item["id"] for item in resolve_features(selected, entitled) if item["enabled"])
+    """Features the machine provides; previews never reach the machine."""
+    return tuple(
+        item["id"]
+        for item in resolve_features(selected, entitled)
+        if item["enabled"] and not item["preview"]
+    )
 
