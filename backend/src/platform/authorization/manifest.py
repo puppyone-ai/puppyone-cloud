@@ -79,6 +79,9 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     ("POST", "/api/v1/projects/{project_id}/workbench/sync/finish"): _human(ProjectAction.CONTENT_WRITE),
     ("POST", "/api/v1/projects/{project_id}/workbench/sync/abort"): _human(ProjectAction.CONTENT_WRITE),
     ("POST", "/api/v1/projects/{project_id}/workbench/publish"): _human(ProjectAction.CONTENT_WRITE),
+    # The owner's own Cloud Computer: same authority as opening it.
+    ("PUT", "/api/v1/projects/{project_id}/workbench/sandbox"): _human(ProjectAction.AGENT_RUN),
+    ("POST", "/api/v1/projects/{project_id}/workbench/screen/session"): _human(ProjectAction.AGENT_RUN),
 
     # Content and History surfaces.
     # Managed Office sessions are resource-owner operations, not project grants.
