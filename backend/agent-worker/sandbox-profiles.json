@@ -1,4 +1,4 @@
 {
   "base": {"capabilities": []},
-  "desktop": {"capabilities": ["desktop_screen", "browser"]}
+  "desktop": {"capabilities": ["desktop", "screen_stream", "browser"]}
 }

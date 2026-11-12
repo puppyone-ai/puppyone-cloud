@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+from contextlib import suppress
 
 from src.platform.sandbox.errors import WorkerDisconnected, WorkerLost, WorkspaceDiskLost
 from src.platform.sandbox.port import (
+    STREAM_COMMANDS,
     RuntimeCapabilities,
     RuntimeConnection,
+    RuntimeStream,
     RuntimeTransition,
     close_process,
     read_process,
@@ -16,7 +19,11 @@ from src.platform.sandbox.port import (
 
 class DockerRuntimeProvider:
     name = "docker"
-    capabilities = RuntimeCapabilities(recovery_backend="docker-volume", file_retention="volume")
+    capabilities = RuntimeCapabilities(
+        recovery_backend="docker-volume",
+        file_retention="volume",
+        streams=frozenset(STREAM_COMMANDS),
+    )
 
     async def _docker(self, *args):
         proc = await asyncio.create_subprocess_exec(
@@ -57,6 +64,32 @@ class DockerRuntimeProvider:
                 + generation
                 + ",target=/run/puppyone-workbench",
             ]
+        features = getattr(host, "sandbox_features", ()) if host.resource.get("workbench_id") else ()
+        # A desktop needs room for X, its session and a browser, and keeps its
+        # home on a volume as Fly keeps it on the workspace disk.
+        if "desktop" in features:
+            guest = host.machine_guest
+            shape = [
+                "--pids-limit=1024",
+                f"--memory={guest['memory_mb']}m",
+                f"--cpus={guest['cpus']}",
+                "--shm-size=512m",
+                "--tmpfs=/tmp:rw,nosuid,nodev,size=512m,uid=1000,gid=1000",
+                "--mount",
+                "type=volume,source=puppyone-workbench-home-"
+                + host.resource["workbench_generation"]
+                + ",target=/home/node",
+                "--env",
+                "PUPPYONE_SANDBOX_FEATURES=" + ",".join(features),
+            ]
+        else:
+            shape = [
+                "--pids-limit=128",
+                "--memory=768m",
+                "--cpus=1",
+                "--tmpfs=/tmp:rw,nosuid,nodev,size=128m,uid=1000,gid=1000",
+                "--tmpfs=/home/node:rw,nosuid,nodev,size=8m,uid=1000,gid=1000",
+            ]
         await self._docker(
             "create",
             "--name",
@@ -71,19 +104,15 @@ class DockerRuntimeProvider:
             "--cap-add=DAC_OVERRIDE",
             "--cap-add=FOWNER",
             "--security-opt=no-new-privileges",
-            "--pids-limit=128",
-            "--memory=768m",
-            "--cpus=1",
             "--user=0:0",
             *mounts,
-            "--tmpfs=/tmp:rw,nosuid,nodev,size=128m,uid=1000,gid=1000",
+            *shape,
             "--tmpfs=/run:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0755",
-            "--tmpfs=/home/node:rw,nosuid,nodev,size=8m,uid=1000,gid=1000",
             "-i",
             *(["--entrypoint=node"] if host.resource.get("workbench_id") else []),
             inspected["Id"],
             *(
-                ["/opt/puppyone-agent/workbench-files-supervisor.mjs"]
+                ["/opt/puppyone-agent/workbench-machine.mjs"]
                 if host.resource.get("workbench_id")
                 else []
             ),
@@ -164,6 +193,34 @@ class DockerRuntimeProvider:
         if service != "files":
             raise ValueError("Unsupported workspace service")
         await self.open_channel(host)
+
+    async def open_stream(self, host, service):
+        if service not in STREAM_COMMANDS:
+            raise ValueError("Unsupported workspace stream")
+        process = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            "-i",
+            "--user=0:0",
+            host.resource["resource_id"],
+            *STREAM_COMMANDS[service],
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        async def close():
+            if process.stdin and not process.stdin.is_closing():
+                process.stdin.close()
+            try:
+                async with asyncio.timeout(5):
+                    await process.wait()
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+
+        return RuntimeStream(process.stdout, process.stdin, close)
 
     async def snapshot(self, host):
         value = await host.control("snapshot")

@@ -502,6 +502,8 @@ class Settings(BaseSettings):
     CLOUD_AGENT_SPRITES_BUNDLE: str = ""
     CLOUD_AGENT_SPRITES_SHA256: str = ""
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
+    # Local Docker image for the "desktop" sandbox profile (agent-worker --target desktop).
+    CLOUD_AGENT_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""
     CLOUD_AGENT_MAX_TOKENS: int = Field(default=4096, ge=1, le=32768)

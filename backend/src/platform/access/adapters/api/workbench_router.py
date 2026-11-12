@@ -2,19 +2,29 @@
 
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
-from src.platform.sandbox import binding_profile, default_profile, resolve_features
+from src.platform.sandbox import binding_profile, resolve_features, settings_profile
 from src.platform.workspace.errors import WorkspaceError, opening_failure
+from src.platform.workspace.screen import SUBPROTOCOL, WorkspaceScreen, ticket_from_protocols
 from src.utils.request_context import request_id_var
 
 logger = logging.getLogger(__name__)
@@ -37,19 +47,37 @@ def public_workbench(row):
             "error": "workbench_start_timeout" if expired else row.get("operation_error"),
             "retryable": expired or row.get("operation_retryable", False),
         },
-        "sandbox": public_sandbox(row.get("binding")),
+        "sandbox": public_sandbox(row),
     }
 
 
-def public_sandbox(binding):
-    """Profile and Feature policy for client entry points; a workspace not yet
-    bound is shown with the Profile it would receive."""
+def public_sandbox(row):
+    """Profile, owner settings and Feature policy for client entry points.
+
+    ``profile`` is the bound computer's; a workspace without a live binding is
+    shown with the Profile its next computer receives. ``next_profile`` differs
+    from ``profile`` when the owner changed the install choice, which applies
+    only when the next computer is created.
+    """
+    choices = row.get("sandbox_settings") or {}
+    binding = row.get("binding") if row.get("state") != "retired" else None
     try:
-        profile = binding_profile(binding) if binding else default_profile()
+        upcoming = settings_profile(choices)
+        current = binding_profile(binding) if binding else upcoming
     except ValueError:
         # A Profile unknown to this deployment offers no Feature entry points.
-        return {"profile": (binding or {}).get("profile"), "features": []}
-    return {"profile": profile.id, "features": resolve_features(profile)}
+        return {
+            "profile": (binding or {}).get("profile"),
+            "next_profile": None,
+            "settings": choices,
+            "features": [],
+        }
+    return {
+        "profile": current.id,
+        "next_profile": upcoming.id,
+        "settings": choices,
+        "features": resolve_features(current, choices),
+    }
 
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/workbench", tags=["workbench"])
@@ -272,6 +300,79 @@ async def publish_workspace(
     """Save the Workspace's work and move the Project's branch to it."""
     row = await _bound_workspace(service, user, project_id, request)
     return await service.git.publish(row)
+
+
+class SandboxSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    desktop: bool | None = None
+    screen_stream: bool | None = None
+
+
+@router.put("/sandbox")
+async def set_sandbox_settings(
+    project_id: str,
+    request: SandboxSettings,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    """The owner's choices for this project's Cloud Computer."""
+    row = await service.set_sandbox_settings(
+        user.user_id, project_id, request.model_dump(exclude_none=True)
+    )
+    return public_sandbox(row)
+
+
+def _screen(app, service):
+    screen = getattr(app.state, "workspace_screen", None)
+    if screen is None or screen.service is not service:
+        screen = app.state.workspace_screen = WorkspaceScreen(service)
+    return screen
+
+
+@router.post("/screen/session")
+async def screen_session(
+    project_id: str,
+    request: Request,
+    response: Response,
+    user=Depends(get_current_user),
+    service=Depends(get_workbench_service),
+):
+    """A one-time ticket for the screen WebSocket; it is never a session token."""
+    response.headers["Cache-Control"] = "no-store"
+    return await _screen(request.app, service).session(user.user_id, project_id)
+
+
+@router.websocket("/screen/stream")
+async def screen_stream(websocket: WebSocket, project_id: str):
+    """Bridge the Cloud Computer's screen. Authority comes only from the ticket
+    in the subprotocol header; failures close before accepting the upgrade."""
+    service = getattr(websocket.app.state, "workbench_service", None)
+    if service is None:
+        from src.platform.access.composition import build_workbench_service
+
+        service = websocket.app.state.workbench_service = build_workbench_service()
+    screen = _screen(websocket.app, service)
+    ticket = ticket_from_protocols(websocket.headers.get("sec-websocket-protocol", ""))
+    try:
+        if not ticket:
+            raise PermissionError("screen_ticket_missing")
+        row, context = await screen.admit(project_id, ticket)
+    except (PermissionError, WorkspaceError) as exc:
+        logger.info("workspace_screen_refused", extra={"reason": type(exc).__name__})
+        await websocket.close(code=1008)
+        return
+    await websocket.accept(subprotocol=SUBPROTOCOL)
+    try:
+        await screen.bridge(websocket, row, context, endings=(WebSocketDisconnect,))
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        logger.exception("workspace_screen_failed")
+        with suppress(Exception):
+            await websocket.close(code=1011)
+        return
+    with suppress(Exception):
+        await websocket.close(code=1000)
 
 
 def workspace_error_handler(request, error: WorkspaceError):

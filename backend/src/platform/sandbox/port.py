@@ -28,6 +28,8 @@ class RuntimeCapabilities:
     preserves_processes: bool = True
     files_require_compute: bool = True
     connection_preparation: bool = False
+    # In-machine byte services this provider can stream (see ``open_stream``).
+    streams: frozenset = frozenset()
 
 
 def resource_identity(resource: dict) -> str:
@@ -64,6 +66,32 @@ class RuntimeConnection:
             raise PermissionError("Provider connection resource binding mismatch")
 
 
+class RuntimeStream:
+    """A raw byte stream to one in-machine service over the provider's own
+    authenticated transport. It never exposes a network listener; closing it
+    ends only this stream, never the service or the machine."""
+
+    def __init__(self, reader, writer, closer):
+        self._reader, self._writer, self._closer = reader, writer, closer
+        self._closed = False
+
+    async def read(self, limit: int = 65536) -> bytes:
+        return await self._reader.read(limit)
+
+    async def write(self, data: bytes) -> None:
+        self._writer.write(data)
+        await self._writer.drain()
+
+    async def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            await self._closer()
+
+
+# In-machine relay per streamable service; the image ships these scripts.
+STREAM_COMMANDS = {"screen": ["node", "/opt/puppyone-agent/desktop-relay.mjs"]}
+
+
 @dataclass(frozen=True)
 class RuntimeTransition:
     identity: str
@@ -95,6 +123,8 @@ class RuntimeProvider(Protocol):
     async def pause(self, host: Any) -> None: ...
     async def open_channel(self, host: Any) -> None: ...
     async def open_service(self, host: Any, service: str) -> None: ...
+    # Byte stream to a service named in ``capabilities.streams``; others raise ValueError.
+    async def open_stream(self, host: Any, service: str) -> RuntimeStream: ...
     async def send(self, host: Any, data: str, *, timeout: float) -> None: ...
     async def disconnect(self, host: Any) -> None: ...
     async def close_channel(self, host: Any) -> None: ...

@@ -17,8 +17,8 @@ from src.infra.execution.runner import run_blocking
 from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import (
     WorkspaceDiskLost,
-    default_profile,
     profile_artifact,
+    settings_profile,
     workspace_providers,
     workspace_stage,
 )
@@ -73,9 +73,13 @@ def failure(exc):
     return "workbench_connection_unavailable", True
 
 
-def new_binding(provider):
-    """A new workspace pins provider, sandbox Profile and that Profile's image."""
-    selected = default_profile()
+def new_binding(provider, row=None):
+    """A new computer pins provider, sandbox Profile and that Profile's image.
+
+    The owner's install choice selects the Profile; an existing binding is
+    never rebuilt to follow a later change.
+    """
+    selected = settings_profile((row or {}).get("sandbox_settings"))
     return {
         "provider": provider.name,
         "profile": selected.id,
@@ -118,7 +122,7 @@ class WorkbenchLifecycle:
         try:
             binding = (
                 (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
-            ) or new_binding(provider)
+            ) or new_binding(provider, row)
         except ValueError as exc:
             await provider.aclose()
             raise WorkspaceUnavailable("workbench_provider_not_configured") from exc
@@ -207,7 +211,9 @@ class WorkbenchLifecycle:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
             return row
-        binding = (row["binding"] if row["state"] != "retired" else None) or new_binding(provider)
+        binding = (row["binding"] if row["state"] != "retired" else None) or new_binding(
+            provider, row
+        )
         return await run_blocking(
             self.repository.request_open,
             row,

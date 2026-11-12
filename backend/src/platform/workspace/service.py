@@ -8,7 +8,7 @@ from src.config import settings
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.factory import build_authorization_service
 from src.shared_types.grants import ProjectAction
-from src.platform.sandbox import runtime_provider, workspace_stage
+from src.platform.sandbox import runtime_provider, validate_settings, workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
@@ -119,6 +119,22 @@ class WorkbenchService(WorkbenchAdmission):
 
     async def reap(self):
         await self.lifecycle.reap()
+
+    async def set_sandbox_settings(self, user, project, value):
+        """Merge the owner's choices. ``desktop`` takes effect when the next
+        computer is created; runtime toggles apply immediately."""
+        try:
+            value = validate_settings(value)
+        except ValueError as exc:
+            raise WorkspaceError(422, {"code": "sandbox_settings_invalid"}) from exc
+        context, _ = await run_blocking(self.context, user, project, ProjectAction.AGENT_RUN)
+        row = context["workbench"] or await run_blocking(
+            self.repository.default, user, project, context["revision"]
+        )
+        merged = {**(row.get("sandbox_settings") or {}), **value}
+        return await run_blocking(
+            self.repository.set_sandbox_settings, row, merged, context["revision"]
+        )
 
     async def check(self, row):
         context, _ = await run_blocking(

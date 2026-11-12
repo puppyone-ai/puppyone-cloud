@@ -5,6 +5,10 @@ Profile is one machine shape: image per provider, compute, extra persisted
 paths and the Features it ships. New workspaces pin a Profile in their binding;
 bindings without one are ``base``.
 
+Each workspace carries user settings: ``desktop`` chooses the Profile of the
+next computer (an existing binding never changes), and runtime toggles such as
+``screen_stream`` withdraw an installed Feature without rebuilding the machine.
+
 This module is data plus pure functions. It never imports Workspace, Access,
 Agent or entitlement code; callers pass policy in. The image-side declaration
 is ``agent-worker/sandbox-profiles.json`` and a test keeps both in agreement.
@@ -27,8 +31,14 @@ class SandboxFeature:
     runtime_capability: str
     # Client entry kind (for example "screen"); None for capabilities without UI.
     surface: str | None = None
+    # Wire format of a streamed surface; the client picks its viewer by it.
+    transport: str | None = None
+    # Features that must be available for this one to be.
+    requires: tuple[str, ...] = ()
     # Organization entitlement feature key; None means not plan-gated.
     entitlement: str | None = None
+    # Whether the workspace owner may switch it off without rebuilding the machine.
+    user_toggle: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,10 +65,16 @@ class SandboxProfile:
 FEATURES: Mapping[str, SandboxFeature] = {
     feature.id: feature
     for feature in (
+        SandboxFeature("desktop", "desktop"),
         SandboxFeature(
-            "desktop_screen", "desktop_screen", surface="screen", entitlement="cloud_desktop"
+            "screen_stream",
+            "screen_stream",
+            surface="screen",
+            transport="vnc",
+            requires=("desktop",),
+            user_toggle=True,
         ),
-        SandboxFeature("browser", "browser", entitlement="cloud_desktop"),
+        SandboxFeature("browser", "browser", requires=("desktop",)),
     )
 }
 
@@ -68,13 +84,16 @@ PROFILES: Mapping[str, SandboxProfile] = {
         SandboxProfile(BASE_PROFILE, (), MachineGuest(cpus=1, memory_mb=1024)),
         SandboxProfile(
             "desktop",
-            ("desktop_screen", "browser"),
+            ("desktop", "screen_stream", "browser"),
             MachineGuest(cpus=2, memory_mb=4096),
             persist_paths=("/home/node",),
-            images={"fly": "CLOUD_AGENT_FLY_DESKTOP_IMAGE"},
+            images={"fly": "CLOUD_AGENT_FLY_DESKTOP_IMAGE", "docker": "CLOUD_AGENT_DESKTOP_IMAGE"},
         ),
     )
 }
+
+# Workspace settings: the install choice plus each Feature's user toggle.
+SETTING_KEYS = frozenset({"desktop", *(f.id for f in FEATURES.values() if f.user_toggle)})
 
 
 def profile(name: str | None) -> SandboxProfile:
@@ -91,6 +110,23 @@ def binding_profile(binding: Mapping | None) -> SandboxProfile:
 
 def default_profile() -> SandboxProfile:
     return profile(settings.CLOUD_AGENT_SANDBOX_PROFILE)
+
+
+def validate_settings(value: Mapping) -> dict:
+    """Workspace settings are a closed set of booleans."""
+    if not isinstance(value, Mapping) or set(value) - SETTING_KEYS:
+        raise ValueError("Unknown sandbox setting")
+    if not all(isinstance(item, bool) for item in value.values()):
+        raise ValueError("Sandbox settings are booleans")
+    return dict(value)
+
+
+def settings_profile(value: Mapping | None) -> SandboxProfile:
+    """Profile a new computer receives: the owner's install choice, else the default."""
+    choice = (value or {}).get("desktop")
+    if choice is None:
+        return default_profile()
+    return PROFILES["desktop"] if choice else PROFILES[BASE_PROFILE]
 
 
 def profile_artifact(selected: SandboxProfile, provider) -> str:
@@ -125,41 +161,57 @@ def preview_features() -> tuple[str, ...]:
 
 
 def resolve_features(
-    selected: SandboxProfile, entitled: Callable[[str], bool] | None = None
+    selected: SandboxProfile,
+    user_settings: Mapping | None = None,
+    entitled: Callable[[str], bool] | None = None,
 ) -> list[dict]:
-    """Policy view of a Profile's Features. It never contacts the machine; using a
-    Feature still requires the running image to declare its runtime capability.
+    """Policy view of every registered Feature for one bound Profile. It never
+    contacts the machine; using a Feature still requires the running image to
+    declare its runtime capability.
 
-    Preview Features are reported for client layout work on Profiles that do not
-    ship them; the machine has nothing behind them.
+    Reasons, first match wins: ``not_installed`` (the Profile lacks it),
+    ``disabled`` (deployment switch), ``not_entitled``, ``user_disabled``
+    (workspace toggle) and ``requires`` (a required Feature is unavailable).
+    Preview Features are reported for client layout work on Profiles that do
+    not ship them; the machine has nothing behind them.
     """
     disabled = disabled_features()
-    resolved = []
-    previews = [name for name in preview_features() if name not in selected.features]
-    for name in (*selected.features, *previews):
-        feature = FEATURES[name]
+    previews = set(preview_features()) - set(selected.features)
+    choices = user_settings or {}
+    reasons = {}
+    for name, feature in FEATURES.items():
         reason = None
-        if name in disabled:
+        if name not in selected.features and name not in previews:
+            reason = "not_installed"
+        elif name in disabled:
             reason = "disabled"
         elif feature.entitlement and entitled is not None and not entitled(feature.entitlement):
             reason = "not_entitled"
-        resolved.append(
-            {
-                "id": name,
-                "surface": feature.surface,
-                "enabled": reason is None,
-                "reason": reason,
-                "preview": name in previews,
-            }
-        )
-    return resolved
+        elif feature.user_toggle and choices.get(name) is False:
+            reason = "user_disabled"
+        elif name not in previews and any(reasons.get(r) for r in feature.requires):
+            reason = "requires"
+        reasons[name] = reason
+    return [
+        {
+            "id": name,
+            "surface": feature.surface,
+            "transport": feature.transport,
+            "installed": name in selected.features,
+            "enabled": reasons[name] is None,
+            "reason": reasons[name],
+            "preview": name in previews,
+        }
+        for name, feature in FEATURES.items()
+    ]
 
 
 def enabled_features(selected: SandboxProfile, entitled=None) -> tuple[str, ...]:
-    """Features the machine provides; previews never reach the machine."""
+    """Features the machine starts services for. Owner toggles only withdraw
+    access, so they never change what the machine runs; previews never reach it.
+    """
     return tuple(
         item["id"]
-        for item in resolve_features(selected, entitled)
-        if item["enabled"] and not item["preview"]
+        for item in resolve_features(selected, None, entitled)
+        if item["enabled"] and item["installed"]
     )
-

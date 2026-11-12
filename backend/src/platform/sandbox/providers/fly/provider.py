@@ -10,6 +10,7 @@ import base64
 import re
 import shlex
 import shutil
+from contextlib import suppress
 from urllib.parse import quote
 from uuid import UUID
 
@@ -23,8 +24,10 @@ from src.platform.sandbox.errors import (
     WorkspaceUnavailable,
 )
 from src.platform.sandbox.port import (
+    STREAM_COMMANDS,
     RuntimeCapabilities,
     RuntimeConnection,
+    RuntimeStream,
     RuntimeTransition,
     close_process,
     read_process,
@@ -42,6 +45,20 @@ APP_CREATE_RETRY_SECONDS = 2
 DEFAULT_GUEST = {"cpus": 1, "memory_mb": 1024}
 
 
+def _after_boot(command):
+    """Fly's started event is earlier than our firewall/mount initialization.
+    Only this boot's root-written receipt admits an in-machine process."""
+    return [
+        "sh",
+        "-c",
+        "boot=$(cat /proc/sys/kernel/random/boot_id); i=0; "
+        'until [ "$(cat /run/puppyone-fly-ready 2>/dev/null)" = "$boot" ]; do '
+        'i=$((i+1)); [ "$i" -lt 150 ] || exit 1; sleep 0.2; done; exec "$@"',
+        "fly-control",
+        *command,
+    ]
+
+
 def _transport_app(resource):
     # One agent carries a tunnel per private network, so dedicated apps share it.
     return settings.CLOUD_AGENT_FLY_APP if dedicated(resource) else resource["app"]
@@ -54,6 +71,7 @@ class FlyRuntimeProvider:
         file_retention="volume",
         preserves_processes=False,
         connection_preparation=True,
+        streams=frozenset(STREAM_COMMANDS),
     )
 
     def __init__(self, *, client=None):
@@ -488,17 +506,7 @@ class FlyRuntimeProvider:
             host.connection = await self.running_connection(host)
         host.connection.validate(host.resource)
         connection = host.connection
-        # Fly's started event is earlier than our firewall/mount initialization.
-        # Only this boot's root-written receipt admits a control process.
-        command = [
-            "sh",
-            "-c",
-            "boot=$(cat /proc/sys/kernel/random/boot_id); i=0; "
-            'until [ "$(cat /run/puppyone-fly-ready 2>/dev/null)" = "$boot" ]; do '
-            'i=$((i+1)); [ "$i" -lt 150 ] || exit 1; sleep 0.2; done; exec "$@"',
-            "fly-control",
-            *host.control_command(),
-        ]
+        command = _after_boot(host.control_command())
         if self._transport is not None:
             await self.close_channel(host)
             host.connection = connection
@@ -526,6 +534,44 @@ class FlyRuntimeProvider:
         if service != "files":
             raise ValueError("Unsupported workspace service")
         await self.open_channel(host)
+
+    async def open_stream(self, host, service):
+        if service not in STREAM_COMMANDS:
+            raise ValueError("Unsupported workspace stream")
+        if getattr(host, "connection", None) is None:
+            host.connection = await self.running_connection(host)
+        host.connection.validate(host.resource)
+        # Each stream owns its SSH channel and transport reference, apart from
+        # the control channel, so a viewer closing never touches file service.
+        transport = await acquire_transport(
+            _transport_app(host.resource),
+            settings.CLOUD_AGENT_FLY_TOKEN,
+            settings.CLOUD_AGENT_FLY_CLI,
+        )
+        try:
+            lease = await transport.ssh_connections().open(
+                host.resource,
+                host.connection.handle,
+                shlex.join(_after_boot(STREAM_COMMANDS[service])),
+                epoch=getattr(host, "compute_epoch", None),
+            )
+        except BaseException:
+            transport.release()
+            raise
+        process = lease.process
+
+        async def close():
+            try:
+                process.stdin.write_eof()
+                process.close()
+                with suppress(Exception):
+                    async with asyncio.timeout(5):
+                        await process.wait_closed()
+            finally:
+                lease.release()
+                transport.release()
+
+        return RuntimeStream(process.stdout, process.stdin, close)
 
     async def send(self, host, data, *, timeout):
         host.process.stdin.write(data.encode())
