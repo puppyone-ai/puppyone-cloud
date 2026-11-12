@@ -18,6 +18,7 @@ from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import (
     WorkspaceDiskLost,
     profile_artifact,
+    profile_provider,
     settings_profile,
     workspace_providers,
     workspace_stage,
@@ -80,10 +81,13 @@ def new_binding(provider, row=None):
     never rebuilt to follow a later change.
     """
     selected = settings_profile((row or {}).get("sandbox_settings"))
+    # A Profile the default provider does not ship (a desktop on Sprites) goes
+    # to a configured provider that does; preflight then validates that one.
+    name = profile_provider(selected, provider.name, workspace_providers(provider.name))
     return {
-        "provider": provider.name,
+        "provider": name,
         "profile": selected.id,
-        "artifact": profile_artifact(selected, provider),
+        "artifact": profile_artifact(selected, provider, name),
     }
 
 

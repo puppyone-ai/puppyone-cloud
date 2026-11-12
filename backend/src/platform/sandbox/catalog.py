@@ -129,14 +129,23 @@ def settings_profile(value: Mapping | None) -> SandboxProfile:
     return PROFILES["desktop"] if choice else PROFILES[BASE_PROFILE]
 
 
-def profile_artifact(selected: SandboxProfile, provider) -> str:
+def profile_provider(selected: SandboxProfile, default: str, configured) -> str:
+    """Provider for a new computer of this Profile: the deployment default when
+    it ships the Profile, else the first configured provider that does. A
+    Profile no configured provider ships keeps the default and fails closed."""
+    if selected.id == BASE_PROFILE or default in selected.images:
+        return default
+    return next((name for name in configured if name in selected.images), default)
+
+
+def profile_artifact(selected: SandboxProfile, provider, name: str | None = None) -> str:
     """Pinned image for a new binding; ValueError when this deployment lacks it."""
     if selected.id == BASE_PROFILE:
         return provider.artifact(settings.CLOUD_AGENT_IMAGE)
-    setting = selected.images.get(provider.name)
+    setting = selected.images.get(name or provider.name)
     artifact = getattr(settings, setting, "") if setting else ""
     if not artifact:
-        raise ValueError(f"Sandbox profile {selected.id} has no {provider.name} image")
+        raise ValueError(f"Sandbox profile {selected.id} has no {name or provider.name} image")
     return artifact
 
 

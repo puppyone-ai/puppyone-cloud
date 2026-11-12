@@ -173,3 +173,16 @@ def test_preview_features_reach_the_client_but_never_the_machine(monkeypatch):
     monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES", "unknown")
     with pytest.raises(ValueError):
         resolve_features(base)
+
+
+def test_a_profile_goes_to_a_configured_provider_that_ships_it(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_SANDBOX_PROVIDER", "sprites")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS", "fly")
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_DESKTOP_IMAGE", DIGEST)
+    sprites = provider("sprites")
+    assert new_binding(sprites)["provider"] == "sprites"
+    desktop = new_binding(sprites, {"sandbox_settings": {"desktop": True}})
+    assert desktop == {"provider": "fly", "profile": "desktop", "artifact": DIGEST}
+    monkeypatch.setattr(settings, "CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS", "")
+    with pytest.raises(ValueError, match="no sprites image"):
+        new_binding(sprites, {"sandbox_settings": {"desktop": True}})
