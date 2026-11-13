@@ -4,7 +4,6 @@ DO $$
 DECLARE
     suffix text;
     user_id uuid;
-    transaction_id bigint;
 BEGIN
     FOREACH suffix IN ARRAY ARRAY['a', 'b'] LOOP
         user_id := CASE suffix
@@ -28,16 +27,8 @@ BEGIN
             'issue053-project-' || suffix, user_id, 'admin', user_id);
         INSERT INTO public.repository_scopes (id, project_id, name, path)
         VALUES ('issue053-scope-' || suffix, 'issue053-project-' || suffix, 'Docs', 'docs');
-        INSERT INTO public.version_transactions (project_id, source_channel, actor, intent_type,
-            status, audit_detail)
-        VALUES ('issue053-project-' || suffix, 'test', user_id::text, 'operation',
-            'committed', jsonb_build_object('private', suffix)) RETURNING id INTO transaction_id;
-        INSERT INTO public.version_conflicts (pending_conflict_id, transaction_id, project_id,
-            conflict_records)
-        VALUES ('issue053-conflict-' || suffix, transaction_id, 'issue053-project-' || suffix,
-            jsonb_build_array(jsonb_build_object('private', suffix)));
-        INSERT INTO public.audit_logs (project_id, action, operator_id, transaction_id, metadata)
-        VALUES ('issue053-project-' || suffix, 'fixture', user_id::text, transaction_id,
+        INSERT INTO public.audit_logs (project_id, action, operator_id, metadata)
+        VALUES ('issue053-project-' || suffix, 'fixture', user_id::text,
             jsonb_build_object('private', suffix));
         INSERT INTO public.tables (id, project_id, name, data)
         VALUES ('issue053-table-' || suffix, 'issue053-project-' || suffix,
