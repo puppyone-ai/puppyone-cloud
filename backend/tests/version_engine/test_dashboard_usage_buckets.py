@@ -62,7 +62,8 @@ def test_equal_ids_in_different_domains_do_not_merge_usage():
             {"synchronize_binding_id": "equal", "project_id": "p1", "started_at": today},
             {"synchronize_binding_id": "equal", "project_id": "other", "started_at": today},
         ],
-        "agent_execution_logs": [{"agent_id": "equal", "started_at": today}] * 3,
+        "agent_runs": [{"agent_id": "equal", "project_id": "p1", "created_at": today}] * 3
+        + [{"agent_id": "equal", "project_id": "other", "created_at": today}],
     })
     resources = fetch_dashboard_resources(sb, "p1")
     by_identity = {(row.resource_kind, row.resource_id): row for row in resources}

@@ -542,6 +542,25 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for category in ("paths", "schemas"):
         assert not expected["contract"][category].keys() & computer[category].keys()
         expected["contract"][category].update(computer[category])
+    # Access analytics (never written, no client) and the session-only chat API
+    # (no client; Cloud Agent runs own chat_sessions/chat_messages) retire exactly.
+    retired = json.loads(
+        Path(__file__).with_name("analytics_chat_retirement_contract_delta.json").read_text()
+    )
+    assert set(retired["paths"]["removed"]) == {
+        "/api/v1/analytics/access-summary",
+        "/api/v1/analytics/access-timeseries",
+        "/api/v1/chat/sessions",
+        "/api/v1/chat/sessions/{session_id}",
+        "/api/v1/chat/sessions/{session_id}/messages",
+    }
+    assert set(retired["schemas"]["removed"]) == {
+        "CreateSessionRequest", "UpdateSessionRequest", "TimeSeriesBucket", "TimeSeriesResponse",
+    }
+    for category in ("paths", "schemas"):
+        assert retired[category]["added"] == retired[category]["changed"] == {}
+        for name, digest in retired[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }

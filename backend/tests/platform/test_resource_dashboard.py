@@ -61,9 +61,10 @@ def facts():
             {"synchronize_binding_id": "same", "project_id": "project-1", "started_at": now},
             {"synchronize_binding_id": "same", "project_id": "foreign", "started_at": now},
         ],
-        "agent_execution_logs": [
-            {"agent_id": "same", "started_at": now},
-            {"agent_id": "same", "started_at": now},
+        "agent_runs": [
+            {"agent_id": "same", "project_id": "project-1", "created_at": now},
+            {"agent_id": "same", "project_id": "project-1", "created_at": now},
+            {"agent_id": "same", "project_id": "foreign", "created_at": now},
         ],
     }
 
@@ -146,7 +147,7 @@ def test_failed_usage_read_is_not_reported_as_zero_successful_activity():
 
     class BrokenSB(FakeSB):
         def table(self, name):
-            return BrokenTable([]) if name == "agent_execution_logs" else super().table(name)
+            return BrokenTable([]) if name == "agent_runs" else super().table(name)
 
     with pytest.raises(RuntimeError, match="unavailable"):
         dashboard.fetch_dashboard_resources(BrokenSB(facts()), "project-1")

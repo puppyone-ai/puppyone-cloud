@@ -156,8 +156,7 @@ backend/
 │   │   ├── project/           #   Project CRUD & members
 │   │   ├── profile/           #   User profile & onboarding status
 │   │   ├── sandbox/           #   Pluggable compute providers (Fly/E2B/Docker) behind RuntimeProvider
-│   │   ├── workspace/         #   Workspace management
-│   │   └── analytics/         #   Usage analytics
+│   │   └── workspace/         #   Workspace management
 │   │
 │   ├── infra/                 # Infrastructure services
 │   │   ├── supabase/          #   Supabase client & repository facade
@@ -216,17 +215,17 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `etl_rules` | `upload/file/rules/repository_supabase.py` | ETL transformation rules |
 | `context_publishes` | `supabase/context_publish/repository.py` | Public JSON short links |
 | `oauth_connections` | `provider/oauth/repository.py` | OAuth integrations |
-| `chat_sessions` | `agent/chat/repository.py` | Agent chat sessions |
-| `chat_messages` | `agent/chat/repository.py` | Agent chat messages |
-| `agent_execution_logs` | `agent/config/repository.py`, `platform/agent/schedule.py` | Scheduled agent execution logs |
+| `chat_sessions` | Cloud Agent run SQL (`agent_run_submit`, `agent_run_write`) | Agent conversations owning durable runs |
+| `chat_messages` | Cloud Agent run SQL (`agent_run_submit`, `agent_run_write`) | Agent conversation messages |
+| `agent_execution_logs` | _(retired — no writer; Dashboard usage counts `agent_runs`)_ | Legacy agent execution logs |
 | `file_versions` | _(deprecated — no longer used in code)_ | Legacy file version history |
 | `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
 | `audit_logs` | `version_engine/infrastructure/supabase/audit_repository.py` | Audit trail |
 | `search_index_tasks` | _(retired with Search Tools; no runtime reader)_ | Legacy search indexing tasks |
 | `ingest_tasks` | _(no runtime reader)_ | Ingestion tasks |
-| `agent_logs` | `analytics/service.py` | Agent usage analytics |
-| `access_logs` | `analytics/service.py`, `analytics/router.py` | API access analytics |
+| `agent_logs` | _(retired with the analytics module; no writer)_ | Legacy agent usage analytics |
+| `access_logs` | _(retired with the analytics module; no writer)_ | Legacy API access analytics |
 
 ### API Routes
 
@@ -259,7 +258,6 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/oauth` | platform/provider_accounts | OAuth authorization (9+ platforms) |
 | `/api/v1/auth` | auth | Authentication (login/refresh) |
 | `/api/v1/auth/initialize` | onboarding | First sign-in: account, entitlements, demo Project |
-| `/api/v1/analytics` | analytics | Usage statistics |
 | `/api/v1/profile` | profile | User profile & onboarding |
 | `/api/v1/s3` | s3 | File upload/download/presigned URLs |
 | `/internal` | internal | Internal service API |

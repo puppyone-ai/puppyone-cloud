@@ -61,8 +61,7 @@
  *     primitives and data hooks remain.
  *   - `app/api/backend/[...path]/route.ts` — authenticated HTTP/SSE proxy.
  *   - Backend `/api/v1/agents`, `/api/v1/agent-config`,
- *     `agent_profiles`, `chat_sessions`, `chat_messages` tables —
- *     untouched.
+ *     `chat_sessions`, `chat_messages` tables — untouched.
  *   - `app/(main)/projects/[projectId]/toolkit/page.tsx` — route
  *     file still exists, just no nav link to it.
  *
