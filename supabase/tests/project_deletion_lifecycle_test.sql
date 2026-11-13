@@ -67,13 +67,12 @@ INSERT INTO public.org_members (id, org_id, user_id, role) VALUES
 
 INSERT INTO public.projects (
     id, name, org_id, created_by, share_token, lifecycle_status,
-    version_root_hash, mut_root_hash
+    version_root_hash
 ) VALUES (
     'lifecycle-delete-project', 'Lifecycle Delete Project',
     'lifecycle-delete-org',
     '00000000-0000-4000-8000-000000041001'::uuid,
     'lifecycle-delete-share', 'ready',
-    '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
     '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 );
 INSERT INTO public.project_members (

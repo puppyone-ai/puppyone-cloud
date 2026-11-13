@@ -42,7 +42,7 @@ def check(condition: bool, message: str) -> None:
 def snapshot(stack: LocalStack) -> str:
     parts = ",".join(
         f"'{name}', (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]') FROM public.{name} t)"
-        for name in (*TABLES, "version_transactions", "version_conflicts", "projects", "project_members")
+        for name in (*TABLES, "projects", "project_members")
     )
     return stack.sql(f"SELECT jsonb_build_object({parts})")
 
@@ -68,7 +68,7 @@ def rest_matrix(status: dict, *, before: bool) -> int:
     with httpx.Client(base_url=url + "/rest/v1/", trust_env=False, timeout=20) as client:
         for token in tokens:
             headers = {"apikey": status["ANON_KEY"], "Authorization": "Bearer " + token}
-            for table in (*TABLES, "version_activity_feed"):
+            for table in TABLES:
                 result = client.get(table, headers=headers, params={"select": "*"})
                 if before:
                     check(result.status_code == 200 and len(result.json()) >= 2,
@@ -99,7 +99,7 @@ def rest_matrix(status: dict, *, before: bool) -> int:
                       f"RPC denial is not a PostgreSQL permission failure: {name}, {result.status_code}")
                 count += 1
         headers = {"apikey": status["SERVICE_ROLE_KEY"], "Authorization": "Bearer " + status["SERVICE_ROLE_KEY"]}
-        for table in (*TABLES, "version_activity_feed"):
+        for table in TABLES:
             result = client.get(table, headers=headers, params={"select": "*"})
             check(result.status_code == 200 and len(result.json()) >= 2, "Backend read failed: " + table)
             count += 1
@@ -127,16 +127,6 @@ def backend_consumers(status: dict) -> None:
         tables.update(table_id, TableUpdate(data={"probe": 2}))
         check(tables.get_by_id(table_id).data == {"probe": 2}, "Structured table update failed")
         check(tables.delete(table_id), "Structured table delete failed")
-
-    # Exercise the production invoker publisher, including audit + sequence use,
-    # in one real database transaction. This is SQL-contract proof, not S3 proof.
-    outcome = db.client.rpc("publish_version_project_update", {
-        "p_project_id": "issue053-project-a", "p_old_root_hash": "", "p_new_root_hash": "d" * 40,
-        "p_head_commit_id": "e" * 40, "p_who": USERS[0], "p_message": "Security regression",
-        "p_event_type": "commit", "p_changes": [], "p_conflicts": None,
-        "p_created_at": datetime.now(UTC).isoformat(), "p_audit_agent_id": "", "p_audit_detail": {},
-    }).execute()
-    check(bool(outcome.data and outcome.data[0]["published"]), "Backend atomic publisher failed")
 
 
 def current_authorization_consumers(stack: LocalStack, status: dict) -> None:
@@ -228,7 +218,6 @@ def rehearse(stack: LocalStack, migrations: list[Path]) -> dict:
         "GRANT SELECT (metadata) ON public.audit_logs TO authenticated;",
         "GRANT USAGE ON public.audit_logs_id_seq TO PUBLIC;",
         "ALTER TABLE public.tables DISABLE ROW LEVEL SECURITY;",
-        "ALTER VIEW public.version_activity_feed SET (security_invoker = false);",
         "GRANT EXECUTE ON FUNCTION public.repository_target_integrity_report() TO PUBLIC;",
         "GRANT EXECUTE ON FUNCTION public.issue_user_git_http_credential(text,text,text,text,text,uuid,text,text,text,text,text) TO service_role;",
         "CREATE ROLE issue053_bridge; GRANT SELECT ON public.audit_logs TO issue053_bridge; GRANT issue053_bridge TO authenticated WITH INHERIT FALSE;",
