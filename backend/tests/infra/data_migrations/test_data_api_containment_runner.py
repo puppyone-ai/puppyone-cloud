@@ -62,8 +62,9 @@ def test_http_probe_uses_filters_and_rejects_non_acl_denials(runner, monkeypatch
         with pytest.raises(AssertionError, match="Write denial is not a PostgreSQL permission failure"):
             runner.rest_matrix(status, before=False)
     else:
-        assert runner.rest_matrix(status, before=False) == 88
-        assert sum(r.method in {"PATCH", "DELETE"} for r in requests) == 36
+        # 3 clients x (3 reads + 2 tables x 3 writes + 2 RPCs) + 3 backend reads.
+        assert runner.rest_matrix(status, before=False) == 36
+        assert sum(r.method in {"PATCH", "DELETE"} for r in requests) == 12
 
 
 def test_http_probe_cannot_target_hosted_database(runner):
