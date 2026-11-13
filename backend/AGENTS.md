@@ -149,8 +149,7 @@ backend/
 │   │   ├── organization/      # 组织管理
 │   │   ├── project/           # 项目管理
 │   │   ├── profile/           # 用户资料
-│   │   ├── workspace/         # 工作空间
-│   │   └── analytics/         # 使用统计
+│   │   └── workspace/         # 工作空间
 │   │
 │   ├── infra/                 # 基础设施
 │   │   ├── supabase/          # Supabase 客户端

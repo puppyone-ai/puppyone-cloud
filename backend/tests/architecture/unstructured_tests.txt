@@ -343,7 +343,6 @@ security/test_access_endpoint_scope_creation.py
 security/test_access_log_path_redaction.py
 security/test_agent_tool_project_boundary.py
 security/test_audit_access_list_mask.py
-security/test_audit_analytics_tenant.py
 security/test_audit_deferred_fixes.py
 security/test_audit_git_limits.py
 security/test_audit_tier2_authz.py

@@ -74,11 +74,6 @@ async def test_desktop_renders_real_worker_file_answers_and_restores_session(
     )
     application = FastAPI()
     application.include_router(router, prefix="/api/v1")
-    from src.platform.agent.chat import dependencies as chat_dependencies
-    from src.platform.agent.chat.router import router as chat_router
-
-    monkeypatch.setattr(chat_dependencies, "_chat_service", None)
-    application.include_router(chat_router, prefix="/api/v1")
     application.add_middleware(AgentDatabaseTelemetry)
     application.dependency_overrides[get_agent_service] = lambda: c.service
     reports = []
