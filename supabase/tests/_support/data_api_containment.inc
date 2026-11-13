@@ -10,9 +10,7 @@ DECLARE
     role_oid oid;
     signature regprocedure;
     protected_relations oid[] := ARRAY[
-        'public.audit_logs'::regclass, 'public.bookmarks'::regclass,
-        'public.connector_runs'::regclass, 'public.scope_sync_events'::regclass,
-        'public.scope_sync_settings'::regclass, 'public.tables'::regclass,
+        'public.audit_logs'::regclass, 'public.tables'::regclass,
         'public.version_activity_feed'::regclass
     ];
 BEGIN
@@ -88,7 +86,7 @@ BEGIN
                 'publish_mut_project_update', 'publish_version_project_update_with_usage',
                 'repository_target_integrity_report', '_project_initialization_has_cascade_dependents',
                 'delete_project_control_plane', 'abandon_project_initialization'
-            ]) OR body ~ '\m(audit_logs|bookmarks|connector_runs|scope_sync_events|scope_sync_settings|version_activity_feed)\M|\mpublic\.tables\M'
+            ]) OR body ~ '\m(audit_logs|version_activity_feed)\M|\mpublic\.tables\M'
             UNION
             SELECT caller.oid FROM reachable r JOIN functions callee ON callee.oid = r.oid
             JOIN functions caller ON caller.body ~ ('\m' || callee.proname || '\s*\(')
