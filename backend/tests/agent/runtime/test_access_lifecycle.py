@@ -418,9 +418,13 @@ def test_populated_upgrade_preserves_existing_credentials_and_connections(postgr
             scratch.sql(path.read_text())
         for table, row in before.items():
             after = scratch.row(f"SELECT * FROM {table} WHERE id='{row['id']}'")
-            # The one intended change: an internal Workspace may reach the internet.
+            # Intended changes: an internal Workspace may reach the internet, and
+            # the legacy engine Contract drops the dual-written mut_root_hash copy.
             expected = {**row, "internet_access": True} if table == "cloud_workbenches" else row
-            assert {key: after[key] for key in row} == expected
+            assert set(row) - set(after) <= ({"mut_root_hash"} if table == "projects" else set())
+            assert {key: after[key] for key in row if key in after} == {
+                key: value for key, value in expected.items() if key in after
+            }
         assert scratch.sql("SELECT count(*) FROM access_grants") == "0"
         resolved = call(scratch, "resolve_access_git_credential", key_hash="a" * 64, channel="git")
         assert resolved["credential_id"] == credential and resolved["registration_id"] is None

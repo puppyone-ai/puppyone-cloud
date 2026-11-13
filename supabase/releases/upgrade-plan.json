@@ -6,9 +6,10 @@
     {"id": "entrypoint-identity-contract", "kind": "schema", "value": "20261003230000"},
     {"id": "entrypoint-sources", "kind": "data", "value": "20261003_final_entrypoint_storage", "until_schema": "20261003230100", "prepare": "entrypoint"},
     {"id": "native-expand", "kind": "schema", "value": "20261008040000"},
-    {"id": "native-inventory", "kind": "data", "value": "20261007_native_repository_inventory"},
-    {"id": "native-recovery", "kind": "data", "value": "20261007_repository_recovery_archive"},
+    {"id": "native-inventory", "kind": "data", "value": "20261007_native_repository_inventory", "until_schema": "20261114020000"},
+    {"id": "native-recovery", "kind": "data", "value": "20261007_repository_recovery_archive", "until_schema": "20261114020000"},
     {"id": "retire-unused-tables", "kind": "data", "value": "20261114_retire_unused_tables", "until_schema": "20261114010000"},
+    {"id": "retire-legacy-engine", "kind": "data", "value": "20261114_retire_legacy_version_engine", "until_schema": "20261114020000"},
     {"id": "current-schema", "kind": "schema", "value": "latest"}
   ]
 }

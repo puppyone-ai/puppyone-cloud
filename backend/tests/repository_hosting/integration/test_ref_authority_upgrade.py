@@ -82,8 +82,25 @@ def test_ref_authority_populated_expand_and_failed_ddl_rollback_with_auth_stubs(
         assert pg.value(f"SELECT version_root_hash=mut_root_hash FROM public.projects WHERE id={literal(project)};") == "t"
 
 
-def test_ref_authority_path_hardening_preserves_populated_data_acls_and_retry(pg_project):
-    pg, project = pg_project
+def test_ref_authority_path_hardening_preserves_populated_data_acls_and_retry():
+    # Re-apply the hardening release against the schema it shipped on; later
+    # Contracts removed legacy objects this historical migration still names.
+    spec = importlib.util.spec_from_file_location(
+        "hosting_native_postgres_harden", ROOT / "scripts/testing/native_postgres.py",
+    )
+    native = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(native)
+    with Postgres().empty_database() as pg:
+        pg.sql((ROOT / "scripts/testing/postgres_auth_stub.sql").read_text())
+        for migration in sorted(HARDEN.parent.glob("*.sql")):
+            if migration.name >= HARDEN.name:
+                break
+            pg.sql(native.product_migration_sql(migration))
+        project = pg.create_project()
+        _hardening_preserves_populated_data_acls_and_retry(pg, project)
+
+
+def _hardening_preserves_populated_data_acls_and_retry(pg, project):
     a = Authority(pg, project)
     assert a.apply([update(new=oid(A))])["status"] == "committed"
 

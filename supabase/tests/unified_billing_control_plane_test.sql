@@ -95,9 +95,6 @@ DECLARE
     first_seat_claims integer;
     second_seat_claims integer;
     seat_admission jsonb;
-    publication record;
-    original_root text;
-    post_rollback_root text;
     refreshed_full_reconciled_at timestamptz;
 BEGIN
     provision_enqueued := public.enqueue_missing_entitlement_provisioning(25);
@@ -248,64 +245,6 @@ BEGIN
     IF first_claims <> 1 OR second_claims <> 0 THEN
         RAISE EXCEPTION 'storage reconciliation lease failed: first %, second %',
             first_claims, second_claims;
-    END IF;
-
-    SELECT COALESCE(mut_root_hash, '') INTO original_root
-    FROM public.projects
-    WHERE id = 'billing-control-plane-project';
-    SELECT * INTO publication
-    FROM public.publish_version_project_update_with_usage(
-        'billing-control-plane-project', original_root, repeat('1', 40),
-        repeat('a', 40), 'billing-control-plane-test', 'storage accounting',
-        'project_version_committed', '[]'::jsonb, NULL, now()::text,
-        'user:00000000-0000-0000-0000-000000033001', '{}'::jsonb,
-        'test', '', '', '', '', 'operation', '', '', '', NULL,
-        'billing-control-plane-org', 80, 10, 1, true, 2
-    );
-    IF NOT publication.published OR publication.txn_id IS NULL THEN
-        RAISE EXCEPTION 'atomic storage publication failed';
-    END IF;
-    IF (SELECT value FROM public.organization_usage_counters
-        WHERE org_id = 'billing-control-plane-org'
-          AND metric = 'storage.logical_bytes') <> 90 THEN
-        RAISE EXCEPTION 'atomic storage publication did not update usage';
-    END IF;
-
-    -- A stale retry must return the canonical CAS miss before applying its
-    -- old delta to the already-updated counter and producing a false denial.
-    SELECT * INTO publication
-    FROM public.publish_version_project_update_with_usage(
-        'billing-control-plane-project', original_root, repeat('2', 40),
-        repeat('b', 40), 'billing-control-plane-test', 'stale retry',
-        'project_version_committed', '[]'::jsonb, NULL, now()::text,
-        'user:00000000-0000-0000-0000-000000033001', '{}'::jsonb,
-        'test', '', '', '', '', 'operation', '', '', '', NULL,
-        'billing-control-plane-org', 80, 1000, 1000, true, 2
-    );
-    IF publication.published THEN
-        RAISE EXCEPTION 'stale storage publication unexpectedly succeeded';
-    END IF;
-
-    -- Quota denial happens after the project CAS inside the same SQL
-    -- transaction, so the exception must roll the canonical publication back.
-    BEGIN
-        PERFORM public.publish_version_project_update_with_usage(
-            'billing-control-plane-project', repeat('1', 40), repeat('3', 40),
-            repeat('c', 40), 'billing-control-plane-test', 'over quota',
-            'project_version_committed', '[]'::jsonb, NULL, now()::text,
-            'user:00000000-0000-0000-0000-000000033001', '{}'::jsonb,
-            'test', '', '', '', '', 'operation', '', '', '', NULL,
-            'billing-control-plane-org', 90, 11, 1000, true, 2
-        );
-        RAISE EXCEPTION 'over-quota storage publication was accepted';
-    EXCEPTION WHEN SQLSTATE 'P0001' THEN
-        NULL;
-    END;
-    SELECT COALESCE(mut_root_hash, '') INTO post_rollback_root
-    FROM public.projects
-    WHERE id = 'billing-control-plane-project';
-    IF post_rollback_root <> repeat('1', 40) THEN
-        RAISE EXCEPTION 'quota denial did not roll back project publication';
     END IF;
 
     IF has_function_privilege(

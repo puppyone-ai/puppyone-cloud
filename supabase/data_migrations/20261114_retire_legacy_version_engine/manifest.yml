@@ -1,0 +1,11 @@
+api_version: 1
+id: 20261114_retire_legacy_version_engine
+description: Prove every pre-native history row is covered by a verified recovery archive before the legacy engine Contract
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20261008040000"
+required_env: []
+timeout_seconds: 600
+legacy: false
