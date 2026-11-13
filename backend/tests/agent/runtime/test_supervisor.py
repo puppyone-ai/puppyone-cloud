@@ -683,10 +683,8 @@ async def test_native_canonical_publication_and_receipt(prepared):
         )
         == "1"
     )
-    assert (
-        case.postgres.sql(f"SELECT count(*) FROM version_commits WHERE project_id='{case.project}'")
-        == "0"
-    )
+    # The pre-native commit table is gone; no legacy write path can exist.
+    assert case.postgres.sql("SELECT to_regclass('public.version_commits') IS NULL") == "t"
 
 
 async def native_write(case, name, content):
