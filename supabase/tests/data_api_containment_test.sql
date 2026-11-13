@@ -22,9 +22,9 @@ DECLARE
 BEGIN
     EXECUTE format('SET LOCAL ROLE %I', client);
     FOREACH relation IN ARRAY ARRAY[
-        'audit_logs', 'bookmarks', 'connector_runs', 'scope_sync_events', 'scope_sync_settings', 'tables'
+        'audit_logs', 'tables'
     ] LOOP
-        column_name := CASE relation WHEN 'connector_runs' THEN 'connector_id' ELSE 'project_id' END;
+        column_name := 'project_id';
         RETURN NEXT throws_ok(format('SELECT * FROM public.%I', relation), '42501',
             format('permission denied for table %s', relation), client || ' cannot read ' || relation);
         RETURN NEXT throws_ok(format('INSERT INTO public.%I DEFAULT VALUES', relation), '42501',
@@ -38,7 +38,7 @@ BEGIN
     END LOOP;
     RETURN NEXT throws_ok('SELECT * FROM public.version_activity_feed', '42501',
         'permission denied for view version_activity_feed', client || ' cannot read joined feed');
-    FOREACH seq IN ARRAY ARRAY['audit_logs_id_seq', 'scope_sync_events_id_seq'] LOOP
+    FOREACH seq IN ARRAY ARRAY['audit_logs_id_seq'] LOOP
         RETURN NEXT throws_ok(format('SELECT nextval(%L)', 'public.' || seq), '42501',
             'permission denied for sequence ' || seq, client || ' cannot advance ' || seq);
         RETURN NEXT throws_ok(format('SELECT setval(%L, 900)', 'public.' || seq), '42501',
@@ -91,11 +91,6 @@ SELECT is((SELECT count(*) FROM public.version_activity_feed WHERE project_id LI
     2::bigint, 'backend can still read both tenant records after application authorization');
 SELECT lives_ok($sql$INSERT INTO public.audit_logs(project_id,action) VALUES ('issue053-project-a','backend-probe')$sql$,
     'backend appends audit with sequence USAGE');
-SELECT lives_ok($sql$INSERT INTO public.scope_sync_events(project_id,scope_id,head_version)
-    VALUES ('issue053-project-a','issue053-scope-a','backend-head')$sql$, 'backend appends scope event');
-SELECT lives_ok($sql$INSERT INTO public.scope_sync_settings(project_id,scope_id,auto_sync)
-    VALUES ('issue053-project-a','issue053-scope-a',false)
-    ON CONFLICT (project_id,scope_id) DO UPDATE SET auto_sync=EXCLUDED.auto_sync$sql$, 'backend settings upsert');
 SELECT lives_ok($sql$INSERT INTO public.tables(id,project_id,data) VALUES ('backend-table','issue053-project-a','{}');
     UPDATE public.tables SET data='{"saved":true}' WHERE id='backend-table';
     DELETE FROM public.tables WHERE id='backend-table'$sql$, 'backend structured table CRUD');

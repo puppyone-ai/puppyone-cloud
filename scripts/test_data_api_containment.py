@@ -29,7 +29,7 @@ FIX = ROOT / "supabase/migrations/20261003000000_contain_internal_data_api_acces
 # Supabase's pg_prove container mounts tests/, not sibling test_fixtures/.
 FIXTURE = ROOT / "supabase/tests/_support/data_api_containment_fixture.inc"
 CONTRACT = ROOT / "supabase/tests/_support/data_api_containment.inc"
-TABLES = ("audit_logs", "bookmarks", "connector_runs", "scope_sync_events", "scope_sync_settings", "tables")
+TABLES = ("audit_logs", "tables")
 USERS = ("00000000-0000-4000-8000-000000000053", "00000000-0000-4000-8000-000000000054")
 EXCLUDE = "studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,realtime,storage-api"
 
@@ -80,13 +80,11 @@ def rest_matrix(status: dict, *, before: bool) -> int:
             if before:
                 continue
             for table in TABLES:
-                column = "connector_id" if table == "connector_runs" else "project_id"
-                for method, body in (("POST", {}), ("PATCH", {column: "issue053-project-a"}), ("DELETE", None)):
+                for method, body in (("POST", {}), ("PATCH", {"project_id": "issue053-project-a"}), ("DELETE", None)):
                     # Supabase's pg_safeupdate rejects unfiltered PATCH/DELETE
                     # before ACL checks. Use a valid tenant filter, never accept
                     # that query-safety 400 as proof of authorization denial.
-                    value = "issue053-legacy-a" if table == "connector_runs" else "issue053-project-a"
-                    params = {column: "eq." + value} if method != "POST" else None
+                    params = {"project_id": "eq.issue053-project-a"} if method != "POST" else None
                     result = client.request(method, table, headers=headers, json=body, params=params)
                     code = result.json().get("code")
                     check(result.status_code in (401, 403) and code == "42501",
@@ -123,20 +121,6 @@ def backend_consumers(status: dict) -> None:
         audit = AuditRepository(db)
         audit.insert("containment-probe", "docs/probe", project_id=project, operator_id=user)
         check(all(row["project_id"] == project for row in audit.list_by_project(project)), "Audit tenant filter failed")
-        # These Scope consumers have been retired. Exercise their historical
-        # storage privileges directly without restoring the removed runtime.
-        scope = "issue053-scope-" + suffix
-        db.client.table("scope_sync_events").insert({
-            "project_id": project, "scope_id": scope, "head_version": "c" * 40,
-            "affected_paths": ["docs/probe"], "source": "publish", "origin_user": user,
-        }).execute()
-        events = db.client.table("scope_sync_events").select("id").eq("project_id", project).eq("scope_id", scope).execute()
-        check(bool(events.data), "Historical Scope event read failed")
-        db.client.table("scope_sync_settings").upsert({
-            "project_id": project, "scope_id": scope, "persona": "reviewer", "auto_sync": False,
-        }, on_conflict="project_id,scope_id").execute()
-        settings = db.client.table("scope_sync_settings").select("auto_sync").eq("project_id", project).eq("scope_id", scope).execute()
-        check(settings.data and settings.data[0]["auto_sync"] is False, "Historical Scope settings update failed")
         tables = TableRepository(db.client)
         table_id = "issue053-backend-" + suffix
         tables.create(TableCreate(id=table_id, project_id=project, data={"probe": 1}))
@@ -222,7 +206,7 @@ def rehearse(stack: LocalStack, migrations: list[Path]) -> dict:
     print("PASS: nonempty pre-fix leak reproduced and new contract rejects old schema", flush=True)
 
     # Exercise standalone column ACLs too: table REVOKE alone would miss these.
-    stack.sql("GRANT SELECT (metadata) ON public.audit_logs TO authenticated; GRANT SELECT (label) ON public.bookmarks TO PUBLIC;")
+    stack.sql("GRANT SELECT (metadata) ON public.audit_logs TO authenticated; GRANT SELECT (name) ON public.tables TO PUBLIC;")
     # Test this security upgrade against its actual source schema; later
     # destructive Contracts require separate reviewed data artifacts.
     stack.replace_migrations([path for path in migrations if path.name <= FIX.name])
@@ -242,7 +226,7 @@ def rehearse(stack: LocalStack, migrations: list[Path]) -> dict:
     mutations = [
         "GRANT SELECT ON public.audit_logs TO anon;",
         "GRANT SELECT (metadata) ON public.audit_logs TO authenticated;",
-        "GRANT USAGE ON public.scope_sync_events_id_seq TO PUBLIC;",
+        "GRANT USAGE ON public.audit_logs_id_seq TO PUBLIC;",
         "ALTER TABLE public.tables DISABLE ROW LEVEL SECURITY;",
         "ALTER VIEW public.version_activity_feed SET (security_invoker = false);",
         "GRANT EXECUTE ON FUNCTION public.repository_target_integrity_report() TO PUBLIC;",

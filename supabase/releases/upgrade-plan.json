@@ -8,6 +8,7 @@
     {"id": "native-expand", "kind": "schema", "value": "20261008040000"},
     {"id": "native-inventory", "kind": "data", "value": "20261007_native_repository_inventory"},
     {"id": "native-recovery", "kind": "data", "value": "20261007_repository_recovery_archive"},
+    {"id": "retire-unused-tables", "kind": "data", "value": "20261114_retire_unused_tables", "until_schema": "20261114010000"},
     {"id": "current-schema", "kind": "schema", "value": "latest"}
   ]
 }

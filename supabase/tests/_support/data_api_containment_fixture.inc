@@ -39,15 +39,6 @@ BEGIN
         INSERT INTO public.audit_logs (project_id, action, operator_id, transaction_id, metadata)
         VALUES ('issue053-project-' || suffix, 'fixture', user_id::text, transaction_id,
             jsonb_build_object('private', suffix));
-        INSERT INTO public.bookmarks (project_id, path, label)
-        VALUES ('issue053-project-' || suffix, 'docs/private', 'private-' || suffix);
-        INSERT INTO public.connector_runs (id, connector_id, stdout)
-        VALUES ('issue053-run-' || suffix, 'issue053-legacy-' || suffix, 'private-' || suffix);
-        INSERT INTO public.scope_sync_events (project_id, scope_id, head_version, affected_paths)
-        VALUES ('issue053-project-' || suffix, 'issue053-scope-' || suffix,
-            repeat(suffix, 40), '["docs/private"]');
-        INSERT INTO public.scope_sync_settings (project_id, scope_id)
-        VALUES ('issue053-project-' || suffix, 'issue053-scope-' || suffix);
         INSERT INTO public.tables (id, project_id, name, data)
         VALUES ('issue053-table-' || suffix, 'issue053-project-' || suffix,
             'private-' || suffix, jsonb_build_object('private', suffix));
