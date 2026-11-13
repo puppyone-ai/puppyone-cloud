@@ -260,31 +260,19 @@ def test_ref_authority_backend_cannot_bypass_rpc_or_activate(authority):
     assert a.pg.value("SELECT bool_and(relrowsecurity) FROM pg_class WHERE oid=ANY(ARRAY[" + ",".join(literal("public." + table) + "::regclass" for table in TABLES) + "]);") == "t"
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_ref_authority_legacy_publication_is_fenced(authority, legacy):
+def test_ref_authority_pre_native_publishers_are_retired(authority):
     a = authority
-    query = a.pg.publish(a.project, "1" * 40, "1" * 40, A)
-    if legacy:
-        query = query.replace("publish_version_project_update", "publish_mut_project_update")
-    result = a.pg.sql("SET ROLE service_role;" + query, check=False)
-    assert result.returncode != 0 and "legacy_repository_publication_fenced" in result.stderr
-    assert a.count("version_ref_events") == 0
-    assert a.pg.value(f"SELECT count(*) FROM public.version_commits WHERE project_id={literal(a.project)}") == "0"
+    assert a.pg.value("""
+        SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace
+          AND (proname LIKE 'publish_version_project_update%' OR proname = 'publish_mut_project_update')
+    """) == "0"
+    assert a.pg.value("SELECT to_regclass('public.version_commits') IS NULL") == "t"
 
 
-@pytest.mark.parametrize("column", ["version_root_hash", "mut_root_hash"])
-def test_ref_authority_legacy_direct_root_write_is_fenced(authority, column):
+def test_ref_authority_legacy_direct_root_write_is_fenced(authority):
     a = authority
-    result = a.pg.sql(f"SET ROLE service_role; UPDATE public.projects SET {column}={literal(B)} WHERE id={literal(a.project)};", check=False)
+    result = a.pg.sql(f"SET ROLE service_role; UPDATE public.projects SET version_root_hash={literal(B)} WHERE id={literal(a.project)};", check=False)
     assert result.returncode != 0 and "legacy_repository_publication_fenced" in result.stderr
-
-
-def test_ref_authority_shadow_does_not_change_legacy_contract(pg_project):
-    pg, project = pg_project
-    pg.sql(f"INSERT INTO public.version_repositories(project_id) VALUES ({literal(project)});")
-    result = json.loads(pg.value("SET ROLE service_role;" + pg.publish(project, "1" * 40, B, A)))
-    assert result["published"] is True
-    assert pg.value(f"SELECT count(*) FROM public.version_repository_refs WHERE project_id={literal(project)}") == "0"
 
 
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
@@ -334,33 +322,8 @@ def test_ref_authority_incomplete_owner_initialization_cannot_publish(authority)
     assert a.state() is None
 
 
-def test_ref_authority_legacy_row_reparent_cannot_escape_fence(authority):
+def test_ref_authority_project_cascade_removes_native_history(authority):
     a = authority
-    other = "other-" + uuid.uuid4().hex
-    a.pg.sql(f"""
-      BEGIN;
-      INSERT INTO public.projects(id,name,org_id,created_by,lifecycle_status)
-      SELECT {literal(other)}, name, org_id, created_by, 'ready' FROM public.projects WHERE id={literal(a.project)};
-      INSERT INTO public.project_members(id,org_id,project_id,user_id,role,granted_by)
-      SELECT {literal('member-' + other)}, org_id, {literal(other)}, created_by, 'admin', created_by
-      FROM public.projects WHERE id={literal(a.project)};
-      UPDATE public.version_repositories SET authority='shadow' WHERE project_id={literal(a.project)};
-      {a.pg.publish(a.project, '1' * 40, '1' * 40, A)}
-      UPDATE public.version_repositories SET authority='native' WHERE project_id={literal(a.project)};
-      COMMIT;
-    """)
-    for table in ("version_scope_state", "version_commits"):
-        result = a.pg.sql(f"SET ROLE service_role; UPDATE public.{table} SET project_id={literal(other)} WHERE project_id={literal(a.project)};", check=False)
-        assert result.returncode != 0 and "legacy_repository_publication_fenced" in result.stderr
-
-
-def test_ref_authority_project_cascade_can_remove_fenced_history(authority):
-    a = authority
-    a.pg.sql(f"""
-      UPDATE public.version_repositories SET authority='shadow' WHERE project_id={literal(a.project)};
-      {a.pg.publish(a.project, '1' * 40, '1' * 40, A)}
-      UPDATE public.version_repositories SET authority='native' WHERE project_id={literal(a.project)};
-    """)
     a.apply([update(new=oid(A))])
     a.pg.sql(f"DELETE FROM public.projects WHERE id={literal(a.project)};")
     for table in TABLES:
