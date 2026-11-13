@@ -362,6 +362,8 @@ async def test_product_owner_single_flight_native_files_and_revocation(
             "content_base64": base64.b64encode(b"human draft").decode(),
         },
     )
+    # Completion is recorded off the reply path; wait for it before reading the log.
+    await service.settle_audits()
     audits = postgres.row(
         f"SELECT jsonb_agg(a ORDER BY id) AS rows FROM audit_logs a WHERE project_id='{args['project']}'"
     )["rows"]
