@@ -345,6 +345,53 @@ def test_railway_never_deploys_latest_branch_instead_of_candidate():
     assert len(calls) == 3
 
 
+def test_railway_stop_accepts_provider_stopped_flag_on_success_status():
+    # Railway now keeps a stopped deployment at SUCCESS and only sets deploymentStopped.
+    import json
+
+    stopped = []
+
+    def handler(request):
+        call = json.loads(request.content)
+        if "deploymentStop(" in call["query"]:
+            stopped.append(call["variables"]["id"])
+            return httpx.Response(200, json={"data": {"deploymentStop": True}})
+        assert "deploymentStopped" in call["query"]
+        node = {"id": "running", "status": "SUCCESS", "meta": {}, "deploymentStopped": bool(stopped)}
+        return httpx.Response(200, json={"data": {"deployments": {
+            "edges": [{"node": node}], "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }}})
+
+    ticks = iter(range(100))
+    result = railway(handler, clock=lambda: next(ticks)).stop(["api"])
+    assert stopped == ["running"]
+    assert result == {"deployment_ids": ["running"], "provider_confirmed_stopped": True}
+
+
+def test_railway_redeploys_a_stopped_deployment_of_the_candidate_source():
+    import json
+
+    calls = []
+
+    def handler(request):
+        call = json.loads(request.content)
+        calls.append(call["query"])
+        if "serviceInstanceDeployV2" in call["query"]:
+            return httpx.Response(200, json={"data": {"serviceInstanceDeployV2": "fresh"}})
+        if "deployment(id:" in call["query"]:
+            return httpx.Response(200, json={"data": {"deployment": {
+                "id": "fresh", "status": "SUCCESS", "meta": {"commitHash": SOURCE},
+                "deploymentStopped": False,
+            }}})
+        return httpx.Response(200, json={"data": {"serviceInstance": {"latestDeployment": {
+            "id": "old", "status": "SUCCESS", "meta": {"commitHash": SOURCE},
+            "deploymentStopped": True,
+        }}}})
+
+    assert railway(handler).deploy(SOURCE) == {"api": "fresh"}
+    assert any("serviceInstanceDeployV2" in query for query in calls)
+
+
 def test_railway_independent_autodeploy_is_rejected_before_cutover():
     client = railway(
         lambda _: httpx.Response(
