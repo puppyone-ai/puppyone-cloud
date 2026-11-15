@@ -6,6 +6,12 @@ import { initializeGitControl } from './workbench-git-layout.mjs';
 import { gitRelay } from './git-relay.mjs';
 import { STATE, UUID, initializeControlState, requireWorkspace } from './workbench-state.mjs';
 import { withWorkbenchGitLock, sharedGitCommand } from './workbench-task.mjs';
+import { lockHead } from './workbench-head-lock.mjs';
+
+// A Workspace that cannot hold its branch never becomes ready.
+async function requireLockedHead(config) {
+  if (!(await lockHead(config.target_ref))) throw new Error('Workspace HEAD is not on its branch');
+}
 
 export async function initializeWorkbench(binding, config, exchange) {
   if (![binding.workbench, binding.generation].every(value => typeof value === 'string' && UUID.test(value)))
@@ -26,6 +32,7 @@ export async function initializeWorkbench(binding, config, exchange) {
     if (await exists(`${STATE}/binding.json`)) {
       await requireWorkspace(binding);
       if (await readFile(file, 'utf8') !== intent) throw new Error('Workspace initialization intent mismatch');
+      await requireLockedHead(config);
       return sharedGitCommand(1000, 'inspect', config);
     }
     let retry = false;
@@ -50,6 +57,7 @@ export async function initializeWorkbench(binding, config, exchange) {
       try { result = await relay.run(() => sharedGitCommand(1000, 'prepare', config, null, relay)); }
       finally { relay.close(); }
     }
+    await requireLockedHead(config);
     await writeFile(`${STATE}/binding.json`, JSON.stringify(binding), { flag: 'wx', mode: 0o600 });
     return result;
   });
