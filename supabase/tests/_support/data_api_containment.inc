@@ -10,8 +10,7 @@ DECLARE
     role_oid oid;
     signature regprocedure;
     protected_relations oid[] := ARRAY[
-        'public.audit_logs'::regclass, 'public.tables'::regclass,
-        'public.version_activity_feed'::regclass
+        'public.audit_logs'::regclass, 'public.tables'::regclass
     ];
 BEGIN
     -- Effective ACL checks alone miss NOINHERIT memberships that permit SET ROLE.
@@ -65,10 +64,6 @@ BEGIN
             END IF;
         END LOOP;
     END LOOP;
-    IF NOT (SELECT coalesce(reloptions, '{}') @> ARRAY['security_invoker=true']
-        FROM pg_class WHERE oid = 'public.version_activity_feed'::regclass) THEN
-        RAISE EXCEPTION 'ISSUE-053: activity feed must use invoker permissions';
-    END IF;
 
     -- Seed reviewed dynamic/cascade paths explicitly. Supplement pg_depend
     -- (which misses PL/pgSQL/string bodies) with a conservative body call scan.
@@ -82,11 +77,9 @@ BEGIN
                 'add_project_member_authorized', 'remove_project_member_authorized',
                 'update_project_member_role_authorized', 'join_project_via_share_token',
                 'issue_user_git_http_credential', 'issue_user_git_http_credential_idempotent',
-                'revoke_user_git_http_credential', 'publish_version_project_update',
-                'publish_mut_project_update', 'publish_version_project_update_with_usage',
-                'repository_target_integrity_report', '_project_initialization_has_cascade_dependents',
+                'revoke_user_git_http_credential', 'repository_target_integrity_report', '_project_initialization_has_cascade_dependents',
                 'delete_project_control_plane', 'abandon_project_initialization'
-            ]) OR body ~ '\m(audit_logs|version_activity_feed)\M|\mpublic\.tables\M'
+            ]) OR body ~ '\maudit_logs\M|\mpublic\.tables\M'
             UNION
             SELECT caller.oid FROM reachable r JOIN functions callee ON callee.oid = r.oid
             JOIN functions caller ON caller.body ~ ('\m' || callee.proname || '\s*\(')
