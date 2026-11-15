@@ -197,12 +197,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("PUT", "/api/v1/agent-config/{agent_id}/bash/{bash_id}"): _human(ProjectAction.AGENT_MANAGE),
     ("DELETE", "/api/v1/agent-config/{agent_id}/bash/{bash_id}"): _human(ProjectAction.AGENT_MANAGE),
     ("GET", "/api/v1/agent-config/{agent_id}/executions"): _human(ProjectAction.AGENT_READ),
-    ("POST", "/api/v1/chat/sessions"): _human(ProjectAction.AGENT_RUN),
-    ("GET", "/api/v1/chat/sessions"): _human(ProjectAction.AGENT_READ),
-    ("GET", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_READ),
-    ("PATCH", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_RUN),
-    ("DELETE", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_RUN),
-    ("GET", "/api/v1/chat/sessions/{session_id}/messages"): _human(ProjectAction.AGENT_READ),
     ("GET", "/api/v1/mcp/agents/{agent_id}/status"): _human(ProjectAction.AGENT_READ),
     ("POST", "/api/v1/mcp/agents/{agent_id}/regenerate-key"): _human(ProjectAction.CREDENTIAL_MANAGE),
     ("GET", "/api/v1/mcp/agents/{agent_id}/tools"): _human(ProjectAction.AGENT_READ),
@@ -225,9 +219,7 @@ PROJECT_ROUTE_AUTHORIZATION.update({
 })
 
 PROJECT_ROUTE_AUTHORIZATION.update({
-    # Scope policy, Sandbox sessions, analytics and activity.
-    ("GET", "/api/v1/analytics/access-timeseries"): _human(ProjectAction.HISTORY_READ),
-    ("GET", "/api/v1/analytics/access-summary"): _human(ProjectAction.HISTORY_READ),
+    # Scope policy, Sandbox sessions and activity.
     ("GET", "/api/v1/activity/items"): _human(ProjectAction.HISTORY_READ),
 })
 

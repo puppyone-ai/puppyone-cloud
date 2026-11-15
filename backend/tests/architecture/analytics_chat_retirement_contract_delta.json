@@ -1,0 +1,23 @@
+{
+  "paths": {
+    "removed": {
+      "/api/v1/analytics/access-summary": "74d2af3d4e11a809bcf0c2bc4a50a58d8eb3673ca330ea04ec0cb69d7b831958",
+      "/api/v1/analytics/access-timeseries": "2369581306eb48a11e6e0c297656ca46b981f942e56d94604c7e18f737dfb693",
+      "/api/v1/chat/sessions": "73cd7ceee0a32d6a4c9acd15df365f5940fc193855a98faf4335b88c8c3f6ee8",
+      "/api/v1/chat/sessions/{session_id}": "1d620cb2b0ca2d8a4f88091efe44a9ffa8d898bfbcda664dd503942734b1619a",
+      "/api/v1/chat/sessions/{session_id}/messages": "06e97eab5484818e822a7ea81a602253f84b4032280e6a366ec32347ff4e0a72"
+    },
+    "added": {},
+    "changed": {}
+  },
+  "schemas": {
+    "removed": {
+      "CreateSessionRequest": "80cc52f069a32c5ea1781e17ce6d5b8c36d2259e99163dba69d7f848472f12c8",
+      "TimeSeriesBucket": "02ff021793cf12bad2648f2f4e2caa09233cdcc34c0952baf442cd21eb700dc8",
+      "TimeSeriesResponse": "c7acf11494cbcf52e9416392b86b129845cfea43be49b1cd0d8d409f9c5c09d2",
+      "UpdateSessionRequest": "f5b555c4896b30d5df20fcb966c05ce96b0d4254f580829ebe9637c7e85fa5eb"
+    },
+    "added": {},
+    "changed": {}
+  }
+}

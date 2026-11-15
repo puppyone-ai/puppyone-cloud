@@ -20,6 +20,13 @@ import httpx
 class Railway:
     STOPPED = frozenset({"REMOVED", "FAILED", "CRASHED", "SKIPPED"})
 
+    @classmethod
+    def live(cls, deployment: dict | None) -> bool:
+        """Railway keeps a stopped deployment at SUCCESS and only sets deploymentStopped."""
+        return bool(deployment) and deployment["status"] not in cls.STOPPED and not deployment.get(
+            "deploymentStopped"
+        )
+
     def __init__(
         self,
         config: dict,
@@ -86,7 +93,7 @@ class Railway:
         while True:
             data = self.query(
                 "query($i:DeploymentListInput!,$a:String){deployments(input:$i,first:100,after:$a){"
-                "edges{node{id status meta}} pageInfo{hasNextPage endCursor}}}",
+                "edges{node{id status meta deploymentStopped}} pageInfo{hasNextPage endCursor}}}",
                 {
                     "i": {
                         "environmentId": self.config["environment_id"],
@@ -96,9 +103,7 @@ class Railway:
                     "a": cursor,
                 },
             )["deployments"]
-            records.extend(
-                edge["node"] for edge in data["edges"] if edge["node"]["status"] not in self.STOPPED
-            )
+            records.extend(edge["node"] for edge in data["edges"] if self.live(edge["node"]))
             if not data["pageInfo"]["hasNextPage"]:
                 return records
             cursor = data["pageInfo"]["endCursor"]
@@ -132,11 +137,12 @@ class Railway:
         for role, service in self.config["services"].items():
             image = images[role] if images else None
             data = self.query(
-                "query($e:String!,$s:String!){serviceInstance(environmentId:$e,serviceId:$s){latestDeployment{id status meta}}}",
+                "query($e:String!,$s:String!){serviceInstance(environmentId:$e,serviceId:$s){latestDeployment{id status meta deploymentStopped}}}",
                 {"e": self.config["environment_id"], "s": service["id"]},
             )["serviceInstance"]["latestDeployment"]
+            # A stopped deployment of the same source is not running; redeploy it.
             if (
-                data
+                self.live(data)
                 and data["status"] == "SUCCESS"
                 and self._matches(data.get("meta"), source, image)
             ):
@@ -168,14 +174,15 @@ class Railway:
             for role, deployment_id in expected.items():
                 image = images[role] if images else None
                 deployment = self.query(
-                    "query($id:String!){deployment(id:$id){id status meta}}",
+                    "query($id:String!){deployment(id:$id){id status meta deploymentStopped}}",
                     {"id": deployment_id},
                 )["deployment"]
                 if not deployment:
                     complete = False
                 elif deployment["status"] in self.STOPPED:
                     raise RuntimeError("Candidate deployment failed")
-                elif deployment["status"] != "SUCCESS":
+                elif deployment["status"] != "SUCCESS" or not self.live(deployment):
+                    # A queued candidate can carry deploymentStopped until it starts.
                     complete = False
                 elif deployment["id"] != deployment_id or not self._matches(
                     deployment.get("meta"), source, image

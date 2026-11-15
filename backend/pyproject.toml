@@ -126,7 +126,7 @@ layers = [
     "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.hosts : src.platform.sandbox : src.platform.landing",
     "src.content : src.tool : src.context_publish : src.platform.provider_accounts : src.platform.managed_ai : src.platform.office : src.platform.template_registry",
     "src.platform.repository_target : src.platform.project : src.platform.repository_context : src.file_operations",
-    "src.platform.billing : src.platform.analytics : src.platform.activity",
+    "src.platform.billing : src.platform.activity",
     "src.platform.auth : src.platform.organization : src.platform.profile : src.platform.entitlements : src.platform.authorization",
     "src.platform.idempotency : src.platform.query_contract",
 ]

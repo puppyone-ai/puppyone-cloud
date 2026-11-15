@@ -30,13 +30,13 @@ def run(api: str, mcp: str) -> None:
         health = _expect(client, "GET", f"{api}/health", {200}).json()
         assert health.get("status") == "ready"
 
-        # ISSUE-001: neither analytics endpoint is anonymously readable.
+        # ISSUE-001: the retired analytics endpoints stay unreadable anonymously.
         for endpoint in ("access-timeseries", "access-summary"):
             _expect(
                 client,
                 "GET",
                 f"{api}/api/v1/analytics/{endpoint}",
-                {401},
+                {401, 404},
                 params={"project_id": "cross-tenant-probe"},
             )
 
