@@ -392,6 +392,31 @@ def test_railway_redeploys_a_stopped_deployment_of_the_candidate_source():
     assert any("serviceInstanceDeployV2" in query for query in calls)
 
 
+def test_railway_waits_for_a_queued_candidate_marked_stopped():
+    # Railway reports a not-yet-started candidate with deploymentStopped=true.
+    import json
+
+    polls = iter([
+        {"status": "INITIALIZING", "deploymentStopped": True},
+        {"status": "SUCCESS", "deploymentStopped": True},
+        {"status": "SUCCESS", "deploymentStopped": False},
+    ])
+
+    def handler(request):
+        call = json.loads(request.content)
+        if "serviceInstanceDeployV2" in call["query"]:
+            return httpx.Response(200, json={"data": {"serviceInstanceDeployV2": "fresh"}})
+        if "deployment(id:" in call["query"]:
+            state = next(polls)
+            return httpx.Response(200, json={"data": {"deployment": {
+                "id": "fresh", "meta": {"commitHash": SOURCE}, **state,
+            }}})
+        return httpx.Response(200, json={"data": {"serviceInstance": {"latestDeployment": None}}})
+
+    ticks = iter(range(100))
+    assert railway(handler, clock=lambda: next(ticks)).deploy(SOURCE) == {"api": "fresh"}
+
+
 def test_railway_independent_autodeploy_is_rejected_before_cutover():
     client = railway(
         lambda _: httpx.Response(

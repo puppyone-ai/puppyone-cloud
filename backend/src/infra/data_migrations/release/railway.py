@@ -179,9 +179,10 @@ class Railway:
                 )["deployment"]
                 if not deployment:
                     complete = False
-                elif not self.live(deployment):
+                elif deployment["status"] in self.STOPPED:
                     raise RuntimeError("Candidate deployment failed")
-                elif deployment["status"] != "SUCCESS":
+                elif deployment["status"] != "SUCCESS" or not self.live(deployment):
+                    # A queued candidate can carry deploymentStopped until it starts.
                     complete = False
                 elif deployment["id"] != deployment_id or not self._matches(
                     deployment.get("meta"), source, image
