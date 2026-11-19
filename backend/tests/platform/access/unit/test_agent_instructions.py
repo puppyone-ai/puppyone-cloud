@@ -43,6 +43,8 @@ def test_https_comes_first_and_ssh_is_the_alternative(page):
     assert "go to step 4 with its `https` object" in page
     assert page.index("Run `https.install` once") < page.index("### Or over SSH")
     assert "kex_exchange_identification" in page
+    # An Agent can tell PuppyOne's own lines from its command's.
+    assert "Lines that start with\n`PuppyOne:` come from PuppyOne" in page
     assert "puppyone_proxy" not in page and "ProxyCommand" not in page
     # Every indented line is a command an Agent runs as written.
     commands = [line.strip() for line in page.splitlines() if line.startswith("    ")]

@@ -297,3 +297,39 @@ async def test_an_unreachable_redis_still_refuses_a_replay_here(monkeypatch, cap
         assert await seen.first("c:digest") is True
         assert await seen.first("c:digest") is False
     assert "agent_exec_replay_store_unavailable" in caplog.text
+
+
+async def test_a_quiet_command_says_it_runs_on_lines_of_its_own(monkeypatch):
+    monkeypatch.setattr(service_module, "QUIET_NOTE_SECONDS", 0.05)
+    run = running(b"partial", 0.18, b"done\n")
+    monkeypatch.setattr(service_module, "run_command", run)
+    commands, _, _ = service()
+    out = await read(commands)
+    lines = out.split("\n")
+    notes = [line for line in lines if line.startswith("PuppyOne: still running (")]
+    assert len(notes) >= 2
+    # The first note starts a line of its own after output that had none.
+    assert "partial\nPuppyOne: still running (0s)...\n" in out
+    assert out.endswith("done\n[exit 0]\n")
+
+
+async def test_a_command_that_keeps_talking_gets_no_notes(monkeypatch):
+    monkeypatch.setattr(service_module, "QUIET_NOTE_SECONDS", 0.1)
+    steps = []
+    for index in range(12):
+        steps += [f"line {index}\n".encode(), 0.02]
+    monkeypatch.setattr(service_module, "run_command", running(*steps))
+    commands, _, _ = service()
+    out = await read(commands)
+    assert "still running" not in out
+    assert out.endswith("line 11\n[exit 0]\n")
+
+
+async def test_no_note_follows_the_end_of_a_command(monkeypatch):
+    monkeypatch.setattr(service_module, "QUIET_NOTE_SECONDS", 0.05)
+    monkeypatch.setattr(service_module, "run_command", running(0.12, status=3))
+    commands, _, _ = service()
+    out = await read(commands)
+    await asyncio.sleep(0.15)
+    assert out.endswith("...\n[exit 3]\n")
+    assert out.count("[exit") == 1

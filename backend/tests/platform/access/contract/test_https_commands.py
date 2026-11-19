@@ -470,3 +470,15 @@ async def test_no_command_runs_while_access_lifecycle_is_off(tmp_path, monkeypat
         )
         assert response.status_code == 503
         assert service.admitted == 0
+
+
+async def test_a_quiet_command_keeps_its_connection_alive(tmp_path, monkeypatch):
+    from src.platform.access.adapters.https import commands as service_module
+
+    monkeypatch.setattr(service_module, "QUIET_NOTE_SECONDS", 0.3)
+    async with serving(tmp_path, monkeypatch) as (agent, _, _, _, _):
+        agent.install(https_access(agent.connection))
+        code, out, _ = await agent.run("printf started; sleep 1.2; echo done")
+        assert code == 0
+        assert "started\nPuppyOne: still running (" in out
+        assert out.endswith("done\n[exit 0]\n")

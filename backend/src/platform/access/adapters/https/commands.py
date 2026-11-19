@@ -34,6 +34,9 @@ MAX_RUNNING = 64
 TIMED_OUT = 124
 # A quiet command writes nothing that would fail, so whether its client left is asked.
 DISCONNECT_CHECK_SECONDS = 2
+# Proxies on the way close a response that sends nothing for a while (Railway's
+# edge at 5 minutes, sandbox proxies sooner), so a quiet command says it runs.
+QUIET_NOTE_SECONDS = 30
 # Commands still stopping after their client left; held so the loop keeps them.
 _COMMANDS: set[asyncio.Task] = set()
 REFUSALS = {
@@ -189,12 +192,22 @@ class AgentCommands:
 
     async def _run(self, connection, command, write, gone, disconnected):
         last = b"\n"
+        written = started = time.monotonic()
 
         async def emit(data):
-            nonlocal last
+            nonlocal last, written
             if data:
-                last = data[-1:]
+                last, written = data[-1:], time.monotonic()
                 await write(data)
+
+        async def quiet_notes():
+            """A line of its own whenever the command has said nothing for a while."""
+            while True:
+                await asyncio.sleep(max(0.0, written + QUIET_NOTE_SECONDS - time.monotonic()))
+                if time.monotonic() - written >= QUIET_NOTE_SECONDS:
+                    running = int(time.monotonic() - started)
+                    gap = b"" if last == b"\n" else b"\n"
+                    await emit(gap + f"PuppyOne: still running ({running}s)...\n".encode())
 
         async def notify(message):
             await emit(f"PuppyOne: {message.replace(chr(13), '')}".encode())
@@ -213,15 +226,21 @@ class AgentCommands:
                 if gone.is_set():
                     # It left while its machine was prepared: nothing is run for nobody.
                     return
-                status = await run_command(
-                    self.access,
-                    admission,
-                    session,
-                    command,
-                    write=relay,
-                    notify=notify,
-                    disconnected=disconnected,
-                )
+                notes = asyncio.create_task(quiet_notes())
+                try:
+                    status = await run_command(
+                        self.access,
+                        admission,
+                        session,
+                        command,
+                        write=relay,
+                        notify=notify,
+                        disconnected=disconnected,
+                    )
+                finally:
+                    notes.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await notes
         except Exception as exc:
             code, hung_up = session_ending(exc)
             if hung_up:

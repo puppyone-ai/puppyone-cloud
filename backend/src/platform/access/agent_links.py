@@ -135,8 +135,11 @@ Run each command with it:
 
 It signs the command with your key and sends it over HTTPS, through this computer's
 HTTP proxy if it has one. The output arrives as the command runs and ends with
-`[exit N]`; the helper exits with the same status. One command runs for at most
-10 minutes, and nothing it starts keeps running after it ends.
+`[exit N]`; the helper exits with the same status. Lines that start with
+`PuppyOne:` come from PuppyOne, not from your command: while it prepares your
+machine, and every 30 seconds a command prints nothing, to keep the connection open.
+One command runs for at most 10 minutes, and nothing it starts keeps running after
+it ends.
 
 ### Or over SSH
 
