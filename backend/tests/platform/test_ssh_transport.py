@@ -1,118 +1,24 @@
 """Real SSH transport against the native PTY helper; provider lifecycle tested separately."""
 
 import asyncio
-import base64
-import json
 import os
 import shutil
-import sys
 import time
-from contextlib import asynccontextmanager
-from pathlib import Path
 from uuid import uuid4
 
 import asyncssh
 import pytest
 
-from src.platform.access.adapters.ssh import gateway as ssh_gateway
+from src.platform.access.adapters import shell_session
 from src.platform.access.adapters.ssh.gateway import (
     ClientDisconnected,
     session_ending,
     start_gateway,
     stop_gateway,
 )
-from src.platform.access.agent_links import CONNECTION_OPTIONS, PROXY_HELPER
+from src.platform.access.agent_links import CONNECTION_OPTIONS
 from src.platform.workspace.errors import WorkspaceError
-
-HELPER = Path(__file__).parents[2] / "agent-worker/workbench-shell.py"
-
-
-class NativeShell:
-    """Test-only local transport. Never selected by the product provider registry."""
-
-    def __init__(self, directory):
-        self.directory = directory
-        self.process = None
-
-    async def control(self, action, value=None):
-        if action == "start":
-            self.process = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-u",
-                str(HELPER),
-                base64.b64encode(json.dumps(value).encode()).decode(),
-                cwd=self.directory,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        else:
-            self.process.stdin.write(
-                json.dumps({"action": action, **(value or {})}).encode() + b"\n"
-            )
-            await self.process.stdin.drain()
-        return {}
-
-    async def receive(self):
-        value = await self.process.stdout.readline()
-        return json.loads(value) if value else {"type": "disconnected"}
-
-    async def close(self):
-        if self.process and self.process.returncode is None:
-            self.process.terminate()
-            await self.process.wait()
-
-
-class NativeAccess:
-    def __init__(self, key, directory):
-        self.key, self.directory, self.used, self.closed = key, directory, False, False
-        self.admitted, self.opened, self.renewed, self.finished = 0, 0, 0, []
-
-    async def authenticate(self, identity, key):
-        return (
-            identity == "fixture"
-            and key.export_public_key() == self.key.export_public_key()
-            and not self.used
-        )
-
-    async def admit(self, identity, notify=None):
-        # A credential admits one connection; its commands reuse the admission.
-        if self.used:
-            raise PermissionError("Used")
-        self.used = True
-        self.admitted += 1
-        return {"id": identity}
-
-    open_error = None
-
-    @asynccontextmanager
-    async def open(self, session, notify=None):
-        self.opened += 1
-        if self.open_error:
-            raise self.open_error
-        if getattr(self, "resume_notice", None):
-            await notify(self.resume_notice)
-        shell = NativeShell(self.directory)
-        try:
-            yield {"id": session["id"]}, shell
-        finally:
-            await shell.close()
-            self.closed = True
-
-    renewal_error = None
-    session_error = None
-
-    async def renew(self, *args):
-        if self.renewal_error:
-            raise self.renewal_error
-
-    async def renew_session(self, session):
-        self.renewed += 1
-        if self.session_error:
-            raise self.session_error
-
-    async def finish(self, session):
-        self.finished.append(session["id"])
+from tests.support.native_shell import NativeAccess
 
 
 @pytest.fixture
@@ -195,7 +101,7 @@ async def test_remote_pty_receives_raw_keystroke_without_newline(transport):
 
 async def _ended_by(transport, monkeypatch, error):
     connection, service = transport
-    monkeypatch.setattr(ssh_gateway, "HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_session, "HEARTBEAT_SECONDS", 0.05)
     service.renewal_error = error
     async with asyncio.timeout(15):
         result = await connection.run("sleep 30", encoding=None)
@@ -269,7 +175,7 @@ async def test_commands_over_one_connection_sign_in_once(transport):
 
 async def test_the_server_ends_a_connection_whose_access_ended(transport, monkeypatch):
     connection, service = transport
-    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_session, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
     await connection.run("true", encoding=None)
     service.session_error = WorkspaceError(403, {"code": "access_denied"})
     async with asyncio.timeout(15):
@@ -296,7 +202,7 @@ async def test_a_command_refused_because_access_ended_closes_the_connection(tran
 
 async def test_a_running_command_ends_with_its_connections_session(transport, monkeypatch):
     connection, service = transport
-    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_session, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
     process = await connection.create_process("echo started; sleep 30", encoding=None)
     async with asyncio.timeout(15):
         assert await process.stdout.readline() == b"started\n"
@@ -355,8 +261,8 @@ async def test_shutdown_does_not_wait_for_clients_to_leave(tmp_path):
 
 async def test_a_connection_left_idle_is_closed_and_its_session_finished(transport, monkeypatch):
     connection, service = transport
-    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
-    monkeypatch.setattr(ssh_gateway, "IDLE_CONNECTION_SECONDS", 0.2)
+    monkeypatch.setattr(shell_session, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_session, "IDLE_CONNECTION_SECONDS", 0.2)
     await connection.run("true", encoding=None)
     async with asyncio.timeout(15):
         await connection.wait_closed()
@@ -367,7 +273,7 @@ async def test_a_connection_left_idle_is_closed_and_its_session_finished(transpo
 
 async def test_an_infrastructure_blip_does_not_end_the_connection(transport, monkeypatch):
     connection, service = transport
-    monkeypatch.setattr(ssh_gateway, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
+    monkeypatch.setattr(shell_session, "CONNECTION_HEARTBEAT_SECONDS", 0.05)
     await connection.run("true", encoding=None)
     service.session_error = RuntimeError("database unavailable")
     await asyncio.sleep(0.08)  # One failed renewal, fewer than the connection survives.
@@ -442,100 +348,5 @@ async def test_the_command_agents_are_given_signs_in_once_for_every_command(tmp_
         assert max(timings[1:]) < 2
     finally:
         await run("-O", "exit", "fixture@127.0.0.1")
-        gateway.close()
-        await gateway.wait_closed()
-
-
-async def connect_proxy(required_auth):
-    """A minimal HTTP CONNECT proxy, as an Agent's sandbox puts in front of the internet."""
-    seen = []
-
-    async def pipe(reader, writer):
-        try:
-            while data := await reader.read(65536):
-                writer.write(data)
-                await writer.drain()
-        finally:
-            writer.close()
-
-    async def handle(reader, writer):
-        head = await reader.readuntil(b"\r\n\r\n")
-        seen.append(head)
-        if required_auth not in head:
-            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
-            await writer.drain()
-            writer.close()
-            return
-        host, port = head.split(b"\r\n")[0].split()[1].decode().rsplit(":", 1)
-        upstream_reader, upstream_writer = await asyncio.open_connection(host, int(port))
-        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
-        await writer.drain()
-        await asyncio.gather(
-            pipe(reader, upstream_writer), pipe(upstream_reader, writer), return_exceptions=True
-        )
-
-    return await asyncio.start_server(handle, "127.0.0.1", 0), seen
-
-
-@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the OpenSSH client")
-async def test_an_agent_behind_an_http_proxy_connects_with_the_helper_from_the_page(tmp_path):
-    host = asyncssh.generate_private_key("ssh-ed25519")
-    key = asyncssh.generate_private_key("ssh-ed25519")
-    service = NativeAccess(key, tmp_path)
-    gateway = await start_gateway(service, host, host="127.0.0.1", port=0)
-    port = gateway.get_port()
-    proxy, seen = await connect_proxy(
-        b"Proxy-Authorization: Basic " + base64.b64encode(b"agent:p@ss")
-    )
-    proxy_port = proxy.sockets[0].getsockname()[1]
-    identity = tmp_path / "id"
-    key.write_private_key(str(identity))
-    os.chmod(identity, 0o600)
-    known = tmp_path / "known_hosts"
-    known.write_text(f"[127.0.0.1]:{port} " + host.export_public_key().decode())
-    helper = tmp_path / "puppyone_proxy.py"
-    helper.write_text(PROXY_HELPER)
-    ssh = [
-        "ssh",
-        "-F",
-        "/dev/null",
-        "-i",
-        str(identity),
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        f"UserKnownHostsFile={known}",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        f"ProxyCommand={sys.executable} {helper} %h %p",
-        "-p",
-        str(port),
-    ]
-
-    async def run(proxy_url):
-        process = await asyncio.create_subprocess_exec(
-            *ssh,
-            "fixture@127.0.0.1",
-            "printf through-the-proxy",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "HTTPS_PROXY": proxy_url},
-        )
-        async with asyncio.timeout(20):
-            out, err = await process.communicate()
-        return process.returncode, out, err
-
-    try:
-        # A refusal is said in the proxy's own words, not as an SSH fault.
-        code, _, err = await run(f"http://127.0.0.1:{proxy_port}")
-        assert code != 0 and b"The proxy refused the connection: HTTP/1.1 407" in err
-        code, out, err = await run(f"http://agent:p%40ss@127.0.0.1:{proxy_port}")
-        assert code == 0, err
-        assert out == b"through-the-proxy"
-        assert seen[-1].startswith(f"CONNECT 127.0.0.1:{port} HTTP/1.1".encode())
-    finally:
-        proxy.close()
-        await proxy.wait_closed()
         gateway.close()
         await gateway.wait_closed()
