@@ -235,9 +235,7 @@ async def test_only_a_fresh_request_signed_by_the_approved_key_runs(tmp_path, mo
         async def post(command, *, signed=None, moment=None, signature=None):
             moment = int(time.time()) if moment is None else moment
             signed = command if signed is None else signed
-            signature = signature or agent.sign(
-                command_message(agent.connection, moment, signed)
-            )
+            signature = signature or agent.sign(command_message(agent.connection, moment, signed))
             return await client.post(
                 path,
                 content=command,
@@ -264,7 +262,9 @@ async def test_only_a_fresh_request_signed_by_the_approved_key_runs(tmp_path, mo
         assert replayed.headers["x-puppyone-code"] == "agent_signature_replayed"
 
         other = tmp_path / "other"
-        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True
+        )
         agent.key = other
         stranger = await post(b"echo ok")
         assert stranger.status_code == 403
@@ -359,3 +359,114 @@ async def test_a_client_that_leaves_while_its_machine_is_prepared_runs_nothing(
         assert not (service.directory / "ran").exists()
         assert service.opened == 0
         assert service.finished == [f"agent-{agent.connection}"]
+
+
+async def test_a_command_arrives_byte_for_byte_and_the_shell_reads_it(tmp_path, monkeypatch):
+    async with serving(tmp_path, monkeypatch) as (agent, service, _, _, _):
+        agent.install(https_access(agent.connection))
+        # Quotes, a non-ASCII word, a literal $HOME and an expansion the workspace makes.
+        code, out, _ = await agent.run(
+            "printf '%s|' \"it's\" 'héllo 你好' '$HOME' \"$((1+1))\"; printf 'end\\n'"
+        )
+        assert code == 0
+        assert "it's|héllo 你好|$HOME|2|end\n[exit 0]\n" in out
+        # A multi-line command with a heredoc: the way to give a command its input.
+        code, out, _ = await agent.run(
+            "cat > note.txt <<'EOF'\nline one\n  indented \\ backslash\nEOF\ncat note.txt"
+        )
+        assert code == 0
+        assert (service.directory / "note.txt").read_text() == "line one\n  indented \\ backslash\n"
+        assert out.endswith("line one\n  indented \\ backslash\n[exit 0]\n")
+
+
+async def test_a_large_output_streams_whole(tmp_path, monkeypatch):
+    async with serving(tmp_path, monkeypatch) as (agent, _, _, _, _):
+        agent.install(https_access(agent.connection))
+        code, out, _ = await agent.run("head -c 2000000 /dev/zero | tr '\\0' x")
+        assert code == 0
+        notice, body, marker, end = out.split("\n")
+        assert notice.startswith("PuppyOne: ") and (marker, end) == ("[exit 0]", "")
+        assert body == "x" * 2_000_000
+
+
+async def test_the_helper_says_what_is_missing(tmp_path, monkeypatch):
+    async with serving(tmp_path, monkeypatch) as (agent, _, _, _, _):
+        agent.run_path.parent.mkdir(exist_ok=True)
+        agent.run_path.write_text(RUN_HELPER)
+        agent.run_path.chmod(0o700)
+
+        async def helper(*arguments):
+            process = await asyncio.create_subprocess_exec(
+                str(agent.run_path),
+                *arguments,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=agent.env,
+            )
+            out, err = await process.communicate()
+            return process.returncode, out.decode(), err.decode()
+
+        code, _, err = await helper()
+        assert code == 2 and "usage:" in err
+        code, _, err = await helper("one", "two")
+        assert code == 2 and "usage:" in err
+        # Before https.install, it says to run it.
+        code, _, err = await helper("pwd")
+        assert code == 2 and "run https.install first" in err
+        agent.install(https_access(agent.connection))
+        # Without its key it cannot sign, and says why.
+        agent.key.rename(agent.key.with_name("moved"))
+        code, out, err = await helper("pwd")
+        assert code == 1 and out == "" and err
+
+
+async def test_a_refused_request_tells_the_agent_and_fails_the_helper(tmp_path, monkeypatch):
+    async def nobody(identity, presented):
+        return False
+
+    async with serving(tmp_path, monkeypatch, admits=nobody) as (agent, service, _, client, _):
+        agent.install(https_access(agent.connection))
+        code, out, _ = await agent.run("pwd")
+        assert code == 1
+        assert out.startswith("PuppyOne: access to this workspace is not available")
+        assert service.admitted == 0
+        moment = int(time.time())
+        signature = agent.sign(command_message(agent.connection, moment, b"pwd"))
+        refused = await client.post(
+            f"/api/v1/agent-links/connections/{agent.connection}/exec",
+            content=b"pwd",
+            headers={"X-PuppyOne-Time": str(moment), "X-PuppyOne-Signature": signature},
+        )
+        assert refused.status_code == 403
+        assert refused.headers["content-type"].startswith("text/plain")
+        assert refused.headers["cache-control"] == "no-store"
+        assert refused.headers["x-puppyone-code"] == "access_denied"
+
+
+async def test_the_response_is_plain_streamed_text_never_cached(tmp_path, monkeypatch):
+    async with serving(tmp_path, monkeypatch) as (agent, _, _, client, _):
+        moment = int(time.time())
+        signature = agent.sign(command_message(agent.connection, moment, b"echo ok"))
+        response = await client.post(
+            f"/api/v1/agent-links/connections/{agent.connection}/exec",
+            content=b"echo ok",
+            headers={"X-PuppyOne-Time": str(moment), "X-PuppyOne-Signature": signature},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/plain; charset=utf-8"
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers.get("transfer-encoding") == "chunked"
+
+
+async def test_no_command_runs_while_access_lifecycle_is_off(tmp_path, monkeypatch):
+    async with serving(tmp_path, monkeypatch) as (agent, service, _, client, _):
+        monkeypatch.setattr(settings, "ACCESS_LIFECYCLE_ENABLED", False)
+        moment = int(time.time())
+        signature = agent.sign(command_message(agent.connection, moment, b"echo ok"))
+        response = await client.post(
+            f"/api/v1/agent-links/connections/{agent.connection}/exec",
+            content=b"echo ok",
+            headers={"X-PuppyOne-Time": str(moment), "X-PuppyOne-Signature": signature},
+        )
+        assert response.status_code == 503
+        assert service.admitted == 0

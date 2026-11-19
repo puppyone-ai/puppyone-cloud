@@ -230,9 +230,7 @@ class AgentCommands:
                 return
             if isinstance(exc, TimeoutError) and deadline.expired():
                 status = TIMED_OUT
-                message = (
-                    f"the command ran longer than {COMMAND_SECONDS // 60} minutes and was stopped."
-                )
+                message = f"the command ran longer than {int(COMMAND_SECONDS // 60)} minutes and was stopped."
             elif code:
                 # Revoked, replaced, preparing or busy: expected and actionable.
                 logger.warning("agent_exec_refused", extra={"connection": connection, "code": code})
