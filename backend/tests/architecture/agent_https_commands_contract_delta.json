@@ -1,0 +1,6 @@
+{
+  "paths": {
+    "/api/v1/agent-links/connections/{connection_id}/exec": "c9ae5cf6a29517794ab13e8bb3057d54ead2648708c1599e46f6faee9cb7fee3"
+  },
+  "schemas": {}
+}

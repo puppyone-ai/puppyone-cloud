@@ -104,3 +104,28 @@ def test_preflight_cli_returns_structured_failure_and_nonzero_exit(monkeypatch, 
     output = capsys.readouterr().err
     assert '"stage": "provider_connection"' in output
     assert "secret" not in output
+
+
+@pytest.mark.asyncio
+async def test_a_desktop_default_is_preflighted_on_the_provider_that_ships_it(monkeypatch):
+    sprites = SimpleNamespace(name="sprites", aclose=AsyncMock())
+    fly = SimpleNamespace(
+        name="fly",
+        capabilities=SimpleNamespace(shared_workspace=True, native_files=True),
+        preflight=AsyncMock(),
+        aclose=AsyncMock(),
+    )
+    image = "registry.fly.io/app@sha256:" + "d" * 64
+    monkeypatch.setattr(preflight.settings, "CLOUD_AGENT_SANDBOX_PROVIDER", "sprites")
+    monkeypatch.setattr(preflight.settings, "CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS", "fly")
+    monkeypatch.setattr(preflight.settings, "CLOUD_AGENT_SANDBOX_PROFILE", "desktop")
+    monkeypatch.setattr(preflight.settings, "CLOUD_AGENT_FLY_DESKTOP_IMAGE", image)
+    monkeypatch.setattr(preflight, "runtime_provider", lambda name=None: fly if name == "fly" else sprites)
+    monkeypatch.setattr(preflight, "AuthorizationRepository", lambda: Mock())
+    workspace = Mock()
+    monkeypatch.setattr(preflight, "WorkbenchRepository", lambda: workspace)
+    result = await preflight.check()
+    assert (result["provider"], result["profile"], result["artifact"]) == ("fly", "desktop", image)
+    fly.preflight.assert_awaited_once_with(image)
+    sprites.aclose.assert_awaited_once()
+    workspace.pending.assert_called_once_with("fly", preflight.settings.AGENT_WORKER_POOL)

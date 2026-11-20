@@ -561,6 +561,15 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
         assert retired[category]["added"] == retired[category]["changed"] == {}
         for name, digest in retired[category]["removed"].items():
             assert expected["contract"][category].pop(name) == digest
+    # A linked Agent runs commands over HTTPS too: one new path, signed by its SSH
+    # key in headers, with a plain-text body both ways, so no new schema.
+    https = json.loads(
+        Path(__file__).with_name("agent_https_commands_contract_delta.json").read_text()
+    )
+    assert set(https["paths"]) == {"/api/v1/agent-links/connections/{connection_id}/exec"}
+    assert https["schemas"] == {}
+    assert not expected["contract"]["paths"].keys() & https["paths"].keys()
+    expected["contract"]["paths"].update(https["paths"])
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }

@@ -12,7 +12,13 @@ from src.config import settings
 from src.infra.dependency_diagnostics import dependency_failure, network_environment
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.repository import AuthorizationRepository
-from src.platform.sandbox import default_profile, profile_artifact, runtime_provider
+from src.platform.sandbox import (
+    default_profile,
+    profile_artifact,
+    profile_provider,
+    runtime_provider,
+    workspace_providers,
+)
 
 from ..repository import WorkbenchRepository
 from .runtime_contract import FILE_PROTOCOL, RUNTIME_PROTOCOL
@@ -30,8 +36,14 @@ async def check():
     stage = "provider_configuration"
     try:
         provider = runtime_provider()
-        # New workspaces pin the default Profile's image; preflight that one.
+        # New workspaces pin the default Profile's image on the provider that
+        # ships it (a desktop default goes past Sprites); preflight that pair.
         profile = default_profile()
+        name = profile_provider(profile, provider.name, workspace_providers(provider.name))
+        if name != provider.name:
+            await provider.aclose()
+            provider = None
+            provider = runtime_provider(name)
         artifact = profile_artifact(profile, provider)
         if not provider.capabilities.shared_workspace or not provider.capabilities.native_files:
             raise ValueError("Configured provider does not support hosted workspaces")

@@ -339,4 +339,5 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("GET", "/agent/{invitation}"): _runtime("access.agent_link"),
     ("POST", "/api/v1/agent-links/connect"): _runtime("access.agent_link"),
     ("GET", "/api/v1/agent-links/connections/{connection_id}"): _runtime("access.agent_link"),
+    ("POST", "/api/v1/agent-links/connections/{connection_id}/exec"): _runtime("access.agent_link"),
 })

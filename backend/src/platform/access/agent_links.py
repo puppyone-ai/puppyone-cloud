@@ -3,7 +3,9 @@
 The Agent generates an SSH key and applies with the link. A ``sign_in`` link gives
 it a URL to pass to its person, and the Workspace owner allows it once; a ``link``
 invitation admits it at once. From then on its SSH key is the only thing it keeps.
-Grants, sessions, revocation and audit are the existing lifecycle records.
+It runs commands over HTTPS, signing each one with that key, or over SSH where
+its network allows. Grants, sessions, revocation and audit are the existing
+lifecycle records.
 """
 
 import asyncio
@@ -39,58 +41,29 @@ CONNECTION_OPTIONS = (
 POLL_INTERVAL_SECONDS = 3
 INVITATION_PATTERN = re.compile(r"pai_[A-Za-z0-9_-]{43,128}")
 
-PROXY_HELPER_PATH = "~/.ssh/puppyone_proxy.py"
-# For an Agent that reaches the internet only through an HTTP proxy. ssh runs it
-# as ProxyCommand; it needs nothing beyond Python, unlike nc or socat.
-PROXY_HELPER = r'''"""Reach HOST PORT through the HTTP proxy in HTTPS_PROXY; ssh runs this as ProxyCommand."""
-import base64, os, socket, ssl, sys, threading
-from urllib.parse import unquote, urlsplit
-
-host, port = sys.argv[1], sys.argv[2]
-names = ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy")
-proxy = next((os.environ[name] for name in names if os.environ.get(name)), None)
-if not proxy:
-    sys.exit("No HTTP proxy is set in HTTPS_PROXY.")
-url = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-sock = socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)))
-if url.scheme == "https":
-    sock = ssl.create_default_context().wrap_socket(sock, server_hostname=url.hostname)
-auth = ""
-if url.username:
-    secret = f"{unquote(url.username)}:{unquote(url.password or '')}".encode()
-    auth = "Proxy-Authorization: Basic " + base64.b64encode(secret).decode() + "\r\n"
-sock.sendall(f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n{auth}\r\n".encode())
-reply = b""
-while b"\r\n\r\n" not in reply:
-    chunk = sock.recv(4096)
-    if not chunk:
-        sys.exit("The proxy closed the connection.")
-    reply += chunk
-head, _, early = reply.partition(b"\r\n\r\n")
-status = head.split(b"\r\n")[0]
-if status.split()[1:2] != [b"200"]:
-    sys.exit("The proxy refused the connection: " + status.decode(errors="replace"))
-out = sys.stdout.buffer
-out.write(early)
-out.flush()
-
-
-def upstream():
-    try:
-        while data := os.read(0, 65536):
-            sock.sendall(data)
-    finally:
-        try:
-            sock.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
-
-
-threading.Thread(target=upstream, daemon=True).start()
-while data := sock.recv(65536):
-    out.write(data)
-    out.flush()
-'''
+RUN_PATH = "~/.puppyone/run"
+RUN_CONNECTION_PATH = "~/.puppyone/connection"
+# What an Agent saves once to run commands over HTTPS. It signs each command with
+# the Agent's SSH key (``ssh-keygen -Y sign``) and sends it with curl, which uses
+# the computer's HTTP proxy by itself; its exit status is the command's.
+RUN_HELPER = r"""#!/bin/sh
+# Runs one command in your PuppyOne workspace over HTTPS: ~/.puppyone/run 'pwd && ls'
+[ $# -eq 1 ] || { echo "usage: $0 'command'" >&2; exit 2; }
+{ read -r connection && read -r url; } < ~/.puppyone/connection ||
+  { echo "PuppyOne: run https.install first." >&2; exit 2; }
+dir=$(mktemp -d) || exit 1
+trap 'rm -rf "$dir"' EXIT
+printf '%s' "$1" > "$dir/command"
+now=$(date +%s)
+{ printf 'puppyone-agent-exec-v1\n%s\n%s\n' "$connection" "$now"; cat "$dir/command"; } > "$dir/message"
+ssh-keygen -Y sign -f ~/.ssh/puppyone_agent -n puppyone-agent "$dir/message" 2> "$dir/error" ||
+  { cat "$dir/error" >&2; exit 1; }
+signature=$(sed '1d;$d' "$dir/message.sig" | tr -d '\n')
+curl -sS -N -X POST "$url" -H "X-PuppyOne-Time: $now" -H "X-PuppyOne-Signature: $signature" \
+  -H 'Content-Type: text/plain' --data-binary @"$dir/command" | tee "$dir/output"
+status=$(tail -n 1 "$dir/output" | sed -n 's/^\[exit \([0-9]*\)\]$/\1/p')
+exit "${status:-1}"
+"""
 
 logger = logging.getLogger(__name__)
 # Machines being prepared for Agents just let in; held so the loop keeps them.
@@ -116,8 +89,8 @@ def agent_instructions(invitation):
     api = public_origin() + "/api/v1/agent-links"
     return f"""# Connect to a PuppyOne hosted workspace
 
-Someone shared this link so that you can work in their PuppyOne hosted workspace
-over SSH. It needs `ssh`, `ssh-keygen` and `curl`, and nothing else to install.
+Someone shared this link so that you can work in their PuppyOne hosted workspace.
+It needs `ssh-keygen` and `curl`, and nothing else to install.
 
 ## 1. Create a key
 
@@ -137,7 +110,7 @@ of these, or other if none of them is you:
 
 ## 3. Follow the response
 
-- `status` is `ready`: go to step 4 with its `ssh` object.
+- `status` is `ready`: go to step 4 with its `https` object.
 - `status` is `pending`: tell your person you are waiting for them to allow you in
   PuppyOne, and give them `sign_in_url` in case they are away from the app.
   Then repeat this every `poll_interval` seconds until `status` changes:
@@ -147,33 +120,45 @@ of these, or other if none of them is you:
   Use `connection_id` and `poll_secret` from the response. The sign-in link lasts
   10 minutes. `rejected`, `expired` or `revoked` means stop and tell your person.
 
-## 4. Connect
+## 4. Run commands
 
-Run `ssh.install_known_hosts` once. Then use `ssh.command`, adding what to run:
+Run `https.install` once. Then save this helper once:
+
+```
+mkdir -p ~/.puppyone && cat > {RUN_PATH} <<'PUPPYONE_RUN' && chmod 700 {RUN_PATH}
+{RUN_HELPER}PUPPYONE_RUN
+```
+
+Run each command with it:
+
+    {RUN_PATH} 'pwd && ls'
+
+It signs the command with your key and sends it over HTTPS, through this computer's
+HTTP proxy if it has one. The output arrives as the command runs and ends with
+`[exit N]`; the helper exits with the same status. Lines that start with
+`PuppyOne:` come from PuppyOne, not from your command: while it prepares your
+machine, and every 30 seconds a command prints nothing, to keep the connection open.
+One command runs for at most 10 minutes, and nothing it starts keeps running after
+it ends.
+
+### Or over SSH
+
+Where `ssh` can reach the internet, the `ssh` object in the response works too and
+keeps a terminal open. Run `ssh.install_known_hosts` once, then use `ssh.command`,
+adding what to run:
 
     SSH_COMMAND 'pwd && ls'
 
-Keep using `ssh.command` exactly as given. The first command signs in and keeps
-one connection open in the background for 30 minutes, so every later command
-starts at once over it without signing in again. If it closes, the next command
-opens a new one by itself.
-
-If this computer reaches the internet only through an HTTP proxy (`HTTPS_PROXY`
-is set and `ssh` cannot connect), save this helper once; it needs only Python:
-
-```
-cat > {PROXY_HELPER_PATH} <<'PUPPYONE_PROXY'
-{PROXY_HELPER}PUPPYONE_PROXY
-```
-
-Then add `-o ProxyCommand='python3 {PROXY_HELPER_PATH} %h %p'` to `ssh.command`.
+If `ssh` says `Connection closed` or `kex_exchange_identification`, this network only
+lets HTTPS out: use {RUN_PATH} instead.
 
 Each command starts in your own copy of the project, on a machine only you use.
 Your home directory is kept from one command to the next, so settings such as
-`git config --global` stay. Your files are saved to your own branch when the machine goes to sleep, and your
-person decides when they join the project. Your first connection can take a few
-minutes while the machine is prepared, and says so while it waits; after that,
-waking takes up to a minute.
+`git config --global` stay. This machine stays on one branch, so commit there;
+`git switch`, `git rebase` and `git worktree add` are refused. Your files are saved
+to that branch when the machine goes to sleep, and your person decides when they
+join the project. Your first connection can take a few minutes while the machine is
+prepared, and says so while it waits; after that, waking takes up to a minute.
 """
 
 
@@ -185,6 +170,18 @@ def agent_connection(identity):
         return str(UUID(identity.removeprefix(AGENT_USER_PREFIX)))
     except ValueError:
         return None
+
+
+def https_access(connection):
+    """How an Agent runs commands over HTTPS, in a form it can run unchanged."""
+    url = f"{public_origin()}/api/v1/agent-links/connections/{connection}/exec"
+    return {
+        "url": url,
+        "install": (
+            f"mkdir -p ~/.puppyone && printf '%s\\n' '{connection}' '{url}' > {RUN_CONNECTION_PATH}"
+        ),
+        "command": RUN_PATH,
+    }
 
 
 def ssh_access(connection, endpoint):
@@ -257,6 +254,7 @@ class AgentLinkService:
         return {
             "status": "ready",
             "expires_at": expires_at,
+            "https": https_access(connection),
             "ssh": ssh_access(connection, self.endpoint()),
         }
 
@@ -339,6 +337,8 @@ class AgentLinkService:
         web = settings.FRONTEND_URL.rstrip("/")
         if not web:
             raise HTTPException(503, detail={"code": "agent_link_not_configured"})
+        # Where its commands go: checked before anything is recorded.
+        public_origin()
         self.endpoint()
         key_hashes = access_token_hash_candidates(request.invitation.get_secret_value())
         # Links issued before admission closed stay refused, in the same words

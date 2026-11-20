@@ -1,6 +1,7 @@
 """Private workspace access, authorization, audit and live-file use cases."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -19,6 +20,36 @@ from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
 from .sync import WorkspaceGit
+
+
+logger = logging.getLogger(__name__)
+MUTATIONS = frozenset({"write", "mkdir", "move", "remove"})
+
+
+async def _staged(stage, awaitable):
+    with workspace_stage(stage):
+        return await awaitable
+
+
+async def _all(*awaitables):
+    """Await every check, then raise the first failure: none keeps running unseen."""
+    results = await asyncio.gather(*awaitables, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
+
+
+class _Intent:
+    """A mutation's intent audit, written at most once and before the mutation."""
+
+    def __init__(self, record):
+        self.record, self.written = record, False
+
+    async def write(self):
+        if not self.written:
+            await self.record()
+            self.written = True
 
 
 @asynccontextmanager
@@ -101,6 +132,8 @@ class WorkbenchService(WorkbenchAdmission):
         self.lifecycle = WorkbenchLifecycle(self)
         self.opening = WorkspaceOpening(self)
         self.git = WorkspaceGit(self)
+        # Completion/rejection audits run off the reply path; close() drains them.
+        self.audits: set[asyncio.Task] = set()
 
     async def current(self, user, project):
         context, _ = await run_blocking(
@@ -199,7 +232,16 @@ class WorkbenchService(WorkbenchAdmission):
         return row, context
 
     @asynccontextmanager
-    async def files(self, user, project, generation, *, write=False, watch=False):
+    async def files(
+        self, user, project, generation, *, write=False, watch=False, before_use=None
+    ):
+        """Admit one file request and lend its channel.
+
+        The SQL revision fence and the runtime billing check pass before the
+        channel is used. ``before_use`` (a mutation's intent audit) runs only
+        after the canonical policy accepted the caller, concurrently with those
+        checks, and always completes before the channel is lent.
+        """
         cached = self.snapshots.get(user, project) if not watch else None
         row = (cached or {}).get("workbench")
         if row and row["state"] == "running" and row["generation"] == generation:
@@ -209,86 +251,143 @@ class WorkbenchService(WorkbenchAdmission):
             except Exception:
                 cached = None
             if cached:
-                try:
-                    with workspace_stage("files.admission_activity"):
-                        row = await run_blocking(
+                checks = [
+                    _staged(
+                        "files.admission_activity",
+                        run_blocking(
                             self.repository.activity, row, cached["revision"], write=write
-                        )
-                except Exception as exc:
+                        ),
+                    ),
+                    self.billing.check_session(meter_id(row)),
+                ]
+                if before_use:
+                    checks.append(before_use())
+                activity, billing, *rest = await asyncio.gather(*checks, return_exceptions=True)
+                for failure in rest:
+                    if isinstance(failure, BaseException):
+                        raise failure
+                if isinstance(activity, BaseException):
                     self.snapshots.discard(user, project)
-                    if getattr(exc, "code", None) != "P0001" or "agent_context_changed" not in str(
-                        exc
+                    if getattr(activity, "code", None) != "P0001" or (
+                        "agent_context_changed" not in str(activity)
                     ):
-                        raise
+                        raise activity
                     # Revision changed: load fresh facts, never use the old grant.
                 else:
-                    await self.billing.check_session(meter_id(row))
-                    async with _borrowed(self.channels, row) as host:
+                    if isinstance(billing, BaseException):
+                        # The snapshot may predate a new compute epoch; only the
+                        # current reservation decides.
+                        if meter_id(activity) == meter_id(row):
+                            raise billing
+                        await self.billing.check_session(meter_id(activity))
+                    async with _borrowed(self.channels, activity) as host:
                         yield host
                     return
         with workspace_stage("files.admission"):
             row, context = await self.bound(user, project, generation, write=write)
+        checks = [self.billing.check_session(meter_id(row))]
         if not watch:
-            with workspace_stage("files.activity"):
-                row = await run_blocking(
-                    self.repository.activity, row, context["revision"], write=write
+            checks.append(
+                _staged(
+                    "files.activity",
+                    run_blocking(self.repository.activity, row, context["revision"], write=write),
                 )
-        await self.billing.check_session(meter_id(row))
+            )
+        if before_use:
+            checks.append(before_use())
+        results = await _all(*checks)
+        if not watch:
+            row = results[1]
         async with _borrowed(self.channels, row) as host:
             yield host
+
+    def _audit_later(self, user, project, generation, operation, identity, status):
+        task = asyncio.create_task(
+            self._record_audit(user, project, generation, operation, identity, status)
+        )
+        self.audits.add(task)
+        task.add_done_callback(self.audits.discard)
+
+    async def _record_audit(self, user, project, generation, operation, identity, status):
+        try:
+            with workspace_stage("files.audit_" + status):
+                await run_blocking(
+                    self.repository.audit, user, project, generation, operation, identity, status
+                )
+        except Exception:
+            # The intent row stays as an unknown outcome; the reply is already sent.
+            logger.exception(
+                "workspace_audit_failed", extra={"operation_id": identity, "status": status}
+            )
+
+    async def settle_audits(self):
+        """Wait for audit rows already scheduled off the reply path."""
+        while self.audits:
+            await asyncio.gather(*list(self.audits), return_exceptions=True)
 
     async def close(self):
         from src.platform.sandbox import close_provider_transports
 
+        try:
+            await asyncio.wait_for(self.settle_audits(), timeout=10)
+        except TimeoutError:
+            logger.warning("workspace_audits_pending_at_close", extra={"count": len(self.audits)})
         await self.opening.observers.close()
         await self.channels.close()
         await close_provider_transports()
 
     async def file_operation(self, user, project, generation, operation):
-        write = operation["action"] in {"write", "mkdir", "move", "remove"}
-        # Bounded below the SQL minimum idle interval (60s); a file request
-        # cannot outlive the activity admission that protects its connection.
-        async with (
-            asyncio.timeout(35),
-            self.files(user, project, generation, write=write) as channel,
-        ):
-            audit_id = str(uuid4())
-            if write:
-                await run_blocking(
+        write = operation["action"] in MUTATIONS
+        audit_id = str(uuid4())
+
+        def audit(status):
+            self._audit_later(user, project, generation, operation, audit_id, status)
+
+        intent = _Intent(
+            lambda: _staged(
+                "files.audit_intent",
+                run_blocking(
                     self.repository.audit, user, project, generation, operation, audit_id, "intent"
-                )
-            try:
-                with workspace_stage("files.operation"):
-                    result = await self.filesystem.operation(channel, operation)
-            except FilesystemError as exc:
+                ),
+            )
+        )
+        lent = False
+        try:
+            # Bounded below the SQL minimum idle interval (60s); a file request
+            # cannot outlive the activity admission that protects its connection.
+            async with (
+                asyncio.timeout(35),
+                self.files(
+                    user, project, generation, write=write, before_use=intent.write if write else None
+                ) as channel,
+            ):
+                lent = True
+                try:
+                    with workspace_stage("files.operation"):
+                        result = await self.filesystem.operation(channel, operation)
+                except FilesystemError as exc:
+                    if write:
+                        audit("rejected")
+                    status = {"file_conflict": 409, "file_not_found": 404}.get(exc.code, 422)
+                    raise WorkspaceError(status, {"code": exc.code}) from exc
                 if write:
-                    await run_blocking(
-                        self.repository.audit,
-                        user,
-                        project,
-                        generation,
-                        operation,
-                        audit_id,
-                        "rejected",
-                    )
-                status = {"file_conflict": 409, "file_not_found": 404}.get(exc.code, 422)
-                raise WorkspaceError(status, {"code": exc.code}) from exc
-            if write:
-                await run_blocking(
-                    self.repository.audit,
-                    user,
-                    project,
-                    generation,
-                    operation,
-                    audit_id,
-                    "completed",
-                )
-            # A response is never handed to a newly-revoked or replaced reader.
-            with workspace_stage("files.response_authorization"):
-                current, _ = await self.bound(user, project, generation, write=write)
-                if not same_runtime(channel.admitted_row, current):
-                    raise WorkerDisconnected("Workspace changed during file operation")
-            return result
+                    # The receipt carries no file bytes, only what the caller sent;
+                    # withholding it would turn an admitted, finished write into an
+                    # unknown outcome. The next request is admitted afresh.
+                    audit("completed")
+                    return result
+                # Bytes are never handed to a newly-revoked or replaced reader.
+                with workspace_stage("files.response_authorization"):
+                    current, _ = await self.bound(user, project, generation, write=write)
+                    if not same_runtime(channel.admitted_row, current):
+                        raise WorkerDisconnected("Workspace changed during file operation")
+                return result
+        except BaseException:
+            # An intent written alongside admission that then refused closes as
+            # rejected; after the channel was lent the outcome stays as recorded.
+            if intent.written and not lent:
+                audit("rejected")
+            raise
 
     async def events(self, user, project, generation):
         async with (

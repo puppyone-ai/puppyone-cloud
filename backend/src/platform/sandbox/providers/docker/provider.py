@@ -103,6 +103,7 @@ class DockerRuntimeProvider:
             "--cap-add=CHOWN",
             "--cap-add=DAC_OVERRIDE",
             "--cap-add=FOWNER",
+            "--cap-add=LINUX_IMMUTABLE",
             "--security-opt=no-new-privileges",
             "--user=0:0",
             *mounts,
