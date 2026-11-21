@@ -154,6 +154,11 @@ async def import_branch(
         )
         return result
     except Exception as e:
+        from src.platform.repository_policy import RepositoryWriteBlockedError
+
+        if isinstance(e, RepositoryWriteBlockedError):
+            await _record_failure(sync_log, binding_id, error=e.message)
+            raise
         log_error(f"[GithubImport] unexpected failure: {e}")
         return await _record_failure(
             sync_log,
@@ -260,6 +265,7 @@ async def _do_import(
             deleted=[p for p in existing if p not in files],
             project_write_state=state,
             message=message,
+            source_channel="sync",
         )
 
     # A no-op still records the observed native commit as the divergence

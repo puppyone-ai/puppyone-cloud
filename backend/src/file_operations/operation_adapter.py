@@ -107,6 +107,7 @@ class ProductOperationAdapter(ProductQueries):
         project_id,
         grant,
         *,
+        channel,
         request_key,
         base,
         input_sha256,
@@ -115,9 +116,17 @@ class ProductOperationAdapter(ProductQueries):
         write_lease_factory=None,
     ):
         from src.platform.project.write_lease import ProjectWriteLease
+        from src.platform.repository_policy import WriteChannel, channel_from_source, require_write
+        from src.version_engine.domain.initialization import InitializationGrant
         from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 
         admitted_actor(grant, project_id, write=False)
+        effective_channel = (
+            WriteChannel.INITIALIZATION
+            if isinstance(grant, InitializationGrant)
+            else channel_from_source(channel)
+        )
+        require_write(effective_channel)
         service = await run_blocking(self._repos.get_native_service, project_id)
         if service is None:
             raise RuntimeError("repository migration required")
@@ -162,6 +171,7 @@ class ProductOperationAdapter(ProductQueries):
         base_commit_id=None,
         project_write_state=None,
         policy="",
+        source_channel="papi",
         **options,
     ):
         if scope:
@@ -170,8 +180,16 @@ class ProductOperationAdapter(ProductQueries):
             raise ValueError("use an explicit Git conflict workflow")
         from src.file_operations.commands import VersionWriteCommandService
         from src.file_operations.native_commands import compile_native_command
+        from src.platform.repository_policy import WriteChannel, channel_from_source, require_write
+        from src.version_engine.domain.initialization import InitializationGrant
 
         grant = self._bound_grant(project_id, project_write_state)
+        effective_channel = (
+            WriteChannel.INITIALIZATION
+            if isinstance(grant, InitializationGrant)
+            else channel_from_source(source_channel)
+        )
+        require_write(effective_channel)
         arguments = {**arguments, "message": message}
         digest, splice, _response = compile_native_command(
             VersionWriteCommandService(self), operation, arguments
@@ -201,6 +219,7 @@ class ProductOperationAdapter(ProductQueries):
         result = await self.apply_native_command(
             project_id,
             grant,
+            channel=effective_channel,
             request_key=key,
             base=base,
             input_sha256=digest,
@@ -291,11 +310,13 @@ class ProductOperationAdapter(ProductQueries):
 
     async def restore_commit(self, project_id, target):
         """Create a normal Git revert-style commit, preserving current ancestry."""
+        from src.platform.repository_policy import WriteChannel, require_write
         from src.version_engine.read.native_history import NativeHistory
         from src.version_engine.write_engine.git_object_format import decode_commit
         from src.version_engine.write_engine.native_tree_diff import native_tree_diff
 
         grant = self._bound_grant(project_id)
+        require_write(WriteChannel.RESTORE)
         with self.open_read(project_id, grant) as reader:
             history = NativeHistory(reader.snapshot)
             history.require(target)
@@ -332,6 +353,7 @@ class ProductOperationAdapter(ProductQueries):
         result = await self.apply_native_command(
             project_id,
             grant,
+            channel=WriteChannel.RESTORE,
             request_key=str(uuid.uuid4()),
             base=base,
             input_sha256=hashlib.sha256(("restore:" + target).encode()).hexdigest(),

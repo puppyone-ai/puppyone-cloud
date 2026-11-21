@@ -32,7 +32,11 @@ def test_probe_does_not_open_storage_or_consume_publication_identity(tmp_path, a
     path = tmp_path / "probe"
     path.write_bytes(b"0000")
     response = NativeGitRepository(service).receive(
-        grant("p"), path, initial_attempt=attempt, publication=publication
+        grant("p"),
+        path,
+        channel="workspace" if publication is not None else "git_push",
+        initial_attempt=attempt,
+        publication=publication,
     )
     assert response.status_code == 200 and response.body == b""
     assert response.media_type == "application/x-git-receive-pack-result"
@@ -48,7 +52,12 @@ def test_probe_still_requires_write_authority(tmp_path, publication):
     path.write_bytes(b"0000")
     repository = NativeGitRepository(service)
     with pytest.raises(PermissionError):
-        repository.receive(grant("p", writable=False), path, publication=publication)
+        repository.receive(
+            grant("p", writable=False),
+            path,
+            channel="workspace" if publication is not None else "git_push",
+            publication=publication,
+        )
     assert not reads and not pins
 
 
@@ -93,7 +102,9 @@ def test_initial_pack_binds_known_attempt_and_retains_stock_git_path(tmp_path, f
     path = tmp_path / "request"
     path.write_bytes(pkt_line(f"{'0' * len(oid)} {oid} refs/heads/main\0report-status\n".encode()) + b"0000" + pack)
     attempt = str(uuid.uuid4()) if known_attempt else None
-    result = NativeGitRepository(service).receive(grant("p"), path, initial_attempt=attempt)
+    result = NativeGitRepository(service).receive(
+        grant("p"), path, channel="git_push", initial_attempt=attempt
+    )
     assert len(received) == 1 and not pins
     assert str(uuid.UUID(received[0]["request_key"])) == (attempt or received[0]["request_key"])
     assert received[0]["edits"][0].new.oid == oid
@@ -115,7 +126,12 @@ def test_attempt_extension_rejects_non_initial_input_before_pack_or_snapshot(tmp
     path = tmp_path / "request"
     path.write_bytes(data + b"0000")
     with pytest.raises(ValueError):
-        NativeGitRepository(service).receive(grant("p"), path, initial_attempt="bad" if fault == "invalid-id" else str(uuid.uuid4()))
+        NativeGitRepository(service).receive(
+            grant("p"),
+            path,
+            channel="git_push",
+            initial_attempt="bad" if fault == "invalid-id" else str(uuid.uuid4()),
+        )
     assert not pins and not reads
 
 

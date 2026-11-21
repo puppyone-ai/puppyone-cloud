@@ -744,6 +744,8 @@ class Settings(BaseSettings):
     PUBLISH_CACHE_TTL_SECONDS: int = 10
 
     # Git-native version engine hardening.
+    REPOSITORY_POLICY: Literal["vm-only", "open"] = "vm-only"
+    REPOSITORY_POLICY_FILE: str = ""
     VERSION_OUTBOX_ENABLED: bool = True
     VERSION_OUTBOX_INTERVAL_SECONDS: int = 30
     VERSION_OUTBOX_BATCH_SIZE: int = 50

@@ -16,6 +16,9 @@ os.environ.setdefault("SUPABASE_KEY", "test-key-for-unit-tests")
 os.environ.setdefault("INTERNAL_API_SECRET", "test-secret-for-unit-tests")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("SKIP_AUTH", "true")
+# Existing tests assume open repository writes; new policy tests explicitly
+# switch to REPOSITORY_POLICY=vm-only.
+os.environ.setdefault("REPOSITORY_POLICY", "open")
 # Tests opt into managed inference explicitly; a developer's .env must not
 # combine a paid gateway with the collection-time test authentication bypass.
 os.environ.setdefault("MANAGED_AI_ENABLED", "false")

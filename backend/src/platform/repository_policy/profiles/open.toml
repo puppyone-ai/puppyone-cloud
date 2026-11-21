@@ -1,0 +1,19 @@
+# open.toml：开放写入，所有通道都可以直接写版本库；工作区只备份到自己的分支。
+[writes]
+workspace = true
+initialization = true
+git_push = true
+content_api = true
+mcp = true
+cli = true
+upload = true
+import = true
+sync = true
+table = true
+restore = true
+head = true
+
+[backup]
+target = "workspace"
+on_pause = false
+interval_seconds = 0

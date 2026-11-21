@@ -227,6 +227,7 @@ async def seed_template_content(
         tmpl.files,
         actor=created_by,
         message=f"template: {tmpl.name}",
+        source_channel="initialization",
     )
 
     return {"template": template_id, "files": list(tmpl.files.keys())}

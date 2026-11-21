@@ -1,0 +1,19 @@
+# vm-only.toml：项目文件只在它的云端工作区里改，版本库是那台工作区的备份。
+[writes]
+workspace = true        # 工作区的备份（以及在它里面跑的 Run）
+initialization = true   # 新建项目时填充：模板、种子、首次导入、第一次推空的 main
+git_push = false        # 推到项目、Scope 或访问点
+content_api = false     # /content/{project}/write、bulk-write、mv、rm、mkdir
+mcp = false             # MCP 的写工具（直接不提供）
+cli = false             # 访问 CLI 的写命令
+upload = false
+import = false
+sync = false            # GitHub 同步进项目
+table = false
+restore = false         # /content/{project}/rollback
+head = false            # 改默认分支
+
+[backup]
+target = "project"      # project：main 跟着工作区走；workspace：只备份到工作区自己的分支
+on_pause = true
+interval_seconds = 300  # 运行中、上次备份后有过活动就备份；0 = 只在暂停时备份

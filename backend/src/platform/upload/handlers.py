@@ -429,6 +429,10 @@ async def submit_file_ingest(
                 source_channel="upload",
             )
         except Exception as e:
+            from src.platform.repository_policy import RepositoryWriteBlockedError
+
+            if isinstance(e, RepositoryWriteBlockedError):
+                raise
             logger.error(f"version push failed during file ingest: {e}", exc_info=True)
 
     return IngestSubmitResponse(items=items, total=len(items))

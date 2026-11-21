@@ -226,6 +226,7 @@ async def seed_default_content(
         files,
         actor=created_by,
         message="seed: project default content",
+        source_channel="initialization",
     )
 
     return {

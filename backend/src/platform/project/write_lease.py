@@ -411,6 +411,25 @@ class LeasedVersionWriteCommandService:
             return target
 
         async def leased(project_id: str, *args, **kwargs):
+            from src.platform.repository_policy import (
+                WriteChannel,
+                channel_from_source,
+                require_write,
+            )
+            from src.version_engine.domain.initialization import InitializationGrant
+
+            ops = getattr(self._commands, "ops", None)
+            grant = getattr(ops, "_grant", None)
+            active = active_project_write_lease(project_id)
+            is_init = isinstance(grant, InitializationGrant) or bool(
+                active and active.initialization_operation_key
+            )
+            effective_channel = (
+                WriteChannel.INITIALIZATION
+                if is_init
+                else channel_from_source(kwargs.get("source_channel", "papi"))
+            )
+            require_write(effective_channel)
             async with self._write_lease_factory(project_id, f"product.{name}"):
                 return await target(project_id, *args, **kwargs)
 

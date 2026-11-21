@@ -132,6 +132,7 @@ class TableService:
             content,
             actor=f"user:{user_id}",
             message=f"create table {name}",
+            source_channel="table",
         )
         log_info(f"[Table] Created table {table_id} via Version Engine")
 
@@ -199,6 +200,7 @@ class TableService:
             project_write_state=self._read_states.get(table.project_id),
             actor="system:table_update",
             message=f"update table {table_id}",
+            source_channel="table",
         )
         log_info(f"[Table] Updated table {table_id} via Version Engine")
 
@@ -224,6 +226,7 @@ class TableService:
             [version_path],
             actor="system:table_delete",
             message=f"delete table {table_id}",
+            source_channel="table",
         )
         log_info(f"[Table] Deleted table {table_id} via Version Engine")
 
@@ -435,6 +438,7 @@ class TableService:
             project_write_state=self._read_states.get(table.project_id),
             actor="system:table_edit",
             message=f"edit table data {table.id}",
+            source_channel="table",
         )
 
     # ================================================================

@@ -16,6 +16,7 @@ from src.exceptions import AppException, ErrorCode
 from src.platform.access.adapters.git import auth as git_auth
 from src.platform.access.adapters.git import router as git_router
 from src.platform.project import write_lease
+from src.platform.repository_policy import WriteChannel, is_write_allowed
 
 
 async def git_project_write_lease(request: Request) -> AsyncIterator[None]:
@@ -62,6 +63,15 @@ async def git_project_write_lease(request: Request) -> AsyncIterator[None]:
             status_code=403,
             message="Git credential does not allow writes",
         )
+    if (
+        path.endswith("/git-receive-pack")
+        and not is_write_allowed(WriteChannel.GIT_PUSH)
+        and "x-puppyone-initial-attempt" not in request.headers
+    ):
+        # Skip acquiring a project write lease when git_push is disabled so
+        # NativeGitRepository.receive can return the Git wire refusal directly.
+        yield
+        return
 
     async with write_lease.ProjectWriteLease(project_id, f"git.{request.method.lower()}"):
         yield

@@ -44,7 +44,9 @@ def native_http(publication, tmp_path):
         spool.write_bytes(await request.body())
         try:
             if command == "git-receive-pack":
-                return await asyncio.to_thread(transport.receive, admitted, spool)
+                return await asyncio.to_thread(
+                    transport.receive, admitted, spool, channel="git_push"
+                )
             assert command == "git-upload-pack"
             return await asyncio.to_thread(
                 transport.upload, admitted, spool, protocol=request.headers.get("git-protocol", "")

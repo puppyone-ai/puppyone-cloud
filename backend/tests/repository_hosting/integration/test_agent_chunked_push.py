@@ -79,7 +79,9 @@ def test_run_host_rejects_non_descendant_even_if_client_bypasses_fast_forward_ch
     body = tmp_path / "receive-pack"
     body.write_bytes(pkt_line(f"{winner} {candidate} refs/heads/main\0report-status\n".encode()) + b"0000" + pack)
     transactions_before = auth.count("version_ref_transactions")
-    result = NativeGitRepository(service).receive(grant(auth.project), body, publication=binding)
+    result = NativeGitRepository(service).receive(
+        grant(auth.project), body, channel="workspace", publication=binding
+    )
     assert b"ng refs/heads/main Run candidate does not descend from its base" in result.body
     assert auth.state()["oid"] == winner
     assert auth.count("version_ref_transactions") == transactions_before

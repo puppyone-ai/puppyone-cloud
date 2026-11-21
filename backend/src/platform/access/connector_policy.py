@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from src.platform.access.model_repository import AccessModelRepository
+from src.platform.repository_policy import WriteChannel, require_write
 from src.version_engine.admission.auth_context import repository_target_from_auth
 from src.shared_types.repository_target import repository_target_scope_id
 from src.utils.logger import log_error, log_warning
@@ -213,6 +214,8 @@ def admit_cli_fs_command(
             status_code=400,
             detail=f"Unknown CLI FS command: {command!r}",
         )
+    if normalized_command in CLI_FS_WRITE_COMMANDS | CLI_FS_DELETE_COMMANDS:
+        require_write(WriteChannel.CLI)
 
     target = repository_target_from_auth(auth)
     scope_id = repository_target_scope_id(target)

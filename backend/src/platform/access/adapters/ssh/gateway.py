@@ -11,6 +11,7 @@ import asyncssh
 
 from src.infra.execution.runner import run_blocking
 from src.platform.project.write_lease import install_storage_write_admission
+from src.platform.repository_policy import load_repository_policy
 
 from ..shell_session import (
     CONNECTION_ENDINGS,
@@ -280,6 +281,7 @@ async def run():
 def main():
     logging.basicConfig(level=logging.INFO)
     install_storage_write_admission()
+    load_repository_policy()
     asyncio.run(run())
 
 
