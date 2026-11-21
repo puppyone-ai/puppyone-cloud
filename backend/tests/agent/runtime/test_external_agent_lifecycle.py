@@ -244,12 +244,20 @@ def unsaved(postgres, workspace):
 
 
 @pytest.mark.integration
-def test_only_a_pausing_workspace_can_be_marked_saved(postgres, submitted):
+def test_only_running_or_pausing_workspace_can_be_marked_saved(postgres, submitted):
     args, _ = submitted
     workspace = machine(postgres, args)
     assert unsaved(postgres, workspace) is True
+    # Running workspace can record periodic backup outcome.
     saved(postgres, workspace)
-    assert unsaved(postgres, workspace) is True  # Running: a connection could still write.
+    assert unsaved(postgres, workspace) is False
+    # Re-mark unsaved and verify paused/retired cannot be marked saved, while pausing can.
+    postgres.sql(
+        f"UPDATE cloud_workbenches SET unpublished_changes=true WHERE id='{workspace['id']}'"
+    )
+    set_state(postgres, workspace, "paused")
+    saved(postgres, workspace)
+    assert unsaved(postgres, workspace) is True
     set_state(postgres, workspace, "pausing")
     saved(postgres, workspace)
     assert unsaved(postgres, workspace) is False

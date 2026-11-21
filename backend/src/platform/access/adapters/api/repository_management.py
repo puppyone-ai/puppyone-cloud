@@ -16,6 +16,7 @@ from src.platform.authorization.dependencies import AuthorizedProject, require_p
 from src.shared_types.grants import ProjectAction
 from src.platform.project.schemas import NativeRepositoryCreate
 from src.platform.project.write_lease import ProjectWriteLease
+from src.platform.repository_policy import WriteChannel, require_write
 from src.file_operations.engine_dependencies import get_repo_manager
 from src.version_engine.infrastructure.supabase.repo_manager import VersionRepoManager
 from src.version_engine.read.ref_metadata import repository_ref_metadata
@@ -76,6 +77,7 @@ def read_native_head(manager, grant):
 
 
 def change_head(manager, grant, payload):
+    require_write(WriteChannel.HEAD)
     service = manager.get_native_service(grant.project_id)
     if service is None:
         raise HTTPException(409, "Native repository required")
@@ -120,6 +122,7 @@ async def update_repository_head(
     authorized: AuthorizedProject = Depends(require_project_action(ProjectAction.PROJECT_MANAGE)),
     manager: VersionRepoManager = Depends(get_repo_manager),
 ):
+    require_write(WriteChannel.HEAD)
     try:
         async with ProjectWriteLease(authorized.grant.project_id, "repository.head"):
             result = await run_owned(change_head, manager, authorized.grant, payload)

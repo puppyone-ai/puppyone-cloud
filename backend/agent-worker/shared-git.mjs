@@ -12,6 +12,24 @@ async function isAncestor(run, older, newer) {
   catch (error) { if (error.code === 1) return false; throw error; }
 }
 
+export async function snapshotParents(run, tip, head) {
+  if (tip && head) {
+    if (tip === head || await isAncestor(run, tip, head)) return [head];
+    if (await isAncestor(run, head, tip)) return [tip];
+    return [tip, head];
+  }
+  return [tip, head].filter(Boolean);
+}
+
+export async function snapshotCommitMessage(run, { message, parents, tree, includeChangedCount = false }) {
+  if (!includeChangedCount) return message;
+  const changed = parents.length
+    ? await run(['diff-tree', '--no-commit-id', '--name-only', '-r', parents[0], tree])
+    : await run(['ls-tree', '-r', '--name-only', tree]);
+  const count = changed ? changed.split('\n').filter(Boolean).length : 0;
+  return count > 0 ? `${message} (${count} ${count === 1 ? 'file' : 'files'})` : message;
+}
+
 /**
  * Bring source into tip through plumbing: no hooks, no user config, and HEAD stays
  * on the Workspace branch. A conflict leaves marked files in the worktree, so they
@@ -66,7 +84,7 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
    * The branch's cloud tip is always an ancestor: amended or reset history joins as
    * a second parent, so a save is a fast-forward and needs no force.
    */
-  async function snapshot({ message, tip = null }) {
+  async function snapshot({ message, tip = null, include_changed_count = false }) {
     if (await exists(MERGE_STATE)) return { status: 'merging' };
     const directory_ = await mkdtemp(path.join(tmpdir(), 'puppyone-snapshot-'));
     try {
@@ -80,12 +98,17 @@ export async function sharedGit(action, config, value, remote, transport = {}) {
           throw new Error('Workspace branch moved during save');
       }
       const head = await currentCommit();
-      let parents = [tip, head].filter(Boolean);
-      if (tip && head && (tip === head || await isAncestor(run, tip, head))) parents = [head];
+      const parents = await snapshotParents(run, tip, head);
       const treeOf = async commit => run(['rev-parse', `${commit}^{tree}`]);
       let candidate = tip || head;
       if (!candidate || tree !== await treeOf(parents[0])) {
-        candidate = await run(['commit-tree', tree, ...parents.flatMap(parent => ['-p', parent]), '-m', message]);
+        const commitMessage = await snapshotCommitMessage(run, {
+          message,
+          parents,
+          tree,
+          includeChangedCount: include_changed_count,
+        });
+        candidate = await run(['commit-tree', tree, ...parents.flatMap(parent => ['-p', parent]), '-m', commitMessage]);
       } else if (parents.length === 1) candidate = parents[0];
       // Keep the commit reachable until the next save; no working ref moves.
       await run(['update-ref', 'refs/puppyone/snapshot', candidate]);

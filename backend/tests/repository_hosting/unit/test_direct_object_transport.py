@@ -426,7 +426,9 @@ def test_stock_http_shallow_partial_and_incremental_roundtrips(
         path.write_bytes(await request.body())
         try:
             if command == "git-receive-pack":
-                return await asyncio.to_thread(transport.receive, grant("p"), path)
+                return await asyncio.to_thread(
+                    transport.receive, grant("p"), path, channel="git_push"
+                )
             return await asyncio.to_thread(
                 transport.upload, grant("p"), path, protocol=request.headers.get("git-protocol", "")
             )
@@ -485,7 +487,7 @@ def test_non_atomic_multiple_refs_persist_the_incoming_pack_once(tmp_path):
         + pkt_line(f"{'0' * 40} {first} refs/heads/feature\n".encode())
         + b"0000" + payload
     )
-    response = NativeGitRepository(service).receive(grant("p"), path)
+    response = NativeGitRepository(service).receive(grant("p"), path, channel="git_push")
     assert b"ok refs/heads/main" in response.body
     assert b"ok refs/heads/feature" in response.body
     assert len(writes) == 1 and not pins

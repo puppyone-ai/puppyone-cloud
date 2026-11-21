@@ -106,8 +106,18 @@ class NativeGitRepository:
         with request_path.open("rb") as handle:
             return receive_commands(handle, self.format)
 
-    def receive(self, grant, request_path: Path, *, publication=None, initial_attempt=None,
+    def receive(self, grant, request_path: Path, *, channel, publication=None, initial_attempt=None,
                 max_pack_bytes=None):
+        from src.platform.repository_policy import (
+            WriteChannel,
+            channel_from_source,
+            git_refusal_message,
+            is_write_allowed,
+        )
+
+        requested_channel = channel_from_source(channel)
+        if requested_channel is WriteChannel.WORKSPACE and publication is None:
+            raise PermissionError("Workspace Git receive requires an admitted publication")
         admitted_actor(grant, self.project_id, write=True)
         outcomes = {}
         with request_path.open("rb") as handle:
@@ -133,6 +143,20 @@ class NativeGitRepository:
                     raise ValueError("initial attempt requires creation of main")
             if publication is not None:
                 publication.validate(edits)
+                effective_channel = WriteChannel.WORKSPACE
+            elif (
+                initial_attempt is not None
+                and len(edits) == 1
+                and edits[0].name == b"refs/heads/main"
+                and edits[0].expected == RefState()
+                and edits[0].new.oid is not None
+            ):
+                effective_channel = WriteChannel.INITIALIZATION
+            else:
+                effective_channel = requested_channel
+            if not is_write_allowed(effective_channel):
+                reason = git_refusal_message()
+                return self.report(edits, capabilities, {edit.name: reason for edit in edits})
             with repository_snapshot(
                 self.control, self.service.backend, grant, project_id=self.project_id
             ) as snapshot:
@@ -280,12 +304,11 @@ class NativeGitRepository:
     @staticmethod
     def report(edits, capabilities, outcomes, *, unpack="ok"):
         def safe(value):
-            return (
-                value.replace("\n", " ")
-                .replace("\r", " ")
-                .replace("\0", " ")[:1024]
-                .encode("ascii", "replace")
-            )
+            cleaned = value.replace("\n", " ").replace("\r", " ").replace("\0", " ")
+            encoded = cleaned.encode("utf-8", "replace")
+            if len(encoded) > 1024:
+                encoded = encoded[:1024].decode("utf-8", "ignore").encode("utf-8")
+            return encoded
 
         report = pkt_line(b"unpack " + safe(unpack) + b"\n")
         for edit in edits:

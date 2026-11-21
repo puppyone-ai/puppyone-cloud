@@ -128,7 +128,7 @@ layers = [
     "src.platform.repository_target : src.platform.project : src.platform.repository_context : src.file_operations",
     "src.platform.billing : src.platform.activity",
     "src.platform.auth : src.platform.organization : src.platform.profile : src.platform.entitlements : src.platform.authorization",
-    "src.platform.idempotency : src.platform.query_contract",
+    "src.platform.idempotency : src.platform.query_contract : src.platform.repository_policy",
 ]
 # Existing violations. Remove an entry when its import is fixed; never add one.
 # tests/architecture/test_import_layers.py pins the count.

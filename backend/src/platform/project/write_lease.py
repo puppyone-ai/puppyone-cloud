@@ -411,6 +411,9 @@ class LeasedVersionWriteCommandService:
             return target
 
         async def leased(project_id: str, *args, **kwargs):
+            # The repository write policy is decided where the starting revision
+            # is known (ProductOperationAdapter): an empty repository is filled,
+            # not written to through a closed channel.
             async with self._write_lease_factory(project_id, f"product.{name}"):
                 return await target(project_id, *args, **kwargs)
 

@@ -17,6 +17,7 @@ from src.platform.access.credential_repository import AccessCredentialRepository
 from src.platform.access.filesystem.context import ScopedFsContext
 from src.platform.access.filesystem.policy import resolve_mcp_fs_allowed_tools
 from src.platform.access.surface_repository import AccessSurfaceRepository
+from src.platform.repository_policy import WriteChannel, is_write_allowed
 from src.shared_types.grants import (
     ProjectAction,
     RuntimeGrant,
@@ -143,7 +144,13 @@ def resolve_mcp_runtime(api_key: str) -> ResolvedMcpRuntime:
     policy_writable = any(
         isinstance(access, dict) and access.get("readonly") is False for access in accesses
     )
-    mode = "rw" if policy_writable and grant.allows(ProjectAction.CONTENT_WRITE) else "ro"
+    mode = (
+        "rw"
+        if policy_writable
+        and grant.allows(ProjectAction.CONTENT_WRITE)
+        and is_write_allowed(WriteChannel.MCP)
+        else "ro"
+    )
     context = ScopedFsContext(
         api_key=key,
         endpoint_id=surface["id"],

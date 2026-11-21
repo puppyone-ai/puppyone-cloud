@@ -696,6 +696,7 @@ async def native_write(case, name, content):
     return await case.ops.apply_native_command(
         case.project,
         grant,
+        channel="papi",
         request_key=str(uuid4()),
         base=base,
         input_sha256="b" * 64,

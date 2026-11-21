@@ -152,6 +152,7 @@ class DatabaseImportService:
             content_bytes,
             actor=f"db_connector:{connection_id}",
             message=f"Save table '{table}' from DB connector",
+            source_channel="import",
         )
 
         self.repo.update_last_used(conn.id)

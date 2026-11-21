@@ -59,7 +59,9 @@ def workspace(replies, *, refs=None, result=None, active=False):
     service = SimpleNamespace(
         transport=transport,
         context=Mock(return_value=({}, "grant")),
-        repository=SimpleNamespace(has_active_runs=Mock(return_value=active)),
+        repository=SimpleNamespace(
+            has_active_runs=Mock(return_value=active), record_sync=Mock()
+        ),
         channel_factory=Mock(return_value=channel),
         connection=AsyncMock(return_value="connection"),
     )
@@ -68,13 +70,15 @@ def workspace(replies, *, refs=None, result=None, active=False):
 
 @pytest.mark.asyncio
 async def test_sync_defaults_to_the_projects_branch():
-    git, channel, _ = workspace([{"status": "merged", "tip": "c" * 40}])
+    git, channel, service = workspace([{"status": "merged", "tip": "c" * 40}])
     result = await git.sync(ROW)
     assert result["status"] == "merged"
     request = channel.calls[0]
     assert request["action"] == "sync"
     assert request["value"]["source_ref"] == MAIN
     assert request["config"]["target_ref"] == WORKSPACE_REF
+    # The Project's branch is in the Workspace now: its backups may land on it again.
+    service.repository.record_sync.assert_called_once()
 
 
 @pytest.mark.asyncio
