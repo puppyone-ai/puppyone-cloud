@@ -236,6 +236,15 @@ class WorkbenchRepository:
             oid=oid,
         )
 
+    def backup_claim(self, row, interval_seconds, *, lease_seconds=180):
+        return self.command(
+            "backup_claim",
+            workbench=row["id"],
+            generation=row["generation"],
+            interval_seconds=interval_seconds,
+            lease_seconds=lease_seconds,
+        )
+
     def reclaim_claim(self, row):
         """Claim a deleted owner's workspace for destruction once unoccupied."""
         return self.command(

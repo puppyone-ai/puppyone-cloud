@@ -14,7 +14,7 @@ from src.config import settings
 from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
-from src.shared_types.grants import ProjectAction
+from src.platform.repository_policy import get_repository_policy
 from src.platform.sandbox import (
     WorkspaceDiskLost,
     profile_artifact,
@@ -23,6 +23,7 @@ from src.platform.sandbox import (
     workspace_providers,
     workspace_stage,
 )
+from src.shared_types.grants import ProjectAction
 
 from .errors import access_failure, context_changed
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
@@ -385,14 +386,24 @@ class WorkbenchLifecycle:
         if row["state"] == "allocating":
             fresh = row["resource"] is None
             if fresh:
-                target = await run_blocking(
-                    self.transport.describe, row["project_id"], grant, target_ref=row["target_ref"]
-                )
-                source = (
-                    target
-                    if target["expected_oid"]
-                    else await run_blocking(self.transport.describe, row["project_id"], grant)
-                )
+                if (
+                    row.get("is_default")
+                    and not row.get("agent_registration_id")
+                    and get_repository_policy().backup.target == "project"
+                ):
+                    source = await run_blocking(self.transport.describe, row["project_id"], grant)
+                else:
+                    target = await run_blocking(
+                        self.transport.describe,
+                        row["project_id"],
+                        grant,
+                        target_ref=row["target_ref"],
+                    )
+                    source = (
+                        target
+                        if target["expected_oid"]
+                        else await run_blocking(self.transport.describe, row["project_id"], grant)
+                    )
                 host.resource["initialization"] = {
                     "project_id": row["project_id"],
                     "object_format": source["object_format"],
@@ -551,6 +562,36 @@ class WorkbenchLifecycle:
             not resource.get("volume_id")
         )
 
+    @staticmethod
+    def _backup_due(row, interval_seconds: int) -> bool:
+        if interval_seconds <= 0 or row.get("owner_deleted_at") or row.get("open_requested"):
+            return False
+        now = datetime.now(UTC)
+        backup_until = row.get("backup_until")
+        if backup_until:
+            with suppress(TypeError, ValueError):
+                if datetime.fromisoformat(backup_until) > now:
+                    return False
+        save_finished_at = row.get("save_finished_at")
+        if not save_finished_at:
+            return bool(row.get("unpublished_changes"))
+        try:
+            saved_at = datetime.fromisoformat(save_finished_at)
+        except (TypeError, ValueError):
+            return bool(row.get("unpublished_changes"))
+        if (now - saved_at).total_seconds() < interval_seconds:
+            return False
+        if row.get("unpublished_changes"):
+            return True
+        last_activity_at = row.get("last_activity_at")
+        if not last_activity_at:
+            return False
+        try:
+            activity_at = datetime.fromisoformat(last_activity_at)
+        except (TypeError, ValueError):
+            return False
+        return activity_at > saved_at
+
     async def _attempt_save(self, row):
         """One save with its retries: the status and error to record, and the commit."""
         for attempt in range(SAVE_ATTEMPTS):
@@ -576,15 +617,20 @@ class WorkbenchLifecycle:
             return "rejected", "workbench_save_rejected", None
         return "failed", "workbench_save_failed", None
 
-    async def _save_agent_work(self, row):
-        """An external Agent's branch is the only way its work leaves the machine.
+    async def _save_work(self, row, *, on_pause: bool = True):
+        """Snapshot working files to the repository and record the outcome.
 
-        This runs while pausing, when no new connection can start. A pause keeps the
-        disk, and unsaved work is never reclaimed, so a failed save loses nothing and
-        cannot hold the pause: the machine sleeps, the Agent can come back, and the
-        result is recorded for its owner.
+        On pause, external Agent workspaces always save to their own branch and
+        other workspaces save when ``backup.on_pause`` is enabled. During
+        periodic running backups, ``on_pause=False`` skips the pause-phase lease
+        extension. A failed save never blocks pausing and leaves
+        ``unpublished_changes`` set.
         """
-        if not row.get("agent_registration_id"):
+        if (
+            on_pause
+            and not row.get("agent_registration_id")
+            and not get_repository_policy().backup.on_pause
+        ):
             return
         try:
             async with asyncio.timeout(SAVE_BUDGET_SECONDS):
@@ -597,10 +643,19 @@ class WorkbenchLifecycle:
                 extra={"workbench_id": row["id"], "save_status": status, "save_error": error},
             )
         await run_blocking(self.repository.save_outcome, row, status, error=error, oid=oid)
-        await self.progress(row, "pausing")  # The save may have used most of the lease.
+        if on_pause:
+            await self.progress(row, "pausing")  # The save may have used most of the lease.
+
+    async def _maybe_backup_running(self, row):
+        interval = get_repository_policy().backup.interval_seconds
+        if not self._backup_due(row, interval):
+            return
+        claimed = await run_blocking(self.repository.backup_claim, row, interval)
+        if claimed and claimed.get("acquired"):
+            await self._save_work(claimed["workbench"], on_pause=False)
 
     async def pause(self, row):
-        await self._save_agent_work(row)
+        await self._save_work(row, on_pause=True)
         await self.channels.invalidate(row["id"])
         host = self.channel_factory(row)
         try:
@@ -705,6 +760,7 @@ class WorkbenchLifecycle:
                             await host.runtime.renew(host)
                         finally:
                             await host.runtime.aclose()
+                        await self._maybe_backup_running(row)
                     except Exception as exc:
                         # Revoked access and lost compute both end the session.
                         # Pausing lost compute verifies the disk survives; the
