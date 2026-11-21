@@ -64,11 +64,11 @@ class ScreenTickets:
     def _sign(self, payload: str) -> str:
         return _b64e(hmac.new(self._key, payload.encode(), hashlib.sha256).digest())
 
-    def issue(self, row: dict) -> tuple[str, int]:
+    def issue(self, row: dict, *, user: str | None = None) -> tuple[str, int]:
         expires = int(self._clock()) + TICKET_SECONDS
         claims = {
             "aud": AUDIENCE,
-            "sub": row["user_id"],
+            "sub": user or row["user_id"],
             "project": row["project_id"],
             "workbench": row["id"],
             "generation": row["generation"],
@@ -147,7 +147,7 @@ class WorkspaceScreen:
         self._require_stream(row)
         # The running image must declare the capability, not only the Profile.
         await self.service.connection(row, capabilities={"screen_stream"})
-        ticket, expires = self.tickets.issue(row)
+        ticket, expires = self.tickets.issue(row, user=user)
         return {
             "ticket": ticket,
             "protocol": SUBPROTOCOL,
@@ -163,15 +163,16 @@ class WorkspaceScreen:
         if row["id"] != claims["workbench"] or row["generation"] != claims["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
         self._require_stream(row)
-        return row, context
+        return row, {**context, "user_id": claims["sub"]}
 
     async def bridge(self, websocket, row: dict, context: dict, *, endings=()) -> None:
         host = self.service.channel_factory(row)
         stream = None
+        viewer = context.get("user_id") or row["user_id"]
         try:
             host.connection = await host.runtime.running_connection(host)
             stream = await host.runtime.open_stream(host, "screen")
-            await self._pump(websocket, stream, row, (*_ENDINGS, *endings))
+            await self._pump(websocket, stream, row, (*_ENDINGS, *endings), viewer=viewer)
         finally:
             if stream is not None:
                 with suppress(Exception):
@@ -179,7 +180,11 @@ class WorkspaceScreen:
             with suppress(Exception):
                 await host.runtime.aclose()
 
-    async def _pump(self, websocket, stream, row: dict, endings: tuple) -> None:
+    async def _pump(
+        self, websocket, stream, row: dict, endings: tuple, *, viewer: str | None = None
+    ) -> None:
+        active_user = viewer or row["user_id"]
+
         async def upstream():
             while True:
                 message = await websocket.receive()
@@ -196,11 +201,14 @@ class WorkspaceScreen:
         async def heartbeat():
             while True:
                 await asyncio.sleep(HEARTBEAT_SECONDS)
-                current, context = await self._admitted(row["user_id"], row["project_id"])
+                current, context = await self._admitted(active_user, row["project_id"])
                 if current["id"] != row["id"] or current["generation"] != row["generation"]:
                     return
                 self._require_stream(current)
-                await run_blocking(self.service.repository.activity, current, context["revision"])
+                user_kw = {"user": active_user} if active_user != current["user_id"] else {}
+                await run_blocking(
+                    self.service.repository.activity, current, context["revision"], **user_kw
+                )
 
         tasks = [asyncio.create_task(job()) for job in (upstream, downstream, heartbeat)]
         try:

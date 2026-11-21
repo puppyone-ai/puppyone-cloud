@@ -22,7 +22,7 @@ RESUMABLE_STATES = frozenset({"paused", "pausing", "resuming"})
 
 
 class ConnectionRepository(WorkbenchRepository):
-    def reserve(self, identity, row, revision, session=None):
+    def reserve(self, identity, row, revision, session=None, *, user=None):
         # A command run over a shared SSH connection belongs to that connection's session.
         scope = {"session": session} if session else {}
         try:
@@ -32,7 +32,7 @@ class ConnectionRepository(WorkbenchRepository):
                 **scope,
                 workbench=row["id"],
                 generation=row["generation"],
-                user=row["user_id"],
+                user=user or row["user_id"],
                 project=row["project_id"],
                 revision=revision,
             )
@@ -125,7 +125,8 @@ class WorkspaceConnections:
         ):
             raise WorkspaceError(409, {"code": "workspace_connection_unavailable"})
         if running:
-            await self.workspace.check(row)
+            user_kw = {"user": user} if user != row["user_id"] else {}
+            await self.workspace.check(row, **user_kw)
         return row, context["revision"]
 
     @asynccontextmanager
@@ -134,7 +135,10 @@ class WorkspaceConnections:
         identity = str(UUID(identity))
         row, revision = await self.authorize(user, project, workbench, generation)
         handle = await self.workspace.connection(row, capabilities={"workspace_shell"})
-        connection = await run_blocking(self.repository.reserve, identity, row, revision, session)
+        user_kw = {"user": user} if user != row["user_id"] else {}
+        connection = await run_blocking(
+            self.repository.reserve, identity, row, revision, session, **user_kw
+        )
         shell = self.shell_factory(connection)
         try:
             await shell.connect(handle)

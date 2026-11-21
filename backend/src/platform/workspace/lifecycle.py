@@ -191,8 +191,10 @@ class WorkbenchLifecycle:
             or context["workbench"]
             or await run_blocking(self.repository.default, user, project, context["revision"])
         )
-        if row["user_id"] != user or row["project_id"] != project:
+        shared_default = bool(row.get("is_default")) and not row.get("agent_registration_id")
+        if row["project_id"] != project or (not shared_default and row["user_id"] != user):
             raise PermissionError("Workbench ownership mismatch")
+        user_kw = {"user": user} if user != row["user_id"] else {}
         provider = await self.preflight(
             row, connected=row["state"] == "running" and self.channels.is_healthy(row)
         )
@@ -200,13 +202,15 @@ class WorkbenchLifecycle:
             raise WorkspaceUnavailable("workbench_requires_recovery")
         if row["state"] == "running":
             try:
-                row = await run_blocking(self.repository.activity, row, context["revision"])
+                row = await run_blocking(
+                    self.repository.activity, row, context["revision"], **user_kw
+                )
                 async with asyncio.timeout(35):
                     with workspace_stage("opening.files_ready"):
                         await self.ready(row)
                 # Recheck the same identity/epoch and current authorization
                 # after potentially slow network I/O, before reporting ready.
-                await self.check(row)
+                await self.check(row, **user_kw)
             except WorkerLost as exc:
                 # Compute is gone and the disk is the workspace: maintenance
                 # pauses it within one pass, and the retried open recreates
@@ -225,6 +229,7 @@ class WorkbenchLifecycle:
             binding,
             context["revision"],
             settings.AGENT_WORKER_POOL,
+            **user_kw,
         )
 
     async def ensure_running(self, run, row, *, base=None):
@@ -244,7 +249,8 @@ class WorkbenchLifecycle:
                     break
                 await asyncio.sleep(0.25)
                 row = await run_blocking(self.repository.get, row["id"])
-            await self.check(row)
+            user_kw = {"user": run["user_id"]} if run["user_id"] != row["user_id"] else {}
+            await self.check(row, **user_kw)
             await self.ready(row)
             return row
 

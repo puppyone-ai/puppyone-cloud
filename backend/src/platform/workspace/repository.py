@@ -66,13 +66,13 @@ class WorkbenchRepository:
             resource=resource,
         )
 
-    def activity(self, row, revision, *, write=False):
+    def activity(self, row, revision, *, write=False, user=None):
         try:
             return self.command(
                 "activity",
                 workbench=row["id"],
                 generation=row["generation"],
-                user=row["user_id"],
+                user=user or row["user_id"],
                 project=row["project_id"],
                 revision=revision,
                 write=write,
@@ -88,23 +88,23 @@ class WorkbenchRepository:
                 raise WorkspaceError(409, {"code": "workbench_not_running"}) from None
             raise
 
-    def set_sandbox_settings(self, row, value, revision):
+    def set_sandbox_settings(self, row, value, revision, *, user=None):
         """Owner's sandbox choices; the shape is enforced by the table constraint."""
         return self.command(
             "set_sandbox_settings",
             workbench=row["id"],
-            user=row["user_id"],
+            user=user or row["user_id"],
             project=row["project_id"],
             settings=value,
             revision=revision,
         )
 
-    def request_open(self, row, binding, revision, pool):
+    def request_open(self, row, binding, revision, pool, *, user=None):
         """Record open intent, executed by workers of ``pool``."""
         return self.command(
             "request_open_in_pool",
             workbench=row["id"],
-            user=row["user_id"],
+            user=user or row["user_id"],
             project=row["project_id"],
             binding=binding,
             revision=revision,

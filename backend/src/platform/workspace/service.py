@@ -8,11 +8,11 @@ from uuid import uuid4
 from src.config import settings
 from src.infra.execution.runner import run_blocking
 from src.platform.authorization.factory import build_authorization_service
-from src.shared_types.grants import ProjectAction
 from src.platform.sandbox import runtime_provider, validate_settings, workspace_stage
 from src.platform.workspace.execution.workbench_host import WorkbenchChannel, WorkbenchChannels
 from src.platform.workspace.execution.worker_port import WorkerDisconnected, WorkerLost
 from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPort, GitTransport
+from src.shared_types.grants import ProjectAction
 
 from .admission import AdmissionSnapshots
 from .errors import WorkspaceError
@@ -20,7 +20,6 @@ from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
 from .repository import WorkbenchRepository
 from .sync import WorkspaceGit
-
 
 logger = logging.getLogger(__name__)
 MUTATIONS = frozenset({"write", "mkdir", "move", "remove"})
@@ -63,6 +62,16 @@ async def _borrowed(channels, row):
         raise WorkspaceError(503, {"code": "workbench_preparing", "retryable": True}) from exc
 
 
+def _is_shared_default(row: dict | None) -> bool:
+    return bool(row and row.get("is_default") and not row.get("agent_registration_id"))
+
+
+def _user_override(row: dict, user: str | None) -> dict[str, str]:
+    if user and user != row["user_id"]:
+        return {"user": user}
+    return {}
+
+
 class WorkbenchAdmission:
     """Synchronous request admission creates identity only, never compute."""
 
@@ -90,10 +99,11 @@ class WorkbenchAdmission:
             row = self.repository.get(identity)
         if (
             not row
-            or row["user_id"] != context.user_id
             or row["project_id"] != context.project_id
             or row["owner_deleted_at"] is not None
         ):
+            raise WorkspaceError(404, {"code": "workbench_not_found"})
+        if not _is_shared_default(row) and row["user_id"] != context.user_id:
             raise WorkspaceError(404, {"code": "workbench_not_found"})
         if not row["is_default"]:
             raise WorkspaceError(409, {"code": "interactive_workspace_required"})
@@ -166,18 +176,23 @@ class WorkbenchService(WorkbenchAdmission):
         )
         merged = {**(row.get("sandbox_settings") or {}), **value}
         return await run_blocking(
-            self.repository.set_sandbox_settings, row, merged, context["revision"]
+            self.repository.set_sandbox_settings,
+            row,
+            merged,
+            context["revision"],
+            **_user_override(row, user),
         )
 
-    async def check(self, row):
+    async def check(self, row, *, user=None):
+        actor = user or row["user_id"]
         context, _ = await run_blocking(
-            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
+            self.context, actor, row["project_id"], ProjectAction.AGENT_RUN
         )
         # Context already contains the interactive default workspace. Automation
         # workspaces have separate identities and still need their exact row.
         current = (
             context["workbench"]
-            if row.get("is_default")
+            if _is_shared_default(row)
             else await run_blocking(self.repository.get, row["id"])
         )
         if (
@@ -255,7 +270,11 @@ class WorkbenchService(WorkbenchAdmission):
                     _staged(
                         "files.admission_activity",
                         run_blocking(
-                            self.repository.activity, row, cached["revision"], write=write
+                            self.repository.activity,
+                            row,
+                            cached["revision"],
+                            write=write,
+                            **_user_override(row, user),
                         ),
                     ),
                     self.billing.check_session(meter_id(row)),
@@ -290,7 +309,13 @@ class WorkbenchService(WorkbenchAdmission):
             checks.append(
                 _staged(
                     "files.activity",
-                    run_blocking(self.repository.activity, row, context["revision"], write=write),
+                    run_blocking(
+                        self.repository.activity,
+                        row,
+                        context["revision"],
+                        write=write,
+                        **_user_override(row, user),
+                    ),
                 )
             )
         if before_use:
