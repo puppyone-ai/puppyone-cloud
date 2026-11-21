@@ -8,13 +8,19 @@
 -- 4. cloud_workbench_idle_claim defers idle pause while backup_until is active.
 -- 5. cloud_workbench_connection_update advances last_activity_at on renew so
 --    long-lived SSH/HTTPS sessions trigger periodic backups.
+-- 6. cloud_workbench_record_sync records the Project branch commit a Workspace
+--    took in, so its backups can land on main again after main moved without it.
 -- Existing function signatures are unchanged.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='2min';
 
 ALTER TABLE public.cloud_workbenches
-    ADD COLUMN backup_until timestamptz;
+    ADD COLUMN backup_until timestamptz,
+    -- The Project branch commit this Workspace last took in (a sync from main).
+    -- A backup lands on main only while main is a commit the Workspace knows:
+    -- its boot base, its last backup or this.
+    ADD COLUMN synced_oid text CHECK (synced_oid ~ '^[0-9a-f]{40}([0-9a-f]{24})?$');
 
 CREATE FUNCTION public.cloud_workbench_backup_claim(
     p_workbench uuid,
@@ -147,6 +153,30 @@ BEGIN
     ELSE RAISE EXCEPTION 'workspace_connection_invalid_action'; END IF;
     RETURN to_jsonb(c);
 END $$;
+
+CREATE FUNCTION public.cloud_workbench_record_sync(
+    p_workbench uuid,
+    p_generation uuid,
+    p_oid text
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE w public.cloud_workbenches;
+BEGIN
+    IF p_oid IS NULL OR p_oid !~ '^[0-9a-f]{40}([0-9a-f]{24})?$' THEN
+        RAISE EXCEPTION 'workbench_sync_oid_invalid' USING ERRCODE='22023';
+    END IF;
+    -- What was taken in is not on main yet: the next backup carries it.
+    UPDATE public.cloud_workbenches SET synced_oid=p_oid,unpublished_changes=true,
+        updated_at=clock_timestamp()
+    WHERE id=p_workbench AND generation=p_generation AND state IN ('running','pausing')
+    RETURNING * INTO w;
+    RETURN to_jsonb(w);
+END $$;
+
+REVOKE ALL ON FUNCTION public.cloud_workbench_record_sync(uuid,uuid,text)
+    FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.cloud_workbench_record_sync(uuid,uuid,text)
+    TO service_role;
 
 REVOKE ALL ON FUNCTION public.cloud_workbench_backup_claim(uuid,uuid,integer,integer)
     FROM PUBLIC,anon,authenticated;

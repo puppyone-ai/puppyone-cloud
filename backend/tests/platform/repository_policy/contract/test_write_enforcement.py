@@ -46,11 +46,13 @@ from src.shared_types.grants import (
 )
 from src.shared_types.repository_target import ProjectRootTarget, ResolvedRepositoryView
 from src.version_engine.domain.initialization import InitializationGrant
+from src.version_engine.domain.intents import ProjectWriteState
 from src.version_engine.read.ref_metadata import GitBranchBase, RefState
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.http_server import _serve_git_app
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+HEAD_OID = "b" * 40
 
 
 def _set_policy(monkeypatch, name: str) -> None:
@@ -169,7 +171,7 @@ async def test_product_write_channels_blocked_before_lease_in_vm_only_and_open_i
 ):
     grant = _project_grant()
     ops = _stub_product_adapter(monkeypatch, grant=grant)
-    base = {"expected_oid": None, "tree_oid": EMPTY_TREE, "generation": 1}
+    base = {"expected_oid": HEAD_OID, "tree_oid": EMPTY_TREE, "generation": 1}
 
     # vm-only: rejected with 409 before lease acquisition
     _set_policy(monkeypatch, "vm-only")
@@ -205,13 +207,23 @@ async def test_product_write_channels_blocked_before_lease_in_vm_only_and_open_i
     assert leases == ["proj-1:product.native"]
 
 
-async def test_leased_command_service_blocks_before_project_write_lease(monkeypatch):
+def _write_state(grant, expected_oid):
+    return ProjectWriteState(
+        "proj-1",
+        "",
+        repository_grant=grant,
+        repository_revision={"expected_oid": expected_oid, "tree_oid": EMPTY_TREE, "generation": 1},
+    )
+
+
+async def test_leased_command_service_refuses_closed_channels_before_the_product_lease(monkeypatch):
     _set_policy(monkeypatch, "vm-only")
     grant = _project_grant()
     ops = _stub_product_adapter(monkeypatch, grant=grant)
+    outer: list[str] = []
     commands = LeasedVersionWriteCommandService(
         VersionWriteCommandService(ops),
-        write_lease_factory=_forbid_lease,
+        write_lease_factory=_dummy_lease_factory(outer),
     )
 
     for source_channel, expected_channel in (
@@ -228,8 +240,80 @@ async def test_leased_command_service_blocks_before_project_write_lease(monkeypa
                 b"hello",
                 actor="user:1",
                 source_channel=source_channel,
+                project_write_state=_write_state(grant, HEAD_OID),
             )
         _assert_blocked_exception(exc_info.value, expected_channel)
+    # Only the command's own lease was held; the product write never started.
+    assert set(outer) == {"proj-1:product.write_bytes"}
+
+
+async def test_an_empty_repository_is_filled_but_a_project_with_content_is_not(monkeypatch):
+    """`/projects/{id}/seed` and the onboarding demo write through the same path:
+    filling a Project that has no commit yet is initialization; writing seed files
+    into a Project with content is a content write, closed under vm-only."""
+    _set_policy(monkeypatch, "vm-only")
+    grant = _project_grant()
+    ops = _stub_product_adapter(monkeypatch, grant=grant)
+    commands = VersionWriteCommandService(ops)
+    leases: list[str] = []
+    monkeypatch.setattr(
+        "src.platform.project.write_lease.ProjectWriteLease", _dummy_lease_factory(leases)
+    )
+
+    outcome = await commands.write_bytes(
+        "proj-1",
+        "Getting Started.md",
+        b"hello",
+        actor="user:1",
+        project_write_state=_write_state(grant, None),
+    )
+    assert outcome.path == "Getting Started.md"
+    assert leases == ["proj-1:product.native"]
+
+    leases.clear()
+    with pytest.raises(RepositoryWriteBlockedError) as exc_info:
+        await commands.write_bytes(
+            "proj-1",
+            "Getting Started.md",
+            b"hello",
+            actor="user:1",
+            project_write_state=_write_state(grant, HEAD_OID),
+        )
+    _assert_blocked_exception(exc_info.value, WriteChannel.CONTENT_API)
+    assert leases == []
+
+
+@pytest.mark.parametrize("label", ["initialization", "workspace"])
+async def test_a_caller_cannot_claim_a_derived_channel(monkeypatch, label):
+    _set_policy(monkeypatch, "vm-only")
+    grant = _project_grant()
+    ops = _stub_product_adapter(monkeypatch, grant=grant)
+    base = {"expected_oid": HEAD_OID, "tree_oid": EMPTY_TREE, "generation": 1}
+    with pytest.raises(ValueError):
+        await ops.apply_native_command(
+            "proj-1",
+            grant,
+            channel=label,
+            request_key=str(uuid.uuid4()),
+            base=base,
+            input_sha256="0" * 64,
+            splice=lambda _s, _t: (EMPTY_TREE, []),
+            message="test",
+            write_lease_factory=_forbid_lease,
+        )
+    for channel in (WriteChannel.INITIALIZATION, WriteChannel.WORKSPACE):
+        with pytest.raises(ValueError):
+            await ops.apply_native_command(
+                "proj-1",
+                grant,
+                channel=channel,
+                request_key=str(uuid.uuid4()),
+                base=base,
+                input_sha256="0" * 64,
+                splice=lambda _s, _t: (EMPTY_TREE, []),
+                message="test",
+                write_lease_factory=_forbid_lease,
+            )
 
 
 async def test_restore_commit_blocked_in_vm_only(monkeypatch):
@@ -275,16 +359,15 @@ async def test_initialization_grant_and_template_seed_succeed_in_vm_only(monkeyp
     assert result["status"] == "committed"
     assert leases == ["proj-1:product.native"]
 
-    # Explicit source_channel="initialization" (used by seed_template_content / seed_default_content)
-    human_grant = _project_grant()
-    ops_human = _stub_product_adapter(monkeypatch, grant=human_grant)
+    # An initialization grant counts even when the repository already has a commit
+    # (a template written in several steps while the Project is created).
     leases.clear()
-    result2 = await ops_human.apply_native_command(
+    result2 = await ops.apply_native_command(
         "proj-1",
-        human_grant,
-        channel="initialization",
+        init_grant,
+        channel="papi",
         request_key=str(uuid.uuid4()),
-        base=base,
+        base={"expected_oid": HEAD_OID, "tree_oid": EMPTY_TREE, "generation": 1},
         input_sha256="0" * 64,
         splice=lambda _s, _t: (EMPTY_TREE, []),
         message="template seed",

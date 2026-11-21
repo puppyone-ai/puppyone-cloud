@@ -44,6 +44,17 @@ class BlobRef:
     content: bytes | None = field(default=None, repr=False)
 
 
+def _initializing(project_id, grant) -> bool:
+    """A write that fills a Project being created: its initialization grant or lease."""
+    from src.platform.project.write_lease import active_project_write_lease
+    from src.version_engine.domain.initialization import InitializationGrant
+
+    if isinstance(grant, InitializationGrant):
+        return True
+    lease = active_project_write_lease(project_id)
+    return bool(lease and lease.initialization_operation_key)
+
+
 class ProductOperationAdapter(ProductQueries):
     def __init__(self, repo_manager, *, grant=None, operation_key: str | None = None):
         self._repos, self._grant, self._operation_key = repo_manager, grant, operation_key
@@ -116,17 +127,17 @@ class ProductOperationAdapter(ProductQueries):
         write_lease_factory=None,
     ):
         from src.platform.project.write_lease import ProjectWriteLease
-        from src.platform.repository_policy import WriteChannel, channel_from_source, require_write
-        from src.version_engine.domain.initialization import InitializationGrant
+        from src.platform.repository_policy import product_write_channel, require_write
         from src.version_engine.write_engine.native_operation_writer import NativeOperationWriter
 
         admitted_actor(grant, project_id, write=False)
-        effective_channel = (
-            WriteChannel.INITIALIZATION
-            if isinstance(grant, InitializationGrant)
-            else channel_from_source(channel)
+        require_write(
+            product_write_channel(
+                channel,
+                initializing=_initializing(project_id, grant),
+                repository_empty=not (base or {}).get("expected_oid"),
+            )
         )
-        require_write(effective_channel)
         service = await run_blocking(self._repos.get_native_service, project_id)
         if service is None:
             raise RuntimeError("repository migration required")
@@ -180,16 +191,9 @@ class ProductOperationAdapter(ProductQueries):
             raise ValueError("use an explicit Git conflict workflow")
         from src.file_operations.commands import VersionWriteCommandService
         from src.file_operations.native_commands import compile_native_command
-        from src.platform.repository_policy import WriteChannel, channel_from_source, require_write
-        from src.version_engine.domain.initialization import InitializationGrant
+        from src.platform.repository_policy import product_write_channel, require_write
 
         grant = self._bound_grant(project_id, project_write_state)
-        effective_channel = (
-            WriteChannel.INITIALIZATION
-            if isinstance(grant, InitializationGrant)
-            else channel_from_source(source_channel)
-        )
-        require_write(effective_channel)
         arguments = {**arguments, "message": message}
         digest, splice, _response = compile_native_command(
             VersionWriteCommandService(self), operation, arguments
@@ -203,6 +207,14 @@ class ProductOperationAdapter(ProductQueries):
             return revision
 
         base = await run_blocking(starting_revision)
+        # Refused before a producer step is recorded or a lease is taken.
+        require_write(
+            product_write_channel(
+                source_channel,
+                initializing=_initializing(project_id, grant),
+                repository_empty=not base.get("expected_oid"),
+            )
+        )
         if self._operation_key:
             # Durable task identity plus logical step. Input digest is checked
             # separately: changing a retry's content cannot create a new task.
@@ -219,7 +231,7 @@ class ProductOperationAdapter(ProductQueries):
         result = await self.apply_native_command(
             project_id,
             grant,
-            channel=effective_channel,
+            channel=source_channel,
             request_key=key,
             base=base,
             input_sha256=digest,

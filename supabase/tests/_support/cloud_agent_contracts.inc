@@ -56,6 +56,7 @@ BEGIN
         'public.cloud_workbench_disk_lost(uuid,uuid,bigint,uuid)',
         'public.cloud_workbench_save_outcome(uuid,uuid,text,text,text)',
         'public.cloud_workbench_backup_claim(uuid,uuid,integer,integer)',
+        'public.cloud_workbench_record_sync(uuid,uuid,text)',
         'public.cloud_workbench_idle_claim(uuid,uuid,bigint,text)',
         'public.cloud_workbench_task_acquire(uuid,uuid,bigint,uuid)',
         'public.cloud_workbench_task_released(uuid,uuid,bigint,uuid,uuid)',

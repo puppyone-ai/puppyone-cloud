@@ -8,13 +8,16 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI, Request, Response
 
-from src.platform.access.adapters.git.workspace_transport import RunGitTransport, RunPublication
 from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.platform.access.adapters.git.protocol import pkt_line
+from src.platform.access.adapters.git.workspace_transport import RunGitTransport, RunPublication
+from src.platform.repository_policy import WriteChannel
 from src.version_engine.read.ref_metadata import GitBranchBase
 from tests.repository_hosting.harness.http_server import _serve_git_app
 from tests.repository_hosting.integration.test_ref_transaction_service import grant, request
-from tests.repository_hosting.integration.test_ref_transaction_service import publisher as publisher_fixture
+from tests.repository_hosting.integration.test_ref_transaction_service import (
+    publisher as publisher_fixture,
+)
 
 pytestmark = pytest.mark.hosting_live
 publisher = publisher_fixture
@@ -80,7 +83,7 @@ def test_run_host_rejects_non_descendant_even_if_client_bypasses_fast_forward_ch
     body.write_bytes(pkt_line(f"{winner} {candidate} refs/heads/main\0report-status\n".encode()) + b"0000" + pack)
     transactions_before = auth.count("version_ref_transactions")
     result = NativeGitRepository(service).receive(
-        grant(auth.project), body, channel="workspace", publication=binding
+        grant(auth.project), body, channel=WriteChannel.WORKSPACE, publication=binding
     )
     assert b"ng refs/heads/main Run candidate does not descend from its base" in result.body
     assert auth.state()["oid"] == winner

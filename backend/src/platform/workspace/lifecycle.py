@@ -620,6 +620,10 @@ class WorkbenchLifecycle:
                 return "saved", None, saved.get("tip")
             if saved["status"] == "merging":
                 return "merging", "workbench_save_merging", None
+            if saved["status"] == "diverged":
+                # Not retried: main moved without this Workspace. It stays
+                # unsaved and is kept until main is brought in (sync).
+                return "rejected", "workbench_backup_diverged", None
             return "rejected", "workbench_save_rejected", None
         return "failed", "workbench_save_failed", None
 

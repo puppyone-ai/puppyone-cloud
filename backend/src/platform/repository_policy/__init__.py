@@ -1,6 +1,10 @@
 """Repository write & backup policy configuration and enforcement."""
 
-from src.platform.repository_policy.channels import WriteChannel, channel_from_source
+from src.platform.repository_policy.channels import (
+    WriteChannel,
+    channel_from_source,
+    product_write_channel,
+)
 from src.platform.repository_policy.enforce import (
     BLOCKED_ERROR_CODE,
     BLOCKED_MESSAGE,
@@ -37,6 +41,7 @@ __all__ = [
     "load_named_profile",
     "load_policy_from_path",
     "load_repository_policy",
+    "product_write_channel",
     "require_write",
     "reset_policy_cache",
 ]

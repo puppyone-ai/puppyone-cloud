@@ -322,6 +322,32 @@ def test_deleting_creator_preserves_shared_workspace_and_next_open_transfers_act
     assert deleted_after["owner_deleted_at"] is not None
 
 
+def test_the_first_opener_is_admitted_only_while_they_hold_a_project_role(pg):
+    env = seed_project(pg, extra_members=[("creator", "editor")])
+    ctx = pg.wb_rpc("context", user=env["creator"], project=env["project"])
+    shared = pg.wb_rpc(
+        "default", user=env["creator"], project=env["project"], revision=ctx["revision"]
+    )
+    assert shared["user_id"] == env["creator"]
+
+    # Made a viewer: the shared Workspace no longer takes their writes,
+    # even though the row still names them.
+    pg.sql(
+        f"UPDATE public.project_members SET role='viewer' "
+        f"WHERE project_id='{env['project']}' AND user_id='{env['creator']}';"
+    )
+    viewer_ctx = pg.wb_rpc("context", user=env["creator"], project=env["project"])
+    with pytest.raises(RuntimeError, match="workbench_unavailable"):
+        pg.wb_rpc(
+            "set_sandbox_settings",
+            workbench=shared["id"],
+            user=env["creator"],
+            project=env["project"],
+            settings={"desktop": True, "screen_stream": False},
+            revision=viewer_ctx["revision"],
+        )
+
+
 def test_populated_upgrade_demotes_duplicate_defaults_keeping_most_recently_active(pg):
     spec = importlib.util.spec_from_file_location(
         "shared_workspace_upgrade_pg", ROOT / "scripts/testing/native_postgres.py"

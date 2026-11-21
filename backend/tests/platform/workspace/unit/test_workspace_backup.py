@@ -263,7 +263,7 @@ async def test_running_backup_requires_interval_and_newer_activity(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 3. Snapshot target, no-op, first backup on empty main, divergence warning
+# 3. Snapshot target, no-op, first backup on empty main, divergence refusal
 # ---------------------------------------------------------------------------
 
 
@@ -300,24 +300,62 @@ async def test_first_backup_on_empty_project_creates_main(monkeypatch, caplog):
     assert not any(rec.message == "workspace_backup_diverged" for rec in caplog.records)
 
 
-async def test_diverged_main_logs_warning_and_still_backs_up(monkeypatch, caplog):
+async def test_a_main_that_moved_without_the_workspace_is_never_overwritten(monkeypatch, caplog):
     _set_policy(monkeypatch, "vm-only")
     external_tip = "e" * 40
-    new_backup = "f" * 40
-    git, channel, _ = _make_git(
-        [{"status": "ready", "candidate": new_backup}, {"status": "pushed"}],
-        refs={MAIN: external_tip},
-    )
+    git, channel, service = _make_git([], refs={MAIN: external_tip})
     row = _default_row(saved_oid="b" * 40, resource={"initialization": {"base_oid": "b" * 40}})
     with caplog.at_level(logging.WARNING, logger="src.platform.workspace.sync"):
         result = await git.snapshot(row)
 
-    assert result == {"status": "saved", "tip": new_backup}
+    # Nothing is snapshotted or pushed: the Workspace's files would roll main back.
+    assert result == {"status": "diverged", "tip": None}
+    assert channel.calls == []
+    service.transport.result.assert_not_called()
+    errors = [rec for rec in caplog.records if rec.message == "workspace_backup_diverged"]
+    assert len(errors) == 1
+    assert errors[0].levelno == logging.ERROR
+    assert errors[0].remote_tip == external_tip
+    assert errors[0].saved_oid == "b" * 40
+
+
+async def test_a_diverged_backup_is_recorded_unsaved_and_not_retried(monkeypatch):
+    _set_policy(monkeypatch, "vm-only")
+    snapshot = AsyncMock(return_value={"status": "diverged", "tip": None})
+    lifecycle, service = _make_lifecycle(git_snapshot=snapshot)
+    row = _default_row()
+    await lifecycle._save_work(row, on_pause=True)
+    snapshot.assert_awaited_once()
+    service.repository.save_outcome.assert_called_once_with(
+        row, "rejected", error="workbench_backup_diverged", oid=None
+    )
+
+
+async def test_syncing_main_into_the_workspace_lets_its_backups_land_again(monkeypatch):
+    _set_policy(monkeypatch, "vm-only")
+    external_tip = "e" * 40
+    git, channel, service = _make_git([{"status": "merged", "tip": "9" * 40}], refs={MAIN: external_tip})
+    service.repository.record_sync = Mock()
+    row = _default_row(saved_oid="b" * 40)
+    result = await git.sync(row)
+    assert result["status"] == "merged"
+    service.repository.record_sync.assert_called_once_with(row, external_tip)
+
+    # A conflict leaves main out of the Workspace: nothing is recorded.
+    git, channel, service = _make_git([{"status": "conflict", "paths": ["a.md"]}], refs={MAIN: external_tip})
+    service.repository.record_sync = Mock()
+    await git.sync(row)
+    service.repository.record_sync.assert_not_called()
+
+    # Synced, the next backup lands on main on top of what was taken in.
+    backup = "f" * 40
+    git, channel, _ = _make_git(
+        [{"status": "ready", "candidate": backup}, {"status": "pushed"}], refs={MAIN: external_tip}
+    )
+    result = await git.snapshot(_default_row(saved_oid="b" * 40, synced_oid=external_tip))
+    assert result == {"status": "saved", "tip": backup}
     assert [call["action"] for call in channel.calls] == ["snapshot", "push-snapshot"]
-    warnings = [rec for rec in caplog.records if rec.message == "workspace_backup_diverged"]
-    assert len(warnings) == 1
-    assert warnings[0].remote_tip == external_tip
-    assert warnings[0].saved_oid == "b" * 40
+    assert channel.calls[0]["value"]["tip"] == external_tip
 
 
 async def test_external_agent_snapshot_uses_agent_branch_and_save_message(monkeypatch):

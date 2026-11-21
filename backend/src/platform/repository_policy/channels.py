@@ -23,6 +23,10 @@ class WriteChannel(StrEnum):
 _SOURCE_CHANNEL_MAP: dict[str, WriteChannel] = {
     "papi": WriteChannel.CONTENT_API,
     "content_api": WriteChannel.CONTENT_API,
+    # A product write an Agent sends itself is a content write.
+    "agent": WriteChannel.CONTENT_API,
+    # The Git adapter's own name for a push.
+    "access_git": WriteChannel.GIT_PUSH,
     "mcp": WriteChannel.MCP,
     "access_cli": WriteChannel.CLI,
     "cli": WriteChannel.CLI,
@@ -31,11 +35,31 @@ _SOURCE_CHANNEL_MAP: dict[str, WriteChannel] = {
     "sync": WriteChannel.SYNC,
     "table": WriteChannel.TABLE,
     "restore": WriteChannel.RESTORE,
-    "initialization": WriteChannel.INITIALIZATION,
-    "workspace": WriteChannel.WORKSPACE,
     "git_push": WriteChannel.GIT_PUSH,
     "head": WriteChannel.HEAD,
 }
+# Filling a new Project and backing up its Workspace are facts the write
+# entry points derive (an initialization grant or an empty repository; an
+# admitted Workspace publication), never labels a caller may claim.
+_DERIVED_CHANNELS = frozenset({WriteChannel.INITIALIZATION, WriteChannel.WORKSPACE})
+
+
+def product_write_channel(
+    requested: WriteChannel | str, *, initializing: bool, repository_empty: bool
+) -> WriteChannel:
+    """The channel a product write counts as.
+
+    A write with an initialization grant, or into a repository with no commit
+    yet, fills a new Project. Anything else counts as the channel it came
+    through; a caller cannot ask to be counted as initialization or as a
+    Workspace.
+    """
+    channel = channel_from_source(requested)
+    if channel in _DERIVED_CHANNELS:
+        raise ValueError(f"Repository write channel {channel.value!r} is derived, not requested")
+    if channel is not WriteChannel.RESTORE and (initializing or repository_empty):
+        return WriteChannel.INITIALIZATION
+    return channel
 
 
 def channel_from_source(source: WriteChannel | str) -> WriteChannel:

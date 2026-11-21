@@ -62,9 +62,7 @@ BEGIN
         RETURN false;
     END IF;
     IF w.is_default AND w.agent_registration_id IS NULL THEN
-        IF w.user_id = p_user THEN
-            RETURN true;
-        END IF;
+        -- Every member, its first opener too, holds the Project role it needs.
         RETURN EXISTS(
             SELECT 1 FROM public.resolve_project_role(p_project, p_user) r
             WHERE NOT p_require_write OR r.effective_role IN ('admin', 'editor')
@@ -231,36 +229,9 @@ CREATE OR REPLACE FUNCTION public.cloud_workbench_request_open(
     p_binding jsonb,
     p_revision jsonb
 )
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
-DECLARE w public.cloud_workbenches; next_user uuid;
-BEGIN
-    PERFORM public.authorization_assert_revision(p_project,p_revision);
-    SELECT * INTO w FROM public.cloud_workbenches WHERE id=p_workbench FOR UPDATE;
-    IF NOT FOUND OR NOT public._cloud_workbench_user_admitted(w, p_user, p_project, true)
-        OR NOT EXISTS(SELECT 1 FROM public.projects WHERE id=p_project AND lifecycle_status='ready') THEN
-        RAISE EXCEPTION 'workbench_unavailable' USING ERRCODE='42501';
-    END IF;
-    IF jsonb_typeof(p_binding) IS DISTINCT FROM 'object' OR coalesce(p_binding->>'provider','') !~ '^[a-z][a-z0-9_-]{0,62}$'
-        OR length(coalesce(p_binding->>'artifact',''))=0 THEN RAISE EXCEPTION 'workbench_binding_invalid'; END IF;
-    IF w.state<>'retired' AND w.binding IS DISTINCT FROM p_binding THEN RAISE EXCEPTION 'workbench_binding_mismatch'; END IF;
-    IF w.state IN ('retained','cleanup_pending') THEN RETURN to_jsonb(w); END IF;
-    IF (w.open_requested AND (w.open_deadline>clock_timestamp() OR w.operation_until>clock_timestamp())) OR w.state='running' THEN
-        RETURN to_jsonb(w);
-    END IF;
-    next_user := CASE
-        WHEN w.is_default AND w.agent_registration_id IS NULL
-            AND NOT EXISTS(
-                SELECT 1 FROM public.resolve_project_role(p_project, w.user_id) r
-                WHERE r.effective_role IN ('admin', 'editor')
-            ) THEN p_user
-        ELSE w.user_id
-    END;
-    UPDATE public.cloud_workbenches SET user_id=next_user,open_requested=true,open_deadline=clock_timestamp()+interval '10 minutes',
-        binding=p_binding,operation_phase=CASE WHEN state='pausing' THEN 'pausing' ELSE 'queued' END,
-        operation_error=NULL,operation_retryable=false,updated_at=clock_timestamp()
-        WHERE id=w.id RETURNING * INTO w;
-    RETURN to_jsonb(w);
-END $$;
+RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+    SELECT public.cloud_workbench_request_open_in_pool(p_workbench,p_user,p_project,p_binding,p_revision,'default')
+$$;
 
 CREATE OR REPLACE FUNCTION public.cloud_workbench_request_open_in_pool(
     p_workbench uuid,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from .conftest import make_running_workbench, seed_project
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -157,3 +159,25 @@ def test_ssh_connection_renew_advances_last_activity_at(pg):
         "last_activity_at"
     ]
     assert after > before
+
+
+def test_record_sync_marks_what_main_brought_in_as_unsaved(pg):
+    env = seed_project(pg)
+    wb = make_running_workbench(pg, env["owner"], env["project"])
+    pg.sql(f"UPDATE cloud_workbenches SET unpublished_changes=false WHERE id='{wb['id']}'")
+    oid = "c" * 40
+
+    recorded = pg.wb_rpc("record_sync", workbench=wb["id"], generation=wb["generation"], oid=oid)
+    assert recorded["synced_oid"] == oid
+    # Taken in, not yet on main: the next backup carries it.
+    assert recorded["unpublished_changes"] is True
+
+    # Another generation, or a value that is not a commit id, records nothing.
+    stale = pg.wb_rpc(
+        "record_sync", workbench=wb["id"], generation=str(uuid4()), oid="d" * 40
+    )
+    assert stale["id"] is None
+    with pytest.raises(RuntimeError, match="workbench_sync_oid_invalid"):
+        pg.wb_rpc("record_sync", workbench=wb["id"], generation=wb["generation"], oid="main")
+    current = pg.row(f"SELECT synced_oid FROM cloud_workbenches WHERE id='{wb['id']}'")
+    assert current["synced_oid"] == oid

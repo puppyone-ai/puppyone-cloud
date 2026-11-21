@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 SAVE_MESSAGE = "Save workspace changes"
 BACKUP_MESSAGE = "Workspace backup"
 SYNC_MESSAGE = "Bring in {source}"
+# A sync after which the Workspace holds the source branch's tip.
+SYNCED = frozenset({"up_to_date", "fast_forward", "merged"})
 # The sandbox artifact that can save without using a task's HEAD and index.
 SNAPSHOT_PROTOCOL = 2
 
@@ -172,13 +174,18 @@ class WorkspaceGit:
         )
         tip = base["expected_oid"]
         if is_project_backup:
+            # The backup's tree is the Workspace's files. Landing it on a main
+            # that moved without this Workspace would roll that work back, so
+            # it lands only on a commit the Workspace knows: the one it booted
+            # from, its last backup, or one it took in through sync.
             saved_oid = row.get("saved_oid")
             init_base_oid = ((row.get("resource") or {}).get("initialization") or {}).get(
                 "base_oid"
             )
-            known = {oid for oid in (saved_oid, init_base_oid) if oid is not None}
+            synced_oid = row.get("synced_oid")
+            known = {oid for oid in (saved_oid, init_base_oid, synced_oid) if oid is not None}
             if (tip is not None and tip not in known) or (tip is None and bool(known)):
-                logger.warning(
+                logger.error(
                     "workspace_backup_diverged",
                     extra={
                         "workbench_id": row["id"],
@@ -187,8 +194,10 @@ class WorkspaceGit:
                         "remote_tip": tip,
                         "saved_oid": saved_oid,
                         "base_oid": init_base_oid,
+                        "synced_oid": synced_oid,
                     },
                 )
+                return {"status": "diverged", "tip": None}
         snapshot_value = {
             "message": BACKUP_MESSAGE if is_project_backup else SAVE_MESSAGE,
             "tip": tip,
@@ -234,7 +243,15 @@ class WorkspaceGit:
             "source_ref": source,
             "message": SYNC_MESSAGE.format(source=source.removeprefix("refs/heads/")),
         }
-        return await self._operate(row, base, "sync", value, self._reader(row, base))
+        result = await self._operate(row, base, "sync", value, self._reader(row, base))
+        # The Project's branch is in the Workspace now: its backups may land on it again.
+        if (
+            source == project["target_ref"]
+            and project["expected_oid"]
+            and result.get("status") in SYNCED
+        ):
+            await run_blocking(self.service.repository.record_sync, row, project["expected_oid"])
+        return result
 
     async def finish(self, row):
         """Commit a resolved merge."""

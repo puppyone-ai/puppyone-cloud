@@ -9,6 +9,7 @@ import pytest
 from src.platform.access.adapters.git.native_repository import NativeGitRepository
 from src.platform.access.adapters.git.native_wire import ReceivePush, receive_request
 from src.platform.access.adapters.git.protocol import pkt_line
+from src.platform.repository_policy import WriteChannel
 from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.integration.test_ref_transaction_service import grant
 from tests.repository_hosting.unit.test_direct_object_transport import storage
@@ -34,7 +35,7 @@ def test_probe_does_not_open_storage_or_consume_publication_identity(tmp_path, a
     response = NativeGitRepository(service).receive(
         grant("p"),
         path,
-        channel="workspace" if publication is not None else "git_push",
+        channel=WriteChannel.WORKSPACE if publication is not None else WriteChannel.GIT_PUSH,
         initial_attempt=attempt,
         publication=publication,
     )
@@ -55,7 +56,7 @@ def test_probe_still_requires_write_authority(tmp_path, publication):
         repository.receive(
             grant("p", writable=False),
             path,
-            channel="workspace" if publication is not None else "git_push",
+            channel=WriteChannel.WORKSPACE if publication is not None else WriteChannel.GIT_PUSH,
             publication=publication,
         )
     assert not reads and not pins

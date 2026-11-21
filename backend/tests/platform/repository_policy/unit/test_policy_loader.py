@@ -194,8 +194,6 @@ def test_missing_file_and_unknown_profile_fail_fast(tmp_path, monkeypatch):
         ("sync", WriteChannel.SYNC),
         ("table", WriteChannel.TABLE),
         ("restore", WriteChannel.RESTORE),
-        ("initialization", WriteChannel.INITIALIZATION),
-        ("workspace", WriteChannel.WORKSPACE),
         ("git_push", WriteChannel.GIT_PUSH),
         ("head", WriteChannel.HEAD),
     ],

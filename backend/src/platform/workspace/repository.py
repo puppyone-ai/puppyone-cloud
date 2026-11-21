@@ -236,6 +236,15 @@ class WorkbenchRepository:
             oid=oid,
         )
 
+    def record_sync(self, row, oid):
+        """The Project branch commit this Workspace took in."""
+        return self.command(
+            "record_sync",
+            workbench=row["id"],
+            generation=row["generation"],
+            oid=oid,
+        )
+
     def backup_claim(self, row, interval_seconds, *, lease_seconds=180):
         return self.command(
             "backup_claim",
