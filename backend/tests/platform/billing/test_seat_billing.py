@@ -242,3 +242,122 @@ def test_repeated_deactivation_generations_do_not_reuse_an_old_outbox_identity(
 
     assert first is not None and second is not None
     assert first.idempotency_key != second.idempotency_key
+
+
+def _service(seats: int, members: int) -> tuple[SeatBillingService, _Operations]:
+    entitlements = _Entitlements(seats=seats)
+    operations = _Operations(entitlements)
+    service = SeatBillingService(
+        _Organizations(count=members),
+        entitlement_service=entitlements,
+        operation_repository=operations,
+    )
+    return service, operations
+
+
+def _activate(service: SeatBillingService, role: str = "member", **extra):
+    return service.ensure_member_activation(
+        org_id="org-1",
+        subject_user_id="user-2",
+        role=role,
+        actor_user_id="user-1",
+        invitation_id="invite-1",
+        **extra,
+    )
+
+
+@pytest.mark.parametrize("mode", ["disabled", "shadow", "required"])
+def test_a_non_billable_role_never_touches_seats(monkeypatch, mode: str) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", mode)
+    service, operations = _service(seats=1, members=1)
+    assert _activate(service, role="viewer") is None
+    assert _activate(service, grants_billable_capability=False) is None
+    assert operations.rows == {}
+
+
+def test_disabled_seat_billing_admits_every_member(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "disabled")
+    service, operations = _service(seats=1, members=5)
+    assert _activate(service) is None
+    assert operations.rows == {}
+
+
+def test_shadow_mode_records_what_it_would_deny_and_admits(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "shadow")
+    service, operations = _service(seats=1, members=1)
+
+    operation = _activate(service)
+
+    assert operation is not None
+    stored = operations.rows[("org-1", "member-activation:invite-1:2")]
+    assert stored.status == "awaiting_confirmation"
+    assert (stored.current_seat_quantity, stored.target_seat_quantity) == (1, 2)
+    assert stored.response_payload["shadow_would_deny"] is True
+
+
+def test_shadow_mode_admits_a_member_who_fits_the_paid_seats(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "shadow")
+    service, operations = _service(seats=3, members=1)
+    assert _activate(service) is None
+    assert operations.rows == {}
+
+
+def test_shadow_mode_confirms_an_earlier_shortfall_once_seats_are_bought(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "shadow")
+    service, operations = _service(seats=1, members=1)
+    _activate(service)
+    operations.entitlements.seats = 2
+    service._entitlements.seats = 2
+
+    confirmed = _activate(service)
+
+    assert confirmed is not None
+    assert confirmed.status == "confirmed"
+    assert confirmed.confirmed_revision == 7
+    assert confirmed.completed_at is not None
+
+
+def test_required_mode_cannot_decide_without_the_entitlement_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "required")
+    operations = _Operations()
+    service = SeatBillingService(
+        _Organizations(count=1),
+        entitlement_service=_UnavailableEntitlements(seats=1),
+        operation_repository=operations,
+    )
+    with pytest.raises(AppException) as caught:
+        _activate(service)
+    assert caught.value.status_code == 503
+    assert operations.rows == {}
+
+
+def test_required_mode_admits_a_member_inside_the_paid_seats(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "required")
+    service, _ = _service(seats=2, members=1)
+    operation = _activate(service)
+    assert operation is not None and operation.status == "confirmed"
+
+
+def test_completing_an_activation_stamps_it_once(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "required")
+    service, operations = _service(seats=2, members=1)
+    operation = _activate(service)
+    service.complete_member_activation(operation)
+    stamped = next(iter(operations.rows.values()))
+    assert stamped.completed_at is not None
+
+    service.complete_member_activation(stamped)
+    assert next(iter(operations.rows.values())).completed_at == stamped.completed_at
+    service.complete_member_activation(None)
+
+
+def test_disabled_seat_billing_records_no_deactivation(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SEAT_BILLING_MODE", "disabled")
+    service, operations = _service(seats=2, members=1)
+    assert (
+        service.record_member_deactivation(
+            org_id="org-1", subject_user_id="user-2", actor_user_id="user-1", previous_role="member"
+        )
+        is None
+    )
+    assert operations.rows == {}
