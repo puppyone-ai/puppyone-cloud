@@ -27,7 +27,11 @@ from src.platform.billing.models import (
     SeatQuoteRequest,
     TopUpRequest,
 )
-from src.platform.billing.operations import BillingOperation, BillingOperationRepository
+from src.platform.billing.operations import (
+    BillingOperation,
+    BillingOperationRepository,
+    settled_on_acceptance,
+)
 from src.platform.billing.storage import StorageUsageRepository
 from src.platform.entitlements.service import EntitlementService
 from src.platform.organization.dependencies import get_org_service
@@ -323,6 +327,13 @@ def _upstream_quote(response: dict[str, Any], *, org_id: str) -> dict[str, Any]:
     return raw_quote
 
 
+def _change_scheduled(summary: dict[str, Any]) -> bool:
+    return (
+        summary.get("pending_plan_id") is not None
+        or summary.get("pending_seat_quantity") is not None
+    )
+
+
 def _source_revision(summary: dict[str, Any]) -> int:
     value = summary.get("source_revision")
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -485,6 +496,10 @@ async def _prepare_commercial_operation(
         operation_kind = (
             "seat_increase" if target_seat_quantity > current_seats else "seat_decrease"
         )
+    elif application_mode == "plan_change" and _change_scheduled(summary):
+        # "Keep current plan": the plan and people held, applied again,
+        # withdraw the change scheduled for renewal.
+        operation_kind = "plan_change"
     else:
         raise AppException(
             code=ErrorCode.BAD_REQUEST,
@@ -698,15 +713,14 @@ async def _submit_commercial_operation(
             details={"code": "billing_operation_provider_mismatch"},
         )
     if operation.status not in {"confirmed", "failed", "canceled"}:
-        updated = await run_blocking(
-            repository.update_nonterminal,
-            operation.id,
-            {
-                "status": "submitted",
-                "response_payload": response_payload,
-                "last_error": None,
-            },
-        )
+        values: dict[str, Any] = {
+            "status": "submitted",
+            "response_payload": response_payload,
+            "last_error": None,
+        }
+        if settled_on_acceptance(quote_payload):
+            values |= {"status": "confirmed", "completed_at": datetime.now(UTC).isoformat()}
+        updated = await run_blocking(repository.update_nonterminal, operation.id, values)
         if updated is not None:
             operation = updated
     return await run_blocking(
