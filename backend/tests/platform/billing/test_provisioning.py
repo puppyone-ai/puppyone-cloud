@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -12,53 +10,7 @@ from src.platform.billing.gateway import BillingGatewayError
 from src.platform.billing.operations import BillingOperation
 from src.platform.billing.provisioning import EntitlementProvisioningService
 from src.platform.entitlements.models import EntitlementPublicationAck, EntitlementUpsert
-
-
-def _snapshot(org_id: str = "org-1") -> dict[str, Any]:
-    unsigned = {
-        "org_id": org_id,
-        "schema_version": "1.0",
-        "plan_id": "free",
-        "status": "free",
-        "source": "puppypay",
-        "entitlements": {
-            "features": {
-                "access_surface.agent": False,
-                "access_surface.mcp": False,
-                "access_surface.sandbox": False,
-                "automation.hosted": False,
-                "remote_workspace.create": False,
-                "scope_sandbox.connect": False,
-            },
-            "limits": {
-                "projects.max": 1,
-                "repo_scopes.max_per_project": 2,
-                "storage.max_bytes": 500 * 1024**2,
-                "upload.max_single_file_bytes": 50 * 1024**2,
-                "seats.purchased": 1,
-                "runtime.included_units": 0,
-            },
-            "allow": {"access_surface_kinds": ["git_remote", "cli", "direct"]},
-        },
-        "seat_quantity": 1,
-        "catalog_version": "2026-07-14.1",
-        "source_revision": 1,
-        "effective_at": datetime(2026, 7, 14, tzinfo=UTC),
-        "current_period_end": None,
-        "effective_until": None,
-        "source_event_id": None,
-        "event_type": "organization.provisioned",
-    }
-    canonical = json.dumps(
-        EntitlementUpsert.model_construct(**unsigned, payload_hash="0" * 64).model_dump(
-            mode="json",
-            exclude={"payload_hash"},
-        ),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return {**unsigned, "payload_hash": hashlib.sha256(canonical.encode()).hexdigest()}
+from tests.platform.billing.support import signed_free_snapshot
 
 
 class _Gateway:
@@ -70,7 +22,7 @@ class _Gateway:
         self.calls.append({"method": method, "path": path, **kwargs})
         if self.failure:
             raise BillingGatewayError(503, {"error": {"code": "unavailable"}})
-        return _snapshot(str(kwargs["body"]["org_id"]))
+        return signed_free_snapshot(str(kwargs["body"]["org_id"]))
 
 
 class _Operations:
