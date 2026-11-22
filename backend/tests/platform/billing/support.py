@@ -150,7 +150,8 @@ def signed_free_snapshot(org_id: str = "org-1") -> dict[str, Any]:
     canonical = json.dumps(
         EntitlementUpsert.model_construct(**unsigned, payload_hash="0" * 64).model_dump(
             mode="json",
-            exclude={"payload_hash"},
+            # Schema 1.0 predates quote correlation, so it is not signed.
+            exclude={"payload_hash", "source_quote_id"},
         ),
         sort_keys=True,
         separators=(",", ":"),

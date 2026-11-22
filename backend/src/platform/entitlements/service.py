@@ -101,6 +101,11 @@ class EntitlementService:
             cache[org_id] = snapshot
         return snapshot
 
+    def published_snapshot(self, org_id: str) -> EntitlementSnapshot | None:
+        """The snapshot PuppyPay last published, read from the table and not memoized."""
+
+        return self._repo.get_by_org_id(org_id)
+
     def _compute_snapshot(self, org_id: str) -> EntitlementSnapshot:
         if not self.enabled:
             return EntitlementSnapshot(

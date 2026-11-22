@@ -9,7 +9,11 @@ from src.config import settings
 from src.platform.billing.gateway import BillingGatewayError
 from src.platform.billing.operations import BillingOperation
 from src.platform.billing.provisioning import EntitlementProvisioningService
-from src.platform.entitlements.models import EntitlementPublicationAck, EntitlementUpsert
+from src.platform.entitlements.models import (
+    EntitlementPublicationAck,
+    EntitlementSnapshot,
+    EntitlementUpsert,
+)
 from tests.platform.billing.support import signed_free_snapshot
 
 
@@ -103,3 +107,57 @@ async def test_provisioning_failure_is_redacted_and_left_for_retry(monkeypatch) 
     assert failed["last_error"] == "BillingGatewayError"
     assert "unavailable" not in json.dumps(failed)
     assert failed["next_attempt_at"]
+
+
+class _Published(_Entitlements):
+    """The table already holds ``stored``; publishing an older or conflicting revision fails."""
+
+    def __init__(self, stored: dict[str, Any] | None) -> None:
+        super().__init__()
+        self.stored = stored
+
+    def publish(self, snapshot: EntitlementUpsert) -> EntitlementPublicationAck:
+        self.received = snapshot
+        raise RuntimeError("stale entitlement revision")
+
+    def published_snapshot(self, org_id: str):
+        return None if self.stored is None else EntitlementSnapshot(**self.stored)
+
+
+def _provisioning(
+    entitlements: _Entitlements,
+) -> tuple[EntitlementProvisioningService, _Operations]:
+    operations = _Operations()
+    service = EntitlementProvisioningService(
+        gateway=_Gateway(), operation_repository=operations, entitlement_service=entitlements
+    )
+    return service, operations
+
+
+@pytest.mark.asyncio
+async def test_provisioning_superseded_by_a_purchase_is_complete(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "ENTITLEMENTS_MODE", "db", raising=False)
+    paid = {**signed_free_snapshot(), "plan_id": "team_v2", "source_revision": 2}
+    service, operations = _provisioning(_Published(paid))
+
+    assert await service.ensure(org_id="org-1", actor_user_id="user-1") is True
+
+    confirmed = operations.updates[-1]
+    assert (confirmed["status"], confirmed["confirmed_revision"]) == ("confirmed", 2)
+    assert confirmed["response_payload"]["payload_hash"] == paid["payload_hash"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_revision", [None, 1])
+async def test_provisioning_that_could_not_publish_is_retried(monkeypatch, stored_revision) -> None:
+    # Nothing published yet, or the same revision with other content: both
+    # are real failures, not a newer plan.
+    monkeypatch.setattr(settings, "ENTITLEMENTS_MODE", "db", raising=False)
+    stored = None
+    if stored_revision is not None:
+        stored = {**signed_free_snapshot(), "source_revision": stored_revision}
+    service, operations = _provisioning(_Published(stored))
+
+    assert await service.ensure(org_id="org-1", actor_user_id="user-1") is False
+    assert operations.updates[-1]["status"] == "failed"
+    assert operations.updates[-1]["last_error"] == "RuntimeError"

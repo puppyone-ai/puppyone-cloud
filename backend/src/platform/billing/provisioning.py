@@ -99,25 +99,24 @@ class EntitlementProvisioningService:
             snapshot = EntitlementUpsert.model_validate(payload)
             if snapshot.org_id != operation.org_id:
                 raise ValueError("provisioned entitlement organization mismatch")
-            acknowledgement = await run_blocking(self._entitlements.publish, snapshot)
+            revision, payload_hash = await self._publish(snapshot)
             await run_blocking(
                 self._operation_repo.update,
                 operation.id,
                 {
                     "status": "confirmed",
-                    "confirmed_revision": acknowledgement.source_revision,
+                    "confirmed_revision": revision,
                     "response_payload": {
                         "schema_version": "1.0",
-                        "source_revision": acknowledgement.source_revision,
-                        "payload_hash": acknowledgement.payload_hash,
+                        "source_revision": revision,
+                        "payload_hash": payload_hash,
                     },
                     "completed_at": datetime.now(UTC).isoformat(),
                     "last_error": None,
                 },
             )
             log_info(
-                "Entitlement provisioning completed "
-                f"org={operation.org_id} revision={acknowledgement.source_revision}"
+                f"Entitlement provisioning completed org={operation.org_id} revision={revision}"
             )
             return True
         except Exception as exc:
@@ -147,6 +146,20 @@ class EntitlementProvisioningService:
                 f"org={operation.org_id} error_type={type(exc).__name__}"
             )
             return False
+
+    async def _publish(self, snapshot: EntitlementUpsert) -> tuple[int, str]:
+        try:
+            acknowledgement = await run_blocking(self._entitlements.publish, snapshot)
+        except Exception:
+            # PuppyPay answers a retried provisioning with its first snapshot
+            # for a day. A Space that bought a plan meanwhile already holds a
+            # newer revision, which the database refuses to replace with this
+            # one; provisioning then has nothing left to do.
+            current = await run_blocking(self._entitlements.published_snapshot, snapshot.org_id)
+            if current is None or current.source_revision <= snapshot.source_revision:
+                raise
+            return current.source_revision, current.payload_hash
+        return acknowledgement.source_revision, acknowledgement.payload_hash
 
 
 _service: EntitlementProvisioningService | None = None
