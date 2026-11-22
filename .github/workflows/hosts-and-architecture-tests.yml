@@ -68,7 +68,7 @@ jobs:
         run: uv run pytest -q tests/platform/hosts -m native
 
   billing-native:
-    name: Billing SQL on real PostgreSQL 17
+    name: Billing on real PostgreSQL 17 + PostgREST
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -88,6 +88,6 @@ jobs:
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
           python -m pip install 'uv==0.5.11'
           cd backend && uv sync --locked
-      - name: Billing native tests
+      - name: Billing native tests (PostgREST runs in Docker)
         working-directory: backend
         run: uv run pytest -q tests/platform/billing -m native

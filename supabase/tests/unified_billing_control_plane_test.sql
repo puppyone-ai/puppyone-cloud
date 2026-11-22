@@ -166,7 +166,7 @@ BEGIN
             repeat('a', 64), 'billing-control-plane-stale', 'stale'
         );
         RAISE EXCEPTION 'stale entitlement revision was accepted';
-    EXCEPTION WHEN SQLSTATE '40001' THEN
+    EXCEPTION WHEN SQLSTATE 'PT409' THEN
         NULL;
     END;
 

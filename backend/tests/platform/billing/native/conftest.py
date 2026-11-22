@@ -6,6 +6,7 @@ import importlib.util
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from tests.platform.workspace.native.conftest import ROOT, NativeDatabase
@@ -20,6 +21,29 @@ def pg():
     spec.loader.exec_module(module)
     with module.native_postgres() as cluster:
         yield NativeDatabase(cluster["url"])
+
+
+@pytest.fixture(scope="session")
+def postgrest(pg):
+    """The billing repositories' client: real PostgREST as service_role on ``pg``."""
+
+    from postgrest import SyncPostgrestClient
+
+    from src.infra.supabase.instrumentation import DatabaseTransport
+    from tests.agent.runtime.owned_http import owned_http_service
+
+    class Client:
+        def __init__(self, client):
+            self._client = client
+
+        def get_client(self):
+            return self._client
+
+    with (
+        owned_http_service("postgrest", database_url=pg.url) as url,
+        httpx.Client(trust_env=False, transport=DatabaseTransport(path_prefix="/")) as http,
+    ):
+        yield Client(SyncPostgrestClient(url, http_client=http))
 
 
 def space(pg: NativeDatabase, *, members: int = 1) -> dict:
