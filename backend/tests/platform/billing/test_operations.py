@@ -61,3 +61,46 @@ def test_public_lifecycle_is_closed_and_kind_aware(
     assert view.retryable is retryable
     assert view.action_required is action_required
     assert view.error_code == "safe_error_code"
+
+
+def _applied(**quote) -> dict:
+    return {
+        "quote_id": "quote-1",
+        "current_plan_id": "enterprise",
+        "target_plan_id": "team",
+        "current_seats": 2,
+        "target_seats": 2,
+        "effective": "now",
+        **quote,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "application", "state"),
+    [
+        # A downgrade scheduled for renewal publishes nothing now.
+        ("plan_change", _applied(effective="next_period"), "succeeded"),
+        (
+            "seat_decrease",
+            _applied(target_plan_id="enterprise", target_seats=1, effective="next_period"),
+            "succeeded",
+        ),
+        # "Keep current plan" only withdraws the scheduled change.
+        ("plan_change", _applied(target_plan_id="enterprise"), "succeeded"),
+        # An upgrade waits for the entitlement it publishes.
+        ("plan_change", _applied(target_plan_id="max"), "processing"),
+        ("seat_increase", _applied(effective="next_period"), "processing"),
+        ("plan_change", {"quote_id": "quote-1"}, "processing"),
+    ],
+)
+def test_a_submitted_change_that_publishes_nothing_now_has_ended(
+    kind: str, application: dict, state: str
+) -> None:
+    operation = _operation(kind=kind, status="submitted").model_copy(
+        update={"response_payload": {"schema_version": "1.1", "application": application}}
+    )
+
+    view = operation.public_view()
+
+    assert view.state == state
+    assert view.terminal is (state == "succeeded")

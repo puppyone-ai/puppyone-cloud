@@ -696,3 +696,96 @@ async def test_add_on_change_is_an_owner_only_idempotent_put(enabled) -> None:
     assert kwargs["body"] == {"quantity": 2}
     assert kwargs["idempotency_key"] == "k-1"
     assert result["checkout_url"] == "https://checkout.example/1"
+
+
+class _ScheduledChangeGateway(_Gateway):
+    """PuppyPay holding Enterprise for two, asked to apply `quote`."""
+
+    def __init__(self, quote: dict, pending_plan_id: str | None = None) -> None:
+        super().__init__()
+        self.quote = {
+            "quote_id": "quote-1",
+            "org_id": "org-1",
+            "current_plan_id": "enterprise",
+            "current_seats": 2,
+            "application_mode": "plan_change",
+            **quote,
+        }
+        self.pending_plan_id = pending_plan_id
+
+    async def request(self, method: str, path: str, **kwargs):
+        self.calls.append((method, path, kwargs))
+        if path.endswith("/summary"):
+            return {
+                "plan_id": "enterprise",
+                "seat_quantity": 2,
+                "pending_plan_id": self.pending_plan_id,
+                "source_revision": 7,
+            }
+        return self.quote
+
+
+async def _apply_plan_change(gateway: _Gateway, operations: _Operations, monkeypatch) -> dict:
+    monkeypatch.setattr(billing_router, "BillingOperationRepository", lambda: operations)
+    return await plan_change(
+        "org-1",
+        QuoteApplyRequest(quote_id="quote-1"),
+        authorization="Bearer desktop-token",
+        idempotency_key="desktop:plan-change:1",
+        current_user=SimpleNamespace(user_id="user-1", email="owner@example.com"),
+        org_service=_Organizations("owner"),
+        gateway=gateway,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_downgrade_scheduled_for_renewal_ends_when_puppypay_accepts_it(
+    enabled, monkeypatch
+) -> None:
+    # Renewal publishes it under a quote of its own, so no entitlement would
+    # ever confirm this operation; open, it would keep the plan page busy.
+    gateway = _ScheduledChangeGateway(
+        {"target_plan_id": "team", "target_seats": 2, "effective": "next_period"}
+    )
+    operations = _Operations()
+
+    result = await _apply_plan_change(gateway, operations, monkeypatch)
+
+    assert operations.operation.status == "confirmed"
+    assert operations.operation.completed_at is not None
+    assert result["operation"]["state"] == "succeeded"
+    assert result["operation"]["terminal"] is True
+
+
+@pytest.mark.asyncio
+async def test_keep_current_plan_withdraws_the_scheduled_change(enabled, monkeypatch) -> None:
+    gateway = _ScheduledChangeGateway(
+        {"target_plan_id": "enterprise", "target_seats": 2, "effective": "now"},
+        pending_plan_id="team",
+    )
+    operations = _Operations()
+
+    result = await _apply_plan_change(gateway, operations, monkeypatch)
+
+    assert [path for _, path, _ in gateway.calls][-1] == (
+        "/api/v1/billing/organizations/org-1/plan/change"
+    )
+    assert operations.values["kind"] == "plan_change"
+    assert result["operation"]["state"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_keep_current_plan_with_nothing_scheduled_changes_nothing(
+    enabled, monkeypatch
+) -> None:
+    gateway = _ScheduledChangeGateway(
+        {"target_plan_id": "enterprise", "target_seats": 2, "effective": "now"}
+    )
+    operations = _Operations()
+
+    with pytest.raises(AppException) as caught:
+        await _apply_plan_change(gateway, operations, monkeypatch)
+
+    assert caught.value.details["code"] == "billing_quote_noop"
+    assert operations.operation is None
+    assert all(not path.endswith("/plan/change") for _, path, _ in gateway.calls)
