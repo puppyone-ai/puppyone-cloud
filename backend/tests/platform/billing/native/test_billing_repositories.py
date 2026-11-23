@@ -79,7 +79,7 @@ def test_a_run_is_created_once_and_a_racing_insert_returns_the_winner(
 def test_an_insert_the_database_refuses_for_another_reason_is_not_hidden(pg, postgrest) -> None:
     org = space(pg)["org"]
     repository = RuntimeRunRepository(postgrest)
-    with pytest.raises(APIError):
+    with pytest.raises(APIError, match="runtime_billing_runs_kind_check"):
         repository.create_or_get(run_values(org, runtime_kind="not-a-kind"))
 
 

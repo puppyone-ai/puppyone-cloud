@@ -127,7 +127,7 @@ def test_a_revision_cannot_change_its_content(pg, postgrest) -> None:
     org = space(pg)["org"]
     repository = EntitlementRepository(postgrest)
     repository.publish(publication(org, 1))
-    with pytest.raises(APIError):
+    with pytest.raises(APIError, match="entitlement revision conflict"):
         repository.publish(publication(org, 1, seat_quantity=9, payload_hash=f"{99:064x}"))
     assert repository.get_by_org_id(org).seat_quantity == 2
 
