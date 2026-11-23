@@ -155,7 +155,7 @@ class WorkspaceGit:
         status = await self._push(row, grant, base, tip)
         return {"status": "saved" if status == "pushed" else status, "tip": tip}
 
-    async def snapshot(self, row, target_ref=None):
+    async def snapshot(self, row, target_ref=None, *, message=None):
         """Save the working files to ``target_ref`` or the configured backup branch."""
         grant = await self._grant(row)
         use_project_default = (
@@ -199,7 +199,7 @@ class WorkspaceGit:
                 )
                 return {"status": "diverged", "tip": None}
         snapshot_value = {
-            "message": BACKUP_MESSAGE if is_project_backup else SAVE_MESSAGE,
+            "message": message or (BACKUP_MESSAGE if is_project_backup else SAVE_MESSAGE),
             "tip": tip,
         }
         if is_project_backup:

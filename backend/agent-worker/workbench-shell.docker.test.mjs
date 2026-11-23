@@ -120,3 +120,32 @@ test('every command on a machine shares one home, so settings carry to the next'
   assert.equal((await readFile(`${SHELL_HOME}/.done-100010`, 'utf8')).trim(), SHELL_HOME);
 });
 
+test('two concurrent external Agents share files and stopping one leaves the other running', { skip: !enabled, timeout: 60000 }, async () => {
+  const { workbench: id, generation } = await workbench();
+  const agentA = shell(100020, id, generation);
+  const agentB = shell(100021, id, generation);
+  try {
+    await agentA.control('start', {
+      term: '', size: [80, 24],
+      command: "printf 'from-A\\n' > shared-collab.md && exec sleep 120",
+    });
+    await agentB.control('start', {
+      term: '', size: [80, 24],
+      command: "until [ -f shared-collab.md ]; do sleep 0.05; done; printf 'from-B\\n' >> shared-collab.md && printf 'ready' > .b-ready && exec sleep 120",
+    });
+    await poll(async () => (await exists('/workspace/repo/.b-ready')) && (await holders(100020)).length >= 1 && (await holders(100021)).length >= 1);
+
+    // Stopping Agent A kills ONLY GID 100020; Agent B (GID 100021) continues untouched.
+    await agentA.control('stop');
+    assert.deepEqual(await holders(100020), []);
+    assert.ok((await holders(100021)).length >= 1);
+    assert.equal(await readFile('/workspace/repo/shared-collab.md', 'utf8'), 'from-A\nfrom-B\n');
+    await agentB.control('stop');
+    assert.deepEqual(await holders(100021), []);
+  } finally {
+    agentA.child.kill('SIGKILL');
+    agentB.child.kill('SIGKILL');
+  }
+});
+
+

@@ -417,6 +417,28 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def enforce_agent_collaboration_safety(self):
+        """Validate pluggable multi-agent collaboration topology requirements."""
+        if self.APP_ENV in {"staging", "production"} and self.SERVICE_ROLE in WORKSPACE_ROLES:
+            if (
+                self.CLOUD_AGENT_COLLAB_MODE == "fly_host_export"
+                and self.CLOUD_AGENT_SANDBOX_PROVIDER != "fly"
+            ):
+                raise ValueError(
+                    "CLOUD_AGENT_COLLAB_MODE='fly_host_export' requires "
+                    "CLOUD_AGENT_SANDBOX_PROVIDER='fly'"
+                )
+            if (
+                self.CLOUD_AGENT_COLLAB_MODE == "juicefs_shared"
+                and not self.CLOUD_AGENT_JUICEFS_META_PREFIX.strip()
+            ):
+                raise ValueError(
+                    "CLOUD_AGENT_COLLAB_MODE='juicefs_shared' requires "
+                    "CLOUD_AGENT_JUICEFS_META_PREFIX"
+                )
+        return self
+
+    @model_validator(mode="after")
     def enforce_git_transport_caps(self):
         from src.shared_types.git_pack_limits import PackLimits
 
@@ -480,6 +502,25 @@ class Settings(BaseSettings):
     # Profile (platform/sandbox/catalog.py) pinned by new workspaces. Existing
     # bindings keep theirs; bindings without one are "base".
     CLOUD_AGENT_SANDBOX_PROFILE: str = Field(default="base", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    # Pluggable multi-agent workspace collaboration topology router:
+    # - "shared_machine": Tier 1 — invited external Agents execute directly in
+    #   the Project's shared default Workspace VM (immediate live-file visibility).
+    # - "fly_host_export": Tier 2 — isolated per-Agent Fly MicroVMs mounting
+    #   /workspace/repo over Fly 6pn from the Project default Workspace VM.
+    # - "juicefs_shared": Tier 3 — isolated per-Agent Fly MicroVMs sharing a
+    #   per-Project JuiceFS POSIX volume.
+    # - "isolated_branch": Legacy mode — each external Agent gets its own VM
+    #   and Git branch (refs/heads/agents/<registration_id>).
+    CLOUD_AGENT_COLLAB_MODE: Literal[
+        "shared_machine",
+        "fly_host_export",
+        "juicefs_shared",
+        "isolated_branch",
+    ] = "shared_machine"
+    # Transport protocol for Tier 2 (fly_host_export) mount descriptors.
+    CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL: Literal["sshfs", "nfs_ganesha"] = "sshfs"
+    # Metadata namespace prefix for Tier 3 (juicefs_shared) per-project schemas.
+    CLOUD_AGENT_JUICEFS_META_PREFIX: str = ""
     # Comma-separated Features withdrawn from every workspace without rebuilding machines.
     CLOUD_AGENT_SANDBOX_DISABLED_FEATURES: str = ""
     # Comma-separated Features reported as previews on Profiles that lack them, for

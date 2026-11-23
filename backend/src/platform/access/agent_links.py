@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from src.config import settings
 from src.infra.execution.runner import run_blocking
+from src.platform.workspace.collaboration import get_agent_collaboration_router
 from src.platform.workspace.errors import WorkspaceError
 
 from .credential_repository import (
@@ -80,13 +81,14 @@ def public_origin():
 AVATAR_CHOICES = ", ".join(AGENT_AVATARS)
 
 
-def agent_instructions(invitation):
+def agent_instructions(invitation, *, mode=None):
     """The only thing an Agent reads, so it stays plain text it can run unchanged.
 
     A person pasted the link and asked the Agent to follow it. This page describes
     what is possible; it carries no authority until those steps finish.
     """
     api = public_origin() + "/api/v1/agent-links"
+    topology = get_agent_collaboration_router().resolve(mode)
     return f"""# Connect to a PuppyOne hosted workspace
 
 Someone shared this link so that you can work in their PuppyOne hosted workspace.
@@ -152,14 +154,7 @@ adding what to run:
 If `ssh` says `Connection closed` or `kex_exchange_identification`, this network only
 lets HTTPS out: use {RUN_PATH} instead.
 
-Each command starts in your own copy of the project, on a machine only you use.
-Your home directory is kept from one command to the next, so settings such as
-`git config --global` stay. This machine stays on one branch, so commit there;
-`git switch`, `git rebase` and `git worktree add` are refused. Your files are saved
-to that branch when the machine goes to sleep, and your person decides when they
-join the project. Your first connection can take a few minutes while the machine is
-prepared, and says so while it waits; after that, waking takes up to a minute.
-"""
+{topology.instructions_footer()}"""
 
 
 def agent_connection(identity):
@@ -202,12 +197,13 @@ def ssh_access(connection, endpoint):
 
 class AgentLinkRepository(AccessRepository):
     def agent_saves(self, project):
-        """The last save of each Agent's Workspace, by its branch."""
+        """The last save of each Agent's Workspace (and the shared default), by branch."""
         rows = (
             self.client.table("cloud_workbenches")
             .select("target_ref,save_status,save_error,save_finished_at,unpublished_changes")
             .eq("project_id", project)
-            .not_.is_("agent_registration_id", "null")
+            .is_("owner_deleted_at", "null")
+            .or_("agent_registration_id.not.is.null,is_default.eq.true")
             .execute()
             .data
         )
@@ -238,10 +234,11 @@ class AgentLinkRepository(AccessRepository):
 
 
 class AgentLinkService:
-    def __init__(self, repository=None, endpoint=None, workspaces=None):
+    def __init__(self, repository=None, endpoint=None, workspaces=None, collaboration_router=None):
         self.repository = repository or AgentLinkRepository()
         self._endpoint = endpoint
         self._workspaces = workspaces
+        self.collaboration = collaboration_router or get_agent_collaboration_router()
 
     def endpoint(self):
         if self._endpoint is not None:
@@ -287,6 +284,7 @@ class AgentLinkService:
             **row,
             "connections": connections,
             "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED,
+            "collaboration_mode": self.collaboration.resolve().mode,
         }
 
     async def stop(self, user, project):
@@ -325,7 +323,8 @@ class AgentLinkService:
                 from .composition import build_workbench_service
 
                 self._workspaces = build_workbench_service()
-            await self._workspaces.request_open(row["user_id"], row["project_id"], row)
+            actor = row.get("actor_user_id") or row["user_id"]
+            await self._workspaces.request_open(actor, row["project_id"], row)
         except Exception:
             logger.warning("agent_workspace_prepare_failed", exc_info=True)
 
@@ -393,15 +392,28 @@ class AgentLinkService:
             self.repository.call, "access_agent_ssh_admit", id=connection, public_key=key
         )
 
-    async def workspace(self, connection):
-        """The Agent's own machine; it may not have been started yet."""
-        return await run_blocking(
-            self.repository.call, "access_agent_workspace", id=connection
+    async def workspace(self, connection, *, mode=None):
+        """The Workspace routed for this Agent by the active collaboration topology."""
+        topology = self.collaboration.require_ready(mode)
+        row = await run_blocking(
+            self.repository.call,
+            "access_agent_workspace",
+            id=connection,
+            mode=topology.sql_mode,
         )
+        if isinstance(row, dict) and row.get("collaboration_mode"):
+            self.collaboration.require_ready(project_override=row["collaboration_mode"])
+        return row
 
-    async def ticket(self, connection):
+    async def ticket(self, connection, *, mode=None):
+        topology = self.collaboration.require_ready(mode)
         try:
-            row = await run_blocking(self.repository.call, "access_agent_ssh_ticket", id=connection)
+            row = await run_blocking(
+                self.repository.call,
+                "access_agent_ssh_ticket",
+                id=connection,
+                mode=topology.sql_mode,
+            )
         except HTTPException as exc:
             if exc.detail == {"code": "access_workspace_unavailable"}:
                 raise WorkspaceError(409, {"code": "workbench_not_running"}) from exc

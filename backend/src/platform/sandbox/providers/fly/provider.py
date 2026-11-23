@@ -215,6 +215,10 @@ class FlyRuntimeProvider:
         if features:
             # fly-init.mjs starts in-machine services for the enabled Features.
             env["PUPPYONE_SANDBOX_FEATURES"] = ",".join(features)
+        mount_env = getattr(host, "workspace_mount_env", None) or {}
+        for key, value in mount_env.items():
+            if key.startswith("PUPPYONE_") and key not in env and isinstance(value, str) and value:
+                env[key] = value
         machine = await self._request(
             resource,
             "POST",
