@@ -62,7 +62,7 @@ def test_an_operation_is_recorded_once_per_key_and_once_per_quote(pg, postgrest,
     assert raced.id == first.id and len(reads) == 2
     monkeypatch.setattr(repository, "get_by_key", real)
 
-    with pytest.raises(APIError):
+    with pytest.raises(APIError, match="organization_billing_operations_quote_idx"):
         # The same quote under another key would apply one quote twice.
         repository.create_commercial_operation(
             **{**values, "idempotency_key": f"plan-change:{uuid4()}"}

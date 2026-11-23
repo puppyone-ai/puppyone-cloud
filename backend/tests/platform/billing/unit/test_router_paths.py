@@ -207,8 +207,10 @@ async def test_a_refusal_puppypay_will_not_retry_ends_the_operation(enabled, mon
             return await super().request(method, path, **kwargs)
 
     stored = _Operations()
-    with pytest.raises(AppException):
+    with pytest.raises(AppException) as caught:
         await change_seats(Refusing(seat_quote(2, 3)), stored, monkeypatch)
+    assert caught.value.status_code == 409
+    assert caught.value.details["code"] == "quote_expired"
     assert stored.operation.status == "failed"
     assert stored.operation.last_error == "quote_expired"
     assert stored.operation.completed_at is not None

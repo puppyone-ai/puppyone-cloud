@@ -77,7 +77,7 @@ async def test_billing_without_a_puppypay_address_is_unconfigured() -> None:
 async def test_a_path_outside_the_billing_api_is_never_called() -> None:
     calls: list[str] = []
     client = gateway(lambda request: calls.append(str(request.url)) or httpx.Response(200, json={}))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="allow-list"):
         await client.request("GET", "/admin/users")
     assert calls == []
 
