@@ -110,7 +110,8 @@ class WorkspaceConnections:
         )
         row = context["workbench"]
         if not row or row["id"] != workbench:
-            # An external Agent never reaches the owner's own Workspace, only its own.
+            # Shared-machine external Agents match context["workbench"] above;
+            # per-Agent workspaces (isolated_branch / Tier 2 / Tier 3) resolve here.
             row = await run_blocking(self.workspace.repository.get, workbench)
             if not row or not row.get("agent_registration_id") or row["user_id"] != user:
                 raise WorkspaceError(409, {"code": "workspace_connection_unavailable"})

@@ -1,6 +1,7 @@
 """Public-key delegation to one existing private Hosted Workspace."""
 
 import asyncio
+import logging
 import time
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
@@ -17,11 +18,14 @@ from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
-from src.shared_types.grants import AccessCapability, ProjectAction
+from src.platform.workspace.collaboration import get_agent_collaboration_router
 from src.platform.workspace.connections import RESUMABLE_STATES, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
+from src.shared_types.grants import AccessCapability, ProjectAction
 
 from .config import ssh_settings
+
+logger = logging.getLogger(__name__)
 
 
 def public_key(value):
@@ -254,9 +258,10 @@ class HostedSshAccess:
             raise WorkspaceError(409, {"code": "workbench_not_running", "state": row["state"]})
         if notify:
             await notify("Resuming the workspace; this can take up to a minute.\r\n")
+        actor = grant.get("user_id") or row["user_id"]
         row = await while_telling(
             self.workspace.ensure_running(
-                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+                {"user_id": actor, "project_id": row["project_id"]}, row
             ),
             notify,
             "Still resuming the workspace ({seconds}s)...\r\n",
@@ -273,9 +278,10 @@ class HostedSshAccess:
             return
         if notify:
             await notify("Preparing your workspace; this can take a few minutes.\r\n")
+        actor = row.get("actor_user_id") or row["user_id"]
         await while_telling(
             self.workspace.ensure_running(
-                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+                {"user_id": actor, "project_id": row["project_id"]}, row
             ),
             notify,
             "Still preparing your workspace ({seconds}s)...\r\n",
@@ -309,6 +315,9 @@ class HostedSshAccess:
                 identity = await self.linked_agents().ticket(connection)
         grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)
+        if connection or grant.get("access_grant_id"):
+            router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
+            await router.resolve().before_agent_session(self.workspace, grant)
         return SshSession(identity, grant, may_wake)
 
     @asynccontextmanager
@@ -316,15 +325,44 @@ class HostedSshAccess:
         """One command: its own shell, under the connection's session."""
         grant = session.grant
         await self.resume(grant, session.may_wake, notify)
+        connection_id = str(uuid4())
+        router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
+        collab_mode = router.resolve().mode
         async with self.connections.open(
-            str(uuid4()),
+            connection_id,
             grant["user_id"],
             grant["project_id"],
             grant["workbench_id"],
             grant["generation"],
             session=session.id if session.delegated else None,
         ) as connection:
-            yield connection
+            if session.delegated:
+                logger.info(
+                    "external_agent_shell_opened",
+                    extra={
+                        "project_id": grant["project_id"],
+                        "workbench_id": grant["workbench_id"],
+                        "access_grant_id": grant.get("access_grant_id"),
+                        "session_id": session.id,
+                        "connection_id": connection_id,
+                        "collaboration_mode": collab_mode,
+                    },
+                )
+            try:
+                yield connection
+            finally:
+                if session.delegated:
+                    logger.info(
+                        "external_agent_shell_closed",
+                        extra={
+                            "project_id": grant["project_id"],
+                            "workbench_id": grant["workbench_id"],
+                            "access_grant_id": grant.get("access_grant_id"),
+                            "session_id": session.id,
+                            "connection_id": connection_id,
+                            "collaboration_mode": collab_mode,
+                        },
+                    )
 
     async def renew_session(self, session):
         """The connection's heartbeat: admission's authority, with no command required.

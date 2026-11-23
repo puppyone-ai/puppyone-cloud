@@ -11,7 +11,7 @@ COPY controller.mjs protocol.mjs git.mjs git-relay.mjs worker.mjs loop.mjs tool-
 COPY workbench-shell.mjs workbench-shell.py ./
 COPY workbench-controller.mjs workbench-task.mjs workbench-signals.mjs workbench-signals.py workbench-git.mjs ./
 COPY shared-git.mjs workbench-git-layout.mjs workbench-state.mjs workbench-initialize.mjs workbench-lifecycle.mjs workbench-head-lock.mjs ./
-COPY workbench-files.mjs workbench-files.py workbench-file-client.mjs workbench-files-supervisor.mjs workbench-machine.mjs fly-init.mjs fly-egress.mjs ./
+COPY workbench-files.mjs workbench-files.py workbench-file-client.mjs workbench-files-supervisor.mjs workbench-machine.mjs fly-init.mjs fly-egress.mjs fly-mount.mjs ./
 COPY desktop-supervisor.mjs desktop-relay.mjs ./
 COPY sprites-init.mjs sprites-control.py ./
 COPY providers/docker-recovery.mjs ./providers/

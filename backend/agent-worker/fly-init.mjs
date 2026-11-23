@@ -2,6 +2,7 @@
 import { mkdir, chmod, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { egressRules, PUBLIC_DNS } from './fly-egress.mjs';
+import { mountWorkspace } from './fly-mount.mjs';
 import { superviseFiles } from './workbench-files-supervisor.mjs';
 import { desktopEnabled, superviseDesktop } from './desktop-supervisor.mjs';
 // Fly supports native nftables but not the iptables xt_owner kernel match.
@@ -20,8 +21,9 @@ await mkdir('/data/workspace', {recursive: true});
 await mkdir('/data/control', {recursive: true});
 await chmod('/data', 0o755); await chmod('/data/control', 0o700);
 // The image has an empty /workspace directory. Mount the persisted workspace
-// through a bind mount so the normal no-symlink FS root contract is unchanged.
-execFileSync('mount', ['--bind', '/data/workspace', '/workspace']);
+// through the pluggable mount dispatcher (default: local NVMe bind mount so
+// the normal no-symlink FS root contract is unchanged).
+mountWorkspace(process.env, execFileSync);
 await mkdir('/run/puppyone-workbench', {recursive: true});
 execFileSync('mount', ['--bind', '/data/control', '/run/puppyone-workbench']);
 // A desktop keeps its user state (browser profile, settings) on the workspace
