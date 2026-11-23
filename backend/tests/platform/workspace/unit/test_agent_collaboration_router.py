@@ -226,7 +226,10 @@ async def test_shared_machine_pre_agent_backup_checkpoints_dirty_default_workspa
 
 
 @pytest.mark.asyncio
-async def test_fly_provider_propagates_pluggable_mount_env_without_overriding_security_env():
+async def test_fly_provider_propagates_pluggable_mount_env_without_overriding_security_env(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "fly-test-token")
     sent = []
 
     class FakeClient:
