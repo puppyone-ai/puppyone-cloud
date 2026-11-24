@@ -153,13 +153,18 @@ async def test_a_session_needs_a_stable_run_id(required) -> None:
 
 
 @pytest.mark.asyncio
-async def test_shadow_session_whose_reservation_failed_runs_unmetered(shadow) -> None:
+async def test_shadow_session_whose_reservation_failed_runs_unmetered(shadow, caplog) -> None:
     metering, repository, gateway = service()
     gateway.reserve_error = BillingGatewayError(503, {"error": {"code": "puppypay_down"}})
 
     assert await metering.start_session(audit_context=_context()) is None
     assert repository.get("run-1").status == "unmetered"
     assert repository.get("run-1").last_error == "puppypay_down"
+    # Shadow checks and finishes never block pre-existing or unmetered sessions.
+    await metering.check_session("run-1")
+    await metering.check_session("preexisting-run-before-rollout")
+    assert "runtime_session_check_shadow_bypass" in caplog.text
+    assert await metering.finish_session("run-1", retry=True) is True
 
 
 @pytest.mark.asyncio

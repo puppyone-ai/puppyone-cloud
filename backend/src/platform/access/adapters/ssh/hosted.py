@@ -10,7 +10,8 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
-from src.exceptions import PermissionException
+from src.config import settings
+from src.exceptions import AppException, PermissionException
 from src.infra.execution.runner import run_blocking
 from src.platform.access.agent_links import AgentLinkService, agent_connection
 from src.platform.access.composition import build_workbench_service
@@ -377,32 +378,51 @@ class HostedSshAccess:
                 or mounted.get("host_generation") != host_row.get("generation")
             ):
                 await self.workspace.lifecycle.ensure_host_export_mounted(wb, host_row=host_row)
-        async with self.connections.open(
-            connection_id,
-            grant["user_id"],
-            grant["project_id"],
-            grant["workbench_id"],
-            grant["generation"],
-            session=session.id if session.delegated else None,
-        ) as connection:
-            if session.delegated:
-                logger.info(
-                    "external_agent_shell_opened",
-                    extra={
-                        "project_id": grant["project_id"],
-                        "workbench_id": grant["workbench_id"],
-                        "access_grant_id": grant.get("access_grant_id"),
-                        "session_id": session.id,
-                        "connection_id": connection_id,
-                        "collaboration_mode": collab_mode,
-                    },
-                )
+        # Tier 1 (shared_machine) external Agents share the project's default
+        # Workspace VM whose compute epoch is metered as non-billable "workspace".
+        # Meter each delegated command as "external_agent" so Tier 1 accounts for
+        # Agent Runtime hours without double-charging Tier 2/0 dedicated Agent VMs
+        # (whose compute epochs already bill as "external_agent").
+        billing = getattr(self.workspace, "billing", None)
+        meter_command = (
+            session.delegated
+            and isinstance(wb, dict)
+            and not wb.get("agent_registration_id")
+            and billing is not None
+            and callable(getattr(billing, "start_session", None))
+            and callable(getattr(billing, "finish_session", None))
+            and callable(getattr(billing, "cancel_session", None))
+        )
+        activity_run_id = None
+        if meter_command:
             try:
-                yield connection
-            finally:
+                activity_run_id = await billing.start_session(
+                    audit_context={
+                        "source": "external_agent",
+                        "run_id": f"external-agent-cmd:{connection_id}",
+                        "project_id": grant["project_id"],
+                        "user_id": grant["user_id"],
+                        "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
+                    }
+                )
+            except AppException as exc:
+                if exc.status_code in (402, 403):
+                    raise WorkspaceError(402, {"code": "workbench_plan_required"}) from exc
+                raise
+        shell_opened = False
+        try:
+            async with self.connections.open(
+                connection_id,
+                grant["user_id"],
+                grant["project_id"],
+                grant["workbench_id"],
+                grant["generation"],
+                session=session.id if session.delegated else None,
+            ) as connection:
+                shell_opened = True
                 if session.delegated:
                     logger.info(
-                        "external_agent_shell_closed",
+                        "external_agent_shell_opened",
                         extra={
                             "project_id": grant["project_id"],
                             "workbench_id": grant["workbench_id"],
@@ -410,6 +430,39 @@ class HostedSshAccess:
                             "session_id": session.id,
                             "connection_id": connection_id,
                             "collaboration_mode": collab_mode,
+                        },
+                    )
+                try:
+                    yield connection
+                finally:
+                    if session.delegated:
+                        logger.info(
+                            "external_agent_shell_closed",
+                            extra={
+                                "project_id": grant["project_id"],
+                                "workbench_id": grant["workbench_id"],
+                                "access_grant_id": grant.get("access_grant_id"),
+                                "session_id": session.id,
+                                "connection_id": connection_id,
+                                "collaboration_mode": collab_mode,
+                            },
+                        )
+        finally:
+            if activity_run_id:
+                try:
+                    if shell_opened:
+                        await asyncio.shield(
+                            billing.finish_session(activity_run_id, retry=True)
+                        )
+                    else:
+                        await asyncio.shield(billing.cancel_session(activity_run_id))
+                except Exception:
+                    logger.exception(
+                        "external_agent_command_settlement_failed",
+                        extra={
+                            "run_id": activity_run_id,
+                            "project_id": grant["project_id"],
+                            "connection_id": connection_id,
                         },
                     )
 

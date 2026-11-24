@@ -410,6 +410,15 @@ class RuntimeMeteringService:
             or not run.expires_at
             or run.expires_at <= datetime.now(UTC)
         ):
+            if settings.RUNTIME_METERING_MODE == "shadow":
+                logger.warning(
+                    "runtime_session_check_shadow_bypass",
+                    extra={
+                        "run_id": run_id,
+                        "status": run.status if run is not None else "missing",
+                    },
+                )
+                return
             raise ValueError("Runtime reservation expired or was exhausted")
 
     async def detach_session(self, run_id: str) -> None:
@@ -421,7 +430,7 @@ class RuntimeMeteringService:
 
         await self._stop_heartbeat(run_id)
         run = await run_blocking(self._repo.get, run_id)
-        if run is None or run.status in {"settled", "canceled"}:
+        if run is None or run.status in {"settled", "canceled", "unmetered"}:
             return True
         runtime_seconds = 0
         if run.started_at:
@@ -431,7 +440,7 @@ class RuntimeMeteringService:
             runtime_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
         await self._settle(run_id, runtime_seconds, allow_retry=retry)
         current = await run_blocking(self._repo.get, run_id)
-        return current is not None and current.status in {"settled", "canceled"}
+        return current is not None and current.status in {"settled", "canceled", "unmetered"}
 
     async def cancel_session(self, run_id: str) -> None:
         """Compensate a reservation when the provider never started."""
