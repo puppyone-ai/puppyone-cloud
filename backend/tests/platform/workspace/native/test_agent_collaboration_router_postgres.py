@@ -564,3 +564,16 @@ def test_tier2_fly_host_export_routes_separate_agent_vms_linked_to_host_and_guar
         "has_function_privilege('service_role','public.access_grant_agent_workspace(uuid,text)','EXECUTE') AS svc"
     )
     assert internal_perm == {"anon": False, "auth": False, "svc": False}
+
+    # Column-level privilege: service_role can update projects.agent_collab_mode without widening lifecycle_status.
+    col_perms = pg.row(
+        "SELECT has_column_privilege('service_role','public.projects','agent_collab_mode','UPDATE') AS can_set_mode, "
+        "has_column_privilege('service_role','public.projects','lifecycle_status','UPDATE') AS can_set_lifecycle"
+    )
+    assert col_perms == {"can_set_mode": True, "can_set_lifecycle": False}
+    pg.sql(
+        f"BEGIN; SET LOCAL ROLE service_role; "
+        f"UPDATE public.projects SET agent_collab_mode='shared_machine' WHERE id='{env['project']}'; "
+        f"UPDATE public.projects SET agent_collab_mode='fly_host_export' WHERE id='{env['project']}'; "
+        f"COMMIT;"
+    )
