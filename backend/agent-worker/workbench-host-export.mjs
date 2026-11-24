@@ -39,6 +39,8 @@ export const EXPORT_KEYS_DIR = `${EXPORT_ROOT}/keys`;
 export const NFS_PORT = 2049;
 export const TUNNEL_SSH_PORT = 2223;
 export const SFTP_SSH_PORT = 2222;
+export const TUNNEL_SSH_USER = 'puppyone-export';
+export const SFTP_SSH_USER = 'node';
 export const EXPORT_PSEUDO = '/repo';
 export const SUPPORTED_PROTOCOLS = Object.freeze(['nfs_ganesha', 'sshfs']);
 
@@ -61,9 +63,9 @@ export function validateProtocol(protocol) {
 }
 
 export function validateEd25519PublicKey(key) {
-  if (typeof key !== 'string' || /[\r\n]/.test(key)) throw new Error('Invalid Ed25519 public key');
+  if (typeof key !== 'string') throw new Error('Invalid Ed25519 public key');
   const trimmed = key.trim();
-  if (!ED25519_PUB_RE.test(trimmed)) {
+  if (/[\r\n]/.test(trimmed) || !ED25519_PUB_RE.test(trimmed)) {
     throw new Error('Invalid Ed25519 public key');
   }
   return trimmed.split(/[ \t]+/).slice(0, 2).join(' ');
@@ -129,16 +131,20 @@ export function renderSshdConfig({
 }) {
   if (!isFlyPrivateIpv6(hostIp)) throw new Error('Host export requires a Fly 6pn fdaa:: IPv6');
   const proto = validateProtocol(protocol);
+  // nfs_ganesha uses a dedicated unprivileged system account (UID != 1000) so
+  // fly-egress.mjs can keep loopback port 2049 sealed against untrusted UID 1000
+  // tasks while sshd's tunnel user forwards strictly to 127.0.0.1:2049.
+  const sshUser = proto === 'sshfs' ? SFTP_SSH_USER : TUNNEL_SSH_USER;
   const matchBlock =
     proto === 'sshfs'
       ? `Subsystem sftp internal-sftp
-Match User node
+Match User ${sshUser}
   ForceCommand internal-sftp -d ${exportPath}
   AllowTcpForwarding no
   X11Forwarding no
   AllowAgentForwarding no
   PermitTTY no`
-      : `Match User node
+      : `Match User ${sshUser}
   AllowTcpForwarding local
   PermitOpen 127.0.0.1:${NFS_PORT}
   X11Forwarding no
@@ -155,7 +161,7 @@ KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 UsePAM no
 StrictModes no
-AllowUsers node
+AllowUsers ${sshUser}
 ClientAliveInterval 15
 ClientAliveCountMax 3
 ${matchBlock}
@@ -309,13 +315,53 @@ async function atomicWrite(filePath, content, mode) {
   await rename(tmp, filePath);
 }
 
+async function withHostExportLock(operation) {
+  await ensureExportDirs();
+  const lock = spawn(
+    'flock',
+    [
+      '-x',
+      '-w',
+      '60',
+      `${EXPORT_ROOT}/host-export.lock`,
+      'node',
+      '-e',
+      'process.stdout.write("ready\\n"); process.stdin.resume()',
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  try {
+    await new Promise((resolve, reject) => {
+      lock.once('error', reject);
+      lock.once('exit', () => reject(new Error('Host export lock unavailable')));
+      lock.stdout.once('data', resolve);
+    });
+    return await operation();
+  } finally {
+    lock.stdin.end();
+    if (lock.exitCode === null) await new Promise(resolve => lock.once('exit', resolve));
+  }
+}
+
+async function readLogTail(logPath, limit = 300) {
+  try {
+    const text = (await readFile(logPath, 'utf8')).trim();
+    return text.length > limit ? text.slice(-limit) : text;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Project Host VM: start/verify nfs-ganesha (127.0.0.1:2049) + per-Agent sshd ([6pn]:port).
  */
 export async function startHostExport({ protocol = 'nfs_ganesha' } = {}) {
   requireRoot();
+  return withHostExportLock(() => _startHostExportUnlocked({ protocol }));
+}
+
+async function _startHostExportUnlocked({ protocol = 'nfs_ganesha' } = {}) {
   const proto = validateProtocol(protocol);
-  await ensureExportDirs();
   await ensureMtab();
 
   const hostIp = detectFlyPrivateIpv6();
@@ -338,10 +384,10 @@ export async function startHostExport({ protocol = 'nfs_ganesha' } = {}) {
   // 1. Start NFS-Ganesha bound strictly to 127.0.0.1:2049 when using nfs_ganesha.
   if (proto === 'nfs_ganesha') {
     const ganeshaPidFile = `${EXPORT_ROOT}/ganesha.pid`;
+    const ganeshaLog = `${EXPORT_ROOT}/ganesha.log`;
     const ganeshaRunning = await readPid(ganeshaPidFile);
     if (!ganeshaRunning) {
       const ganeshaConf = `${EXPORT_ROOT}/ganesha.conf`;
-      const ganeshaLog = `${EXPORT_ROOT}/ganesha.log`;
       await atomicWrite(ganeshaConf, renderGaneshaConfig({ exportPath: ROOT }), 0o600);
       const child = spawn(
         '/usr/bin/ganesha.nfsd',
@@ -351,7 +397,12 @@ export async function startHostExport({ protocol = 'nfs_ganesha' } = {}) {
       child.unref();
       await atomicWrite(ganeshaPidFile, `${child.pid}\n`, 0o600);
     }
-    await waitForTcp('127.0.0.1', NFS_PORT, 15000);
+    try {
+      await waitForTcp('127.0.0.1', NFS_PORT, 15000);
+    } catch (error) {
+      const detail = await readLogTail(ganeshaLog);
+      throw new Error(detail ? `${error.message} (ganesha: ${detail})` : error.message);
+    }
   }
 
   // 2. Start dedicated sshd bound strictly to [host_6pn_ip]:port.
@@ -396,23 +447,24 @@ export async function grantHostExport({
   agent_ip: agentIp = null,
 } = {}) {
   requireRoot();
-  const proto = validateProtocol(protocol);
-  await ensureExportDirs();
-  const authorizedKeysPath = `${EXPORT_ROOT}/authorized_keys_${proto}`;
-  let existing = '';
-  try {
-    existing = await readFile(authorizedKeysPath, 'utf8');
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-  const updated = upsertAuthorizedKeys(existing, {
-    agentId,
-    publicKey,
-    protocol: proto,
-    agentIp,
+  return withHostExportLock(async () => {
+    const proto = validateProtocol(protocol);
+    const authorizedKeysPath = `${EXPORT_ROOT}/authorized_keys_${proto}`;
+    let existing = '';
+    try {
+      existing = await readFile(authorizedKeysPath, 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const updated = upsertAuthorizedKeys(existing, {
+      agentId,
+      publicKey,
+      protocol: proto,
+      agentIp,
+    });
+    await atomicWrite(authorizedKeysPath, updated, 0o644);
+    return { granted: true, agent_id: validateAgentId(agentId), protocol: proto };
   });
-  await atomicWrite(authorizedKeysPath, updated, 0o644);
-  return { granted: true, agent_id: validateAgentId(agentId), protocol: proto };
 }
 
 /**
@@ -424,35 +476,36 @@ export async function revokeHostExport({
   protocol = null,
 } = {}) {
   requireRoot();
-  const safeId = validateAgentId(agentId);
-  await ensureExportDirs();
-  const protocols = protocol ? [validateProtocol(protocol)] : SUPPORTED_PROTOCOLS;
-  for (const proto of protocols) {
-    const authorizedKeysPath = `${EXPORT_ROOT}/authorized_keys_${proto}`;
-    try {
-      const existing = await readFile(authorizedKeysPath, 'utf8');
-      const updated = removeAuthorizedKey(existing, safeId);
-      await atomicWrite(authorizedKeysPath, updated, 0o644);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-    if (agentIp && isFlyPrivateIpv6(agentIp)) {
-      const port = proto === 'sshfs' ? SFTP_SSH_PORT : TUNNEL_SSH_PORT;
+  return withHostExportLock(async () => {
+    const safeId = validateAgentId(agentId);
+    const protocols = protocol ? [validateProtocol(protocol)] : SUPPORTED_PROTOCOLS;
+    for (const proto of protocols) {
+      const authorizedKeysPath = `${EXPORT_ROOT}/authorized_keys_${proto}`;
       try {
-        const { stdout } = await execFileAsync('ss', ['-Htpn', `sport = :${port}`]);
-        for (const pid of parsePeerSshdPids(stdout, agentIp)) {
-          try {
-            process.kill(pid, 'SIGKILL');
-          } catch {
-            // Already exited.
+        const existing = await readFile(authorizedKeysPath, 'utf8');
+        const updated = removeAuthorizedKey(existing, safeId);
+        await atomicWrite(authorizedKeysPath, updated, 0o644);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (agentIp && isFlyPrivateIpv6(agentIp)) {
+        const port = proto === 'sshfs' ? SFTP_SSH_PORT : TUNNEL_SSH_PORT;
+        try {
+          const { stdout } = await execFileAsync('ss', ['-Htpn', `sport = :${port}`]);
+          for (const pid of parsePeerSshdPids(stdout, agentIp)) {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              // Already exited.
+            }
           }
+        } catch {
+          // Best-effort live socket termination; authorized_keys removal prevents reconnect.
         }
-      } catch {
-        // Best-effort live socket termination; authorized_keys removal prevents reconnect.
       }
     }
-  }
-  return { revoked: true, agent_id: safeId };
+    return { revoked: true, agent_id: safeId };
+  });
 }
 
 /**
@@ -460,13 +513,14 @@ export async function revokeHostExport({
  */
 export async function ensureClientKey() {
   requireRoot();
-  await ensureExportDirs();
-  const keyPath = `${EXPORT_KEYS_DIR}/client_key`;
-  const publicKey = await ensureEd25519Keypair(keyPath, 'puppyone-agent-mount');
-  return {
-    public_key: publicKey,
-    agent_ip: detectFlyPrivateIpv6(),
-  };
+  return withHostExportLock(async () => {
+    const keyPath = `${EXPORT_KEYS_DIR}/client_key`;
+    const publicKey = await ensureEd25519Keypair(keyPath, 'puppyone-agent-mount');
+    return {
+      public_key: publicKey,
+      agent_ip: detectFlyPrivateIpv6(),
+    };
+  });
 }
 
 async function currentRemoteMount() {
@@ -501,9 +555,7 @@ async function stopTunnelSupervisor() {
   await rm(pidFile, { force: true }).catch(() => {});
 }
 
-export async function unmountHostExport() {
-  requireRoot();
-  await ensureExportDirs();
+async function _unmountHostExportUnlocked() {
   await stopTunnelSupervisor();
   if (await currentRemoteMount()) {
     try {
@@ -516,10 +568,20 @@ export async function unmountHostExport() {
   return { unmounted: true };
 }
 
+export async function unmountHostExport() {
+  requireRoot();
+  return withHostExportLock(() => _unmountHostExportUnlocked());
+}
+
 /**
  * Agent VM: connect supervised SSH tunnel + mount Project Host VM's /workspace/repo.
  */
-export async function mountHostExport({
+export async function mountHostExport(params = {}) {
+  requireRoot();
+  return withHostExportLock(() => _mountHostExportUnlocked(params));
+}
+
+async function _mountHostExportUnlocked({
   workbench,
   generation,
   protocol = 'nfs_ganesha',
@@ -528,7 +590,6 @@ export async function mountHostExport({
   host_public_key: hostPublicKey,
   export_path: exportPath,
 } = {}) {
-  requireRoot();
   if (![workbench, generation].every(value => typeof value === 'string' && UUID.test(value))) {
     throw new Error('Invalid workspace lifecycle binding');
   }
@@ -536,7 +597,6 @@ export async function mountHostExport({
   if (!isFlyPrivateIpv6(hostIp)) throw new Error('host_ip must be a Fly 6pn fdaa:: IPv6');
   const numericPort = Number(port || (proto === 'sshfs' ? SFTP_SSH_PORT : TUNNEL_SSH_PORT));
   const verifiedHostKey = validateEd25519PublicKey(hostPublicKey);
-  await ensureExportDirs();
 
   const spec = {
     protocol: proto,
@@ -566,7 +626,7 @@ export async function mountHostExport({
         // Stale mount -> tear down and remount below.
       }
     }
-    await unmountHostExport();
+    await _unmountHostExportUnlocked();
   }
 
   const keyPath = `${EXPORT_KEYS_DIR}/client_key`;
@@ -577,15 +637,19 @@ export async function mountHostExport({
 
   if (proto === 'nfs_ganesha') {
     const tunnelConfigPath = `${EXPORT_ROOT}/tunnel.json`;
+    const tunnelLogPath = `${EXPORT_ROOT}/tunnel.log`;
+    await rm(tunnelLogPath, { force: true }).catch(() => {});
     await atomicWrite(
       tunnelConfigPath,
       JSON.stringify({
+        user: TUNNEL_SSH_USER,
         host_ip: spec.host_ip,
         port: spec.port,
         key_path: keyPath,
         known_hosts_path: knownHostsPath,
         local_port: NFS_PORT,
         remote_port: NFS_PORT,
+        log_path: tunnelLogPath,
       }),
       0o600,
     );
@@ -596,7 +660,12 @@ export async function mountHostExport({
     );
     supervisor.unref();
     await atomicWrite(`${EXPORT_ROOT}/tunnel.pid`, `${supervisor.pid}\n`, 0o600);
-    await waitForTcp('127.0.0.1', NFS_PORT, 15000);
+    try {
+      await waitForTcp('127.0.0.1', NFS_PORT, 15000);
+    } catch (error) {
+      const detail = await readLogTail(tunnelLogPath);
+      throw new Error(detail ? `${error.message} (tunnel: ${detail})` : error.message);
+    }
 
     try {
       await execFileAsync('modprobe', ['nfsv4']);
@@ -634,7 +703,7 @@ export async function mountHostExport({
           'ServerAliveCountMax=3',
           'cache_timeout=1',
         ].join(','),
-        `node@[${spec.host_ip}]:${spec.export_path}`,
+        `${SFTP_SSH_USER}@[${spec.host_ip}]:${spec.export_path}`,
         ROOT,
       ],
       { timeout: 25000 },
@@ -643,7 +712,7 @@ export async function mountHostExport({
 
   const verified = await currentRemoteMount();
   if (!verified) {
-    await unmountHostExport();
+    await _unmountHostExportUnlocked();
     throw new Error(`Remote mount verification failed for ${ROOT}`);
   }
   await stat(ROOT);
@@ -659,6 +728,7 @@ export async function mountHostExport({
  */
 async function runTunnelSupervisor(configPath) {
   const cfg = JSON.parse(await readFile(configPath, 'utf8'));
+  const sshUser = cfg.user || TUNNEL_SSH_USER;
   let stopping = false;
   let current = null;
   const shutdown = () => {
@@ -671,6 +741,7 @@ async function runTunnelSupervisor(configPath) {
   while (!stopping) {
     const started = Date.now();
     await new Promise(resolve => {
+      let errBuf = '';
       current = spawn(
         'ssh',
         [
@@ -695,15 +766,25 @@ async function runTunnelSupervisor(configPath) {
           String(cfg.port),
           '-L',
           `127.0.0.1:${cfg.local_port}:127.0.0.1:${cfg.remote_port}`,
-          `node@${cfg.host_ip}`,
+          `${sshUser}@${cfg.host_ip}`,
         ],
-        { stdio: 'ignore' },
+        { stdio: ['ignore', 'ignore', 'pipe'] },
       );
+      current.stderr?.setEncoding('utf8');
+      current.stderr?.on('data', chunk => {
+        errBuf = (errBuf + chunk).slice(-4096);
+        if (cfg.log_path) {
+          void writeFile(cfg.log_path, errBuf, { mode: 0o600 }).catch(() => {});
+        }
+      });
       current.once('exit', () => {
         current = null;
         resolve();
       });
-      current.once('error', () => {
+      current.once('error', error => {
+        if (cfg.log_path) {
+          void writeFile(cfg.log_path, String(error.message || error), { mode: 0o600 }).catch(() => {});
+        }
         current = null;
         resolve();
       });

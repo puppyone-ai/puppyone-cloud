@@ -47,6 +47,8 @@ test('detectFlyPrivateIpv6 extracts non-internal Fly 6pn interface address', () 
 
 test('validators reject malformed keys, agent ids, and protocols', () => {
   assert.equal(validateEd25519PublicKey(`${VALID_KEY_A} comment@host`), VALID_KEY_A);
+  assert.equal(validateEd25519PublicKey(`${VALID_KEY_A} puppyone-host-export\n`), VALID_KEY_A);
+  assert.equal(validateEd25519PublicKey(`  ${VALID_KEY_A}\r\n`), VALID_KEY_A);
   assert.throws(() => validateEd25519PublicKey('ssh-rsa AAAA'), /Invalid Ed25519/);
   assert.throws(() => validateEd25519PublicKey(`${VALID_KEY_A}\ncommand="id"`), /Invalid Ed25519/);
   assert.equal(validateAgentId('agent_01-abc'), 'agent_01-abc');
@@ -77,6 +79,8 @@ test('sshd config binds strictly to Fly 6pn IPv6 and enforces protocol-scoped co
     pidFile: '/run/puppyone-workbench/export/sshd_nfs_ganesha.pid',
   });
   assert.match(nfsCfg, new RegExp(`ListenAddress \\[${HOST_IP}\\]`));
+  assert.match(nfsCfg, /AllowUsers puppyone-export/);
+  assert.match(nfsCfg, /Match User puppyone-export/);
   assert.match(nfsCfg, /AllowTcpForwarding local/);
   assert.match(nfsCfg, /PermitOpen 127\.0\.0\.1:2049/);
   assert.match(nfsCfg, /ForceCommand \/bin\/false/);
@@ -90,6 +94,8 @@ test('sshd config binds strictly to Fly 6pn IPv6 and enforces protocol-scoped co
     authorizedKeysPath: '/run/puppyone-workbench/export/authorized_keys_sshfs',
     pidFile: '/run/puppyone-workbench/export/sshd_sshfs.pid',
   });
+  assert.match(sftpCfg, /AllowUsers node/);
+  assert.match(sftpCfg, /Match User node/);
   assert.match(sftpCfg, /ForceCommand internal-sftp -d \/workspace\/repo/);
   assert.match(sftpCfg, /AllowTcpForwarding no/);
 

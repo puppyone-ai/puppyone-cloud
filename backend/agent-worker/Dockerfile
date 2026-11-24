@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       netbase kmod iproute2 nfs-common nfs-ganesha nfs-ganesha-vfs openssh-server openssh-client sshfs fuse3 \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && usermod -p '*' node \
+    && useradd --system --no-create-home --home-dir /nonexistent --shell /bin/sh puppyone-export \
+    && usermod -p '*' puppyone-export \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/puppyone-agent
 COPY package.json ./
