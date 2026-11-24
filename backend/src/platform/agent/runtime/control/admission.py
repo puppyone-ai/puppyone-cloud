@@ -26,7 +26,7 @@ def clean_path(value):
         or "\0" in path
         or any(part in {".", "..", ""} for part in path.split("/") if path)
     ):
-        raise HTTPException(409, "Agent has an invalid repository path")
+        raise HTTPException(409, {"code": "agent_repository_path_invalid"})
     return path
 
 
@@ -61,11 +61,11 @@ class Admission:
         surface = value["surface"]
         self.visible(surface, user, project)
         if surface["status"] != "active":
-            raise HTTPException(409, "Agent is paused or unavailable")
+            raise HTTPException(409, {"code": "agent_unavailable"})
         config = surface.get("config") or {}
         view = config.get("bash_view") or {"path_prefix": "", "excludes": [], "max_mode": "r"}
         if surface.get("scope_id"):
-            raise HTTPException(409, "Native Agent Git requires an unrestricted Project-root view")
+            raise HTTPException(409, {"code": "agent_scope_not_supported"})
         policy = {
             "revision": value["revision"],
             "surface_updated_at": surface["updated_at"],
@@ -96,43 +96,68 @@ class Admission:
             json.dumps(value.get("receipt")),
         )
 
-    def load(self, user, project, agent_id=None, scope_id=None, request_id=None):
+    def load(
+        self,
+        user,
+        project,
+        agent_id=None,
+        scope_id=None,
+        request_id=None,
+        *,
+        workbench_admitted: bool = False,
+    ):
         for attempt in range(2):
             try:
-                return self._load(user, project, agent_id, scope_id, request_id)
+                return self._load(
+                    user,
+                    project,
+                    agent_id,
+                    scope_id,
+                    request_id,
+                    workbench_admitted=workbench_admitted,
+                )
             except HTTPException as exc:
                 if attempt or exc.detail != {"code": "agent_context_changed"}:
                     raise
         raise AssertionError("unreachable")
 
-    def _load(self, user, project, agent_id=None, scope_id=None, request_id=None):
+    def _load(
+        self,
+        user,
+        project,
+        agent_id=None,
+        scope_id=None,
+        request_id=None,
+        *,
+        workbench_admitted: bool = False,
+    ):
         value = self.repository.load_run_context(user, project, agent_id, scope_id, request_id)
         self.authorization.authorize_facts(value["facts"], project, user, ProjectAction.AGENT_RUN)
-        ready = value["readiness"]
-        # Cloud workspaces clone the authoritative native HEAD. A verified
-        # migration or product write can create it without an external Git push.
-        # External-client onboarding has a separate first-push requirement.
-        if self.readiness:
-            resolved = self.readiness.resolve(project)
-            is_ready = resolved.project_git_surface_exists and resolved.project_head_exists
-        else:
-            is_ready = bool(
-                ready
-                and ready.get("project_git_surface_exists")
-                and re.fullmatch(
-                    r"(?:[0-9a-f]{40}|[0-9a-f]{64})", ready.get("project_head_commit_id") or ""
+        if not workbench_admitted:
+            ready = value["readiness"]
+            # Legacy non-workbench session sandboxes clone the authoritative native HEAD.
+            # A verified migration or product write can create it without an external Git push.
+            # External-client onboarding has a separate first-push requirement.
+            if self.readiness:
+                resolved = self.readiness.resolve(project)
+                is_ready = resolved.project_git_surface_exists and resolved.project_head_exists
+            else:
+                is_ready = bool(
+                    ready
+                    and ready.get("project_git_surface_exists")
+                    and re.fullmatch(
+                        r"(?:[0-9a-f]{40}|[0-9a-f]{64})",
+                        ready.get("project_head_commit_id") or "",
+                    )
                 )
-            )
-        if not is_ready and not value.get("receipt"):
-            raise HTTPException(409, {"code": "project_agent_not_ready"})
+            if not is_ready and not value.get("receipt"):
+                raise HTTPException(409, {"code": "project_agent_not_ready"})
         if not value["surface"] and agent_id is None:
             self.authorization.authorize_facts(
                 value["facts"], project, user, ProjectAction.AGENT_MANAGE
             )
             if scope_id:
-                raise HTTPException(
-                    409, "Native Agent Git requires an unrestricted Project-root view"
-                )
+                raise HTTPException(409, {"code": "agent_scope_not_supported"})
             agent_id = self.repository.create_builtin(
                 project=project,
                 scope=None,
@@ -159,5 +184,5 @@ class Admission:
             run["project_id"],
         )
         if context.policy["revision"] != run["policy"]["revision"]:
-            raise HTTPException(409, "Agent configuration changed during execution")
+            raise HTTPException(409, {"code": "agent_configuration_changed"})
         return context.grant

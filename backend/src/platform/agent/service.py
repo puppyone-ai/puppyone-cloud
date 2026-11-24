@@ -30,13 +30,19 @@ class AgentService:
 
     def submit(self, user_id, request, *, interactive=True):
         identity = submission_digest(request)
+        load_options = {"workbench_admitted": True} if self.workbenches is not None else {}
         context = self.admission.load(
-            user_id, request.project_id, request.agent_id, request.scope_id, str(request.request_id)
+            user_id,
+            request.project_id,
+            request.agent_id,
+            request.scope_id,
+            str(request.request_id),
+            **load_options,
         )
         old = context.receipt
         if old:
             if old["input_sha256"] != identity:
-                raise HTTPException(409, "Request identity was reused with different input")
+                raise HTTPException(409, {"code": "agent_request_conflict"})
             return public_run(old)
         policy = context.policy
         if self.workbenches is not None:
@@ -57,7 +63,7 @@ class AgentService:
         if not settings.MANAGED_AI_ENABLED:
             raise HTTPException(503, {"code": "managed_agent_inference_disabled"})
         if not policy["model"]:
-            raise HTTPException(409, "Configure an Agent model before submitting")
+            raise HTTPException(409, {"code": "agent_model_unconfigured"})
         # SQL moves the route into dedicated columns and strips it from the policy.
         policy = {**policy, "dispatch": run_dispatch()}
         run = self.repository.submit_run(
