@@ -99,6 +99,31 @@ class WorkbenchRepository:
             revision=revision,
         )
 
+    def project_collab_mode(self, project) -> str | None:
+        """Return optional per-project collaboration mode override, if set."""
+        rows = (
+            self.client.table("projects")
+            .select("agent_collab_mode")
+            .eq("id", project)
+            .limit(1)
+            .execute()
+            .data
+        )
+        return (rows[0] or {}).get("agent_collab_mode") if rows else None
+
+    def set_project_collab_mode(self, project, mode: str) -> str:
+        """Persist the project-wide external Agent collaboration mode."""
+        rows = (
+            self.client.table("projects")
+            .update({"agent_collab_mode": mode})
+            .eq("id", project)
+            .execute()
+            .data
+        )
+        if not rows:
+            raise WorkspaceError(404, {"code": "project_not_found"})
+        return rows[0].get("agent_collab_mode") or mode
+
     def request_open(self, row, binding, revision, pool, *, user=None):
         """Record open intent, executed by workers of ``pool``."""
         return self.command(

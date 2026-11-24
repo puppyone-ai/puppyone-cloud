@@ -274,3 +274,132 @@ async def test_fly_provider_propagates_pluggable_mount_env_without_overriding_se
     assert env["PUPPYONE_WORKSPACE_MOUNT_MODE"] == "fly_host_export"
     assert env["PUPPYONE_HOST_EXPORT_PROTOCOL"] == "sshfs"
     assert "NON_PUPPYONE_VAR" not in env
+
+
+def test_public_sandbox_reports_isolated_agent_sandboxes_from_project_mode(monkeypatch):
+    from src.platform.access.adapters.api.workbench_router import public_sandbox
+
+    monkeypatch.setattr(settings, "CLOUD_AGENT_COLLAB_MODE", "shared_machine")
+    base_row = {"state": "running", "binding": {"provider": "fly", "profile": "base"}, "sandbox_settings": {}}
+    assert public_sandbox(base_row)["settings"]["isolated_agent_sandboxes"] is False
+    assert public_sandbox(base_row, collab_mode="fly_host_export")["settings"]["isolated_agent_sandboxes"] is True
+    assert (
+        public_sandbox({**base_row, "agent_collab_mode": "fly_host_export"})["settings"][
+            "isolated_agent_sandboxes"
+        ]
+        is True
+    )
+    assert public_sandbox(base_row, collab_mode="shared_machine")["settings"]["isolated_agent_sandboxes"] is False
+    # Global default takes effect when the project has no override.
+    monkeypatch.setattr(settings, "CLOUD_AGENT_COLLAB_MODE", "fly_host_export")
+    assert public_sandbox(base_row)["settings"]["isolated_agent_sandboxes"] is True
+    assert public_sandbox(base_row, collab_mode="shared_machine")["settings"]["isolated_agent_sandboxes"] is False
+
+
+@pytest.mark.asyncio
+async def test_set_sandbox_settings_isolated_agent_sandboxes_toggle_and_authorization(monkeypatch):
+    from fastapi import HTTPException
+
+    from src.platform.access.adapters.api.workbench_router import (
+        SandboxSettings,
+        public_sandbox,
+        set_sandbox_settings as set_sandbox_route,
+        status as status_route,
+    )
+    from src.platform.workspace.service import WorkbenchService
+    from src.shared_types.grants import ProjectAction
+
+    monkeypatch.setattr(settings, "CLOUD_AGENT_COLLAB_MODE", "shared_machine")
+    row = {
+        "id": str(uuid4()),
+        "user_id": "admin-1",
+        "project_id": "proj-1",
+        "state": "running",
+        "generation": str(uuid4()),
+        "target_ref": "refs/heads/workspace",
+        "is_default": True,
+        "agent_registration_id": None,
+        "owner_deleted_at": None,
+        "binding": {"provider": "fly", "profile": "base", "artifact": "img"},
+        "sandbox_settings": {},
+    }
+    state = {"collab_mode": None, "sandbox_calls": [], "collab_calls": []}
+
+    repo = SimpleNamespace(
+        context=lambda user, project: {
+            "facts": {"user": user},
+            "revision": {"v": 1},
+            "workbench": row,
+        },
+        default=lambda user, project, rev: row,
+        project_collab_mode=lambda project: state["collab_mode"],
+        set_project_collab_mode=lambda project, mode: (
+            state["collab_calls"].append((project, mode)),
+            state.__setitem__("collab_mode", mode),
+            mode,
+        )[2],
+        set_sandbox_settings=lambda r, value, rev, **kw: (
+            state["sandbox_calls"].append(value),
+            {**r, "sandbox_settings": value},
+        )[1],
+    )
+
+    def authorize_facts(facts, project, user, action):
+        if action == ProjectAction.PROJECT_MANAGE and user != "admin-1":
+            raise HTTPException(status_code=403, detail="forbidden")
+        return SimpleNamespace(org_id="org-1")
+
+    service = WorkbenchService(
+        transport=SimpleNamespace(),
+        filesystem=SimpleNamespace(),
+        billing=SimpleNamespace(),
+        repository=repo,
+        authorization=SimpleNamespace(authorize_facts=authorize_facts),
+    )
+
+    # Non-admin Editor cannot toggle project-wide isolated Agent sandboxes.
+    with pytest.raises(HTTPException) as denied:
+        await service.set_sandbox_settings("editor-1", "proj-1", {"isolated_agent_sandboxes": True})
+    assert denied.value.status_code == 403
+    assert state["collab_calls"] == []
+    assert state["sandbox_calls"] == []
+
+    # Invalid non-boolean value fails closed with 422.
+    with pytest.raises(WorkspaceError) as bad:
+        await service.set_sandbox_settings("admin-1", "proj-1", {"isolated_agent_sandboxes": "yes"})
+    assert bad.value.status_code == 422
+
+    # Admin enables Tier 2 via PUT /workbench/sandbox without mutating cloud_workbenches.sandbox_settings.
+    resp = await set_sandbox_route(
+        "proj-1",
+        SandboxSettings(isolated_agent_sandboxes=True),
+        user=SimpleNamespace(user_id="admin-1"),
+        service=service,
+    )
+    assert resp["settings"]["isolated_agent_sandboxes"] is True
+    assert state["collab_calls"] == [("proj-1", "fly_host_export")]
+    assert state["sandbox_calls"] == []
+
+    # GET /workbench reflects the persisted Tier 2 setting.
+    service.opening = SimpleNamespace(status=AsyncMock(return_value=(row, None)))
+    status_resp = await status_route(
+        "proj-1",
+        SimpleNamespace(headers={}),
+        wait_seconds=0,
+        user=SimpleNamespace(user_id="admin-1"),
+        service=service,
+    )
+    assert status_resp["workspace"]["sandbox"]["settings"]["isolated_agent_sandboxes"] is True
+
+    # Combined update writes both project collaboration mode and workbench sandbox_settings.
+    combined = await service.set_sandbox_settings(
+        "admin-1",
+        "proj-1",
+        {"desktop": True, "isolated_agent_sandboxes": False},
+    )
+    assert state["collab_calls"][-1] == ("proj-1", "shared_machine")
+    assert state["sandbox_calls"] == [{"desktop": True}]
+    assert public_sandbox(combined)["settings"] == {
+        "desktop": True,
+        "isolated_agent_sandboxes": False,
+    }

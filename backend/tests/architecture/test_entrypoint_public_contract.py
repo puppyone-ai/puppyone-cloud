@@ -570,6 +570,17 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     assert https["schemas"] == {}
     assert not expected["contract"]["paths"].keys() & https["paths"].keys()
     expected["contract"]["paths"].update(https["paths"])
+    # Cloud Computer settings exposes the per-project Tier 2 isolated Agent
+    # sandbox toggle (isolated_agent_sandboxes) on SandboxSettings only.
+    isolated_sandboxes = json.loads(
+        Path(__file__).with_name("isolated_agent_sandboxes_contract_delta.json").read_text()
+    )
+    assert isolated_sandboxes["paths"] == {} and set(isolated_sandboxes["schemas"]) == {
+        "SandboxSettings"
+    }
+    for name, change in isolated_sandboxes["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }
