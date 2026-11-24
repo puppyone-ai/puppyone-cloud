@@ -218,6 +218,56 @@ async def test_subscriptions_share_watch_and_release_only_the_last_listener():
     assert [call.args for call in channel.control.await_args_list] == [("watch",), ("unwatch",)]
 
 
+async def test_cancelled_unwatch_resets_watch_started_so_next_subscriber_rewatches():
+    """Regression: Starlette/AnyIO cancels SSE streams on client disconnect.
+
+    If ``unwatch`` is sent to the VM and then cancelled before its reply returns,
+    ``watch_started`` must still reset to False so the next subscriber reusing
+    this pooled channel sends ``watch`` again instead of going permanently deaf.
+    """
+    from src.platform.workspace.execution.workbench_host import WorkbenchChannel
+
+    channel = object.__new__(WorkbenchChannel)
+    channel.subscribers, channel.watch_lock = set(), asyncio.Lock()
+    channel.watch_started = False
+    channel.healthy = lambda: True
+
+    actions: list[str] = []
+    fail_unwatch_once = True
+
+    async def fake_control(action, value=None):
+        nonlocal fail_unwatch_once
+        actions.append(action)
+        if action == "unwatch" and fail_unwatch_once:
+            fail_unwatch_once = False
+            raise asyncio.CancelledError()
+        return {}
+
+    channel.control = fake_control
+
+    entered = asyncio.Event()
+
+    async def subscriber_one():
+        async with channel.subscribe():
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(subscriber_one())
+    await entered.wait()
+    assert channel.watch_started is True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert channel.watch_started is False
+
+    # Re-entering on the SAME pooled channel must re-send "watch" to the VM.
+    async with channel.subscribe():
+        assert channel.watch_started is True
+    assert channel.watch_started is False
+    assert actions == ["watch", "unwatch", "watch", "unwatch"]
+
+
 async def test_watch_admission_does_not_register_workspace_activity():
     from contextlib import asynccontextmanager
     from unittest.mock import Mock

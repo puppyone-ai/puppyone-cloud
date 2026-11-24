@@ -201,10 +201,13 @@ async def folder_events(host: str, folder_id: UUID, request: Request, generation
 async def _workspace_events(workbench, user, project, generation):
     """Hosted workspace changes in the same shape as a device folder's."""
     yield {"paths": [], "reset": True}
+    events = workbench.events(user, project, generation)
     try:
-        async for value in workbench.events(user, project, generation):
+        async for value in events:
             yield None if value is None else {"paths": value.get("paths") or [], "reset": bool(value.get("reset"))}
     except (HTTPException, WorkspaceError):
         yield {"unavailable": {}}
     except ConnectionError:
         yield {"unavailable": {"retryable": True}}
+    finally:
+        await events.aclose()
