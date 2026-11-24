@@ -15,6 +15,7 @@ from src.platform.workspace.filesystem.port import FilesystemError, FilesystemPo
 from src.shared_types.grants import ProjectAction
 
 from .admission import AdmissionSnapshots
+from .collaboration import get_agent_collaboration_router
 from .errors import WorkspaceError
 from .lifecycle import WorkbenchLifecycle, meter_id
 from .opening import WorkspaceOpening, same_runtime
@@ -163,25 +164,68 @@ class WorkbenchService(WorkbenchAdmission):
     async def reap(self):
         await self.lifecycle.reap()
 
+    async def project_collab_mode(self, project) -> str | None:
+        getter = getattr(self.repository, "project_collab_mode", None)
+        if not callable(getter):
+            return None
+        return await run_blocking(getter, project)
+
     async def set_sandbox_settings(self, user, project, value):
         """Merge the owner's choices. ``desktop`` takes effect when the next
-        computer is created; runtime toggles apply immediately."""
+        computer is created; runtime toggles apply immediately.
+        ``isolated_agent_sandboxes`` updates the project's collaboration mode
+        between ``fly_host_export`` (Tier 2) and ``shared_machine`` (Tier 1)
+        and requires project management authority."""
+        if not isinstance(value, dict):
+            try:
+                value = dict(value)
+            except Exception as exc:
+                raise WorkspaceError(422, {"code": "sandbox_settings_invalid"}) from exc
+        else:
+            value = dict(value)
+        has_isolated = "isolated_agent_sandboxes" in value
+        isolated = value.pop("isolated_agent_sandboxes", None)
+        if has_isolated and not isinstance(isolated, bool):
+            raise WorkspaceError(422, {"code": "sandbox_settings_invalid"})
         try:
-            value = validate_settings(value)
+            workbench_choices = validate_settings(value)
         except ValueError as exc:
             raise WorkspaceError(422, {"code": "sandbox_settings_invalid"}) from exc
         context, _ = await run_blocking(self.context, user, project, ProjectAction.AGENT_RUN)
+        if has_isolated:
+            await run_blocking(
+                self.authorization.authorize_facts,
+                context["facts"],
+                project,
+                user,
+                ProjectAction.PROJECT_MANAGE,
+            )
+            target_mode = "fly_host_export" if isolated else "shared_machine"
+            get_agent_collaboration_router().require_ready(target_mode)
+            setter = getattr(self.repository, "set_project_collab_mode", None)
+            if not callable(setter):
+                raise WorkspaceError(
+                    503,
+                    {"code": "agent_collaboration_mode_not_ready", "mode": target_mode},
+                )
+            collab_mode = await run_blocking(setter, project, target_mode)
+        else:
+            collab_mode = await self.project_collab_mode(project)
         row = context["workbench"] or await run_blocking(
             self.repository.default, user, project, context["revision"]
         )
-        merged = {**(row.get("sandbox_settings") or {}), **value}
-        return await run_blocking(
-            self.repository.set_sandbox_settings,
-            row,
-            merged,
-            context["revision"],
-            **_user_override(row, user),
-        )
+        if workbench_choices or not has_isolated:
+            merged = {**(row.get("sandbox_settings") or {}), **workbench_choices}
+            row = await run_blocking(
+                self.repository.set_sandbox_settings,
+                row,
+                merged,
+                context["revision"],
+                **_user_override(row, user),
+            )
+        if isinstance(row, dict) and collab_mode is not None:
+            row = {**row, "agent_collab_mode": collab_mode}
+        return row
 
     async def check(self, row, *, user=None):
         actor = user or row["user_id"]

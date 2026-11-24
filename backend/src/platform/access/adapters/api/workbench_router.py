@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.platform.access.composition import get_workbench_service
 from src.platform.auth.dependencies import get_current_user
 from src.platform.sandbox import binding_profile, resolve_features, settings_profile
+from src.platform.workspace.collaboration import get_agent_collaboration_router
 from src.platform.workspace.errors import WorkspaceError, opening_failure
 from src.platform.workspace.screen import SUBPROTOCOL, WorkspaceScreen, ticket_from_protocols
 from src.utils.request_context import request_id_var
@@ -30,7 +31,7 @@ from src.utils.request_context import request_id_var
 logger = logging.getLogger(__name__)
 
 
-def public_workbench(row):
+def public_workbench(row, *, collab_mode=None):
     if row is None:
         return None
     expired = bool(
@@ -47,11 +48,11 @@ def public_workbench(row):
             "error": "workbench_start_timeout" if expired else row.get("operation_error"),
             "retryable": expired or row.get("operation_retryable", False),
         },
-        "sandbox": public_sandbox(row),
+        "sandbox": public_sandbox(row, collab_mode=collab_mode),
     }
 
 
-def public_sandbox(row):
+def public_sandbox(row, *, collab_mode=None):
     """Profile, owner settings and Feature policy for client entry points.
 
     ``profile`` is the bound computer's; a workspace without a live binding is
@@ -59,7 +60,10 @@ def public_sandbox(row):
     from ``profile`` when the owner changed the install choice, which applies
     only when the next computer is created.
     """
-    choices = row.get("sandbox_settings") or {}
+    choices = dict(row.get("sandbox_settings") or {})
+    override = collab_mode if collab_mode is not None else row.get("agent_collab_mode")
+    effective_mode = get_agent_collaboration_router().resolve(project_override=override).mode
+    choices["isolated_agent_sandboxes"] = effective_mode == "fly_host_export"
     binding = row.get("binding") if row.get("state") != "retired" else None
     try:
         upcoming = settings_profile(choices)
@@ -122,6 +126,13 @@ class FileOperation(BaseModel):
     expected_revision: str | None
 
 
+async def _project_collab_mode(service, project_id):
+    getter = getattr(service, "project_collab_mode", None)
+    if not callable(getter):
+        return None
+    return await getter(project_id)
+
+
 @router.get("")
 async def status(
     project_id: str,
@@ -135,7 +146,8 @@ async def status(
         row, root = await service.opening.status(
             user.user_id, project_id, wait_seconds=wait_seconds
         )
-    return {"workspace": public_workbench(row), **(root or {})}
+    collab_mode = await _project_collab_mode(service, project_id) if row is not None else None
+    return {"workspace": public_workbench(row, collab_mode=collab_mode), **(root or {})}
 
 
 @router.post("")
@@ -147,8 +159,9 @@ async def open_workspace(
 ):
     async with _opening("open", project_id):
         row = await service.request_open(user.user_id, project_id)
+    collab_mode = await _project_collab_mode(service, project_id) if row is not None else None
     response.status_code = 200 if row["state"] == "running" else 202
-    return public_workbench(row)
+    return public_workbench(row, collab_mode=collab_mode)
 
 
 @router.get("/files")
@@ -309,6 +322,7 @@ class SandboxSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     desktop: bool | None = None
     screen_stream: bool | None = None
+    isolated_agent_sandboxes: bool | None = None
 
 
 @router.put("/sandbox")

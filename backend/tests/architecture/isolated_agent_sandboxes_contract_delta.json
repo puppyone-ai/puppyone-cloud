@@ -1,0 +1,9 @@
+{
+  "paths": {},
+  "schemas": {
+    "SandboxSettings": {
+      "before": "553985cc2b864b9aa07711ea158d693ffd8b9761969babc0f9b2456f16d17cb6",
+      "after": "c729b8cb9c46b2366429a63cec1f486cd9e8cc4648d98a9cd30b7ac928bbae60"
+    }
+  }
+}
