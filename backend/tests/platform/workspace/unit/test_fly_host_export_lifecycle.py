@@ -146,6 +146,45 @@ async def test_destroying_tier2_agent_vm_deletes_only_agent_machine_and_volume_n
 
 
 @pytest.mark.asyncio
+async def test_tier2_agent_destroy_treats_already_deleted_host_app_404_as_destroyed(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_FLY_TOKEN", "fly-test-token")
+    host_id = str(uuid4())
+    agent_id = str(uuid4())
+    agent_gen = str(uuid4())
+    project_app = workspace_app(host_id)
+    resource = {
+        "app": project_app,
+        "workbench_id": agent_id,
+        "workbench_generation": agent_gen,
+        "project_id": "proj-1",
+        "host_workbench_id": host_id,
+        "resource_id": "mach-agent-a",
+        "volume_id": "vol-agent-a",
+    }
+
+    # Case 1: Host Fly app was already force-deleted before Agent cleanup runs (GET /machines -> 404).
+    async with httpx.AsyncClient(
+        base_url="https://api.machines.dev",
+        transport=httpx.MockTransport(lambda req: httpx.Response(404, json={"error": "not_found"})),
+    ) as client:
+        await FlyRuntimeProvider(client=client).destroy_workspace(resource)
+
+    # Case 2: Host Fly app disappears between GET /machines and GET /volumes (GET /volumes -> 404).
+    def handle_volumes_404(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/machines"):
+            return httpx.Response(200, json=[])
+        if request.method == "GET" and request.url.path.endswith("/volumes"):
+            return httpx.Response(404, json={"error": "not_found"})
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        base_url="https://api.machines.dev",
+        transport=httpx.MockTransport(handle_volumes_404),
+    ) as client:
+        await FlyRuntimeProvider(client=client).destroy_workspace(resource)
+
+
+@pytest.mark.asyncio
 async def test_fly_ssh_allows_tier2_agent_on_project_host_dedicated_app():
     host_id = str(uuid4())
     agent_id = str(uuid4())
