@@ -14,8 +14,9 @@ const SAFE_SCHEMA = /^[a-z][a-z0-9_]{0,62}$/;
  *
  * - `local` (Tier 1 shared_machine and legacy isolated_branch): bind-mount the
  *   Machine's local NVMe `/data/workspace` onto `/workspace`.
- * - `fly_host_export` (Tier 2 pluggable slot): mount `/workspace/repo` over
- *   Fly 6pn from the Project default Workspace machine (SSHFS / NFS-Ganesha).
+ * - `fly_host_export` (Tier 2): bind-mount `/data/workspace` onto `/workspace`
+ *   and prepare empty `/workspace/repo` (root-owned until lifecycle attaches
+ *   the authenticated Kernel NFSv4.1 / SSHFS mount over Fly 6pn).
  * - `juicefs_shared` (Tier 3 pluggable slot): mount a per-Project JuiceFS POSIX
  *   volume backed by isolated metadata schema and prefix-scoped S3 credentials.
  */
@@ -29,20 +30,27 @@ export function resolveMountPlan(env = process.env) {
     };
   }
   if (mode === 'fly_host_export') {
-    const protocol = (env.PUPPYONE_HOST_EXPORT_PROTOCOL || 'sshfs').trim();
+    const protocol = (env.PUPPYONE_HOST_EXPORT_PROTOCOL || 'nfs_ganesha').trim();
     const target = (env.PUPPYONE_HOST_EXPORT_TARGET || '').trim();
     if (!['sshfs', 'nfs_ganesha'].includes(protocol)) {
       throw new Error(`Unsupported fly_host_export protocol: ${protocol}`);
     }
-    if (!SAFE_TARGET.test(target)) {
-      throw new Error('PUPPYONE_HOST_EXPORT_TARGET is required for fly_host_export');
+    if (target && !SAFE_TARGET.test(target)) {
+      throw new Error('PUPPYONE_HOST_EXPORT_TARGET contains invalid characters');
     }
     return {
       mode: 'fly_host_export',
-      implemented: false,
+      implemented: true,
       protocol,
       target,
-      commands: [],
+      // Bind local /workspace for scratch/parent layout and pre-create an empty,
+      // root-owned /workspace/repo mountpoint; workbench-lifecycle.mjs mounts the
+      // authenticated per-Agent 6pn export onto /workspace/repo before readiness.
+      commands: [
+        ['mount', ['--bind', '/data/workspace', '/workspace']],
+        ['mkdir', ['-p', '/workspace/repo']],
+        ['chmod', ['0755', '/workspace/repo']],
+      ],
     };
   }
   if (mode === 'juicefs_shared') {

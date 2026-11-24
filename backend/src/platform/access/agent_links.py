@@ -200,22 +200,39 @@ class AgentLinkRepository(AccessRepository):
         """The last save of each Agent's Workspace (and the shared default), by branch."""
         rows = (
             self.client.table("cloud_workbenches")
-            .select("target_ref,save_status,save_error,save_finished_at,unpublished_changes")
+            .select(
+                "target_ref,save_status,save_error,save_finished_at,unpublished_changes,"
+                "is_default,collaboration_mode"
+            )
             .eq("project_id", project)
             .is_("owner_deleted_at", "null")
             .or_("agent_registration_id.not.is.null,is_default.eq.true")
             .execute()
             .data
         )
-        return {
-            row["target_ref"]: {
+        saves = {}
+        for row in rows or []:
+            if row.get("collaboration_mode") == "fly_host_export" and not row.get("is_default"):
+                continue
+            saves[row["target_ref"]] = {
                 "status": row["save_status"],
                 "error": row["save_error"],
                 "finished_at": row["save_finished_at"],
                 "unsaved_work": row["unpublished_changes"],
             }
-            for row in rows or []
-        }
+        return saves
+
+    def project_collab_mode(self, project):
+        """Return optional per-project collaboration mode override, if set."""
+        rows = (
+            self.client.table("projects")
+            .select("agent_collab_mode")
+            .eq("id", project)
+            .limit(1)
+            .execute()
+            .data
+        )
+        return (rows[0] or {}).get("agent_collab_mode") if rows else None
 
     def command(self, action, user, **payload):
         return self.call("access_agent_link_command", action=action, user=user, payload=payload)
@@ -276,6 +293,12 @@ class AgentLinkService:
     async def inventory(self, user, project):
         row = await run_blocking(self.repository.command, "inventory", user, project_id=project)
         saves = await run_blocking(self.repository.agent_saves, project)
+        project_mode = None
+        if callable(getattr(self.repository, "project_collab_mode", None)):
+            try:
+                project_mode = await run_blocking(self.repository.project_collab_mode, project)
+            except Exception:
+                project_mode = None
         connections = [
             {**connection, "save": saves.get(connection.get("branch"))}
             for connection in row.get("connections") or []
@@ -284,7 +307,7 @@ class AgentLinkService:
             **row,
             "connections": connections,
             "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED,
-            "collaboration_mode": self.collaboration.resolve().mode,
+            "collaboration_mode": self.collaboration.resolve(project_override=project_mode).mode,
         }
 
     async def stop(self, user, project):
@@ -324,6 +347,12 @@ class AgentLinkService:
 
                 self._workspaces = build_workbench_service()
             actor = row.get("actor_user_id") or row["user_id"]
+            if row.get("collaboration_mode") == "fly_host_export" and row.get("host_workbench_id"):
+                host_row = await run_blocking(
+                    self._workspaces.repository.get, row["host_workbench_id"]
+                )
+                if host_row and host_row["state"] != "running" and not host_row.get("open_requested"):
+                    await self._workspaces.request_open(actor, row["project_id"], host_row)
             await self._workspaces.request_open(actor, row["project_id"], row)
         except Exception:
             logger.warning("agent_workspace_prepare_failed", exc_info=True)

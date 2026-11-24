@@ -271,9 +271,36 @@ class HostedSshAccess:
         if row["generation"] != grant["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
+    async def _ensure_fly_host_ready(self, row, notify=None):
+        """Ensure the Project default Host VM is running for a Tier 2 Agent VM."""
+        if (
+            not isinstance(row, dict)
+            or row.get("collaboration_mode") != "fly_host_export"
+            or not row.get("host_workbench_id")
+        ):
+            return None
+        host_row = await run_blocking(self.workspace.repository.get, row["host_workbench_id"])
+        if not host_row or host_row.get("owner_deleted_at"):
+            raise WorkspaceError(409, {"code": "workbench_host_unavailable"})
+        if host_row["state"] != "running" or host_row.get("open_requested"):
+            if notify:
+                await notify("Waking the project workspace; this can take up to a minute.\r\n")
+            actor = row.get("actor_user_id") or row["user_id"]
+            host_row = await while_telling(
+                self.workspace.ensure_running(
+                    {"user_id": actor, "project_id": host_row["project_id"]}, host_row
+                ),
+                notify,
+                "Still waking the project workspace ({seconds}s)...\r\n",
+                seconds=self.first_start_seconds,
+                refusal="workspace_preparing",
+            )
+        return host_row
+
     async def start_agent_workspace(self, connection, notify=None):
         """A ticket binds one generation, so a machine must exist before it is minted."""
         row = await self.linked_agents().workspace(connection)
+        await self._ensure_fly_host_ready(row, notify)
         if row["state"] == "running" or row["state"] in RESUMABLE_STATES:
             return
         if notify:
@@ -317,7 +344,15 @@ class HostedSshAccess:
         await run_blocking(self.grants.consume, identity)
         if connection or grant.get("access_grant_id"):
             router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
-            await router.resolve().before_agent_session(self.workspace, grant)
+            wb = None
+            repo = getattr(self.workspace, "repository", None)
+            if repo is not None and callable(getattr(repo, "get", None)):
+                with suppress(Exception):
+                    wb = await run_blocking(repo.get, grant["workbench_id"])
+            project_mode = wb.get("collaboration_mode") if isinstance(wb, dict) else None
+            await router.resolve(project_override=project_mode).before_agent_session(
+                self.workspace, grant
+            )
         return SshSession(identity, grant, may_wake)
 
     @asynccontextmanager
@@ -327,7 +362,21 @@ class HostedSshAccess:
         await self.resume(grant, session.may_wake, notify)
         connection_id = str(uuid4())
         router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
-        collab_mode = router.resolve().mode
+        wb = None
+        repo = getattr(self.workspace, "repository", None)
+        if repo is not None and callable(getattr(repo, "get", None)):
+            with suppress(Exception):
+                wb = await run_blocking(repo.get, grant["workbench_id"])
+        project_mode = wb.get("collaboration_mode") if isinstance(wb, dict) else None
+        collab_mode = router.resolve(project_override=project_mode).mode
+        if isinstance(wb, dict) and collab_mode == "fly_host_export" and wb.get("host_workbench_id"):
+            host_row = await self._ensure_fly_host_ready(wb, notify)
+            mounted = (wb.get("resource") or {}).get("host_export") or {}
+            if host_row and (
+                mounted.get("host_compute_epoch") != host_row.get("compute_epoch")
+                or mounted.get("host_generation") != host_row.get("generation")
+            ):
+                await self.workspace.lifecycle.ensure_host_export_mounted(wb, host_row=host_row)
         async with self.connections.open(
             connection_id,
             grant["user_id"],

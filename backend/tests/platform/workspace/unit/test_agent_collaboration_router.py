@@ -39,7 +39,7 @@ def test_router_lists_all_tiers_and_resolves_precedence(monkeypatch):
         "juicefs_shared",
         "isolated_branch",
     ]
-    assert [m["implemented"] for m in modes] == [True, False, False, True]
+    assert [m["implemented"] for m in modes] == [True, True, False, True]
 
     monkeypatch.setattr(settings, "CLOUD_AGENT_COLLAB_MODE", "shared_machine")
     assert router.resolve().mode == "shared_machine"
@@ -56,7 +56,7 @@ def test_router_lists_all_tiers_and_resolves_precedence(monkeypatch):
     assert exc.value.code == "agent_collaboration_mode_invalid"
 
 
-@pytest.mark.parametrize("mode", ["fly_host_export", "juicefs_shared"])
+@pytest.mark.parametrize("mode", ["juicefs_shared"])
 def test_unimplemented_tiers_fail_closed_on_require_ready(mode):
     router = AgentCollaborationRouter()
     with pytest.raises(WorkspaceError) as exc:
@@ -65,17 +65,20 @@ def test_unimplemented_tiers_fail_closed_on_require_ready(mode):
     assert exc.value.detail == {"code": "agent_collaboration_mode_not_ready", "mode": mode}
 
 
-def test_custom_tier2_plugin_can_be_registered_without_touching_callers():
-    class EnabledFlyHostExport(FlyHostExportTopology):
-        implemented = True
-
+def test_tier2_fly_host_export_is_ready_and_can_still_be_overridden():
     router = AgentCollaborationRouter()
-    router.register(EnabledFlyHostExport())
     active = router.require_ready("fly_host_export")
     assert active.mode == "fly_host_export"
     assert active.isolated_compute_vm is True
     assert active.shared_live_files is True
     assert active.uses_agent_branch is False
+
+    class CustomFlyHostExport(FlyHostExportTopology):
+        def instructions_footer(self) -> str:
+            return "custom tier2 footer"
+
+    router.register(CustomFlyHostExport())
+    assert router.require_ready("fly_host_export").instructions_footer() == "custom tier2 footer"
 
 
 def test_mount_descriptors_across_all_four_topologies(monkeypatch):

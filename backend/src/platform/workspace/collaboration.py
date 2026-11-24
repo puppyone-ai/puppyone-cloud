@@ -137,6 +137,58 @@ class _BaseTopology:
         return None
 
 
+async def _checkpoint_default_workspace(
+    workspace_service: Any,
+    workbench_id: str | None,
+    grant: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Best-effort safety backup of a Project's shared default Workspace before Agent edits."""
+    if not workbench_id or not get_repository_policy().backup.on_pause:
+        return None
+    repo = getattr(workspace_service, "repository", None)
+    git = getattr(workspace_service, "git", None)
+    if repo is None or git is None or not callable(getattr(repo, "get", None)):
+        return None
+    snapshot = getattr(git, "snapshot", None)
+    if not callable(snapshot):
+        return None
+    try:
+        row = await run_blocking(repo.get, workbench_id)
+        if not isinstance(row, dict):
+            return None
+        if (
+            not row.get("is_default")
+            or row.get("agent_registration_id")
+            or row.get("state") != "running"
+            or not row.get("unpublished_changes")
+        ):
+            return None
+        async with asyncio.timeout(PRE_AGENT_BACKUP_TIMEOUT_SECONDS):
+            result = await snapshot(row, message=PRE_AGENT_BACKUP_MESSAGE)
+        if isinstance(result, dict) and result.get("status") == "saved":
+            save_outcome = getattr(repo, "save_outcome", None)
+            if callable(save_outcome):
+                await run_blocking(
+                    save_outcome,
+                    row,
+                    "saved",
+                    error=None,
+                    oid=result.get("tip"),
+                )
+        return result
+    except Exception:
+        logger.warning(
+            "shared_machine_pre_agent_backup_skipped",
+            extra={
+                "workbench_id": workbench_id,
+                "project_id": grant.get("project_id"),
+                "access_grant_id": grant.get("access_grant_id"),
+            },
+            exc_info=True,
+        )
+        return None
+
+
 class SharedMachineTopology(_BaseTopology):
     """Tier 1: External Agents execute inside the Project's shared default Workspace VM."""
 
@@ -164,69 +216,23 @@ class SharedMachineTopology(_BaseTopology):
         workspace_service: Any,
         grant: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Best-effort safety checkpoint before an external Agent begins modifying shared files.
-
-        Protects unsaved human edits in the shared default Workspace by taking a
-        linear backup commit on ``main`` before the Agent session starts. Never
-        blocks or fails Agent admission if backup is disabled or unavailable.
-        """
-        if not get_repository_policy().backup.on_pause:
-            return None
-        repo = getattr(workspace_service, "repository", None)
-        git = getattr(workspace_service, "git", None)
-        if repo is None or git is None or not callable(getattr(repo, "get", None)):
-            return None
-        snapshot = getattr(git, "snapshot", None)
-        if not callable(snapshot):
-            return None
-        try:
-            row = await run_blocking(repo.get, grant["workbench_id"])
-            if not isinstance(row, dict):
-                return None
-            if (
-                not row.get("is_default")
-                or row.get("agent_registration_id")
-                or row.get("state") != "running"
-                or not row.get("unpublished_changes")
-            ):
-                return None
-            async with asyncio.timeout(PRE_AGENT_BACKUP_TIMEOUT_SECONDS):
-                result = await snapshot(row, message=PRE_AGENT_BACKUP_MESSAGE)
-            if isinstance(result, dict) and result.get("status") == "saved":
-                save_outcome = getattr(repo, "save_outcome", None)
-                if callable(save_outcome):
-                    await run_blocking(
-                        save_outcome,
-                        row,
-                        "saved",
-                        error=None,
-                        oid=result.get("tip"),
-                    )
-            return result
-        except Exception:
-            logger.warning(
-                "shared_machine_pre_agent_backup_skipped",
-                extra={
-                    "workbench_id": grant.get("workbench_id"),
-                    "project_id": grant.get("project_id"),
-                    "access_grant_id": grant.get("access_grant_id"),
-                },
-                exc_info=True,
-            )
-            return None
+        return await _checkpoint_default_workspace(
+            workspace_service, grant.get("workbench_id"), grant
+        )
 
 
 class FlyHostExportTopology(_BaseTopology):
-    """Tier 2 (pluggable slot): Isolated Fly MicroVMs mounting /workspace/repo over Fly 6pn.
+    """Tier 2: Isolated Fly MicroVMs mounting /workspace/repo over Fly 6pn.
 
     The Project's default Workspace Fly Machine owns the real ext4 NVMe disk and
-    exports ``/workspace/repo`` (keeping ``.git`` outside the export) via
-    user-space SSHFS or NFS-Ganesha over Fly's private 6pn network.
+    exports ``/workspace/repo`` via SSH-tunneled kernel NFSv4.1 (NFS-Ganesha bound
+    strictly to 127.0.0.1:2049 behind per-Agent Ed25519 SSH tunnels on Fly 6pn) or
+    optional SSHFS.
     """
 
     mode: AgentCollaborationMode = "fly_host_export"
     tier = 2
-    implemented = False
+    implemented = True
     shared_live_files = True
     isolated_compute_vm = True
     uses_agent_branch = False
@@ -239,6 +245,24 @@ class FlyHostExportTopology(_BaseTopology):
             "directory is kept from one command to the next. Changes are backed up to the project\n"
             "repository automatically. Your first connection can take a few minutes while the\n"
             "machine is prepared, and says so while it waits; after that, waking takes up to a minute.\n"
+        )
+
+    async def before_agent_session(
+        self,
+        workspace_service: Any,
+        grant: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        repo = getattr(workspace_service, "repository", None)
+        if repo is None or not callable(getattr(repo, "get", None)):
+            return None
+        try:
+            agent_row = await run_blocking(repo.get, grant.get("workbench_id"))
+        except Exception:
+            return None
+        if not isinstance(agent_row, dict) or not agent_row.get("host_workbench_id"):
+            return None
+        return await _checkpoint_default_workspace(
+            workspace_service, agent_row["host_workbench_id"], grant
         )
 
     def resolve_mount(

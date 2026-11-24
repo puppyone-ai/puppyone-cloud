@@ -453,3 +453,114 @@ def test_populated_upgrade_rollback_dry_run_and_function_privileges(pg):
         )
     finally:
         pg.sql(f"DROP DATABASE {database} WITH (FORCE)")
+
+
+def test_tier2_fly_host_export_routes_separate_agent_vms_linked_to_host_and_guards_idle_pause(pg):
+    env = seed_project(pg)
+    host = make_running_workbench(pg, env["owner"], env["project"])
+    # Opt this Project into Tier 2 (fly_host_export) via per-project override.
+    pg.sql(f"UPDATE public.projects SET agent_collab_mode='fly_host_export' WHERE id='{env['project']}'")
+
+    agent_a = _admit_agent(pg, env["owner"], env["project"], host["id"], name="Tier2A", key=KEY_A)
+    agent_b = _admit_agent(pg, env["owner"], env["project"], host["id"], name="Tier2B", key=KEY_B)
+
+    wb_a = _sql_call(pg, "access_agent_workspace", agent_a["id"], "shared_machine")
+    wb_b = _sql_call(pg, "access_agent_workspace", agent_b["id"], "shared_machine")
+
+    # Project override wins: each Agent gets its OWN isolated compute workbench,
+    # BOTH linked to the Project's single shared default Host Workspace on refs/heads/workspace.
+    assert wb_a["id"] != wb_b["id"]
+    assert wb_a["id"] != host["id"] and wb_b["id"] != host["id"]
+    assert wb_a["host_workbench_id"] == host["id"]
+    assert wb_b["host_workbench_id"] == host["id"]
+    assert wb_a["collaboration_mode"] == "fly_host_export"
+    assert wb_b["collaboration_mode"] == "fly_host_export"
+    assert wb_a["target_ref"] == "refs/heads/workspace"
+    assert wb_b["target_ref"] == "refs/heads/workspace"
+
+    # Inventory reports refs/heads/workspace and fly_host_export for both Agents.
+    inv = pg.call_rpc(
+        "access_agent_link_command",
+        action="inventory",
+        user=env["owner"],
+        payload={"project_id": env["project"]},
+    )
+    assert set(inv.keys()) == {"links", "connections", "pending"}
+    by_id = {c["id"]: c for c in inv["connections"]}
+    assert by_id[agent_a["id"]]["collaboration_mode"] == "fly_host_export"
+    assert by_id[agent_a["id"]]["branch"] == "refs/heads/workspace"
+    assert by_id[agent_b["id"]]["collaboration_mode"] == "fly_host_export"
+    assert by_id[agent_b["id"]]["branch"] == "refs/heads/workspace"
+
+    # Bring Agent A's compute workbench to running and verify Project Host idle pause is deferred!
+    pg.sql(
+        f"UPDATE public.cloud_workbenches SET state='running', compute_epoch=1, "
+        f"binding='{{\"provider\":\"fly\",\"artifact\":\"img\"}}'::jsonb, "
+        f"resource='{{\"app\":\"pw-host\",\"resource_id\":\"mach-a\",\"allocation_pending\":false}}'::jsonb "
+        f"WHERE id='{wb_a['id']}'"
+    )
+    pg.sql(
+        f"UPDATE public.cloud_workbenches SET last_activity_at=clock_timestamp() - interval '2 hours', "
+        f"unpublished_changes=false, backup_until=NULL WHERE id='{host['id']}'"
+    )
+    stale_host = pg.row(f"SELECT id, generation, version FROM cloud_workbenches WHERE id='{host['id']}'")
+    blocked = pg.wb_rpc(
+        "idle_claim",
+        workbench=stale_host["id"],
+        generation=stale_host["generation"],
+        version=stale_host["version"],
+        action="pause",
+    )
+    assert blocked["acquired"] is False
+
+    # Running a command on Agent A propagates activity + unpublished_changes to Project Host VM!
+    ticket_a = _sql_call(pg, "access_agent_ssh_ticket", agent_a["id"], "fly_host_export")["id"]
+    pg.call_rpc("workspace_ssh_grant_consume", id=ticket_a)
+    wb_a_running = pg.row(f"SELECT * FROM cloud_workbenches WHERE id='{wb_a['id']}'")
+    cmd_a = _open_command(
+        pg, session_id=ticket_a, workbench=wb_a_running, user=env["owner"], project=env["project"]
+    )
+    assert cmd_a["workbench_id"] == wb_a["id"]
+    host_after = pg.row(
+        f"SELECT unpublished_changes, last_activity_at > clock_timestamp() - interval '1 minute' AS fresh "
+        f"FROM cloud_workbenches WHERE id='{host['id']}'"
+    )
+    assert host_after == {"unpublished_changes": True, "fresh": True}
+
+    # Once Agent A pauses (and host is idle), idle_claim allows pausing Host VM cleanly.
+    pg.wb_rpc("connection_update", id=cmd_a["id"], generation=cmd_a["generation"], action="stop")
+    pg.wb_rpc("connection_update", id=cmd_a["id"], generation=cmd_a["generation"], action="release")
+    pg.sql(f"UPDATE public.cloud_workbenches SET state='paused' WHERE id='{wb_a['id']}'")
+    pg.sql(
+        f"UPDATE public.cloud_workbenches SET last_activity_at=clock_timestamp() - interval '2 hours', "
+        f"backup_until=NULL WHERE id='{host['id']}'"
+    )
+    stale_host2 = pg.row(f"SELECT id, generation, version FROM cloud_workbenches WHERE id='{host['id']}'")
+    allowed = pg.wb_rpc(
+        "idle_claim",
+        workbench=stale_host2["id"],
+        generation=stale_host2["generation"],
+        version=stale_host2["version"],
+        action="pause",
+    )
+    assert allowed["acquired"] is True
+
+    # Privilege containment on updated functions from 20261124020000 migration.
+    for sig in (
+        "public.cloud_workbench_idle_claim(uuid,uuid,bigint,text)",
+        "public.cloud_workbench_connection_acquire_in_session(uuid,uuid,uuid,uuid,uuid,text,jsonb)",
+        "public.cloud_workbench_connection_update(uuid,uuid,text)",
+        "public.access_agent_link_command(text,uuid,jsonb)",
+    ):
+        perms = pg.row(
+            f"SELECT has_function_privilege('anon','{sig}','EXECUTE') AS anon, "
+            f"has_function_privilege('authenticated','{sig}','EXECUTE') AS auth, "
+            f"has_function_privilege('service_role','{sig}','EXECUTE') AS svc"
+        )
+        assert perms == {"anon": False, "auth": False, "svc": True}, sig
+    internal_perm = pg.row(
+        "SELECT has_function_privilege('anon','public.access_grant_agent_workspace(uuid,text)','EXECUTE') AS anon, "
+        "has_function_privilege('authenticated','public.access_grant_agent_workspace(uuid,text)','EXECUTE') AS auth, "
+        "has_function_privilege('service_role','public.access_grant_agent_workspace(uuid,text)','EXECUTE') AS svc"
+    )
+    assert internal_perm == {"anon": False, "auth": False, "svc": False}

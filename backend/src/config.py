@@ -518,7 +518,8 @@ class Settings(BaseSettings):
         "isolated_branch",
     ] = "shared_machine"
     # Transport protocol for Tier 2 (fly_host_export) mount descriptors.
-    CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL: Literal["sshfs", "nfs_ganesha"] = "sshfs"
+    # Default "nfs_ganesha" uses SSH-tunneled kernel NFSv4.1 (full POSIX + hardlinks + cross-VM flock).
+    CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL: Literal["sshfs", "nfs_ganesha"] = "nfs_ganesha"
     # Metadata namespace prefix for Tier 3 (juicefs_shared) per-project schemas.
     CLOUD_AGENT_JUICEFS_META_PREFIX: str = ""
     # Comma-separated Features withdrawn from every workspace without rebuilding machines.
