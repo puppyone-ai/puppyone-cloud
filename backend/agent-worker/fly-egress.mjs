@@ -5,6 +5,8 @@ const PRIVATE_V4 = [
 ];
 // fc00::/7 holds Fly's private network, its resolver and its Machines API.
 const PRIVATE_V6 = ['fc00::/7', 'fe80::/10', 'ff00::/8'];
+// Root-only loopback services (NFS-Ganesha 2049, host-export sshd/tunnels 2222-2223).
+const SEALED_LOOPBACK_TCP_PORTS = [2049, 2222, 2223];
 const REJECT = 'counter reject with icmpx type admin-prohibited';
 
 export const PUBLIC_DNS = 'nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\n';
@@ -16,9 +18,12 @@ export function egressRules(internet) {
         `meta skuid 1000 ip6 daddr { ${PRIVATE_V6.join(', ')} } ${REJECT}`,
       ]
     : [`meta skuid 1000 ${REJECT}`];
+  const sealedPorts = SEALED_LOOPBACK_TCP_PORTS.join(', ');
   return `table inet puppyone_task_egress {
     chain output {
       type filter hook output priority 0; policy accept;
+      meta skuid 1000 ip daddr 127.0.0.0/8 tcp dport { ${sealedPorts} } ${REJECT}
+      meta skuid 1000 ip6 daddr ::1/128 tcp dport { ${sealedPorts} } ${REJECT}
       meta skuid 1000 ip daddr 127.0.0.0/8 accept
       meta skuid 1000 ip6 daddr ::1/128 accept
       ${closing.join('\n      ')}

@@ -40,6 +40,14 @@ SAVE_BUDGET_SECONDS = 150
 PAUSE_LIMIT_SECONDS = 600
 
 
+def _is_fly_host_export(row) -> bool:
+    return bool(
+        isinstance(row, dict)
+        and row.get("collaboration_mode") == "fly_host_export"
+        and row.get("host_workbench_id")
+    )
+
+
 def meter_source(row):
     """Who a compute epoch works for, which decides whose hours it spends.
 
@@ -346,10 +354,19 @@ class WorkbenchLifecycle:
                                 self.repository.pending, name, settings.AGENT_WORKER_POOL
                             )
                         )
-                    rows.sort(key=lambda row: (row.get("updated_at", ""), row["id"]))
+                    rows.sort(
+                        key=lambda row: (
+                            not bool(row.get("is_default")),
+                            row.get("updated_at", ""),
+                            row["id"],
+                        )
+                    )
                     self.pending_snapshot = pending_snapshot(rows)
                     for row in rows:
-                        if row["id"] not in self.active and len(self.active) < 4:
+                        # Reserve extra capacity for Project default Host VMs so
+                        # Tier 2 Agent VMs waiting on their Host can never starve it.
+                        cap = 8 if row.get("is_default") else 4
+                        if row["id"] not in self.active and len(self.active) < cap:
                             task = asyncio.create_task(run(row))
                             self.active[row["id"]] = task
                             task.add_done_callback(
@@ -370,6 +387,105 @@ class WorkbenchLifecycle:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def ensure_host_running(self, agent_row):
+        """Ensure the Project default Host Workspace is running before mounting over Fly 6pn."""
+        host_id = agent_row.get("host_workbench_id")
+        host_row = await run_blocking(self.repository.get, host_id) if host_id else None
+        if not host_row or host_row.get("owner_deleted_at"):
+            raise WorkspaceUnavailable("workbench_host_unavailable", retryable=False)
+        if host_row["state"] != "running" or host_row.get("open_requested"):
+            host_row = await self.ensure_running(
+                {"user_id": agent_row["user_id"], "project_id": agent_row["project_id"]},
+                host_row,
+            )
+        return host_row
+
+    async def ensure_host_export_mounted(self, agent_row, *, agent_host=None, host_row=None):
+        """Start the Host VM exporter, grant this Agent's VM-local key, and mount /workspace/repo."""
+        host_row = host_row or await self.ensure_host_running(agent_row)
+        protocol = settings.CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL
+        project_host = self.channel_factory(host_row)
+        owned_agent = agent_host is None
+        agent_channel = agent_host or self.channel_factory(agent_row)
+        try:
+            await project_host.connect()
+            host_cap = await project_host.control("capabilities")
+            if host_cap.get("host_export") != 1:
+                raise WorkspaceUnavailable("workbench_host_export_unsupported", retryable=False)
+            export_info = await project_host.control("host-export-start", {"protocol": protocol})
+
+            if owned_agent:
+                await agent_channel.connect()
+            agent_cap = await agent_channel.control("capabilities")
+            validate_runtime(agent_cap.get("runtime"))
+            if agent_cap.get("host_export") != 1:
+                raise WorkspaceUnavailable("workbench_host_export_unsupported", retryable=False)
+            client_key = await agent_channel.control("host-export-client-key")
+            await project_host.control(
+                "host-export-grant",
+                {
+                    "agent_id": agent_row["id"],
+                    "public_key": client_key["public_key"],
+                    "protocol": export_info["protocol"],
+                    "agent_ip": client_key.get("agent_ip"),
+                },
+            )
+            mount_info = await agent_channel.control(
+                "host-export-mount",
+                {
+                    "protocol": export_info["protocol"],
+                    "host_ip": export_info["host_ip"],
+                    "port": export_info["port"],
+                    "host_public_key": export_info["host_public_key"],
+                    "export_path": export_info["export_path"],
+                    "target_ref": "refs/heads/workspace",
+                },
+            )
+            return {
+                "host_workbench_id": host_row["id"],
+                "host_generation": host_row["generation"],
+                "host_compute_epoch": host_row.get("compute_epoch"),
+                "protocol": export_info["protocol"],
+                "host_ip": export_info["host_ip"],
+                "agent_ip": client_key.get("agent_ip"),
+                "fstype": mount_info.get("fstype"),
+                "reused": bool(mount_info.get("reused")),
+            }
+        finally:
+            await project_host.close()
+            if owned_agent:
+                await agent_channel.close()
+
+    async def revoke_host_export_agent(self, agent_row):
+        """Best-effort revoke one Tier 2 Agent's mount key & tunnel on its Project Host VM."""
+        if not _is_fly_host_export(agent_row):
+            return
+        host_row = await run_blocking(self.repository.get, agent_row["host_workbench_id"])
+        if not host_row or host_row.get("owner_deleted_at") or host_row.get("state") != "running":
+            return
+        host_export = (agent_row.get("resource") or {}).get("host_export") or {}
+        project_host = self.channel_factory(host_row)
+        try:
+            async with asyncio.timeout(15):
+                await project_host.connect()
+                await project_host.control(
+                    "host-export-revoke",
+                    {
+                        "agent_id": agent_row["id"],
+                        "agent_ip": host_export.get("agent_ip"),
+                        "protocol": host_export.get("protocol"),
+                    },
+                )
+        except Exception:
+            logger.warning(
+                "host_export_revoke_skipped",
+                extra={"workbench_id": agent_row["id"], "host_workbench_id": host_row["id"]},
+                exc_info=True,
+            )
+        finally:
+            with suppress(Exception):
+                await project_host.close()
+
     async def _start(self, row, grant):
         host = self.channel_factory(row)
         try:
@@ -389,6 +505,8 @@ class WorkbenchLifecycle:
             }
         )
         await self.billing.check_session(meter_id(row))
+        if _is_fly_host_export(row):
+            return await self._start_fly_host_export(row, grant, host)
         if row["state"] == "allocating":
             fresh = row["resource"] is None
             if fresh:
@@ -480,6 +598,55 @@ class WorkbenchLifecycle:
             return await run_blocking(self.repository.ready, row, host.resource)
         return row
 
+    async def _start_fly_host_export(self, row, grant, host):
+        """Start/resume an isolated Tier 2 Agent VM mounted onto the Project Host VM's disk."""
+        host_row = await self.ensure_host_running(row)
+        host_app = (host_row.get("resource") or {}).get("app")
+        if row["state"] == "allocating":
+            fresh = row["resource"] is None
+            if fresh:
+                if host_app:
+                    host.resource["app"] = host_app
+                host.resource["host_workbench_id"] = host_row["id"]
+                row = await run_blocking(
+                    self.repository.transition, row, "allocating", host.resource
+                )
+                await host.create()
+                row = await run_blocking(
+                    self.repository.transition, row, "allocating", host.resource
+                )
+            else:
+                matches = await host.runtime.resolve(host.resource)
+                if len(matches) != 1:
+                    raise WorkerDisconnected(
+                        "Allocation outcome is ambiguous; preserve the original intent"
+                    )
+                host.resource = matches[0]
+                await host.runtime.resume(host)
+        elif row["state"] == "resuming":
+            try:
+                await host.runtime.resume(host)
+            except WorkerLost:
+                row = await self._recreate(row, host)
+        else:
+            raise WorkerDisconnected("Workspace lifecycle transition is not startable")
+
+        await host._open_control()
+        await self.progress(row, "connecting")
+        await self.progress(row, "initializing")
+        mount_receipt = await self.ensure_host_export_mounted(
+            row, agent_host=host, host_row=host_row
+        )
+        host.resource["initialized"] = True
+        host.resource["host_export"] = mount_receipt
+        row = await run_blocking(self.repository.transition, row, row["state"], host.resource)
+        await self.progress(row, "checking_files")
+        await self.ready({**row, "resource": host.resource})
+        await run_blocking(
+            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
+        )
+        return await run_blocking(self.repository.ready, row, host.resource)
+
     async def _recreate(self, row, host):
         """Compute is replaceable; the disk is the workspace.
 
@@ -503,6 +670,8 @@ class WorkbenchLifecycle:
     async def destroy(self, row):
         """Destroy compute and disk: the owner was deleted, or the work is on its branch."""
         await self.channels.invalidate(row["id"])
+        if _is_fly_host_export(row):
+            await self.revoke_host_export_agent(row)
         if row["resource"] is not None:
             host = self.channel_factory(row)
             try:
@@ -636,6 +805,29 @@ class WorkbenchLifecycle:
         extension. A failed save never blocks pausing and leaves
         ``unpublished_changes`` set.
         """
+        if _is_fly_host_export(row):
+            # Edits already live on the Project Host VM's NVMe disk and are backed
+            # up to ``main`` by the Host VM; cleanly unmount and revoke mount creds.
+            if on_pause:
+                agent_host = self.channel_factory(row)
+                try:
+                    async with asyncio.timeout(15):
+                        await agent_host.connect()
+                        await agent_host.control("host-export-unmount")
+                except Exception:
+                    logger.warning(
+                        "host_export_unmount_skipped",
+                        extra={"workbench_id": row["id"]},
+                        exc_info=True,
+                    )
+                finally:
+                    with suppress(Exception):
+                        await agent_host.close()
+                await self.revoke_host_export_agent(row)
+            await run_blocking(self.repository.save_outcome, row, "saved", error=None, oid=None)
+            if on_pause:
+                await self.progress(row, "pausing")
+            return
         if (
             on_pause
             and not row.get("agent_registration_id")

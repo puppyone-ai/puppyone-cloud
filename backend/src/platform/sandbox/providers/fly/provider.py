@@ -35,7 +35,7 @@ from src.platform.sandbox.port import (
 )
 from src.platform.sandbox.timing import workspace_stage
 
-from .naming import dedicated, workspace_app
+from .naming import dedicated, isolated_app, shared_dedicated_network, workspace_app
 from .transport import acquire_transport, close_transports
 
 # A deleted app frees its name asynchronously, and two owners can race to create it.
@@ -61,7 +61,7 @@ def _after_boot(command):
 
 def _transport_app(resource):
     # One agent carries a tunnel per private network, so dedicated apps share it.
-    return settings.CLOUD_AGENT_FLY_APP if dedicated(resource) else resource["app"]
+    return settings.CLOUD_AGENT_FLY_APP if isolated_app(resource) else resource["app"]
 
 
 class FlyRuntimeProvider:
@@ -96,11 +96,20 @@ class FlyRuntimeProvider:
 
     def initialize(self, host):
         workspace = getattr(host, "dedicated_workspace", None)
-        host.resource["app"] = (
-            workspace_app(workspace)
-            if workspace and settings.CLOUD_AGENT_FLY_ORG
-            else settings.CLOUD_AGENT_FLY_APP
-        )
+        shared_host = getattr(host, "shared_network_workspace", None)
+        if shared_host:
+            host.resource["host_workbench_id"] = shared_host
+            host.resource["app"] = (
+                workspace_app(shared_host)
+                if settings.CLOUD_AGENT_FLY_ORG
+                else settings.CLOUD_AGENT_FLY_APP
+            )
+        else:
+            host.resource["app"] = (
+                workspace_app(workspace)
+                if workspace and settings.CLOUD_AGENT_FLY_ORG
+                else settings.CLOUD_AGENT_FLY_APP
+            )
         host.resource["image_id"] = host.artifact
 
     def bind_recovery(self, host):
@@ -176,6 +185,19 @@ class FlyRuntimeProvider:
                 raise
 
     async def _ensure_app(self, resource):
+        if shared_dedicated_network(resource):
+            app = resource["app"]
+            try:
+                row = await self._request(resource, "GET", "")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    raise WorkerDisconnected(
+                        "Project host Fly Workspace app is not ready yet; retry"
+                    ) from exc
+                raise
+            if row.get("network") != app:
+                raise PermissionError("Fly Workspace app is on another private network")
+            return
         if not dedicated(resource):
             return
         app = resource["app"]
@@ -302,7 +324,7 @@ class FlyRuntimeProvider:
             )
         except httpx.HTTPStatusError as exc:
             # The intent is persisted first, so a crash can precede the app.
-            if exc.response.status_code == 404 and dedicated(resource):
+            if exc.response.status_code == 404 and isolated_app(resource):
                 return []
             raise
         matching = [

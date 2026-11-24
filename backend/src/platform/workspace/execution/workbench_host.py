@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from src.config import settings
 from src.platform.sandbox import binding_profile, enabled_features, workspace_event, workspace_stage
 
 from .control_channel import ControlChannel
@@ -23,11 +24,24 @@ class WorkbenchChannel(ControlChannel):
         resource = row["resource"] or {}
         binding = row["binding"]
         # Read by the provider while initializing; a persisted binding then wins.
-        self.dedicated_workspace = (
-            str(UUID(row["id"]))
-            if row.get("is_default") or row.get("agent_registration_id")
-            else None
-        )
+        host_workbench = row.get("host_workbench_id")
+        if host_workbench:
+            self.host_workbench_id = str(UUID(host_workbench))
+            self.dedicated_workspace = None
+            self.shared_network_workspace = self.host_workbench_id
+            self.workspace_mount_env = {
+                "PUPPYONE_WORKSPACE_MOUNT_MODE": "fly_host_export",
+                "PUPPYONE_HOST_EXPORT_PROTOCOL": settings.CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL,
+            }
+        else:
+            self.host_workbench_id = None
+            self.dedicated_workspace = (
+                str(UUID(row["id"]))
+                if row.get("is_default") or row.get("agent_registration_id")
+                else None
+            )
+            self.shared_network_workspace = None
+            self.workspace_mount_env = {}
         self.internet_access = row.get("internet_access") is True
         # Resolved Profile values for allocation; providers never read the catalog.
         profile = binding_profile(binding)

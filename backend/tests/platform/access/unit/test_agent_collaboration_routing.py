@@ -117,7 +117,7 @@ async def test_agent_link_service_fails_closed_for_unimplemented_project_overrid
                 "user_id": "admin",
                 "project_id": "proj-1",
                 "state": "retired",
-                "collaboration_mode": "fly_host_export",
+                "collaboration_mode": "juicefs_shared",
             }
         )
     )
@@ -127,8 +127,49 @@ async def test_agent_link_service_fails_closed_for_unimplemented_project_overrid
     assert exc.value.status_code == 503
     assert exc.value.detail == {
         "code": "agent_collaboration_mode_not_ready",
-        "mode": "fly_host_export",
+        "mode": "juicefs_shared",
     }
+
+
+@pytest.mark.asyncio
+async def test_agent_link_service_admits_tier2_fly_host_export_and_wakes_host_first(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_AGENT_COLLAB_MODE", "shared_machine")
+    host_row = {
+        "id": "wb-host",
+        "user_id": "owner",
+        "project_id": "proj-1",
+        "state": "paused",
+        "open_requested": False,
+        "is_default": True,
+    }
+    agent_row = {
+        "id": "wb-agent",
+        "user_id": "owner",
+        "actor_user_id": "owner",
+        "project_id": "proj-1",
+        "state": "retired",
+        "collaboration_mode": "fly_host_export",
+        "host_workbench_id": "wb-host",
+    }
+    repo = SimpleNamespace(
+        call=Mock(return_value=agent_row),
+        command=Mock(return_value={"links": [], "connections": [], "pending": []}),
+        agent_saves=Mock(return_value={}),
+        project_collab_mode=Mock(return_value="fly_host_export"),
+    )
+    workspaces = SimpleNamespace(
+        repository=SimpleNamespace(get=Mock(return_value=host_row)),
+        request_open=AsyncMock(),
+    )
+    service = AgentLinkService(repo, endpoint=lambda: ENDPOINT, workspaces=workspaces)
+
+    await service.prepare(CONNECTION)
+    assert [call.args[2]["id"] for call in workspaces.request_open.await_args_list] == [
+        "wb-host",
+        "wb-agent",
+    ]
+    inv = await service.inventory("owner", "proj-1")
+    assert inv["collaboration_mode"] == "fly_host_export"
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ test('open keeps every private range closed and leaves the rest to the accept po
   ]) {
     assert.ok(rules.includes(range), range);
   }
+  assert.ok(rules.indexOf('tcp dport { 2049, 2222, 2223 }') < rules.indexOf('127.0.0.0/8 accept'));
   assert.ok(rules.indexOf('127.0.0.0/8 accept') < rules.indexOf('10.0.0.0/8'));
 });
 

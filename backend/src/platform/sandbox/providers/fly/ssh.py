@@ -23,7 +23,7 @@ from src.platform.sandbox.port import resource_identity
 from src.platform.sandbox.timing import workspace_stage
 
 from .certificate import import_user_certificate
-from .naming import dedicated
+from .naming import isolated_app
 
 
 @dataclass
@@ -206,7 +206,7 @@ class FlySSHConnections:
             raise
 
     async def _reserve(self, resource, address):
-        if resource.get("app") != self.app and not dedicated(resource):
+        if resource.get("app") != self.app and not isolated_app(resource):
             raise PermissionError("Fly SSH application mismatch")
         try:
             valid = ipaddress.ip_address(address) in ipaddress.ip_network("fdaa::/16")

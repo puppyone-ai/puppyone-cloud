@@ -10,24 +10,31 @@ test('default mount mode bind-mounts local NVMe /data/workspace onto /workspace'
   assert.deepEqual(calls, [['mount', ['--bind', '/data/workspace', '/workspace']]]);
 });
 
-test('fly_host_export validates protocol and target and fails closed until driver ships', () => {
-  const plan = resolveMountPlan({
-    PUPPYONE_WORKSPACE_MOUNT_MODE: 'fly_host_export',
-    PUPPYONE_HOST_EXPORT_PROTOCOL: 'sshfs',
-    PUPPYONE_HOST_EXPORT_TARGET: 'mach-123.vm.puppyone-ws.internal',
-  });
-  assert.equal(plan.mode, 'fly_host_export');
-  assert.equal(plan.protocol, 'sshfs');
-  assert.equal(plan.implemented, false);
-
-  assert.throws(
-    () => mountWorkspace({
+test('fly_host_export prepares /workspace and /workspace/repo mountpoint at boot', () => {
+  const calls = [];
+  const plan = mountWorkspace(
+    {
       PUPPYONE_WORKSPACE_MOUNT_MODE: 'fly_host_export',
       PUPPYONE_HOST_EXPORT_PROTOCOL: 'nfs_ganesha',
       PUPPYONE_HOST_EXPORT_TARGET: 'mach-123.vm.puppyone-ws.internal',
-    }, () => { throw new Error('must not exec'); }),
-    /not enabled in this worker artifact/,
+    },
+    (binary, args) => calls.push([binary, args]),
   );
+  assert.equal(plan.mode, 'fly_host_export');
+  assert.equal(plan.protocol, 'nfs_ganesha');
+  assert.equal(plan.implemented, true);
+  assert.deepEqual(calls, [
+    ['mount', ['--bind', '/data/workspace', '/workspace']],
+    ['mkdir', ['-p', '/workspace/repo']],
+    ['chmod', ['0755', '/workspace/repo']],
+  ]);
+
+  // Target may also be omitted at boot when lifecycle delivers the live host IP.
+  const withoutTarget = resolveMountPlan({
+    PUPPYONE_WORKSPACE_MOUNT_MODE: 'fly_host_export',
+  });
+  assert.equal(withoutTarget.protocol, 'nfs_ganesha');
+  assert.equal(withoutTarget.implemented, true);
 
   assert.throws(
     () => resolveMountPlan({
@@ -44,7 +51,7 @@ test('fly_host_export validates protocol and target and fails closed until drive
       PUPPYONE_HOST_EXPORT_PROTOCOL: 'sshfs',
       PUPPYONE_HOST_EXPORT_TARGET: 'bad host; rm -rf /',
     }),
-    /PUPPYONE_HOST_EXPORT_TARGET is required/,
+    /PUPPYONE_HOST_EXPORT_TARGET contains invalid characters/,
   );
 });
 
