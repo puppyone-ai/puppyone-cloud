@@ -403,3 +403,137 @@ async def test_set_sandbox_settings_isolated_agent_sandboxes_toggle_and_authoriz
         "desktop": True,
         "isolated_agent_sandboxes": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_hosted_ssh_meters_shared_machine_external_agent_commands_without_double_billing():
+    from contextlib import asynccontextmanager
+
+    from src.exceptions import AppException, ErrorCode
+    from src.platform.access.adapters.ssh.hosted import HostedSshAccess, SshSession
+
+    wb_shared = {
+        "id": str(uuid4()),
+        "project_id": "proj-1",
+        "user_id": "user-1",
+        "generation": str(uuid4()),
+        "state": "running",
+        "is_default": True,
+        "agent_registration_id": None,
+        "collaboration_mode": "shared_machine",
+    }
+    wb_tier2 = {
+        **wb_shared,
+        "id": str(uuid4()),
+        "is_default": False,
+        "agent_registration_id": str(uuid4()),
+        "host_workbench_id": wb_shared["id"],
+        "collaboration_mode": "fly_host_export",
+    }
+    rows = {wb_shared["id"]: wb_shared, wb_tier2["id"]: wb_tier2}
+
+    billing = SimpleNamespace(
+        start_session=AsyncMock(side_effect=lambda *, audit_context: audit_context["run_id"]),
+        finish_session=AsyncMock(return_value=True),
+        cancel_session=AsyncMock(return_value=None),
+    )
+    workspace = SimpleNamespace(
+        repository=SimpleNamespace(get=lambda wid: rows.get(wid)),
+        billing=billing,
+    )
+
+    fail_connect = False
+
+    @asynccontextmanager
+    async def fake_open(conn_id, user, project, workbench, generation, *, session=None):
+        if fail_connect:
+            raise RuntimeError("ssh_connect_failed")
+        yield ({"id": conn_id}, SimpleNamespace())
+
+    access = HostedSshAccess(
+        workspace=workspace,
+        grants=SimpleNamespace(),
+        connections=SimpleNamespace(open=fake_open),
+        config=SimpleNamespace(public_host="ssh.example", public_port=22, public_host_key=""),
+    )
+    access.resume = AsyncMock(return_value=None)
+    access._ensure_fly_host_ready = AsyncMock(return_value=None)
+
+    # 1. Tier 1 delegated command -> reserves & settles as "external_agent".
+    shared_session = SshSession(
+        id=str(uuid4()),
+        grant={
+            "user_id": "user-1",
+            "project_id": "proj-1",
+            "workbench_id": wb_shared["id"],
+            "generation": wb_shared["generation"],
+            "access_grant_id": str(uuid4()),
+        },
+        may_wake=True,
+    )
+    async with access.open(shared_session):
+        pass
+    assert billing.start_session.await_count == 1
+    ctx = billing.start_session.await_args.kwargs["audit_context"]
+    assert ctx["source"] == "external_agent"
+    assert ctx["run_id"].startswith("external-agent-cmd:")
+    assert ctx["project_id"] == "proj-1"
+    billing.finish_session.assert_awaited_once_with(ctx["run_id"], retry=True)
+    billing.cancel_session.assert_not_awaited()
+
+    # 2. Tier 1 shell connection failure -> cancels reservation instead of settling.
+    billing.start_session.reset_mock()
+    billing.finish_session.reset_mock()
+    billing.cancel_session.reset_mock()
+    fail_connect = True
+    with pytest.raises(RuntimeError, match="ssh_connect_failed"):
+        async with access.open(shared_session):
+            pass
+    billing.cancel_session.assert_awaited_once()
+    billing.finish_session.assert_not_awaited()
+    fail_connect = False
+
+    # 3. Tier 2 dedicated Agent VM -> skipped (VM epoch already meters as external_agent).
+    billing.start_session.reset_mock()
+    billing.finish_session.reset_mock()
+    billing.cancel_session.reset_mock()
+    tier2_session = SshSession(
+        id=str(uuid4()),
+        grant={
+            "user_id": "user-1",
+            "project_id": "proj-1",
+            "workbench_id": wb_tier2["id"],
+            "generation": wb_tier2["generation"],
+            "access_grant_id": str(uuid4()),
+        },
+        may_wake=True,
+    )
+    async with access.open(tier2_session):
+        pass
+    billing.start_session.assert_not_awaited()
+    billing.finish_session.assert_not_awaited()
+
+    # 4. Owner non-delegated SSH session -> skipped (human workspace session).
+    owner_session = SshSession(
+        id=str(uuid4()),
+        grant={
+            "user_id": "user-1",
+            "project_id": "proj-1",
+            "workbench_id": wb_shared["id"],
+            "generation": wb_shared["generation"],
+        },
+        may_wake=True,
+    )
+    async with access.open(owner_session):
+        pass
+    billing.start_session.assert_not_awaited()
+
+    # 5. Required mode 402/403 refusal maps cleanly to workbench_plan_required.
+    billing.start_session.side_effect = AppException(
+        code=ErrorCode.FORBIDDEN, status_code=402, message="Out of runtime credits"
+    )
+    with pytest.raises(WorkspaceError) as denied:
+        async with access.open(shared_session):
+            pass
+    assert denied.value.status_code == 402
+    assert denied.value.code == "workbench_plan_required"
