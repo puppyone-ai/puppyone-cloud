@@ -423,12 +423,20 @@ class FlyRuntimeProvider:
             await self._delete(resource, "", params={"force": "true"})
             return
         metadata = self._metadata(resource)
-        rows = await self._request(
-            resource,
-            "GET",
-            "/machines",
-            params={"metadata." + key: value for key, value in metadata.items()},
-        )
+        try:
+            rows = await self._request(
+                resource,
+                "GET",
+                "/machines",
+                params={"metadata." + key: value for key, value in metadata.items()},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # The Fly app itself is already gone (for example, a Tier 2
+                # Project Host app was already force-deleted), so every machine
+                # and volume in it is already destroyed.
+                return
+            raise
         machines = {
             row["id"]
             for row in rows
@@ -441,7 +449,13 @@ class FlyRuntimeProvider:
                 resource, "/machines/" + quote(machine, safe=""), params={"force": "true"}
             )
         name = self._volume_name(resource["workbench_generation"])
-        for volume in await self._request(resource, "GET", "/volumes"):
+        try:
+            volumes = await self._request(resource, "GET", "/volumes")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return
+            raise
+        for volume in volumes:
             if volume.get("id") != resource.get("volume_id") and volume.get("name") != name:
                 continue
             if volume.get("state") in {"destroyed", "destroying", "pending_destroy"}:
