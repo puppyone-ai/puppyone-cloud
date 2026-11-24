@@ -153,3 +153,147 @@ def test_old_request_digest_stays_byte_for_byte_compatible(explicit_null):
     assert submission_digest(request) == digest(wire)
     selected = SubmitRun(**wire, workbench_id=uuid4())
     assert submission_digest(selected) != digest(wire)
+
+
+def test_workbench_submit_admits_unborn_project_and_emits_structured_409_codes(monkeypatch):
+    from unittest.mock import Mock
+
+    from fastapi import HTTPException
+
+    from src.config import settings
+    from src.platform.agent.runtime.control.admission import Admission
+    from src.platform.agent.service import AgentService
+
+    user_id = str(uuid4())
+    project_id = "prj_empty_cloud"
+    agent_id = "agt_builtin"
+    workbench_id = uuid4()
+
+    def make_context(*, status="active", llm_model="deepseek/deepseek-v4.1-flash", receipt=None):
+        return {
+            "facts": {"project_id": project_id},
+            "revision": {"project": 1},
+            "readiness": {
+                "project_git_surface_exists": False,
+                "project_head_commit_id": "",
+                "project_git_push_accepted": False,
+            },
+            "receipt": receipt,
+            "surface": {
+                "id": agent_id,
+                "project_id": project_id,
+                "status": status,
+                "updated_at": "2026-11-24T00:00:00Z",
+                "scope_id": None,
+                "config": {
+                    "visibility": "org",
+                    "llm_model": llm_model,
+                    "bash_view": {"path_prefix": "", "excludes": [], "max_mode": "rw"},
+                },
+            },
+        }
+
+    repository = Mock()
+    repository.load_run_context.return_value = make_context()
+    authorization = Mock()
+    authorization.authorize_facts.return_value = {"project_id": project_id}
+    admission = Admission(repository, authorization=authorization)
+
+    monkeypatch.setattr(settings, "MANAGED_AI_ENABLED", True)
+    monkeypatch.setattr(settings, "CLOUD_AGENT_DEFAULT_MODEL", "")
+
+    # Legacy non-workbench path still enforces Git surface + HEAD readiness.
+    legacy = AgentService(repository, admission)
+    with pytest.raises(HTTPException) as legacy_refused:
+        legacy.submit(
+            user_id,
+            SubmitRun(project_id=project_id, request_id=uuid4(), prompt="hello"),
+        )
+    assert legacy_refused.value.status_code == 409
+    assert legacy_refused.value.detail == {"code": "project_agent_not_ready"}
+
+    # Workbench-backed submission admits unborn empty projects without a git_remote surface.
+    workbenches = Mock()
+    workbenches.admit.return_value = {
+        "id": str(workbench_id),
+        "target_ref": "refs/heads/main",
+    }
+    req_id = uuid4()
+    repository.submit_run.return_value = {
+        "id": str(uuid4()),
+        "project_id": project_id,
+        "workbench_id": str(workbench_id),
+        "agent_id": agent_id,
+        "session_id": str(uuid4()),
+        "request_id": str(req_id),
+        "prompt": "hello",
+        "state": "queued",
+        "execution_id": None,
+        "sequence": 0,
+        "stop_requested": False,
+        "snapshot": {},
+        "publication": None,
+        "created_at": "2026-11-24T00:00:00Z",
+        "updated_at": "2026-11-24T00:00:00Z",
+        "deadline": "2026-11-24T01:00:00Z",
+    }
+    service = AgentService(repository, admission, workbenches=workbenches)
+    run = service.submit(
+        user_id,
+        SubmitRun(
+            project_id=project_id,
+            request_id=req_id,
+            workbench_id=workbench_id,
+            prompt="hello",
+        ),
+    )
+    assert run["workbench_id"] == str(workbench_id)
+    workbenches.admit.assert_called_once()
+    submitted_policy = repository.submit_run.call_args.kwargs["policy"]
+    assert submitted_policy["workbench_id"] == str(workbench_id)
+    assert submitted_policy["workbench_target_ref"] == "refs/heads/main"
+
+    # Structured 409 codes for unconfigured model, paused agent, and request conflict.
+    repository.load_run_context.return_value = make_context(llm_model="")
+    with pytest.raises(HTTPException) as unconfigured:
+        service.submit(
+            user_id,
+            SubmitRun(
+                project_id=project_id,
+                request_id=uuid4(),
+                workbench_id=workbench_id,
+                prompt="hello",
+            ),
+        )
+    assert unconfigured.value.status_code == 409
+    assert unconfigured.value.detail == {"code": "agent_model_unconfigured"}
+
+    repository.load_run_context.return_value = make_context(status="paused")
+    with pytest.raises(HTTPException) as paused:
+        service.submit(
+            user_id,
+            SubmitRun(
+                project_id=project_id,
+                request_id=uuid4(),
+                workbench_id=workbench_id,
+                prompt="hello",
+            ),
+        )
+    assert paused.value.status_code == 409
+    assert paused.value.detail == {"code": "agent_unavailable"}
+
+    repository.load_run_context.return_value = make_context(
+        receipt={"input_sha256": "different-digest"}
+    )
+    with pytest.raises(HTTPException) as conflict:
+        service.submit(
+            user_id,
+            SubmitRun(
+                project_id=project_id,
+                request_id=req_id,
+                workbench_id=workbench_id,
+                prompt="different prompt",
+            ),
+        )
+    assert conflict.value.status_code == 409
+    assert conflict.value.detail == {"code": "agent_request_conflict"}
