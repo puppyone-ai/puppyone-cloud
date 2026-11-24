@@ -160,12 +160,25 @@ class WorkbenchChannel(ControlChannel):
             yield queue
         finally:
             self.subscribers.discard(queue)
-            async with self.watch_lock:
-                if not self.subscribers and self.watch_started and self.healthy():
-                    with suppress(Exception):
-                        async with asyncio.timeout(5):
-                            await self.control("unwatch")
-                    self.watch_started = False
+            should_unwatch = not self.subscribers and self.watch_started
+            if should_unwatch:
+                # Reset before awaiting unwatch: Starlette/AnyIO cancels SSE tasks on
+                # client disconnect (CancelledError is BaseException, not Exception).
+                # If unwatch is written to SSH and then cancelled before its reply
+                # returns, leaving watch_started=True would permanently blind every
+                # future subscriber reusing this pooled channel.
+                self.watch_started = False
+            if should_unwatch and self.healthy():
+                try:
+                    async with self.watch_lock:
+                        if not self.subscribers and not self.watch_started and self.healthy():
+                            with suppress(Exception):
+                                async with asyncio.timeout(5):
+                                    await self.control("unwatch")
+                except asyncio.CancelledError:
+                    if not self.subscribers:
+                        self.watch_started = False
+                    raise
 
     def healthy(self):
         return bool(self.reader and not self.reader.done() and not self.reconnecting)

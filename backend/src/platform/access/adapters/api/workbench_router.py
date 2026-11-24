@@ -221,8 +221,9 @@ async def events(
     await service.bound(user.user_id, project_id, str(generation))
 
     async def stream():
+        events = service.events(user.user_id, project_id, str(generation))
         try:
-            async for value in service.events(user.user_id, project_id, str(generation)):
+            async for value in events:
                 if await request.is_disconnected():
                     return
                 yield (
@@ -234,6 +235,8 @@ async def events(
             yield "event: unavailable\ndata: {}\n\n"
         except ConnectionError:
             yield 'event: unavailable\ndata: {"retryable":true}\n\n'
+        finally:
+            await events.aclose()
 
     return StreamingResponse(
         stream(),
