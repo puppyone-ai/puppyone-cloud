@@ -1,6 +1,6 @@
 import type { CloudTransport as Transport } from '../transport';
 
-export type ActivityKind = 'upload' | 'import' | 'synchronize_run';
+export type ActivityKind = 'upload' | 'import' | 'synchronize_run' | 'chat_app';
 export interface ActivityItem {
   id: string;
   kind: ActivityKind;
@@ -19,7 +19,7 @@ export interface ActivityItem {
 }
 export interface ActivityListResponse { items: ActivityItem[]; total: number }
 export interface ActivitySelectors { kind?: ActivityKind; activeOnly?: boolean; limit?: number }
-const KINDS = new Set(['upload', 'import', 'synchronize_run']);
+const KINDS = new Set(['upload', 'import', 'synchronize_run', 'chat_app']);
 const TERMINAL = new Set(['completed', 'success', 'failed', 'cancelled', 'canceled', 'skipped', 'conflict', 'error']);
 export function isActivityItemActive(item: ActivityItem): boolean {
   return !item.completed_at && !TERMINAL.has((item.status || '').toLowerCase()) && !TERMINAL.has((item.phase || '').toLowerCase());

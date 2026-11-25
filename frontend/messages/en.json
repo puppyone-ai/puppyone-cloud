@@ -230,5 +230,40 @@
   "projectSettings": {
     "boundGitBranch": "Default git branch",
     "boundGitBranchHint": "Used as the default ref for new GitHub bindings and for the clone command. Doesn't affect existing bindings."
+  },
+  "chatApps": {
+    "open": {
+      "opening": "Opening PuppyOne…",
+      "openingHint": "If PuppyOne does not open, continue in the browser.",
+      "openInBrowser": "Open in the browser",
+      "checking": "Checking your access…",
+      "signIn": "Sign in to continue…",
+      "noAccess": "You don't have access to this project.",
+      "failed": "Could not open this project. Try again.",
+      "retry": "Try again"
+    },
+    "link": {
+      "linking": "Linking your account…",
+      "linked": "Your account is linked. Your question will start in the chat.",
+      "expired": "This link expired. Ask the agent again in the chat to get a new one.",
+      "missingCode": "This link is incomplete. Ask the agent again in the chat to get a new one.",
+      "failed": "Could not link your account. Try again.",
+      "retry": "Try again",
+      "signIn": "Sign in to link your account…"
+    },
+    "activity": {
+      "added": "Added to {name} ({platform})",
+      "allowed": "Allowed {name}",
+      "denied": "Denied {name}",
+      "updated": "Settings changed in {name}",
+      "taken_over": "Took over {name}",
+      "removed": "Removed from {name}",
+      "removed_there": "Removed in {platform}: {name}",
+      "unknown": "Chat changed: {name}",
+      "telegram": "Telegram",
+      "slack": "Slack",
+      "wecom": "WeCom",
+      "chat": "chat"
+    }
   }
 }
