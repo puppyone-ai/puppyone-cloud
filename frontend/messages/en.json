@@ -264,6 +264,7 @@
       "slack": "Slack",
       "wecom": "WeCom",
       "chat": "chat"
-    }
+    },
+    "activityTitle": "Activity"
   }
 }

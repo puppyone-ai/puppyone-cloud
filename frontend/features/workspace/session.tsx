@@ -34,6 +34,8 @@ export interface PanelState {
   /** Exact binding selected from a Synchronize resource, not an Access ID. */
   synchronizeBindingId?: string;
   agentId?: string;
+  /** Deep link: open the Agent panel on this chat session. */
+  sessionId?: string;
   mcpEndpointId?: string;
   sandboxEndpointId?: string;
   /** When opening sync_create from a scope's "AI Agent" default, set

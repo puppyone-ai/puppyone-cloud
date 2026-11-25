@@ -243,3 +243,22 @@ it('retains a readers scroll position across tab switches and background message
   ui.rerender(<Reader active revision='3' />);
   expect(element.scrollTop).toBe(1200);
 });
+
+it('deep link opens the requested session, and only the agent when it is unknown', async () => {
+  const { store, client } = setup();
+  const before = store.getSnapshot().tabs.length;
+  await store.openSessionById('session-1', agent.id);
+  const after = store.getSnapshot();
+  expect(after.tabs).toHaveLength(before + 1);
+  const active = after.tabs.find(tab => tab.id === after.activeId) as ChatTab;
+  expect(store.actor(active).getSnapshot().sessionId).toBe('session-1');
+  await store.openSessionById('session-1', agent.id);
+  expect(store.getSnapshot().tabs).toHaveLength(before + 1);
+
+  const other = setup('user-1', 'project-2');
+  const count = other.store.getSnapshot().tabs.length;
+  await expect(other.store.openSessionById('not-mine', agent.id)).resolves.toBeUndefined();
+  expect(other.store.getSnapshot().tabs).toHaveLength(count);
+  expect(other.store.getSnapshot().historyError).toBeNull();
+  expect(client.sessions).toHaveBeenCalled();
+});
