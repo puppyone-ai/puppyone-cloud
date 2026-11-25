@@ -76,7 +76,7 @@ CREATE TABLE public.chat_app_inbox (
     message_key text NOT NULL CHECK (length(message_key) BETWEEN 1 AND 300),
     external_event_id text,
     via text NOT NULL CHECK (via IN ('message','guest','action','membership')),
-    kind text NOT NULL CHECK (kind IN ('question','knock','stop','joined','left','new_thread','identity')),
+    kind text NOT NULL CHECK (kind IN ('question','knock','stop','joined','left','new_thread','uninstalled')),
     external_chat_id text NOT NULL,
     external_thread_key text,
     asker_external_id text,
@@ -521,6 +521,11 @@ BEGIN
           FROM public.profiles p WHERE p.user_id = c.owner_user_id),
         'workspace_name', (SELECT display_name FROM public.chat_app_connections WHERE id = c.connection_id)) END,
       'identity_scope', identity_scope,
+      -- Slack may not say who invited it; the next mention within 10 minutes decides.
+      'join_without_inviter', EXISTS (SELECT 1 FROM public.chat_app_inbox j
+        WHERE j.platform = platform_name AND j.connection_id IS NOT DISTINCT FROM connection
+          AND j.external_chat_id = p_payload->>'external_chat_id' AND j.kind = 'joined'
+          AND j.outcome = 'inviter_missing' AND j.created_at > clock_timestamp() - interval '10 minutes'),
       'asker_user_id', asker_user,
       'asker_can_run', CASE WHEN asker_user IS NULL OR c.id IS NULL THEN NULL
                             ELSE public._chat_app_can_run(c.project_id, asker_user) END,
@@ -629,12 +634,16 @@ BEGIN
     RETURN to_jsonb(r);
 
   ELSIF p_action = 'claim_reply' THEN
-    SELECT * INTO r FROM public.chat_app_replies a
+    -- A WeCom message can only go out through the socket of the lease holder.
+    SELECT a.* INTO r FROM public.chat_app_replies a
+    JOIN public.chat_app_conversations ac ON ac.id = a.conversation_id
+    LEFT JOIN public.chat_app_connections ax ON ax.id = ac.connection_id
     WHERE a.state IN ('pending','active')
       AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= clock_timestamp())
       AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= clock_timestamp())
+      AND (ac.platform <> 'wecom' OR (ax.lease_owner = p_worker AND ax.lease_expires_at > clock_timestamp()))
     ORDER BY a.next_attempt_at NULLS FIRST, a.created_at
-    FOR UPDATE SKIP LOCKED LIMIT 1;
+    FOR UPDATE OF a SKIP LOCKED LIMIT 1;
     IF NOT FOUND THEN RETURN NULL; END IF;
     UPDATE public.chat_app_replies SET lease_owner = p_worker, lease_expires_at = clock_timestamp() + lease,
       fence = fence + 1 WHERE id = r.id RETURNING * INTO r;

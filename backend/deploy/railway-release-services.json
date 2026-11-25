@@ -42,6 +42,9 @@
     },
     "device_gateway": {
       "root_directory": "backend"
+    },
+    "chat_gateway": {
+      "root_directory": "backend"
     }
   }
 }
