@@ -12,6 +12,7 @@ import time
 from contextlib import suppress
 
 from src.platform.workspace.errors import WorkspaceError
+from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,30 @@ SESSION_MESSAGES = {
         "this session was ended: the workspace owner disconnected it or the workspace stopped."
     ),
     "workspace_preparing": "the workspace is still being prepared; run the command again in a minute.",
+    "workbench_preparing": (
+        "the workspace is still being prepared (code: workbench_preparing); "
+        "run the command again in a minute."
+    ),
+    "workbench_requires_recovery": (
+        "the workspace is recovering from a previous stop (code: workbench_requires_recovery); "
+        "run the command again in a minute."
+    ),
+    "workbench_start_timeout": (
+        "the workspace took too long to start (code: workbench_start_timeout); "
+        "run the command again in a minute."
+    ),
+    "workbench_connection_unavailable": (
+        "the workspace is temporarily unavailable (code: workbench_connection_unavailable); "
+        "run the command again in a minute."
+    ),
+    "workbench_provider_capacity": (
+        "workspace compute capacity is temporarily full (code: workbench_provider_capacity); "
+        "run the command again shortly."
+    ),
+    "workbench_plan_required": (
+        "the workspace cannot start under the owner's current plan or runtime balance "
+        "(code: workbench_plan_required)."
+    ),
     "access_denied": (
         "access to this workspace is not available: it was revoked, expired or ended by "
         "the owner, or is already in use by another session."
@@ -73,6 +98,8 @@ def session_ending(error):
             return (detail.get("code") if isinstance(detail, dict) else None) or (
                 "workspace_unavailable"
             ), False
+        if isinstance(leaf, WorkspaceUnavailable):
+            return leaf.code or "workspace_unavailable", False
     return None, bool(leaves) and all(isinstance(leaf, ClientDisconnected) for leaf in leaves)
 
 

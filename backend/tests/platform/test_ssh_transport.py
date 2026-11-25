@@ -147,9 +147,15 @@ async def test_a_client_hangup_is_not_logged_as_a_failure(transport, caplog):
 
 
 def test_session_endings_are_classified_through_task_groups():
+    from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
+
     ended = WorkspaceError(409, {"code": "workspace_connection_ended"})
     nested = ExceptionGroup("outer", [ExceptionGroup("inner", [ClientDisconnected(), ended])])
     assert session_ending(nested) == ("workspace_connection_ended", False)
+    assert session_ending(WorkspaceUnavailable("workbench_requires_recovery")) == (
+        "workbench_requires_recovery",
+        False,
+    )
     assert session_ending(ExceptionGroup("g", [ClientDisconnected()])) == (None, True)
     assert session_ending(ExceptionGroup("g", [ClientDisconnected(), RuntimeError()])) == (
         None,
