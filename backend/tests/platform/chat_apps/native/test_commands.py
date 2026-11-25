@@ -94,6 +94,7 @@ def test_knock_then_allow_activates_the_chat_and_says_hello(db):
     )
     assert chat["state"] == "active" and chat["who_can_ask"] == "owner"
     assert chat["daily_limit_units"] == 60 and chat["owner_name"] == "Alex"
+    assert chat["no_hours"] is False and chat["used_today_units"] == 0
     assert (
         db.sql(f"SELECT notice_code FROM chat_app_replies WHERE conversation_id='{chat['id']}'")
         == "welcome"

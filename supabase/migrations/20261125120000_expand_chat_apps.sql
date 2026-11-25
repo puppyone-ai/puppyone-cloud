@@ -226,6 +226,11 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog,
     'last_activity_at', (SELECT max(t.last_activity_at) FROM public.chat_app_threads t
                          WHERE t.conversation_id = c.id),
     'workspace_name', (SELECT x.display_name FROM public.chat_app_connections x WHERE x.id = c.connection_id),
+    -- The space ran out of Agent hours on this chat's latest question (banner).
+    'no_hours', coalesce((SELECT q.outcome = 'refused:runtime_credit_unavailable'
+                          FROM public.chat_app_inbox q
+                          WHERE q.conversation_id = c.id AND q.kind = 'question' AND q.state = 'done'
+                          ORDER BY q.finished_at DESC NULLS LAST LIMIT 1), false),
     'created_at', c.created_at)
 $$;
 
