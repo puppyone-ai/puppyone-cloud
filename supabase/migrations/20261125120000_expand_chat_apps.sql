@@ -514,6 +514,13 @@ BEGIN
     IF c.id IS NOT NULL AND p_payload->>'external_thread_key' IS NOT NULL THEN
       SELECT * INTO t FROM public.chat_app_threads
       WHERE conversation_id = c.id AND external_thread_key = p_payload->>'external_thread_key';
+      IF NOT FOUND THEN
+        -- A reply to one of our messages continues that message's thread.
+        SELECT th.* INTO t FROM public.chat_app_threads th
+        JOIN public.chat_app_replies rp ON rp.thread_id = th.id
+        WHERE th.conversation_id = c.id AND rp.external_message_id = p_payload->>'external_thread_key'
+        LIMIT 1;
+      END IF;
     END IF;
     RETURN jsonb_build_object(
       'conversation', CASE WHEN c.id IS NULL THEN NULL ELSE to_jsonb(c) || jsonb_build_object(
@@ -530,6 +537,11 @@ BEGIN
       'asker_can_run', CASE WHEN asker_user IS NULL OR c.id IS NULL THEN NULL
                             ELSE public._chat_app_can_run(c.project_id, asker_user) END,
       'used_today_units', CASE WHEN c.id IS NULL THEN 0 ELSE public._chat_app_used_today(c.id) END,
+      -- Paused / limit / "only X can ask" are said to one person once an hour.
+      'notified_last_hour', coalesce((SELECT jsonb_agg(DISTINCT q.outcome) FROM public.chat_app_inbox q
+        WHERE q.conversation_id = c.id AND q.asker_external_id = p_payload->>'asker_external_id'
+          AND q.finished_at > clock_timestamp() - interval '1 hour'
+          AND q.outcome IN ('paused','limit','only_owner','not_in_project')), '[]'),
       'asked_last_hour', (SELECT count(*) FROM public.chat_app_inbox q WHERE q.conversation_id = c.id
                           AND q.kind = 'question' AND q.created_at > clock_timestamp() - interval '1 hour'),
       'thread', CASE WHEN t.id IS NULL THEN NULL ELSE to_jsonb(t) || jsonb_build_object(
@@ -585,11 +597,31 @@ BEGIN
     VALUES ((p_payload->>'conversation_id')::uuid, p_payload->>'external_thread_key')
     ON CONFLICT (conversation_id, external_thread_key) DO UPDATE SET last_activity_at = clock_timestamp()
     RETURNING * INTO t;
-    IF p_payload->>'agent_session_id' IS NOT NULL THEN
+    IF p_payload->>'agent_session_id' IS NOT NULL
+       OR coalesce((p_payload->>'reset_session')::boolean, false) THEN
+      -- /new, or idle too long: the next question starts a new Agent session.
       UPDATE public.chat_app_threads SET agent_session_id = p_payload->>'agent_session_id'
       WHERE id = t.id RETURNING * INTO t;
     END IF;
-    RETURN to_jsonb(t);
+    RETURN to_jsonb(t) || jsonb_build_object(
+      'busy', EXISTS (SELECT 1 FROM public.chat_app_replies a WHERE a.thread_id = t.id
+                      AND a.state = 'active' AND a.run_id IS NOT NULL));
+
+  ELSIF p_action = 'reply_info' THEN
+    -- Who may press Stop on this reply: the asker or the chat's owner.
+    SELECT * INTO r FROM public.chat_app_replies WHERE id = (p_payload->>'id')::uuid;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    SELECT * INTO c FROM public.chat_app_conversations WHERE id = r.conversation_id;
+    RETURN jsonb_build_object('id', r.id, 'run_id', r.run_id, 'state', r.state,
+      'conversation_id', c.id, 'owner_user_id', c.owner_user_id, 'owner_external_id', c.owner_external_id,
+      'owner_name', (SELECT coalesce(nullif(p.display_name, ''), p.email) FROM public.profiles p
+                     WHERE p.user_id = c.owner_user_id),
+      'asker_external_id', (SELECT q.asker_external_id FROM public.chat_app_inbox q WHERE q.id = r.inbox_id),
+      'asker_label', (SELECT q.asker_label FROM public.chat_app_inbox q WHERE q.id = r.inbox_id),
+      'clicker_user_id', (SELECT i2.user_id FROM public.chat_app_identities i2
+        WHERE i2.platform = c.platform AND i2.external_user_id = p_payload->>'clicker'
+          AND i2.scope = coalesce((SELECT external_id FROM public.chat_app_connections WHERE id = c.connection_id),
+                                  'telegram')));
 
   ELSIF p_action = 'finish_inbox' THEN
     SELECT * INTO i FROM public.chat_app_inbox WHERE id = (p_payload->>'id')::uuid FOR UPDATE;
@@ -609,29 +641,20 @@ BEGIN
       lease_owner = NULL, lease_expires_at = NULL
     WHERE id = i.id RETURNING * INTO i;
     IF p_payload ? 'reply' AND i.conversation_id IS NOT NULL THEN
-      -- A queued question's "next" message becomes its working message.
+      -- The inbox loop has already said a notice; a Run reply is followed from now
+      -- on. A queued question's "next" message becomes its working message.
       INSERT INTO public.chat_app_replies (conversation_id, thread_id, inbox_id, run_id, notice_code, payload, state)
       VALUES (i.conversation_id, i.thread_id, i.id, (p_payload->'reply'->>'run_id')::uuid,
-              p_payload->'reply'->>'notice_code', coalesce(p_payload->'reply'->'payload', '{}'), 'pending')
+              p_payload->'reply'->>'notice_code', coalesce(p_payload->'reply'->'payload', '{}'),
+              CASE WHEN p_payload->'reply'->>'run_id' IS NULL THEN 'done' ELSE 'active' END)
       ON CONFLICT (inbox_id) WHERE inbox_id IS NOT NULL DO UPDATE SET
-        run_id = EXCLUDED.run_id, notice_code = EXCLUDED.notice_code, payload = EXCLUDED.payload,
-        state = CASE WHEN EXCLUDED.run_id IS NOT NULL THEN 'active' ELSE 'pending' END,
+        run_id = EXCLUDED.run_id, notice_code = EXCLUDED.notice_code,
+        payload = public.chat_app_replies.payload || EXCLUDED.payload,
+        state = EXCLUDED.state, thread_id = EXCLUDED.thread_id,
         rendered_digest = NULL, next_attempt_at = NULL
       RETURNING * INTO r;
-      IF r.run_id IS NOT NULL AND r.state = 'pending' THEN
-        UPDATE public.chat_app_replies SET state = 'active' WHERE id = r.id RETURNING * INTO r;
-      END IF;
     END IF;
     RETURN jsonb_build_object('inbox', to_jsonb(i), 'reply', to_jsonb(r));
-
-  ELSIF p_action = 'notice' THEN
-    -- A one-line answer that is not tied to a conversation row (an unconnected
-    -- chat, a stranger). The inbox row carries where it goes.
-    INSERT INTO public.chat_app_replies (conversation_id, inbox_id, notice_code, payload)
-    VALUES ((p_payload->>'conversation_id')::uuid, (p_payload->>'inbox_id')::uuid,
-            p_payload->>'notice_code', coalesce(p_payload->'payload', '{}'))
-    RETURNING * INTO r;
-    RETURN to_jsonb(r);
 
   ELSIF p_action = 'claim_reply' THEN
     -- A WeCom message can only go out through the socket of the lease holder.
