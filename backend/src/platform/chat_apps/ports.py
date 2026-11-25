@@ -122,6 +122,8 @@ class Pacing:
     stream_chars: int | None = None
     #: True when the length limit is in UTF-8 bytes (WeCom), not characters.
     bytes_limit: bool = False
+    #: Re-send unchanged progress this often (Telegram DM drafts expire after 30 s).
+    keepalive_seconds: float | None = None
 
 
 class PlatformError(Exception):

@@ -54,6 +54,7 @@ LEASE_SECONDS = 30
 STATS_INTERVAL_SECONDS = 60
 SCRUB_INTERVAL_SECONDS = 3600
 IDLE_SECONDS = 1.0
+MAX_INBOX_ATTEMPTS = 5
 
 
 def _now() -> datetime:
@@ -146,8 +147,10 @@ class Gateway:
         except Exception:
             logger.exception("chat_app_inbox_failed", extra={"chat_app": {"inbox": row["id"]}})
             self.stats["failed"] += 1
-            with suppress(Exception):
-                await self._db("release", kind="inbox", id=row["id"], fence=row["fence"])
+            # Keep the lease: the row comes back when it expires, not in a hot loop.
+            if row["attempts"] >= MAX_INBOX_ATTEMPTS:
+                with suppress(Exception):
+                    await self._finish(row, "done", "error")
         return True
 
     async def _finish(self, row, state, outcome, **values):
@@ -445,7 +448,12 @@ class Gateway:
         last_edit = _parse(payload.get("edited_at"))
         fingerprint = digest(rendered.message)
         later = (now + timedelta(seconds=max(1.0, pacing.min_edit_seconds))).isoformat()
-        if fingerprint == reply.get("rendered_digest") and not rendered.finished:
+        stale = (
+            pacing.keepalive_seconds is not None
+            and last_edit is not None
+            and (now - last_edit).total_seconds() >= pacing.keepalive_seconds
+        )
+        if fingerprint == reply.get("rendered_digest") and not rendered.finished and not stale:
             await self._save(reply, release=True, next_attempt_at=later)
             return
         if not due(last_edit, pacing, now, rendered.finished):
@@ -652,9 +660,11 @@ async def main() -> None:
     from src.platform.agent.dependencies import get_agent_service
     from src.platform.chat_apps.dependencies import get_platforms
     from src.platform.entitlements.service import EntitlementService
+    from src.platform.project.write_lease import install_storage_write_admission
     from src.platform.repository_policy import load_repository_policy
 
     # Same startup contract as every deployed process, though Runs are written by agent_worker.
+    install_storage_write_admission()
     load_repository_policy()
     repository = ChatAppRepository()
     await run_blocking(preflight, repository)

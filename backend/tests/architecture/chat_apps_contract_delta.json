@@ -1,0 +1,38 @@
+{
+  "added": {
+    "paths": {
+      "/api/v1/chat-apps/identities": "5472f9c66428ed02d8ea6ccd7edc86b0952236474f3d35d4c4d1c9bc4f0a38ff",
+      "/api/v1/chat-apps/slack/actions": "bf651a75c728e135acf0857dbabfacdfe64cfe4c185003f5f131ebf45688ab50",
+      "/api/v1/chat-apps/slack/events": "7031fb59bacceffb6a0a76b4cd62153e4647b00f05797b5df2d68a8365d07746",
+      "/api/v1/chat-apps/telegram/webhook": "acdb4b8de576f9d1d31919086266a73dacecd2de9ad85fedc41836edc12783de",
+      "/api/v1/projects/{project_id}/chat-apps": "d47778b7e8afa297bcdc83870421122c12e60a1225b11d235e4685fdea7982a0",
+      "/api/v1/projects/{project_id}/chat-apps/connections": "dc395366bfe0d78284d80ac00f2353e3ad06024d671e5d2619fcc8c08acc2d65",
+      "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}": "eb507cf1bf0cdce02e3552e353752dbf2262554dfbaf802b46a261e8f2e02877",
+      "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}/decision": "4061e3676e8f207883f6594ebec6b39ed0f5560d23dd00eabd74b265a471e78d",
+      "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}/owner": "655a02cb3ec9cdf2f8390bf4892d84e01290a2aa16765827ef62e28ca7b1becf",
+      "/api/v1/projects/{project_id}/chat-apps/links": "361b3a1a479a6f125aa7085c5f06419c260c77ee9b9c23720b8d5024161a73d5",
+      "/api/v1/projects/{project_id}/chat-apps/links/{link_id}": "15619946542e75a1113a15bcd8a19ce8679fb4e697f9d2a6ccbdf8b79ff2c335"
+    },
+    "schemas": {
+      "ChangeChat": "9cede96d06cca67f5ca8471901359ac9c0fe045c5aa11683ce03f7ac07f08d26",
+      "ConnectBot": "99f6c18fd46665b9d15eec4bb6ea03de94813f1bbfc59ff1608aaae104e13dd9",
+      "Decision": "fd4085a6c2905db6bb6e0011d9784e131be57068735110f57eb8346e5e99b633",
+      "LinkIdentity": "17982cb3aba567f7d12860daa906461a42a5f6a88530c615221cb8c48ccba2e4",
+      "StartLink": "e23c5b647e9106ad344289a7b3b840daee9dee9f56510137f8442c2d44f5a59d"
+    }
+  },
+  "changed": {
+    "paths": {
+      "/api/v1/activity/items": {
+        "after": "ee79ed9719921878b62bec256af2927684f19a523527c9908ef52e805c5a7dac",
+        "before": "8d328bf56d1d068c6b19853ce816b1ac68127c6a5dc3e3aad19ffa510840c242"
+      }
+    },
+    "schemas": {
+      "ContextActivityItem": {
+        "after": "9dd07e8b94ecd83b0c8c71141fe3b99a42495b91639564720984bd531437809f",
+        "before": "3a744cd8c3bfb68229fdf0d9cdb80998df97bb040bd50c593975047e9db69f99"
+      }
+    }
+  }
+}

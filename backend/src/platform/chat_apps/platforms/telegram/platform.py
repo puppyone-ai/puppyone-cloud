@@ -78,7 +78,7 @@ class TelegramPlatform:
         # Groups: ~20 sends+edits a minute per chat, so one edit per 3 s.
         # DM drafts expire after 30 s: the relay must refresh within 20 s.
         if target.chat_kind == "dm" and target.via != "guest":
-            return Pacing(min_edit_seconds=1.0, max_text=_MAX_TEXT)
+            return Pacing(min_edit_seconds=1.0, max_text=_MAX_TEXT, keepalive_seconds=20.0)
         return Pacing(min_edit_seconds=3.0, max_text=_MAX_TEXT)
 
     def verify(self, headers: dict[str, str], raw_body: bytes) -> None:
