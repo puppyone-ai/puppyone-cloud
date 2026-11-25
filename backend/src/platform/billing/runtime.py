@@ -372,19 +372,41 @@ class RuntimeMeteringService:
         if settings.RUNTIME_METERING_MODE == "disabled":
             return None
         run = await run_blocking(self._repo.get, run_id)
-        if (
-            run is None
-            or run.project_id != project_id
-            or run.metadata.get("actor_id") != actor_id
-            or run.status != "running"
-            or not run.reservation_id
-        ):
+        if run is None or run.status == "unmetered" or not run.reservation_id:
+            if settings.RUNTIME_METERING_MODE == "shadow":
+                logger.warning(
+                    "runtime_session_resume_shadow_bypass",
+                    extra={
+                        "run_id": run_id,
+                        "status": run.status if run is not None else "missing",
+                    },
+                )
+                return None
             raise ValueError("Runtime reservation cannot be resumed")
-        response = await self._gateway.request(
-            "POST",
-            f"/internal/v1/billing/runtime/reservations/{run.reservation_id}/heartbeat",
-            body={"extend_seconds": min(3600, settings.RUNTIME_BILLING_HEARTBEAT_SECONDS * 2)},
-        )
+        if run.project_id != project_id or run.metadata.get("actor_id") != actor_id:
+            raise ValueError("Runtime reservation cannot be resumed")
+        if run.status != "running":
+            if settings.RUNTIME_METERING_MODE == "shadow":
+                logger.warning(
+                    "runtime_session_resume_shadow_bypass",
+                    extra={"run_id": run_id, "status": run.status},
+                )
+                return None
+            raise ValueError("Runtime reservation cannot be resumed")
+        try:
+            response = await self._gateway.request(
+                "POST",
+                f"/internal/v1/billing/runtime/reservations/{run.reservation_id}/heartbeat",
+                body={"extend_seconds": min(3600, settings.RUNTIME_BILLING_HEARTBEAT_SECONDS * 2)},
+            )
+        except BillingGatewayError as exc:
+            if settings.RUNTIME_METERING_MODE == "shadow":
+                logger.warning(
+                    "runtime_session_resume_shadow_bypass",
+                    extra={"run_id": run_id, "reason": _billing_error_code(exc)},
+                )
+                return None
+            raise
         await run_blocking(
             self._repo.update,
             run_id,
@@ -430,7 +452,7 @@ class RuntimeMeteringService:
 
         await self._stop_heartbeat(run_id)
         run = await run_blocking(self._repo.get, run_id)
-        if run is None or run.status in {"settled", "canceled", "unmetered"}:
+        if run is None or run.status in {"settled", "canceled", "unmetered", "expired"}:
             return True
         runtime_seconds = 0
         if run.started_at:
@@ -440,7 +462,12 @@ class RuntimeMeteringService:
             runtime_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
         await self._settle(run_id, runtime_seconds, allow_retry=retry)
         current = await run_blocking(self._repo.get, run_id)
-        return current is not None and current.status in {"settled", "canceled", "unmetered"}
+        return current is not None and current.status in {
+            "settled",
+            "canceled",
+            "unmetered",
+            "expired",
+        }
 
     async def cancel_session(self, run_id: str) -> None:
         """Compensate a reservation when the provider never started."""
@@ -641,6 +668,9 @@ class RuntimeMeteringService:
         occurred_at = str(
             run.metadata.get("settlement_occurred_at") or datetime.now(UTC).isoformat()
         )
+        idempotency_key = str(
+            run.metadata.get("settlement_idempotency_key") or f"runtime-settle:{run_id}"
+        )
         metadata = {
             **run.metadata,
             "runtime_seconds": stable_runtime_seconds,
@@ -660,26 +690,106 @@ class RuntimeMeteringService:
             response = await self._gateway.request(
                 "POST",
                 f"/internal/v1/billing/runtime/reservations/{run.reservation_id}/settle",
-                idempotency_key=f"runtime-settle:{run_id}",
+                idempotency_key=idempotency_key,
                 body={
                     "runtime_seconds": stable_runtime_seconds,
                     "occurred_at": occurred_at,
                 },
             )
         except BillingGatewayError as exc:
+            error_code = _billing_error_code(exc)
+            if (
+                exc.status_code == 409
+                and error_code == "runtime_exceeds_reservation"
+                and not metadata.get("settlement_capped")
+            ):
+                capped_seconds, reserved_units = _capped_settlement_seconds(
+                    run, stable_runtime_seconds, exc
+                )
+                if capped_seconds is not None:
+                    capped_key = f"runtime-settle:{run_id}:capped"
+                    metadata = {
+                        **metadata,
+                        "uncapped_runtime_seconds": stable_runtime_seconds,
+                        "runtime_seconds": capped_seconds,
+                        "settlement_capped": True,
+                        "settlement_idempotency_key": capped_key,
+                    }
+                    logger.error(
+                        "runtime_settlement_capped_to_reservation",
+                        extra={
+                            "run_id": run_id,
+                            "uncapped_runtime_seconds": stable_runtime_seconds,
+                            "capped_runtime_seconds": capped_seconds,
+                            "reserved_units": reserved_units,
+                        },
+                    )
+                    try:
+                        response = await self._gateway.request(
+                            "POST",
+                            f"/internal/v1/billing/runtime/reservations/{run.reservation_id}/settle",
+                            idempotency_key=capped_key,
+                            body={
+                                "runtime_seconds": capped_seconds,
+                                "occurred_at": occurred_at,
+                            },
+                        )
+                    except BillingGatewayError as retry_exc:
+                        exc = retry_exc
+                        error_code = _billing_error_code(retry_exc)
+                    else:
+                        await run_blocking(
+                            self._repo.update,
+                            run_id,
+                            {
+                                "status": "settled",
+                                "actual_units": int(response["runtime_units"]),
+                                "settled_at": datetime.now(UTC).isoformat(),
+                                "last_error": None,
+                                "metadata": metadata,
+                            },
+                        )
+                        return True
+            if exc.status_code in {404, 409} and error_code in _TERMINAL_SETTLEMENT_ERRORS:
+                details = _billing_error_details(exc)
+                terminal_status = (
+                    "canceled"
+                    if error_code == "reservation_not_active"
+                    and details.get("status") == "canceled"
+                    else "expired"
+                )
+                await run_blocking(
+                    self._repo.update,
+                    run_id,
+                    {
+                        "status": terminal_status,
+                        "attempts": run.attempts + 1,
+                        "last_error": error_code,
+                        "metadata": metadata,
+                    },
+                )
+                logger.error(
+                    "runtime_settlement_abandoned_terminal",
+                    extra={
+                        "run_id": run_id,
+                        "reason": error_code,
+                        "terminal_status": terminal_status,
+                    },
+                )
+                return True
             await run_blocking(
                 self._repo.update,
                 run_id,
                 {
                     "status": "failed",
                     "attempts": run.attempts + 1,
-                    "last_error": _billing_error_code(exc),
+                    "last_error": error_code,
                     "metadata": metadata,
                 },
             )
             logger.error(
                 "runtime_settlement_deferred",
-                extra={"run_id": run_id, "reason": _billing_error_code(exc)},
+                extra={"run_id": run_id, "reason": error_code},
             )
             return True
         await run_blocking(
@@ -795,6 +905,47 @@ class RuntimeMeteringService:
                 # not starve the remainder of the recovery batch.
                 logger.exception("runtime_recovery_item_failed", extra={"run_id": run.run_id})
         return recovered
+
+
+_TERMINAL_SETTLEMENT_ERRORS = frozenset(
+    {
+        "reservation_settlement_window_expired",
+        "reservation_not_found",
+        "reservation_not_active",
+    }
+)
+
+
+def _billing_error_details(error: BillingGatewayError) -> dict[str, Any]:
+    payload = error.payload.get("error") if isinstance(error.payload, dict) else None
+    details = payload.get("details") if isinstance(payload, dict) else None
+    return details if isinstance(details, dict) else {}
+
+
+def _capped_settlement_seconds(
+    run: RuntimeBillingRun,
+    runtime_seconds: int,
+    error: BillingGatewayError,
+) -> tuple[int | None, int]:
+    details = _billing_error_details(error)
+    try:
+        reserved_units = int(details.get("reserved_units") or run.estimated_units or 0)
+    except (TypeError, ValueError):
+        reserved_units = int(run.estimated_units or 0)
+    try:
+        reported_units = int(details.get("runtime_units") or 0)
+    except (TypeError, ValueError):
+        reported_units = 0
+    if reserved_units <= 0:
+        return None, 0
+    if reported_units > reserved_units and runtime_seconds > 0:
+        capped = (reserved_units * runtime_seconds) // reported_units
+    else:
+        capped = min(runtime_seconds, reserved_units * 60)
+    capped = min(runtime_seconds, max(0, capped))
+    if capped >= runtime_seconds:
+        return None, reserved_units
+    return capped, reserved_units
 
 
 def _billing_error_code(error: BillingGatewayError) -> str:

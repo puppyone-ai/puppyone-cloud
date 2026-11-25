@@ -335,7 +335,9 @@ class Settings(BaseSettings):
             raise ValueError("HOST_GATEWAY_PUBLIC_URL must be an https origin")
         # Every API worker must sign with the same authority the hosts trust.
         if "BEGIN OPENSSH PRIVATE KEY" not in (self.HOST_SSH_CA_PRIVATE_KEY or ""):
-            raise ValueError("HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled")
+            raise ValueError(
+                "HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled"
+            )
         return self
 
     @model_validator(mode="after")
@@ -736,6 +738,12 @@ class Settings(BaseSettings):
     SEAT_PROPOSAL_BATCH_SIZE: int = Field(default=25, ge=1, le=100)
     SEAT_PROPOSAL_LEASE_SECONDS: int = Field(default=60, ge=10, le=3600)
     RUNTIME_DEFAULT_RESERVATION_UNITS: int = Field(default=10, gt=0, le=10_000)
+    RUNTIME_WORKSPACE_MAX_UNITS: int = Field(
+        default=10_080,
+        gt=0,
+        le=1_000_000,
+        description="Upper-bound RU reservation for one uncharged interactive Workspace epoch (7 days at 1 RU/min)",
+    )
     RUNTIME_AGENT_MAX_UNITS: int = Field(
         default=30,
         gt=0,
