@@ -38,6 +38,8 @@ SAVE_RETRY_SECONDS = 5
 SAVE_BUDGET_SECONDS = 150
 # Past this a pause stops retrying: the machine goes back to running, or to retained.
 PAUSE_LIMIT_SECONDS = 600
+# Bounded fast-path settlement window after the local outbox row is durably sealed.
+FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS = 5
 
 
 def _is_fly_host_export(row) -> bool:
@@ -679,17 +681,74 @@ class WorkbenchLifecycle:
         logger.warning("workbench_compute_recreated", extra={"workbench_id": row["id"]})
         return await run_blocking(self.repository.transition, row, "resuming", host.resource)
 
-    async def _finish_billing(self, row) -> None:
+    async def _seal_billing(self, row) -> None:
+        """Freeze usage durably in local PostgreSQL before releasing the control plane."""
         if settings.RUNTIME_METERING_MODE == "disabled":
             return
-        if await self.billing.finish_session(meter_id(row), retry=True):
+        seal = getattr(self.billing, "seal_session", None)
+        if callable(seal):
+            await seal(meter_id(row))
+
+    async def _try_settle_billing(self, row) -> None:
+        """Best-effort fast-path settlement after the workspace transition is durable.
+
+        The outbox row is already sealed in PostgreSQL, so transport failures,
+        timeouts, or PuppyPay outages never block ``paused`` / ``retired``;
+        ``RuntimeMeteringService.recover_once()`` settles deferred rows with
+        exponential backoff.
+        """
+        if settings.RUNTIME_METERING_MODE == "disabled":
             return
-        if settings.RUNTIME_METERING_MODE == "required":
-            raise WorkerDisconnected("Workspace settlement awaits confirmation")
-        logger.warning(
-            "workbench_settlement_shadow_deferred",
-            extra={"workbench_id": row["id"], "run_id": meter_id(row)},
-        )
+        run_id = meter_id(row)
+        try:
+            async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                settled = await self.billing.finish_session(run_id, retry=True)
+        except Exception:
+            logger.warning(
+                "workbench_settlement_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+                exc_info=True,
+            )
+            return
+        if not settled:
+            logger.warning(
+                "workbench_settlement_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+            )
+
+    async def _seal_cancel_billing(self, row) -> None:
+        """Record cancellation intent locally before retiring a never-started workspace."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        seal_cancel = getattr(self.billing, "seal_cancel_session", None)
+        if callable(seal_cancel):
+            await seal_cancel(meter_id(row))
+
+    async def _try_cancel_billing(self, row) -> None:
+        """Best-effort fast-path cancellation after local cancel intent is durable."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        run_id = meter_id(row)
+        try:
+            async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                await self.billing.cancel_session(run_id, retry=True)
+        except TypeError:
+            # Test fakes or older wrappers may not accept ``retry``.
+            try:
+                async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                    await self.billing.cancel_session(run_id)
+            except Exception:
+                logger.warning(
+                    "workbench_cancellation_deferred_to_outbox",
+                    extra={"workbench_id": row["id"], "run_id": run_id},
+                    exc_info=True,
+                )
+        except Exception:
+            logger.warning(
+                "workbench_cancellation_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+                exc_info=True,
+            )
 
     async def destroy(self, row):
         """Destroy compute and disk: the owner was deleted, or the work is on its branch."""
@@ -702,9 +761,10 @@ class WorkbenchLifecycle:
                 await host.runtime.destroy_workspace(row["resource"])
             finally:
                 await host.runtime.aclose()
-        await self._finish_billing(row)
+        await self._seal_billing(row)
         await run_blocking(self.repository.transition, row, "retired")
         logger.info("workbench_destroyed", extra={"workbench_id": row["id"]})
+        await self._try_settle_billing(row)
 
     async def _preserve_failed_start(self, row):
         """Bring a failed start to rest, then out of retained once it can be checked.
@@ -717,13 +777,13 @@ class WorkbenchLifecycle:
                 # Intent is persisted before allocation, so no provider resource exists.
                 if row["resource"] is not None and await host.runtime.resolve(host.resource):
                     raise WorkerDisconnected("Allocation outcome requires reconciliation")
-                if settings.RUNTIME_METERING_MODE != "disabled":
-                    await self.billing.cancel_session(meter_id(row))
+                await self._seal_cancel_billing(row)
                 await run_blocking(
                     self.repository.transition,
                     row,
                     "retired" if row["state"] == "retained" else "retained",
                 )
+                await self._try_cancel_billing(row)
                 return
             matches = await host.runtime.resolve(host.resource)
             if len(matches) != 1:
@@ -736,14 +796,18 @@ class WorkbenchLifecycle:
                 host.resource["initialized"] = True  # Only an initialized disk resumes.
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
-            await self._finish_billing(row)
+            await self._seal_billing(row)
             if row["state"] != "retained":
                 await run_blocking(self.repository.transition, row, "retained", host.resource)
             elif host.resource.get("initialized"):
                 # The one original resource is confirmed stopped: an ordinary paused disk.
-                await run_blocking(self.repository.transition, row, "paused", host.resource)
+                paused = await run_blocking(
+                    self.repository.transition, row, "paused", host.resource
+                )
+                await run_blocking(self.repository.progress, paused, "paused")
             else:
                 logger.error("workspace_requires_operator", extra={"workbench_id": row["id"]})
+            await self._try_settle_billing(row)
         finally:
             await host.runtime.aclose()
 
@@ -883,15 +947,19 @@ class WorkbenchLifecycle:
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
         except WorkspaceDiskLost:
+            await self._seal_billing(row)
             await run_blocking(self.repository.disk_lost, row)
             logger.error("workbench_disk_lost", extra={"workbench_id": row["id"]})
+            await self._try_settle_billing(row)
             return
         finally:
             await host.runtime.aclose()
-        # Settlement precedes paused ACK and the next compute epoch.
-        await self._finish_billing(row)
+        # Local durable outbox seal precedes the paused ACK; fast-path
+        # settlement runs afterwards so PuppyPay outages never trap a workspace.
+        await self._seal_billing(row)
         paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
         await run_blocking(self.repository.progress, paused, "paused")
+        await self._try_settle_billing(row)
 
     @staticmethod
     def _pause_expired(row):
