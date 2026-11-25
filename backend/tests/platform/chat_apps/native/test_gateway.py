@@ -100,6 +100,7 @@ def world(db, client, monkeypatch):
             {"telegram": platform},
             worker=name,
             web_origin="https://web.example.test",
+            mentions={"telegram": "@PuppyOneBot"},
         )
 
     def ask(
@@ -161,7 +162,7 @@ def test_one_question_becomes_one_message_that_ends_as_the_answer(world, db):
     w["drain"](g)
     welcome = w["platform"].sent[0][1].text
     assert len(w["platform"].sent) == 2
-    assert welcome.startswith("I'm in. Reply to me or mention @PuppyOne to ask.")
+    assert welcome.startswith("I'm in. Reply to me or mention @PuppyOneBot to ask.")
     [run] = w["runs_of_project"]()
     assert run["prompt"] == "[Telegram · Design team · Alex]\nchange the price to 29"
     assert run["user_id"] == w["owner"]
@@ -174,7 +175,7 @@ def test_one_question_becomes_one_message_that_ends_as_the_answer(world, db):
     w["move"](run["id"], "succeeded", text="Monthly is 29 now.")
     w["drain"](g)
     final = w["platform"].edits[-1][1]
-    assert final.final and final.text == "Monthly is 29 now.\n\nChanged 1 files: pricing.md"
+    assert final.final and final.text == "Monthly is 29 now.\n\nChanged 1 file: pricing.md"
     assert final.open_url.startswith(
         f"https://web.example.test/open/projects/{w['project_id']}?session="
     )

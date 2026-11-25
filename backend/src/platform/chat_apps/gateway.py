@@ -76,6 +76,7 @@ class Gateway:
         worker=None,
         web_origin="",
         clock=_now,
+        mentions=None,
     ):
         self.repository = repository
         self.agents = agents
@@ -84,6 +85,8 @@ class Gateway:
         self.worker = worker or f"chat-gateway-{socket.gethostname()}-{os.getpid()}"
         self.web_origin = web_origin.rstrip("/")
         self.clock = clock
+        # How people mention the bot in each app (Telegram: the bot's username).
+        self.mentions = {"slack": "@PuppyOne", "wecom": "@PuppyOne", **(mentions or {})}
         self.stats: Counter[str] = Counter()
 
     # --- database -------------------------------------------------------
@@ -177,7 +180,7 @@ class Gateway:
         names = {
             "name": (conversation or {}).get("owner_name") or "the owner",
             "workspace": (conversation or {}).get("workspace_name") or "this workspace",
-            "mention": "@PuppyOne",
+            "mention": self.mentions.get(row["platform"], "@PuppyOne"),
             "asker": row.get("asker_label") or "",
         }
         action = decision.action
@@ -418,7 +421,7 @@ class Gateway:
         target = await self._target(conversation, inbox, thread)
         names = {
             "name": conversation.get("owner_name") or "the owner",
-            "mention": "@PuppyOne",
+            "mention": self.mentions.get(conversation["platform"], "@PuppyOne"),
             "workspace": conversation.get("workspace_name") or "",
         }
         if not reply.get("run_id"):
@@ -675,6 +678,7 @@ async def main() -> None:
         platforms,
         EntitlementService(),
         web_origin=settings.FRONTEND_URL,
+        mentions={"telegram": "@" + settings.CHAT_APPS_TELEGRAM_BOT_USERNAME.lstrip("@")},
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

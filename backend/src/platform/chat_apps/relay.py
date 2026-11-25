@@ -140,7 +140,7 @@ def render(
 
     code = snapshot.get("code")
     if state == "succeeded":
-        line = _changed_line(files, f"Changed {len(files)} files")
+        line = _changed_line(files, f"Changed {len(files)} file{'' if len(files) == 1 else 's'}")
         body = "\n\n".join(part for part in (text or "Done.", line) if part)
     elif state == "stopped" and code == "approval_expired":
         body = "No answer in 30 minutes. Stopped."

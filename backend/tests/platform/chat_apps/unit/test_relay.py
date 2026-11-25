@@ -74,7 +74,7 @@ def test_finished_runs():
         )
     )
     assert done.finished and done.message.final and done.units == 1 and not done.done_notice
-    assert done.message.text == "Done, it is 29 now.\n\nChanged 1 files: pricing.md"
+    assert done.message.text == "Done, it is 29 now.\n\nChanged 1 file: pricing.md"
     assert done.message.open_url.endswith("session=s1") and done.message.stop_reply_id is None
     long = show(run("succeeded", text="ok", seconds=61))
     assert long.done_notice and long.units == 2
