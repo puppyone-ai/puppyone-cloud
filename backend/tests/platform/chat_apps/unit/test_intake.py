@@ -199,6 +199,18 @@ def test_each_app_starts_its_own_way(secrets):
     assert missing.value.status_code == 422
 
 
+def test_the_list_says_how_people_call_it_in_each_app(secrets):
+    svc, repository = service()
+    svc.mentions = {"telegram": "@PuppyOneBot"}
+    repository.human.side_effect = lambda action, user, **payload: {"conversations": []}
+    listed = svc.list("u", "p")
+    assert listed["mentions"] == {
+        "slack": "@PuppyOne",
+        "telegram": "@PuppyOneBot",
+        "wecom": "@PuppyOne",
+    }
+
+
 def test_a_platform_that_is_off_cannot_be_started(secrets):
     svc, _ = service({"telegram": SimpleNamespace(start_links=lambda c: {})})
     with pytest.raises(HTTPException) as off:

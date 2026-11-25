@@ -18,5 +18,12 @@ def get_chat_app_repository() -> ChatAppRepository:
     return ChatAppRepository()
 
 
+def mentions() -> dict[str, str]:
+    username = settings.CHAT_APPS_TELEGRAM_BOT_USERNAME.lstrip("@")
+    return {"telegram": "@" + username} if username else {}
+
+
 def get_chat_app_service() -> ChatAppService:
-    return ChatAppService(get_chat_app_repository(), get_platforms(), get_agent_service())
+    return ChatAppService(
+        get_chat_app_repository(), get_platforms(), get_agent_service(), mentions=mentions()
+    )

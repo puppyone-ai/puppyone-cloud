@@ -14,10 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 class ChatAppService:
-    def __init__(self, repository: ChatAppRepository, platforms: dict, agents=None):
+    def __init__(self, repository: ChatAppRepository, platforms: dict, agents=None, mentions=None):
         self.repository = repository
         self.platforms = platforms
         self.agents = agents
+        self.mentions = mentions or {}
 
     def _platform(self, name: str):
         platform = self.platforms.get(name)
@@ -28,6 +29,8 @@ class ChatAppService:
     def list(self, user: str, project: str):
         value = self.repository.human("list", user, project_id=project)
         value["platforms"] = sorted(self.platforms)
+        # How people call it in each app (Telegram: the bot's username).
+        value["mentions"] = {p: self.mentions.get(p, "@PuppyOne") for p in value["platforms"]}
         return value
 
     def start(self, user: str, project: str, body: StartLink):

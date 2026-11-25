@@ -661,7 +661,7 @@ def preflight(repository: ChatAppRepository) -> None:
 async def main() -> None:
     from src.config import settings
     from src.platform.agent.dependencies import get_agent_service
-    from src.platform.chat_apps.dependencies import get_platforms
+    from src.platform.chat_apps.dependencies import get_platforms, mentions
     from src.platform.entitlements.service import EntitlementService
     from src.platform.project.write_lease import install_storage_write_admission
     from src.platform.repository_policy import load_repository_policy
@@ -678,7 +678,7 @@ async def main() -> None:
         platforms,
         EntitlementService(),
         web_origin=settings.FRONTEND_URL,
-        mentions={"telegram": "@" + settings.CHAT_APPS_TELEGRAM_BOT_USERNAME.lstrip("@")},
+        mentions=mentions(),
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
