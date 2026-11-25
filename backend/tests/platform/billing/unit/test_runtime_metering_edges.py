@@ -160,11 +160,174 @@ async def test_shadow_session_whose_reservation_failed_runs_unmetered(shadow, ca
     assert await metering.start_session(audit_context=_context()) is None
     assert repository.get("run-1").status == "unmetered"
     assert repository.get("run-1").last_error == "puppypay_down"
-    # Shadow checks and finishes never block pre-existing or unmetered sessions.
+    # Shadow checks, resumes and finishes never block pre-existing or unmetered sessions.
     await metering.check_session("run-1")
     await metering.check_session("preexisting-run-before-rollout")
+    assert await metering.resume_session("run-1", project_id="project-1", actor_id="user-1") is None
+    assert (
+        await metering.resume_session(
+            "preexisting-run-before-rollout", project_id="project-1", actor_id="user-1"
+        )
+        is None
+    )
     assert "runtime_session_check_shadow_bypass" in caplog.text
+    assert "runtime_session_resume_shadow_bypass" in caplog.text
     assert await metering.finish_session("run-1", retry=True) is True
+
+
+@pytest.mark.asyncio
+async def test_shadow_resume_session_bypasses_gateway_failure_but_enforces_owner(
+    shadow, monkeypatch, caplog
+) -> None:
+    metering, _, gateway = service()
+    run_id = await metering.start_session(audit_context=_context())
+    assert run_id == "run-1"
+    await metering.detach_session(run_id)
+
+    with pytest.raises(ValueError, match="cannot be resumed"):
+        await metering.resume_session(run_id, project_id="project-1", actor_id="other-user")
+
+    real = gateway.request
+
+    async def broken_heartbeat(method, path, **kwargs):
+        if path.endswith("/heartbeat"):
+            raise BillingGatewayError(503, {"error": {"code": "puppypay_down"}})
+        return await real(method, path, **kwargs)
+
+    monkeypatch.setattr(gateway, "request", broken_heartbeat)
+    assert await metering.resume_session(run_id, project_id="project-1", actor_id="user-1") is None
+    assert "runtime_session_resume_shadow_bypass" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_settlement_exceeding_reservation_caps_and_settles_with_distinct_key(
+    required, monkeypatch, caplog
+) -> None:
+    metering, repository, gateway = service()
+    reserved(
+        repository,
+        status="failed",
+        estimated_units=10,
+        metadata={"runtime_seconds": 8799, "settlement_occurred_at": datetime.now(UTC).isoformat()},
+    )
+    real = gateway.request
+
+    async def reject_over_reservation(method, path, **kwargs):
+        if path.endswith("/settle"):
+            seconds = kwargs["body"]["runtime_seconds"]
+            if seconds > 600:
+                gateway.calls.append((method, path, kwargs))
+                raise BillingGatewayError(
+                    409,
+                    {
+                        "error": {
+                            "code": "runtime_exceeds_reservation",
+                            "details": {"reserved_units": 10, "runtime_units": 147},
+                        }
+                    },
+                )
+            gateway.calls.append((method, path, kwargs))
+            return {"runtime_units": 10}
+        return await real(method, path, **kwargs)
+
+    monkeypatch.setattr(gateway, "request", reject_over_reservation)
+    assert await metering.finish_session("run-1", retry=True) is True
+
+    settle_calls = calls(gateway, "/settle")
+    assert len(settle_calls) == 2
+    assert settle_calls[0][2]["idempotency_key"] == "runtime-settle:run-1"
+    assert settle_calls[0][2]["body"]["runtime_seconds"] == 8799
+    assert settle_calls[1][2]["idempotency_key"] == "runtime-settle:run-1:capped"
+    assert settle_calls[1][2]["body"]["runtime_seconds"] <= 600
+    run = repository.get("run-1")
+    assert run.status == "settled"
+    assert run.actual_units == 10
+    assert run.metadata["settlement_capped"] is True
+    assert run.metadata["uncapped_runtime_seconds"] == 8799
+    assert "runtime_settlement_capped_to_reservation" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_capped_settlement_preserves_capped_key_across_transient_retry(
+    required, monkeypatch
+) -> None:
+    metering, repository, gateway = service()
+    reserved(
+        repository,
+        status="failed",
+        estimated_units=10,
+        metadata={
+            "runtime_seconds": 12279,
+            "settlement_occurred_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    attempt = 0
+
+    async def flaky_capped(method, path, **kwargs):
+        nonlocal attempt
+        gateway.calls.append((method, path, kwargs))
+        attempt += 1
+        if attempt == 1:
+            raise BillingGatewayError(
+                409,
+                {
+                    "error": {
+                        "code": "runtime_exceeds_reservation",
+                        "details": {"reserved_units": 10, "runtime_units": 205},
+                    }
+                },
+            )
+        if attempt == 2:
+            raise BillingGatewayError(503, {"error": {"code": "puppypay_down"}})
+        return {"runtime_units": 10}
+
+    monkeypatch.setattr(gateway, "request", flaky_capped)
+    assert await metering.finish_session("run-1", retry=True) is False
+    assert repository.get("run-1").status == "failed"
+    assert repository.get("run-1").metadata["settlement_idempotency_key"] == (
+        "runtime-settle:run-1:capped"
+    )
+
+    assert await metering.finish_session("run-1", retry=True) is True
+    settle_calls = calls(gateway, "/settle")
+    assert len(settle_calls) == 3
+    assert settle_calls[2][2]["idempotency_key"] == "runtime-settle:run-1:capped"
+    assert (
+        settle_calls[2][2]["body"]["runtime_seconds"]
+        == settle_calls[1][2]["body"]["runtime_seconds"]
+    )
+    assert repository.get("run-1").status == "settled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "error_code", "details", "expected_status"),
+    [
+        (409, "reservation_settlement_window_expired", {}, "expired"),
+        (404, "reservation_not_found", {}, "expired"),
+        (409, "reservation_not_active", {"status": "expired"}, "expired"),
+        (409, "reservation_not_active", {"status": "canceled"}, "canceled"),
+    ],
+)
+async def test_terminal_settlement_conflict_stops_retry_deadlock(
+    required, monkeypatch, caplog, status_code, error_code, details, expected_status
+) -> None:
+    metering, repository, gateway = service()
+    reserved(repository, status="running")
+
+    async def reject_terminal(method, path, **kwargs):
+        gateway.calls.append((method, path, kwargs))
+        raise BillingGatewayError(
+            status_code,
+            {"error": {"code": error_code, "details": details}},
+        )
+
+    monkeypatch.setattr(gateway, "request", reject_terminal)
+    assert await metering.finish_session("run-1", retry=True) is True
+    run = repository.get("run-1")
+    assert run.status == expected_status
+    assert run.last_error == error_code
+    assert "runtime_settlement_abandoned_terminal" in caplog.text
 
 
 @pytest.mark.asyncio

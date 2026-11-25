@@ -66,6 +66,19 @@ def meter_id(row):
     return f"cloud-workbench:{row['id']}:{row['generation']}:{row['compute_epoch']}"
 
 
+def meter_max_units(row) -> int:
+    """Upper-bound RU reservation for one compute epoch.
+
+    Interactive default Workspaces (``workspace``) are metered cost-only without
+    drawing credit and stay open across hours or days, so they must not use the
+    10-minute default reservation ceiling. Charged agent/automation Workspaces
+    reserve ``RUNTIME_AGENT_MAX_UNITS``.
+    """
+    if meter_source(row) == "workspace":
+        return settings.RUNTIME_WORKSPACE_MAX_UNITS
+    return settings.RUNTIME_AGENT_MAX_UNITS
+
+
 def failure(exc):
     if isinstance(exc, WorkspaceUnavailable):
         return exc.code, exc.retryable
@@ -502,6 +515,7 @@ class WorkbenchLifecycle:
                 "project_id": row["project_id"],
                 "user_id": row["user_id"],
                 "org_id": grant.org_id,
+                "maximum_runtime_units": meter_max_units(row),
             }
         )
         await self.billing.check_session(meter_id(row))
@@ -642,9 +656,7 @@ class WorkbenchLifecycle:
         row = await run_blocking(self.repository.transition, row, row["state"], host.resource)
         await self.progress(row, "checking_files")
         await self.ready({**row, "resource": host.resource})
-        await run_blocking(
-            self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN
-        )
+        await run_blocking(self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN)
         return await run_blocking(self.repository.ready, row, host.resource)
 
     async def _recreate(self, row, host):
@@ -667,6 +679,18 @@ class WorkbenchLifecycle:
         logger.warning("workbench_compute_recreated", extra={"workbench_id": row["id"]})
         return await run_blocking(self.repository.transition, row, "resuming", host.resource)
 
+    async def _finish_billing(self, row) -> None:
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        if await self.billing.finish_session(meter_id(row), retry=True):
+            return
+        if settings.RUNTIME_METERING_MODE == "required":
+            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        logger.warning(
+            "workbench_settlement_shadow_deferred",
+            extra={"workbench_id": row["id"], "run_id": meter_id(row)},
+        )
+
     async def destroy(self, row):
         """Destroy compute and disk: the owner was deleted, or the work is on its branch."""
         await self.channels.invalidate(row["id"])
@@ -678,10 +702,7 @@ class WorkbenchLifecycle:
                 await host.runtime.destroy_workspace(row["resource"])
             finally:
                 await host.runtime.aclose()
-        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
-            meter_id(row), retry=True
-        ):
-            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        await self._finish_billing(row)
         await run_blocking(self.repository.transition, row, "retired")
         logger.info("workbench_destroyed", extra={"workbench_id": row["id"]})
 
@@ -715,11 +736,7 @@ class WorkbenchLifecycle:
                 host.resource["initialized"] = True  # Only an initialized disk resumes.
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
-            if (
-                settings.RUNTIME_METERING_MODE != "disabled"
-                and not await self.billing.finish_session(meter_id(row), retry=True)
-            ):
-                raise WorkerDisconnected("Workspace settlement awaits confirmation")
+            await self._finish_billing(row)
             if row["state"] != "retained":
                 await run_blocking(self.repository.transition, row, "retained", host.resource)
             elif host.resource.get("initialized"):
@@ -733,8 +750,10 @@ class WorkbenchLifecycle:
     @staticmethod
     def _never_created(row):
         resource = row["resource"] or {}
-        return row["state"] == "retained" and bool(resource.get("allocation_pending")) and (
-            not resource.get("volume_id")
+        return (
+            row["state"] == "retained"
+            and bool(resource.get("allocation_pending"))
+            and (not resource.get("volume_id"))
         )
 
     @staticmethod
@@ -870,10 +889,7 @@ class WorkbenchLifecycle:
         finally:
             await host.runtime.aclose()
         # Settlement precedes paused ACK and the next compute epoch.
-        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
-            meter_id(row), retry=True
-        ):
-            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        await self._finish_billing(row)
         paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
         await run_blocking(self.repository.progress, paused, "paused")
 

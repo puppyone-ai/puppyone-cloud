@@ -577,7 +577,7 @@ async def test_workspace_stop_does_not_ack_an_unconfirmed_settlement(monkeypatch
 
 def test_only_agent_work_is_metered_as_an_agent_runtime_kind() -> None:
     from src.platform.billing.runtime import _source_kind
-    from src.platform.workspace.lifecycle import meter_source
+    from src.platform.workspace.lifecycle import meter_max_units, meter_source
 
     person = {"is_default": True, "agent_registration_id": None}
     external_agent = {"is_default": False, "agent_registration_id": "registration-1"}
@@ -588,3 +588,69 @@ def test_only_agent_work_is_metered_as_an_agent_runtime_kind() -> None:
     assert _source_kind(meter_source(automation)) == "automation"
     assert _source_kind("chat_agent") == "agent"
     assert _source_kind("schedule_agent") == "automation"
+    assert meter_max_units(person) == settings.RUNTIME_WORKSPACE_MAX_UNITS
+    assert meter_max_units(external_agent) == settings.RUNTIME_AGENT_MAX_UNITS
+    assert meter_max_units(automation) == settings.RUNTIME_AGENT_MAX_UNITS
+
+
+@pytest.mark.asyncio
+async def test_workspace_pause_shadow_mode_does_not_deadlock_on_deferred_settlement(
+    monkeypatch, caplog
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from src.platform.workspace.execution.worker_port import WorkerDisconnected
+    from src.platform.workspace.lifecycle import WorkbenchLifecycle
+
+    def make_lifecycle(settled: bool):
+        runtime = SimpleNamespace(
+            pause_resource=AsyncMock(
+                return_value=SimpleNamespace(receipt=lambda _res: {"files_retained": True})
+            ),
+            aclose=AsyncMock(),
+        )
+        host = SimpleNamespace(resource={"provider": "fly"}, runtime=runtime)
+        repo = Mock(
+            save_outcome=Mock(),
+            transition=Mock(side_effect=lambda row, state, resource=None: {**row, "state": state}),
+            progress=Mock(),
+        )
+        service = SimpleNamespace(
+            repository=repo,
+            transport=Mock(),
+            filesystem=Mock(),
+            billing=SimpleNamespace(finish_session=AsyncMock(return_value=settled)),
+            channel_factory=Mock(return_value=host),
+            providers=Mock(),
+            channels=SimpleNamespace(invalidate=AsyncMock()),
+            check=AsyncMock(),
+            git=SimpleNamespace(
+                snapshot=AsyncMock(return_value={"status": "saved", "tip": "a" * 40})
+            ),
+        )
+        return WorkbenchLifecycle(service), repo
+
+    row = {
+        "id": "wb-1",
+        "project_id": "proj-1",
+        "user_id": "user-1",
+        "generation": "gen-1",
+        "compute_epoch": 1,
+        "state": "pausing",
+        "is_default": True,
+        "agent_registration_id": None,
+        "resource": {"provider": "fly"},
+    }
+
+    monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "shadow")
+    lifecycle, repo = make_lifecycle(settled=False)
+    await lifecycle.pause(row)
+    assert repo.transition.call_args.args[1] == "paused"
+    assert "workbench_settlement_shadow_deferred" in caplog.text
+
+    monkeypatch.setattr(settings, "RUNTIME_METERING_MODE", "required")
+    lifecycle_req, repo_req = make_lifecycle(settled=False)
+    with pytest.raises(WorkerDisconnected, match="Workspace settlement awaits confirmation"):
+        await lifecycle_req.pause(row)
+    repo_req.transition.assert_not_called()
