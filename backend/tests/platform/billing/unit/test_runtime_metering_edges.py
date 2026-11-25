@@ -331,6 +331,110 @@ async def test_terminal_settlement_conflict_stops_retry_deadlock(
 
 
 @pytest.mark.asyncio
+async def test_seal_session_freezes_duration_locally_without_calling_puppypay(required) -> None:
+    metering, repository, gateway = service()
+    run_id = await metering.start_session(audit_context=_context())
+    repository.update(run_id, {"started_at": datetime.now(UTC) - timedelta(seconds=180)})
+    gateway.calls.clear()
+
+    sealed = await metering.seal_session(run_id)
+    assert sealed is not None
+    assert sealed.status == "settling"
+    assert 180 <= sealed.metadata["runtime_seconds"] <= 185
+    assert sealed.metadata["settlement_occurred_at"]
+    assert sealed.metadata["sealed_at"]
+    assert gateway.calls == []
+
+    # Idempotent second seal preserves the original frozen duration.
+    first_seconds = sealed.metadata["runtime_seconds"]
+    repository.update(run_id, {"started_at": datetime.now(UTC) - timedelta(hours=3)})
+    sealed_again = await metering.seal_session(run_id)
+    assert sealed_again.metadata["runtime_seconds"] == first_seconds
+
+
+@pytest.mark.asyncio
+async def test_recovery_applies_exponential_backoff_and_emits_dead_letter_alert(
+    required, monkeypatch, caplog
+) -> None:
+    metering, repository, gateway = service()
+    reserved(repository, status="running")
+
+    async def always_down(method, path, **kwargs):
+        gateway.calls.append((method, path, kwargs))
+        raise BillingGatewayError(503, {"error": {"code": "puppypay_down"}})
+
+    monkeypatch.setattr(gateway, "request", always_down)
+    # 1st failure waits base retry_before; 2nd failure adds exponential next_retry_at backoff.
+    assert await metering.finish_session("run-1", retry=True) is False
+    assert repository.get("run-1").attempts == 1
+    assert "next_retry_at" not in repository.get("run-1").metadata
+
+    repository.recovery_rows = [repository.get("run-1")]
+    assert await metering.recover_once() == 1
+    run = repository.get("run-1")
+    assert run.attempts == 2
+    second_due = datetime.fromisoformat(run.metadata["next_retry_at"])
+    assert second_due > datetime.now(UTC)
+
+    # Backoff prevents immediate re-hammering on the next recovery poll.
+    repository.recovery_rows = [run]
+    assert await metering.recover_once() == 0
+    assert len(calls(gateway, "/settle")) == 2
+
+    # Advance past backoff through attempt 5 -> triggers dead-letter alert and larger backoff.
+    for expected_attempts in range(3, 6):
+        current = repository.get("run-1")
+        repository.update(
+            "run-1",
+            {
+                "metadata": {
+                    **current.metadata,
+                    "next_retry_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+                }
+            },
+        )
+        repository.recovery_rows = [repository.get("run-1")]
+        assert await metering.recover_once() == 1
+        assert repository.get("run-1").attempts == expected_attempts
+
+    assert "runtime_settlement_dead_letter_alert" in caplog.text
+    fifth_due = datetime.fromisoformat(repository.get("run-1").metadata["next_retry_at"])
+    assert (
+        fifth_due - datetime.now(UTC)
+    ).total_seconds() > settings.RUNTIME_BILLING_RECOVERY_RETRY_SECONDS * 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_code", "details", "expected_status"),
+    [
+        ("reservation_not_found", {}, "expired"),
+        ("reservation_already_settled", {}, "expired"),
+        ("reservation_not_active", {"status": "canceled"}, "canceled"),
+    ],
+)
+async def test_terminal_cancellation_conflict_stops_retry_deadlock(
+    required, monkeypatch, caplog, error_code, details, expected_status
+) -> None:
+    metering, repository, gateway = service()
+    reserved(repository, status="running")
+
+    async def reject_cancel(method, path, **kwargs):
+        gateway.calls.append((method, path, kwargs))
+        raise BillingGatewayError(
+            404 if error_code == "reservation_not_found" else 409,
+            {"error": {"code": error_code, "details": details}},
+        )
+
+    monkeypatch.setattr(gateway, "request", reject_cancel)
+    await metering.cancel_session("run-1")
+    run = repository.get("run-1")
+    assert run.status == expected_status
+    assert run.last_error == error_code
+    assert "runtime_cancellation_abandoned_terminal" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_a_session_cannot_move_to_another_organization(required) -> None:
     metering, _, _ = service()
     run_id = await metering.start_session(audit_context=_context())

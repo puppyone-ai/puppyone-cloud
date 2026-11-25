@@ -447,6 +447,78 @@ class RuntimeMeteringService:
         """A fenced owner stops its local heartbeat without settling the run."""
         await self._stop_heartbeat(run_id)
 
+    async def seal_session(self, run_id: str) -> RuntimeBillingRun | None:
+        """Durably freeze usage in the local billing outbox without contacting PuppyPay.
+
+        Called right after compute stops and before the control-plane state
+        transitions to ``paused`` or ``retired``. Because this only writes to
+        local PostgreSQL, PuppyPay availability never blocks workspace stop,
+        while the exact ``runtime_seconds`` and ``settlement_occurred_at`` are
+        preserved for fast-path or background settlement.
+        """
+        await self._stop_heartbeat(run_id)
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return None
+        run = await run_blocking(self._repo.get, run_id)
+        if (
+            run is None
+            or not run.reservation_id
+            or run.status in {"settled", "canceled", "denied", "expired", "unmetered"}
+            or run.metadata.get("cancel_requested")
+        ):
+            return run
+        if run.status in {"settling", "failed"}:
+            return run
+        if run.status not in {"reserved", "running"}:
+            return run
+        now = datetime.now(UTC)
+        runtime_seconds = _elapsed_runtime_seconds(run, now=now)
+        sealed_at = now.isoformat()
+        metadata = {
+            **run.metadata,
+            "runtime_seconds": int(run.metadata.get("runtime_seconds", runtime_seconds)),
+            "settlement_occurred_at": str(run.metadata.get("settlement_occurred_at") or sealed_at),
+            "sealed_at": str(run.metadata.get("sealed_at") or sealed_at),
+        }
+        claimed = await run_blocking(
+            self._repo.claim_action,
+            run_id=run_id,
+            expected_status=run.status,
+            expected_updated_at=run.updated_at,
+            metadata=metadata,
+        )
+        return claimed or await run_blocking(self._repo.get, run_id)
+
+    async def seal_cancel_session(self, run_id: str) -> RuntimeBillingRun | None:
+        """Durably record cancellation intent locally without contacting PuppyPay."""
+        await self._stop_heartbeat(run_id)
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return None
+        run = await run_blocking(self._repo.get, run_id)
+        if (
+            run is None
+            or not run.reservation_id
+            or run.status in {"settled", "canceled", "denied", "expired", "unmetered"}
+        ):
+            return run
+        if run.status in {"settling", "failed"}:
+            return run
+        if run.status not in {"reserved", "running"}:
+            return run
+        metadata = {
+            **run.metadata,
+            "cancel_requested": True,
+            "sealed_at": datetime.now(UTC).isoformat(),
+        }
+        claimed = await run_blocking(
+            self._repo.claim_action,
+            run_id=run_id,
+            expected_status=run.status,
+            expected_updated_at=run.updated_at,
+            metadata=metadata,
+        )
+        return claimed or await run_blocking(self._repo.get, run_id)
+
     async def finish_session(self, run_id: str, *, retry: bool = False) -> bool:
         """Settle a successfully started provider resource exactly once."""
 
@@ -454,12 +526,7 @@ class RuntimeMeteringService:
         run = await run_blocking(self._repo.get, run_id)
         if run is None or run.status in {"settled", "canceled", "unmetered", "expired"}:
             return True
-        runtime_seconds = 0
-        if run.started_at:
-            started = run.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-            runtime_seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
+        runtime_seconds = _elapsed_runtime_seconds(run, now=datetime.now(UTC))
         await self._settle(run_id, runtime_seconds, allow_retry=retry)
         current = await run_blocking(self._repo.get, run_id)
         return current is not None and current.status in {
@@ -469,11 +536,11 @@ class RuntimeMeteringService:
             "expired",
         }
 
-    async def cancel_session(self, run_id: str) -> None:
+    async def cancel_session(self, run_id: str, *, retry: bool = False) -> None:
         """Compensate a reservation when the provider never started."""
 
         await self._stop_heartbeat(run_id)
-        await self._cancel(run_id)
+        await self._cancel(run_id, allow_retry=retry)
 
     async def _stop_heartbeat(self, run_id: str) -> None:
         task = self._heartbeat_tasks.pop(run_id, None)
@@ -738,6 +805,9 @@ class RuntimeMeteringService:
                         exc = retry_exc
                         error_code = _billing_error_code(retry_exc)
                     else:
+                        settled_metadata = {
+                            k: v for k, v in metadata.items() if k != "next_retry_at"
+                        }
                         await run_blocking(
                             self._repo.update,
                             run_id,
@@ -746,7 +816,7 @@ class RuntimeMeteringService:
                                 "actual_units": int(response["runtime_units"]),
                                 "settled_at": datetime.now(UTC).isoformat(),
                                 "last_error": None,
-                                "metadata": metadata,
+                                "metadata": settled_metadata,
                             },
                         )
                         return True
@@ -758,6 +828,7 @@ class RuntimeMeteringService:
                     and details.get("status") == "canceled"
                     else "expired"
                 )
+                terminal_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
                 await run_blocking(
                     self._repo.update,
                     run_id,
@@ -765,7 +836,7 @@ class RuntimeMeteringService:
                         "status": terminal_status,
                         "attempts": run.attempts + 1,
                         "last_error": error_code,
-                        "metadata": metadata,
+                        "metadata": terminal_metadata,
                     },
                 )
                 logger.error(
@@ -777,21 +848,41 @@ class RuntimeMeteringService:
                     },
                 )
                 return True
+            new_attempts = run.attempts + 1
+            retry_at = _next_retry_at(new_attempts, now=datetime.now(UTC))
+            retry_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
+            if retry_at is not None:
+                retry_metadata["next_retry_at"] = retry_at
             await run_blocking(
                 self._repo.update,
                 run_id,
                 {
                     "status": "failed",
-                    "attempts": run.attempts + 1,
+                    "attempts": new_attempts,
                     "last_error": error_code,
-                    "metadata": metadata,
+                    "metadata": retry_metadata,
                 },
             )
             logger.error(
                 "runtime_settlement_deferred",
-                extra={"run_id": run_id, "reason": error_code},
+                extra={
+                    "run_id": run_id,
+                    "reason": error_code,
+                    "attempts": new_attempts,
+                    "next_retry_at": retry_at,
+                },
             )
+            if new_attempts >= RUNTIME_BILLING_DEAD_LETTER_ATTEMPTS:
+                logger.error(
+                    "runtime_settlement_dead_letter_alert",
+                    extra={
+                        "run_id": run_id,
+                        "reason": error_code,
+                        "attempts": new_attempts,
+                    },
+                )
             return True
+        settled_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
         await run_blocking(
             self._repo.update,
             run_id,
@@ -800,7 +891,7 @@ class RuntimeMeteringService:
                 "actual_units": int(response["runtime_units"]),
                 "settled_at": datetime.now(UTC).isoformat(),
                 "last_error": None,
-                "metadata": metadata,
+                "metadata": settled_metadata,
             },
         )
         return True
@@ -843,21 +934,70 @@ class RuntimeMeteringService:
                 idempotency_key=f"runtime-cancel:{run_id}",
             )
         except BillingGatewayError as exc:
+            error_code = _billing_error_code(exc)
+            if exc.status_code in {404, 409} and error_code in _TERMINAL_CANCELLATION_ERRORS:
+                details = _billing_error_details(exc)
+                terminal_status = (
+                    "canceled"
+                    if error_code == "reservation_not_active"
+                    and details.get("status") == "canceled"
+                    else "expired"
+                )
+                terminal_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
+                await run_blocking(
+                    self._repo.update,
+                    run_id,
+                    {
+                        "status": terminal_status,
+                        "attempts": run.attempts + 1,
+                        "last_error": error_code,
+                        "metadata": terminal_metadata,
+                    },
+                )
+                logger.error(
+                    "runtime_cancellation_abandoned_terminal",
+                    extra={
+                        "run_id": run_id,
+                        "reason": error_code,
+                        "terminal_status": terminal_status,
+                    },
+                )
+                return True
+            new_attempts = run.attempts + 1
+            retry_at = _next_retry_at(new_attempts, now=datetime.now(UTC))
+            retry_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
+            if retry_at is not None:
+                retry_metadata["next_retry_at"] = retry_at
             await run_blocking(
                 self._repo.update,
                 run_id,
                 {
                     "status": "failed",
-                    "attempts": run.attempts + 1,
-                    "last_error": _billing_error_code(exc),
-                    "metadata": metadata,
+                    "attempts": new_attempts,
+                    "last_error": error_code,
+                    "metadata": retry_metadata,
                 },
             )
             logger.error(
                 "runtime_cancellation_deferred",
-                extra={"run_id": run_id, "reason": _billing_error_code(exc)},
+                extra={
+                    "run_id": run_id,
+                    "reason": error_code,
+                    "attempts": new_attempts,
+                    "next_retry_at": retry_at,
+                },
             )
+            if new_attempts >= RUNTIME_BILLING_DEAD_LETTER_ATTEMPTS:
+                logger.error(
+                    "runtime_cancellation_dead_letter_alert",
+                    extra={
+                        "run_id": run_id,
+                        "reason": error_code,
+                        "attempts": new_attempts,
+                    },
+                )
             return True
+        canceled_metadata = {k: v for k, v in metadata.items() if k != "next_retry_at"}
         await run_blocking(
             self._repo.update,
             run_id,
@@ -866,16 +1006,15 @@ class RuntimeMeteringService:
                 "actual_units": 0,
                 "settled_at": datetime.now(UTC).isoformat(),
                 "last_error": None,
-                "metadata": metadata,
+                "metadata": canceled_metadata,
             },
         )
         return True
 
     async def recover_once(self) -> int:
         recovered = 0
-        retry_before = datetime.now(UTC) - timedelta(
-            seconds=settings.RUNTIME_BILLING_RECOVERY_RETRY_SECONDS
-        )
+        now = datetime.now(UTC)
+        retry_before = now - timedelta(seconds=settings.RUNTIME_BILLING_RECOVERY_RETRY_SECONDS)
         runs = await run_blocking(
             self._repo.recoverable,
             retry_before=retry_before,
@@ -885,19 +1024,15 @@ class RuntimeMeteringService:
             try:
                 if not run.reservation_id:
                     continue
+                if not _retry_due(run, now=now):
+                    continue
                 if run.metadata.get("cancel_requested"):
                     if await self._cancel(run.run_id, allow_retry=True):
                         recovered += 1
                     continue
                 runtime_seconds = int(run.metadata.get("runtime_seconds") or 0)
                 if runtime_seconds <= 0 and run.started_at:
-                    started = run.started_at
-                    if started.tzinfo is None:
-                        started = started.replace(tzinfo=UTC)
-                    runtime_seconds = max(
-                        0,
-                        int((datetime.now(UTC) - started).total_seconds()),
-                    )
+                    runtime_seconds = _elapsed_runtime_seconds(run, now=now)
                 if await self._settle(run.run_id, runtime_seconds, allow_retry=True):
                     recovered += 1
             except Exception:
@@ -907,6 +1042,9 @@ class RuntimeMeteringService:
         return recovered
 
 
+RUNTIME_BILLING_MAX_BACKOFF_SECONDS = 3600
+RUNTIME_BILLING_DEAD_LETTER_ATTEMPTS = 5
+
 _TERMINAL_SETTLEMENT_ERRORS = frozenset(
     {
         "reservation_settlement_window_expired",
@@ -914,6 +1052,52 @@ _TERMINAL_SETTLEMENT_ERRORS = frozenset(
         "reservation_not_active",
     }
 )
+_TERMINAL_CANCELLATION_ERRORS = frozenset(
+    {
+        "reservation_not_found",
+        "reservation_not_active",
+        "reservation_already_settled",
+    }
+)
+
+
+def _elapsed_runtime_seconds(run: RuntimeBillingRun, *, now: datetime) -> int:
+    if not run.started_at:
+        return 0
+    started = run.started_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return max(0, int((now - started).total_seconds()))
+
+
+def _recovery_backoff_seconds(attempts: int) -> int:
+    base = settings.RUNTIME_BILLING_RECOVERY_RETRY_SECONDS
+    if attempts <= 1:
+        return base
+    return min(RUNTIME_BILLING_MAX_BACKOFF_SECONDS, base * (2 ** min(attempts - 1, 6)))
+
+
+def _next_retry_at(attempts: int, *, now: datetime) -> str | None:
+    """Extra exponential backoff starting on the 2nd consecutive failure.
+
+    The 1st failure already waits ``RUNTIME_BILLING_RECOVERY_RETRY_SECONDS`` via
+    ``RuntimeRunRepository.recoverable(retry_before=...)``.
+    """
+    if attempts <= 1:
+        return None
+    return (now + timedelta(seconds=_recovery_backoff_seconds(attempts))).isoformat()
+
+
+def _retry_due(run: RuntimeBillingRun, *, now: datetime) -> bool:
+    raw = run.metadata.get("next_retry_at")
+    if not raw:
+        return True
+    with contextlib.suppress(TypeError, ValueError):
+        due = datetime.fromisoformat(str(raw))
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=UTC)
+        return due <= now
+    return True
 
 
 def _billing_error_details(error: BillingGatewayError) -> dict[str, Any]:
