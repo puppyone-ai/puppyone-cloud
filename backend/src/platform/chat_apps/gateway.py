@@ -285,6 +285,10 @@ class Gateway:
         code = decision.values.get("code")
         owner = decision.values.get("owner") or row.get("asker_external_id")
         name = chat_name(row["platform"], payload, row.get("asker_label"))
+        # Slack's join event names no channel; ask Slack what it is called.
+        lookup = getattr(self.platforms.get(row["platform"]), "chat_title", None)
+        if lookup is not None and not payload.get("chat_title"):
+            name = await lookup(await self._target(None, row)) or name
         result = await self._db(
             "knock",
             platform=row["platform"],

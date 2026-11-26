@@ -497,14 +497,32 @@ class SlackPlatform:
             self._client = httpx.AsyncClient(transport=self._transport, timeout=self._timeout)
         return self._client
 
-    async def _call(self, method: str, target: Target, body: dict[str, Any]) -> dict[str, Any]:
+    async def chat_title(self, target: Target) -> str | None:
+        """A channel's name, for a chat that knocks: events carry only its id.
+
+        Read methods take form fields, not JSON. ``None`` when it cannot be read.
+        """
+        if target.chat_kind != "group":
+            return None
+        try:
+            data = await self._call(
+                "conversations.info", target, {"channel": target.external_chat_id}, form=True
+            )
+        except PlatformError:
+            return None
+        name = (data.get("channel") or {}).get("name")
+        return f"#{name}" if name else None
+
+    async def _call(
+        self, method: str, target: Target, body: dict[str, Any], *, form: bool = False
+    ) -> dict[str, Any]:
         if not target.credential:
             raise PlatformError("slack call without a bot token")
         body = {key: value for key, value in body.items() if value is not None}
         try:
             response = await self._http().post(
                 f"{self._base}/{method}",
-                json=body,
+                **({"data": body} if form else {"json": body}),
                 headers={"Authorization": f"Bearer {target.credential}"},
             )
         except httpx.HTTPError as exc:

@@ -541,3 +541,14 @@ def test_build_platforms_wires_the_slack_settings():
         "redirect_uri=https%3A%2F%2Fapi.puppyone.test%2Fapi%2Fv1%2Fchat-apps%2Fslack%2Foauth%2Fcallback"
         in built["slack"].authorize_url("s")
     )
+
+
+async def test_a_knocking_channel_is_named_by_asking_slack():
+    calls = Calls(lambda method, body: {"ok": True, "channel": {"id": "C1", "name": "launch"}})
+    platform = make(calls)
+    assert await platform.chat_title(target(chat_kind="group")) == "#launch"
+    [(method, body)] = calls.requests
+    assert (method, body) == ("conversations.info", {"channel": "C1"})
+    assert await platform.chat_title(target(chat_kind="dm")) is None
+    refused = make(Calls(lambda method, body: {"ok": False, "error": "channel_not_found"}))
+    assert await refused.chat_title(target(chat_kind="group")) is None
