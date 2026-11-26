@@ -24,6 +24,7 @@ NOTICES = {
     "welcome_telegram": "I'm in. Reply to me or mention {mention} to ask. "
     "I only read messages meant for me. Only {name} can ask for now.",
     "welcome_dm": "I'm in. Send me a message to ask.",
+    "new_thread": "New conversation. Ask away.",
     "only_owner": "Only {name} can ask me here.",
     "outsider": "Only people in {workspace} can ask me.",
     "link_account": "Link your PuppyOne account to ask.",

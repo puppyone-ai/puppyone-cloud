@@ -125,7 +125,7 @@ def decide(event: dict, situation: dict, now: datetime) -> Decision:
     if conversation["state"] != "active":
         return Decision("drop", "asking")
     if kind == "new_thread":
-        return Decision("new_thread", "new_thread", values={"thread_key": "dm"})
+        return Decision("new_thread", "new_thread", "new_thread", values={"thread_key": "dm"})
     if (
         now - datetime.fromisoformat(event["created_at"]) > STALE_AFTER
         and event["state"] == "pending"

@@ -206,3 +206,8 @@ def test_a_knocking_chat_is_named_by_its_title_or_its_person():
     assert chat_name("telegram", {"chat_kind": "dm"}, "Alex") == "Alex"
     assert chat_name("slack", {"chat_kind": "dm"}, None) == "Direct message"
     assert chat_name("wecom", {"chat_kind": "group"}, "enc-alex") == "WeCom group"
+
+
+def test_new_in_a_direct_chat_starts_over_and_says_so():
+    d = decide(event(kind="new_thread"), situation(), NOW)
+    assert (d.action, d.notice, d.values["thread_key"]) == ("new_thread", "new_thread", "dm")

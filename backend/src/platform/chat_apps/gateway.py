@@ -232,6 +232,8 @@ class Gateway:
             await self._db(
                 "thread", conversation_id=chat, external_thread_key=key, reset_session=True
             )
+            target = await self._target(conversation, row)
+            await self._say(platform, target, notice_text(decision.notice, **names))
             await self._finish(row, "done", decision.outcome, conversation_id=chat)
         elif action == "hold":
             raw = codes.link_code()
