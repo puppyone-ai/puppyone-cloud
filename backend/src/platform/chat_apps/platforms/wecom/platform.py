@@ -18,7 +18,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-import websockets.asyncio.client
+import aiohttp
 
 from ...ports import (
     Inbound,
@@ -44,6 +44,51 @@ _BACKOFF = (2.0, 5.0, 10.0, 30.0, 60.0)
 
 Connect = Callable[[str], Awaitable[Any]]
 Sleep = Callable[[float], Awaitable[None]]
+
+
+class _Socket:
+    """The long connection over aiohttp.
+
+    WeCom's server does not send every frame the strict RFC 6455 way (its
+    control pings arrive masked), and ``websockets`` closes the socket on them
+    about a minute and a half in; aiohttp reads them. Errors surface as
+    ``ConnectionError`` so the session treats every drop alike.
+    """
+
+    def __init__(self, session: aiohttp.ClientSession, ws: aiohttp.ClientWebSocketResponse):
+        self._session = session
+        self._ws = ws
+
+    async def send(self, text: str) -> None:
+        try:
+            await self._ws.send_str(text)
+        except (aiohttp.ClientError, RuntimeError) as exc:
+            raise ConnectionError(f"wecom send failed: {type(exc).__name__}") from None
+
+    async def recv(self) -> str:
+        message = await self._ws.receive()
+        if message.type == aiohttp.WSMsgType.TEXT:
+            return message.data
+        if message.type == aiohttp.WSMsgType.BINARY:
+            return message.data.decode("utf-8", "replace")
+        raise ConnectionError(f"wecom connection closed ({message.type.name})")
+
+    async def close(self) -> None:
+        try:
+            await self._ws.close()
+        finally:
+            await self._session.close()
+
+
+async def _connect(url: str) -> _Socket:
+    # Direct connection, as in production: a local HTTP proxy is not for this socket.
+    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=15))
+    try:
+        ws = await session.ws_connect(url, autoping=True, heartbeat=None)
+    except BaseException:
+        await session.close()
+        raise
+    return _Socket(session, ws)
 
 
 class _Session:
@@ -76,6 +121,8 @@ class _Session:
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(ConnectionError("wecom connection closed"))
+                # Whoever waits on it re-raises; nobody waiting is not an error.
+                future.exception()
 
 
 class WeComPlatform:
@@ -93,7 +140,7 @@ class WeComPlatform:
         backoff: tuple[float, ...] = _BACKOFF,
     ):
         self._url = ws_url
-        self._connect = connect or websockets.asyncio.client.connect
+        self._connect = connect or _connect
         self._clock = clock
         self._sleep = sleep
         self._heartbeat = heartbeat_seconds
