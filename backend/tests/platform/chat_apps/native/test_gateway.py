@@ -334,3 +334,4 @@ def test_stop_only_for_the_asker_or_owner(world, db):
     w["drain"](g)
     [run] = w["runs_of_project"]()
     assert run["stop_requested"] is True or run["state"] == "stopped"
+    assert w["platform"].notices[-1][1] == "Stopping…"

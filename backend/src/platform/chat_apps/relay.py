@@ -29,6 +29,7 @@ NOTICES = {
     "not_in_project": "You're not in this project. Ask {name} to invite you.",
     "not_your_stop": "Only {asker} or {name} can stop this.",
     "not_your_stop_one": "Only {name} can stop this.",
+    "stopping": "Stopping…",
     "queued": "I'll get to this next.",
     "too_many": "Too many waiting. Ask again in a bit.",
     "limit": "Today's limit here is used up. I'll answer again tomorrow.",

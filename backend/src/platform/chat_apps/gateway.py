@@ -312,6 +312,12 @@ class Gateway:
             await run_blocking(self.agents.command, info["owner_user_id"], info["run_id"], "stop")
         except HTTPException:
             logger.info("chat_app_stop_refused", extra={"chat_app": {"reply": reply_id}})
+            return
+        # A Telegram button press spins until it is answered; the message
+        # itself changes to "Stopped" on the next relay.
+        if target.handle.get("callback_query_id"):
+            with suppress(PlatformError):
+                await platform.notify(target, notice_text("stopping"))
 
     async def _submit(self, row, conversation, decision, names, platform) -> None:
         values = decision.values
