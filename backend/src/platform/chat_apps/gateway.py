@@ -122,7 +122,6 @@ class Gateway:
             handle={
                 key: (inbox.get(key) or payload.get(key))
                 for key in (
-                    "inline_query_id",
                     "guest_query_id",
                     "callback_query_id",
                     "response_url",

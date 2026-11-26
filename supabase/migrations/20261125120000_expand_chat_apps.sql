@@ -683,7 +683,7 @@ BEGIN
         'workspace_name', (SELECT display_name FROM public.chat_app_connections WHERE id = c.connection_id)),
       'thread', (SELECT to_jsonb(th) FROM public.chat_app_threads th WHERE th.id = r.thread_id),
       'inbox', (SELECT to_jsonb(q) - 'payload' || jsonb_build_object('message_id', q.payload->'message_id',
-                  'inline_query_id', q.payload->'inline_query_id', 'response_url', q.payload->'response_url',
+                  'guest_query_id', q.payload->'guest_query_id', 'response_url', q.payload->'response_url',
                   'req_id', q.payload->'req_id')
                 FROM public.chat_app_inbox q WHERE q.id = r.inbox_id));
 

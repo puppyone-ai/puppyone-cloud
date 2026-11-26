@@ -104,7 +104,12 @@ def world(db, client, monkeypatch):
         )
 
     def ask(
-        message_id, text="change the price to 29", via="message", asker="tg-alex", reply_to=None
+        message_id,
+        text="change the price to 29",
+        via="message",
+        asker="tg-alex",
+        reply_to=None,
+        handle=None,
     ):
         event = Inbound(
             platform="telegram",
@@ -117,6 +122,7 @@ def world(db, client, monkeypatch):
             text=text,
             message_id=str(message_id),
             external_thread_key=str(reply_to or message_id),
+            handle=handle or {},
         )
         return store(repository, [event])
 
@@ -190,6 +196,19 @@ def test_redelivery_and_both_telegram_kinds_make_one_run(world):
     assert w["ask"](21, via="guest") == 0
     w["drain"](g)
     assert len(w["runs_of_project"]()) == 1
+
+
+def test_a_guest_mode_answer_goes_back_through_its_guest_query(world):
+    w = world
+    g = w["gateway"]()
+    w["ask"](25, via="guest", handle={"guest_query_id": "gq-25"})
+    w["drain"](g)
+    [run] = w["runs_of_project"]()
+    w["move"](run["id"], "succeeded", text="Monthly is 29 now.")
+    w["drain"](g)
+    target, _ = w["platform"].sent[-1]
+    assert target.handle["guest_query_id"] == "gq-25"
+    assert w["platform"].edits[-1][1].final
 
 
 def test_a_new_gateway_keeps_editing_the_same_message(world, db):
