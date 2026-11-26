@@ -137,6 +137,13 @@ async def slack_installed(request: Request, repository=Depends(get_chat_app_repo
     )
 
 
+@router.post("/identities/preview")
+def preview_identity(
+    body: LinkIdentity, user=Depends(get_current_user), service=Depends(get_chat_app_service)
+):
+    return service.preview_identity(user.user_id, body.code)
+
+
 @router.post("/identities")
 def link_identity(
     body: LinkIdentity, user=Depends(get_current_user), service=Depends(get_chat_app_service)

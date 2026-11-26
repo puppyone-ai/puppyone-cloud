@@ -242,6 +242,8 @@ class Gateway:
                 platform=row["platform"],
                 scope=situation["identity_scope"],
                 external_user_id=row["asker_external_id"],
+                external_label=row.get("asker_label"),
+                conversation_id=chat,
                 code_hash=codes.code_hash(raw),
             )
             target = await self._target(conversation, row)

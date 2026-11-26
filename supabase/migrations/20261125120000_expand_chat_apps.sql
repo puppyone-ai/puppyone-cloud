@@ -142,6 +142,9 @@ CREATE TABLE public.chat_app_link_codes (
     connection_id uuid REFERENCES public.chat_app_connections(id) ON DELETE CASCADE,
     scope text,
     external_user_id text,
+    -- Identity codes: who in the chat asked, as the app shows them, so the
+    -- link page can say whose account is being linked before anyone confirms.
+    external_label text CHECK (length(external_label) <= 200),
     conversation_id uuid REFERENCES public.chat_app_conversations(id) ON DELETE SET NULL,
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
@@ -286,6 +289,18 @@ DECLARE
 BEGIN
   IF p_user IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users WHERE id = p_user) THEN
     RAISE EXCEPTION 'chat_app_denied' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_action = 'identity_preview' THEN
+    -- Read only: the link page shows whose chat account this is before linking.
+    SELECT * INTO l FROM public.chat_app_link_codes
+    WHERE code_hash = p_payload->>'code_hash' AND purpose = 'identity';
+    IF NOT FOUND OR l.consumed_at IS NOT NULL OR l.expires_at <= clock_timestamp() THEN
+      RAISE EXCEPTION 'chat_app_link_expired' USING ERRCODE = '55000';
+    END IF;
+    RETURN jsonb_build_object('platform', l.platform, 'name', l.external_label,
+      'chat', (SELECT display_name FROM public.chat_app_conversations WHERE id = l.conversation_id),
+      'expires_at', l.expires_at);
   END IF;
 
   IF p_action = 'link_identity' THEN
@@ -835,9 +850,11 @@ BEGIN
     RETURN jsonb_build_object('marked', true, 'conversation_id', c.id);
 
   ELSIF p_action = 'identity_code' THEN
-    INSERT INTO public.chat_app_link_codes (purpose, code_hash, platform, scope, external_user_id, expires_at)
+    INSERT INTO public.chat_app_link_codes (purpose, code_hash, platform, scope, external_user_id,
+                                            external_label, conversation_id, expires_at)
     VALUES ('identity', p_payload->>'code_hash', platform_name, p_payload->>'scope',
-            p_payload->>'external_user_id', clock_timestamp() + interval '10 minutes')
+            p_payload->>'external_user_id', left(p_payload->>'external_label', 200),
+            (p_payload->>'conversation_id')::uuid, clock_timestamp() + interval '10 minutes')
     RETURNING * INTO l;
     RETURN jsonb_build_object('id', l.id, 'expires_at', l.expires_at);
 

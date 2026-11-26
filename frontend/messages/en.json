@@ -249,7 +249,13 @@
       "missingCode": "This link is incomplete. Ask the agent again in the chat to get a new one.",
       "failed": "Could not link your account. Try again.",
       "retry": "Try again",
-      "signIn": "Sign in to link your account…"
+      "signIn": "Sign in to link your account…",
+      "checking": "Checking the link…",
+      "confirmTitle": "Link {app} account “{name}” to your PuppyOne account?",
+      "confirmChat": "From {chat}.",
+      "confirmHint": "Only do this if that {app} account is yours. It can then ask the agent with your access to this project.",
+      "confirm": "Link account",
+      "someone": "this person"
     },
     "activity": {
       "added": "Added to {name} ({platform})",

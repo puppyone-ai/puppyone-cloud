@@ -6,7 +6,7 @@ import messages from '@/messages/en.json';
 
 const fixture = vi.hoisted(() => ({
   session: { user: { id: 'u1' } } as any, ready: true, query: '',
-  getProject: vi.fn(), link: vi.fn(),
+  getProject: vi.fn(), link: vi.fn(), preview: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'p1' }),
@@ -16,7 +16,7 @@ vi.mock('@/contexts/SupabaseAuthProvider', () => ({
   useAuth: () => ({ session: fixture.session, isAuthReady: fixture.ready }),
 }));
 vi.mock('@/lib/projectsApi', () => ({ getProject: fixture.getProject }));
-vi.mock('@/features/chat-apps/chatAppsApi', () => ({ linkChatIdentity: fixture.link }));
+vi.mock('@/features/chat-apps/chatAppsApi', () => ({ linkChatIdentity: fixture.link, previewChatIdentity: fixture.preview }));
 
 import { OpenInPuppyOnePage } from '@/features/chat-apps/OpenInPuppyOnePage';
 import { AccountLinkPage } from '@/features/chat-apps/AccountLinkPage';
@@ -32,6 +32,7 @@ beforeEach(() => {
   fixture.session = { user: { id: 'u1' } }; fixture.ready = true; fixture.query = 'session=s1';
   fixture.getProject.mockResolvedValue({ id: 'p1' });
   fixture.link.mockResolvedValue({});
+  fixture.preview.mockResolvedValue({ platform: 'telegram', name: 'Mia', chat: 'Design team' });
   mobile = false;
   Object.defineProperty(window, 'location', { configurable: true, value: {
     pathname: '/open/projects/p1', search: '?session=s1', hostname: 'localhost', assign, replace } });
@@ -89,17 +90,23 @@ it('mobile goes straight to the Web Agent without the app scheme', async () => {
   expect(assign).not.toHaveBeenCalled();
 });
 
-it('link page redeems the code once and confirms', async () => {
+it('link page says whose chat account it is and links only on confirm', async () => {
   fixture.query = 'code=abc';
   render(intl(<AccountLinkPage />));
+  await screen.findByText('Link Telegram account “Mia” to your PuppyOne account?');
+  screen.getByText('From Design team.');
+  expect(fixture.preview).toHaveBeenCalledExactlyOnceWith('abc');
+  expect(fixture.link).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Link account' }));
   await screen.findByText('Your account is linked. Your question will start in the chat.');
   expect(fixture.link).toHaveBeenCalledExactlyOnceWith('abc');
 });
 
-it('link page reports an expired code', async () => {
-  fixture.query = 'code=abc'; fixture.link.mockRejectedValue({ status: 409 });
+it('link page reports an expired code before asking', async () => {
+  fixture.query = 'code=abc'; fixture.preview.mockRejectedValue({ status: 409 });
   render(intl(<AccountLinkPage />));
   await screen.findByText('This link expired. Ask the agent again in the chat to get a new one.');
+  expect(fixture.link).not.toHaveBeenCalled();
 });
 
 it('link page sends signed-out users to login', () => {
@@ -108,6 +115,7 @@ it('link page sends signed-out users to login', () => {
   Object.defineProperty(window.location, 'search', { value: '?code=abc' });
   render(intl(<AccountLinkPage />));
   expect(replace).toHaveBeenCalledWith('/login?redirect=%2Fchat-apps%2Flink%3Fcode%3Dabc');
+  expect(fixture.preview).not.toHaveBeenCalled();
   expect(fixture.link).not.toHaveBeenCalled();
 });
 

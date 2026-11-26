@@ -105,5 +105,9 @@ class ChatAppService:
                 logger.info("chat_app_remove_stop_skipped", extra={"chat_app": {"run": run}})
         return value
 
+    def preview_identity(self, user: str, code: str):
+        """Whose chat account a "Link account" code is for; nothing is linked."""
+        return self.repository.human("identity_preview", user, code_hash=codes.code_hash(code))
+
     def link_identity(self, user: str, code: str):
         return self.repository.human("link_identity", user, code_hash=codes.code_hash(code))

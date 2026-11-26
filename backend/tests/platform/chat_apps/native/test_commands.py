@@ -453,7 +453,17 @@ def test_linking_an_identity_releases_the_held_question(db):
         platform="telegram",
         scope="telegram",
         external_user_id="tg-mia",
+        external_label="Mia",
+        conversation_id=chat,
         code_hash=code(122),
+    )
+    assert db.gateway("claim_inbox") is None
+    # The page first says whose account this is; looking links nothing.
+    preview = db.human("identity_preview", mia, code_hash=code(122))
+    assert (preview["platform"], preview["name"], preview["chat"]) == (
+        "telegram",
+        "Mia",
+        "Design team",
     )
     assert db.gateway("claim_inbox") is None
     db.human("link_identity", mia, code_hash=code(122))
@@ -464,6 +474,8 @@ def test_linking_an_identity_releases_the_held_question(db):
     assert context["asker_user_id"] == mia and context["asker_can_run"] is True
     with pytest.raises(CommandError, match="chat_app_link_expired"):
         db.human("link_identity", mia, code_hash=code(122))
+    with pytest.raises(CommandError, match="chat_app_link_expired"):
+        db.human("identity_preview", mia, code_hash=code(122))
 
 
 def test_activity_keeps_the_old_kinds_and_adds_chat_app(db):
