@@ -51,6 +51,20 @@ from src.platform.chat_apps.relay import (
 from src.platform.chat_apps.repository import ChatAppRepository, StaleFence
 
 logger = logging.getLogger(__name__)
+
+
+def chat_name(platform: str, payload: dict, asker: str | None) -> str:
+    """What a knocking chat is called until someone renames it: its own title,
+    the person for a direct chat, or the app's word for a group it cannot read."""
+    if payload.get("chat_title"):
+        return payload["chat_title"]
+    if platform == "wecom":
+        return "WeCom group"
+    if payload.get("chat_kind") == "dm":
+        return asker or "Direct message"
+    return "Chat"
+
+
 LEASE_SECONDS = 30
 STATS_INTERVAL_SECONDS = 60
 SCRUB_INTERVAL_SECONDS = 3600
@@ -265,13 +279,7 @@ class Gateway:
     async def _knock(self, row, decision, payload) -> None:
         code = decision.values.get("code")
         owner = decision.values.get("owner") or row.get("asker_external_id")
-        name = payload.get("chat_title") or (
-            "WeCom group"
-            if row["platform"] == "wecom"
-            else "Direct message"
-            if payload.get("chat_kind") == "dm"
-            else "Chat"
-        )
+        name = chat_name(row["platform"], payload, row.get("asker_label"))
         result = await self._db(
             "knock",
             platform=row["platform"],
