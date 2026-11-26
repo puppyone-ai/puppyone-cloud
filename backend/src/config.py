@@ -996,6 +996,7 @@ class Settings(BaseSettings):
     CHAT_APPS_TELEGRAM_BOT_USERNAME: str = ""
     CHAT_APPS_TELEGRAM_WEBHOOK_SECRET: str = ""
     CHAT_APPS_TELEGRAM_API_BASE: str = "https://api.telegram.org"
+    CHAT_APPS_TELEGRAM_LINK_BASE: str = "https://t.me"
     CHAT_APPS_SLACK_CLIENT_ID: str = ""
     CHAT_APPS_SLACK_CLIENT_SECRET: str = ""
     CHAT_APPS_SLACK_SIGNING_SECRET: str = ""

@@ -19,6 +19,7 @@ def build_platforms(settings: Any) -> dict[str, ChatPlatform]:
             bot_username=settings.CHAT_APPS_TELEGRAM_BOT_USERNAME,
             webhook_secret=settings.CHAT_APPS_TELEGRAM_WEBHOOK_SECRET,
             api_base=settings.CHAT_APPS_TELEGRAM_API_BASE,
+            link_base=settings.CHAT_APPS_TELEGRAM_LINK_BASE,
         )
     if "slack" in wanted:
         from .slack import SlackPlatform

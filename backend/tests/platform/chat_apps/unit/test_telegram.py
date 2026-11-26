@@ -248,6 +248,13 @@ def test_start_links():
     }
 
 
+def test_start_links_follow_the_configured_base_for_local_stand_ins():
+    platform = TelegramPlatform(
+        TOKEN, BOT, SECRET, "https://tg.test", link_base="http://127.0.0.1:9911/"
+    )
+    assert platform.start_links("C")["group"] == "http://127.0.0.1:9911/PuppyOneBot?startgroup=C"
+
+
 def test_pacing_groups_edit_every_three_seconds():
     platform = make()
     group = platform.pacing(Target("telegram", "-1"))
@@ -265,6 +272,7 @@ def test_build_platforms_builds_only_what_is_enabled():
         CHAT_APPS_TELEGRAM_BOT_USERNAME = BOT
         CHAT_APPS_TELEGRAM_WEBHOOK_SECRET = SECRET
         CHAT_APPS_TELEGRAM_API_BASE = "https://tg.test"
+        CHAT_APPS_TELEGRAM_LINK_BASE = "https://t.me"
 
     built = build_platforms(Settings())
     assert list(built) == ["telegram"]

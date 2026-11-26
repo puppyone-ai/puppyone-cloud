@@ -57,6 +57,7 @@ class TelegramPlatform:
         bot_username: str,
         webhook_secret: str,
         api_base: str = "https://api.telegram.org",
+        link_base: str = "https://t.me",
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Clock = time.time,
@@ -66,6 +67,7 @@ class TelegramPlatform:
         self._username = bot_username.lstrip("@")
         self._secret = webhook_secret
         self._base = api_base.rstrip("/")
+        self._link_base = link_base.rstrip("/")
         self._bot_id = bot_token.split(":", 1)[0]
         self._transport = transport
         self._clock = clock
@@ -183,7 +185,7 @@ class TelegramPlatform:
     # -- LinkPlatform ------------------------------------------------------
 
     def start_links(self, code: str) -> dict[str, str]:
-        base = f"https://t.me/{self._username}"
+        base = f"{self._link_base}/{self._username}"
         return {"group": f"{base}?startgroup={code}", "dm": f"{base}?start={code}"}
 
     async def aclose(self) -> None:
