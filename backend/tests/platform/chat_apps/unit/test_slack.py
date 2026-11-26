@@ -552,3 +552,48 @@ async def test_a_knocking_channel_is_named_by_asking_slack():
     assert await platform.chat_title(target(chat_kind="dm")) is None
     refused = make(Calls(lambda method, body: {"ok": False, "error": "channel_not_found"}))
     assert await refused.chat_title(target(chat_kind="group")) is None
+
+
+async def test_status_lines_stay_in_a_stop_message_and_only_the_answer_streams():
+    """Real Slack showed "Starting up…ing.md…rice is $29" when status lines streamed."""
+    calls = Calls(stream_reply)
+    platform = make(calls)
+    sent = await platform.send(target(), Message("Starting up…", stop_reply_id="r1", status=True))
+    [post] = calls.of("chat.postMessage")
+    assert post["text"] == "Starting up…" and "stop" in json.dumps(post["blocks"])
+    assert calls.of("chat.startStream") == []
+    sent = await platform.edit(
+        target(), sent, Message("Reading pricing.md…", stop_reply_id="r1", status=True)
+    )
+    assert calls.of("chat.update")[-1]["text"] == "Reading pricing.md…"
+    sent = await platform.edit(target(), sent, Message("The price", stop_reply_id="r1"))
+    assert calls.of("chat.startStream")[0]["markdown_text"] == "The price"
+    sent = await platform.edit(
+        target(), sent, Message("Waiting for Alex", stop_reply_id="r1", status=True)
+    )
+    sent = await platform.edit(target(), sent, Message("The price is 39.", final=True))
+    assert [b["markdown_text"] for b in calls.of("chat.appendStream")] == [" is 39."]
+    assert calls.methods()[-2:] == ["chat.stopStream", "chat.delete"]
+    assert calls.of("chat.delete")[0]["ts"] == "9.9"  # the status message that held Stop
+
+
+async def test_a_fast_answer_replaces_the_status_message_without_a_stream():
+    calls = Calls(stream_reply)
+    platform = make(calls)
+    sent = await platform.send(target(), Message("Starting up…", stop_reply_id="r1", status=True))
+    await platform.edit(target(), sent, Message("Done.\n\nChanged 1 file: a.md", final=True))
+    assert calls.of("chat.startStream") == []
+    final = calls.of("chat.update")[-1]
+    assert final["text"].startswith("Done.") and "stop" not in json.dumps(final.get("blocks", []))
+
+
+async def test_an_answer_rewritten_behind_the_stream_is_said_again_in_full():
+    calls = Calls(stream_reply)
+    platform = make(calls)
+    sent = await platform.send(target(), Message("Draft one", stop_reply_id="r1"))
+    sent = await platform.edit(target(), sent, Message("Final answer", final=True))
+    assert calls.of("chat.appendStream") == []
+    assert [b["markdown_text"] for b in calls.of("chat.startStream")] == [
+        "Draft one",
+        "Final answer",
+    ]

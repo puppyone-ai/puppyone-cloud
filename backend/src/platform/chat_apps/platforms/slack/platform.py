@@ -123,7 +123,9 @@ class SlackPlatform:
         return [found] if found else []
 
     async def send(self, target: Target, message: Message) -> Sent:
-        if message.stop_reply_id and not message.final:
+        # Status lines are a plain message with Stop, updated in place; only
+        # the answer itself streams.
+        if message.stop_reply_id and not message.final and not message.status:
             return await self._start_stream(target, message)
         text = self._mentioned(message, target)
         body = self._post_body(target, text, message)
@@ -131,6 +133,23 @@ class SlackPlatform:
         return Sent(data.get("ts"), {"mode": "message"})
 
     async def edit(self, target: Target, sent: Sent, message: Message) -> Sent:
+        answering = message.stop_reply_id and not message.final and not message.status
+        if sent.ref.get("mode") != "stream" and answering:
+            # The answer begins: the status message keeps only Stop, the answer streams.
+            self._take(target, "update", 50)
+            await self._call(
+                "chat.update",
+                target,
+                {
+                    **self._post_body(
+                        target, "", Message("", stop_reply_id=message.stop_reply_id), update=True
+                    ),
+                    "ts": sent.message_id,
+                },
+            )
+            ref = await self._open_stream(target, message.text, {"mode": "stream", "offset": 0})
+            ref["stop_ts"] = sent.message_id
+            return Sent(ref["ts"], ref)
         if sent.ref.get("mode") != "stream":
             self._take(target, "update", 50)
             body = self._post_body(target, self._mentioned(message, target), message, update=True)
@@ -416,13 +435,24 @@ class SlackPlatform:
         if text:
             body["markdown_text"] = text
         data = await self._call("chat.startStream", target, body)
-        return {**ref, "ts": data.get("ts"), "streamed": len(text), "started_at": self._clock()}
+        opened = {**ref, "ts": data.get("ts"), "streamed": len(text), "started_at": self._clock()}
+        if not ref.get("offset"):
+            opened["sha"] = _sha(text)
+        return opened
 
     async def _edit_stream(self, target: Target, sent: Sent, message: Message) -> Sent:
         ref = dict(sent.ref)
+        if message.status and not message.final:
+            return sent  # a stream only grows; the status line has nowhere to go
         full = message.text
         channel = target.external_chat_id
         done = int(ref.get("offset", 0)) + int(ref.get("streamed", 0))
+        if ref.get("sha") and _sha(full[:done]) != ref["sha"]:
+            # The text changed behind what was streamed: close it, say it again in full.
+            if ref.get("ts") is not None:
+                await self._stop_stream(target, ref, None)
+            ref = {**ref, "offset": 0, "streamed": 0, "ts": None}
+            done = 0
         pending = full[done:]
         while True:
             if ref.get("ts") is None:
@@ -466,6 +496,7 @@ class SlackPlatform:
                 )
             await self._drop_companion(target, ref)
             ref = {**ref, "ts": None, "stop_ts": None, "closed": True}
+        ref["sha"] = _sha(full[:done])
         return Sent(ref.get("ts") or sent.message_id, ref)
 
     async def _stop_stream(self, target: Target, ref: dict[str, Any], open_url: str | None) -> None:
@@ -543,6 +574,10 @@ class SlackPlatform:
         if error in {"message_not_found", "message_not_in_streaming_state", "cant_update_message"}:
             raise MessageGone(error)
         raise PlatformError(f"slack {method} failed: {error}")
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _json(raw: bytes) -> dict[str, Any]:

@@ -155,7 +155,10 @@ def render(
                 body = f"Denied by {owner}."
             else:
                 body = text or _step(tools)
-        return Render(Message(truncate(body, pacing, OPEN), stop_reply_id=reply_id), False)
+        status = body != text
+        return Render(
+            Message(truncate(body, pacing, OPEN), stop_reply_id=reply_id, status=status), False
+        )
 
     code = snapshot.get("code")
     if state == "succeeded":

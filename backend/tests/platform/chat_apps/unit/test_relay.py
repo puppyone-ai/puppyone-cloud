@@ -156,3 +156,10 @@ def test_notice_copy():
     assert notice_text("welcome", mention="@PuppyOne", name="Alex").startswith(
         "I'm in. Mention @PuppyOne to ask."
     )
+
+
+def test_status_lines_are_marked_so_a_stream_never_appends_them():
+    assert show(run("queued")).message.status
+    assert show(run("running", tools=[{"name": "read", "state": "executing"}])).message.status
+    assert not show(run("running", text="The price")).message.status
+    assert not show(run("succeeded", text="Done.")).message.status

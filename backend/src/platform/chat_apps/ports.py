@@ -99,6 +99,9 @@ class Message:
     button: tuple[str, str] | None = None
     #: The Run reached its end; streams close, drafts become a message.
     final: bool = False
+    #: A status line ("Starting up…", "Reading pricing.md…") that replaces the
+    #: last one, not the answer itself: a stream must not append it.
+    status: bool = False
     #: Mention this person (``Done · {asker}``).
     mention: str | None = None
 
