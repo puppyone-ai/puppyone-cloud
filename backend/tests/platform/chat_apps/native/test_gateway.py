@@ -322,7 +322,7 @@ def test_stop_only_for_the_asker_or_owner(world, db):
     )
     store(w["repository"], [click])
     w["drain"](g)
-    assert w["platform"].notices[-1][1] == "Only Alex or Alex can stop this."
+    assert w["platform"].notices[-1][1] == "Only Alex can stop this."
     store(
         w["repository"],
         [

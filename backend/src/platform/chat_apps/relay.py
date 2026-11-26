@@ -28,6 +28,7 @@ NOTICES = {
     "link_account": "Link your PuppyOne account to ask.",
     "not_in_project": "You're not in this project. Ask {name} to invite you.",
     "not_your_stop": "Only {asker} or {name} can stop this.",
+    "not_your_stop_one": "Only {name} can stop this.",
     "queued": "I'll get to this next.",
     "too_many": "Too many waiting. Ask again in a bit.",
     "limit": "Today's limit here is used up. I'll answer again tomorrow.",
@@ -45,6 +46,13 @@ NOTICES = {
 
 def notice_text(code: str, **values: str) -> str:
     return NOTICES[code].format_map({key: value or "" for key, value in values.items()})
+
+
+def stop_refusal(asker: str, owner: str) -> str:
+    """Who may press Stop, naming one person once when the asker owns the chat."""
+    if asker == owner:
+        return notice_text("not_your_stop_one", name=owner)
+    return notice_text("not_your_stop", asker=asker, name=owner)
 
 
 def changed_files(run: dict) -> list[str]:

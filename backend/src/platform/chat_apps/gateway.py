@@ -46,6 +46,7 @@ from src.platform.chat_apps.relay import (
     due,
     notice_text,
     render,
+    stop_refusal,
 )
 from src.platform.chat_apps.repository import ChatAppRepository, StaleFence
 
@@ -301,10 +302,8 @@ class Gateway:
         allowed = allowed or info.get("clicker_user_id") == info["owner_user_id"]
         target = await self._target(None, row)
         if not allowed:
-            text = notice_text(
-                "not_your_stop",
-                asker=info.get("asker_label") or "the asker",
-                name=info.get("owner_name") or "the owner",
+            text = stop_refusal(
+                info.get("asker_label") or "the asker", info.get("owner_name") or "the owner"
             )
             with suppress(PlatformError):
                 await platform.notify(target, text)

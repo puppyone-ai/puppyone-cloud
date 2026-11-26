@@ -5,7 +5,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.platform.chat_apps.ports import Message, Pacing
-from src.platform.chat_apps.relay import changed_files, digest, due, notice_text, render, truncate
+from src.platform.chat_apps.relay import (
+    changed_files,
+    digest,
+    due,
+    notice_text,
+    render,
+    stop_refusal,
+    truncate,
+)
 
 NOW = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
 TELEGRAM = Pacing(min_edit_seconds=3.0, max_text=4096)
@@ -128,6 +136,11 @@ def test_edits_wait_for_the_platform_pace_except_the_final():
 def test_unchanged_content_has_the_same_digest():
     assert digest(Message("a")) == digest(Message("a"))
     assert digest(Message("a")) != digest(Message("a", final=True))
+
+
+def test_stop_refusal_names_each_person_once():
+    assert stop_refusal("Mia", "Alex") == "Only Mia or Alex can stop this."
+    assert stop_refusal("Alex", "Alex") == "Only Alex can stop this."
 
 
 def test_notice_copy():
