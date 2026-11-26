@@ -13,6 +13,7 @@ from src.platform.chat_apps.relay import (
     render,
     stop_refusal,
     truncate,
+    welcome_code,
 )
 
 NOW = datetime(2026, 11, 25, 12, 0, tzinfo=UTC)
@@ -136,6 +137,13 @@ def test_edits_wait_for_the_platform_pace_except_the_final():
 def test_unchanged_content_has_the_same_digest():
     assert digest(Message("a")) == digest(Message("a"))
     assert digest(Message("a")) != digest(Message("a", final=True))
+
+
+def test_the_hello_says_how_to_ask_there():
+    assert welcome_code("telegram", "group") == "welcome_telegram"
+    assert welcome_code("slack", "group") == "welcome"
+    assert welcome_code("telegram", "dm") == welcome_code("slack", "dm") == "welcome_dm"
+    assert notice_text("welcome_dm") == "I'm in. Send me a message to ask."
 
 
 def test_stop_refusal_names_each_person_once():

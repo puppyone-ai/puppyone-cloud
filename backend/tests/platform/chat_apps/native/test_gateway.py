@@ -167,6 +167,7 @@ def test_one_question_becomes_one_message_that_ends_as_the_answer(world, db):
     assert w["ask"](11) == 1
     w["drain"](g)
     welcome = w["platform"].sent[0][1].text
+    assert w["platform"].sent[0][1].final  # never a draft or an open stream
     assert len(w["platform"].sent) == 2
     assert welcome.startswith("I'm in. Reply to me or mention @PuppyOneBot to ask.")
     [run] = w["runs_of_project"]()

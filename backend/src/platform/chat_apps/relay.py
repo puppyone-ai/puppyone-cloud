@@ -23,6 +23,7 @@ NOTICES = {
     "Only {name} can ask for now.",
     "welcome_telegram": "I'm in. Reply to me or mention {mention} to ask. "
     "I only read messages meant for me. Only {name} can ask for now.",
+    "welcome_dm": "I'm in. Send me a message to ask.",
     "only_owner": "Only {name} can ask me here.",
     "outsider": "Only people in {workspace} can ask me.",
     "link_account": "Link your PuppyOne account to ask.",
@@ -47,6 +48,14 @@ NOTICES = {
 
 def notice_text(code: str, **values: str) -> str:
     return NOTICES[code].format_map({key: value or "" for key, value in values.items()})
+
+
+def welcome_code(platform: str, chat_kind: str) -> str:
+    """The hello that says how to ask: every message in a direct chat; in a
+    group a mention, and on Telegram a reply too."""
+    if chat_kind == "dm":
+        return "welcome_dm"
+    return "welcome_telegram" if platform == "telegram" else "welcome"
 
 
 def stop_refusal(asker: str, owner: str) -> str:

@@ -47,6 +47,7 @@ from src.platform.chat_apps.relay import (
     notice_text,
     render,
     stop_refusal,
+    welcome_code,
 )
 from src.platform.chat_apps.repository import ChatAppRepository, StaleFence
 
@@ -267,7 +268,7 @@ class Gateway:
 
     async def _say(self, platform, target, text, *, button=None) -> Sent | None:
         try:
-            return await platform.send(target, Message(text, button=button))
+            return await platform.send(target, Message(text, button=button, final=True))
         except PlatformError:
             self.stats["send_failed"] += 1
             return None
@@ -540,10 +541,10 @@ class Gateway:
         code = reply["notice_code"]
         if code == "welcome":
             names["name"] = conversation.get("owner_name") or "the owner"
-            if conversation["platform"] == "telegram" and conversation["chat_kind"] == "group":
-                code = "welcome_telegram"
+            code = welcome_code(conversation["platform"], conversation["chat_kind"])
         try:
-            await platform.send(target, Message(notice_text(code, **names)))
+            # A notice is whole at once: no draft, no open stream.
+            await platform.send(target, Message(notice_text(code, **names), final=True))
             if reply["notice_code"] == "removed":
                 with suppress(PlatformError):
                     await platform.leave(target)
