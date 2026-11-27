@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.config import settings
 from src.infra.execution.runner import run_blocking
 from src.platform.auth.dependencies import get_current_user
 from src.platform.chat_apps import credentials
@@ -98,12 +99,49 @@ async def slack_actions(request: Request, repository=Depends(get_chat_app_reposi
     return await _intake("slack", request, repository)
 
 
-def _page(title: str, line: str, status: int = 200) -> HTMLResponse:
+_INSTALL_COPY = {
+    "en": {
+        "added": "Added to {team}",
+        "added_line": "PuppyOne is in your Slack. Go back to PuppyOne to invite it to a channel.",
+        "failed": "Slack wasn't added",
+        "failed_line": "Go back to PuppyOne and try again.",
+        "close": "You can close this tab.",
+    },
+    "zh": {
+        "added": "已加到 {team}",
+        "added_line": "PuppyOne 已经在你的 Slack 里了。回到 PuppyOne，把它请进一个频道。",
+        "failed": "没有加到 Slack",
+        "failed_line": "回到 PuppyOne 再试一次。",
+        "close": "你可以关闭这个标签页。",
+    },
+}
+
+
+def _copy(request: Request) -> dict[str, str]:
+    accept = (request.headers.get("accept-language") or "").lower()
+    return _INSTALL_COPY["zh" if accept.startswith("zh") else "en"]
+
+
+def _page(title: str, line: str, note: str, *, ok: bool, status: int = 200) -> HTMLResponse:
+    """The browser tab Slack's install returns to, in the look of the sign-in
+    result page: the product mark, one result, one line on what to do next."""
+    logo = html.escape(f"{settings.FRONTEND_URL.rstrip('/')}/puppyone-logo.svg")
+    tone = "#1f7a4d;background:#e3f2e9" if ok else "#a4331f;background:#fbe6e1"
     body = (
-        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-        f"<title>{html.escape(title)}</title>"
-        "<body style='font:15px system-ui;margin:20vh auto;max-width:28rem;text-align:center'>"
-        f"<h1 style='font-size:18px'>{html.escape(title)}</h1><p>{html.escape(line)}</p>"
+        "<!doctype html><html><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{html.escape(title)}</title></head>"
+        "<body style='margin:0;min-height:100vh;display:flex;align-items:center;"
+        "justify-content:center;background:#ebe8e3;color:#1f2328;"
+        'font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif\'>'
+        "<main style='display:flex;flex-direction:column;align-items:center;gap:16px;"
+        "max-width:340px;padding:24px;text-align:center'>"
+        f"<img src='{logo}' alt='PuppyOne' width=48 height=48>"
+        f"<h1 style='margin:0;font-size:22px;font-weight:600'>{html.escape(title)}</h1>"
+        f"<p style='margin:0;padding:8px 14px;border-radius:6px;color:{tone}'>"
+        f"{html.escape(line)}</p>"
+        f"<p style='margin:0;font-size:12px;color:#6b7280'>{html.escape(note)}</p>"
+        "</main></body></html>"
     )
     return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
@@ -113,7 +151,7 @@ async def slack_installed(request: Request, repository=Depends(get_chat_app_repo
     platform = _platform("slack")
     code, state = request.query_params.get("code"), request.query_params.get("state")
     if not code or not state:
-        return _page("Slack wasn't added.", "Go back to PuppyOne and try again.", 400)
+        return _failed(request)
     from src.platform.chat_apps.codes import code_hash
 
     try:
@@ -130,11 +168,19 @@ async def slack_installed(request: Request, repository=Depends(get_chat_app_repo
         )
     except Exception:
         logger.warning("chat_app_slack_install_failed")
-        return _page("Slack wasn't added.", "Go back to PuppyOne and try again.", 400)
+        return _failed(request)
+    copy = _copy(request)
     return _page(
-        f"Added to {installed['team_name']}",
-        "You can close this tab and go back to PuppyOne.",
+        copy["added"].format(team=installed["team_name"]),
+        copy["added_line"],
+        copy["close"],
+        ok=True,
     )
+
+
+def _failed(request: Request) -> HTMLResponse:
+    copy = _copy(request)
+    return _page(copy["failed"], copy["failed_line"], copy["close"], ok=False, status=400)
 
 
 @router.post("/identities/preview")

@@ -246,3 +246,22 @@ def test_removing_stops_running_runs_as_their_owner(secrets):
     }
     assert svc.remove("manager", "p", "c") == {"owner_user_id": "owner", "state": "removed"}
     svc.agents.command.assert_called_once_with("owner", "r1", "stop")
+
+
+def test_slack_install_result_page_speaks_the_browsers_language(monkeypatch, secrets):
+    class Installs(FakePlatform):
+        async def exchange(self, code):
+            return {
+                "team_id": "T1",
+                "team_name": "Acme",
+                "bot_token": "xoxb-test-placeholder",
+                "installer_user_id": "U1",
+            }
+
+    client, _ = intake(monkeypatch, {"slack": Installs(name="slack")})
+    path = "/api/v1/chat-apps/slack/oauth/callback"
+    done = client.get(f"{path}?code=c&state=s", headers={"Accept-Language": "zh-CN,zh;q=0.9"})
+    assert done.status_code == 200 and "已加到 Acme" in done.text and "请进一个频道" in done.text
+    assert "puppyone-logo.svg" in done.text
+    refused = client.get(path, headers={"Accept-Language": "en-US"})
+    assert refused.status_code == 400 and "Slack wasn&#x27;t added" in refused.text
