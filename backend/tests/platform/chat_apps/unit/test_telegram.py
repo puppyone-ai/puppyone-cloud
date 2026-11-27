@@ -444,3 +444,32 @@ async def test_mention_becomes_a_text_mention_entity():
     assert body["entities"] == [
         {"type": "text_mention", "offset": 7, "length": 4, "user": {"id": 7}}
     ]
+
+
+async def test_a_refused_link_button_moves_into_the_text_and_the_answer_still_arrives():
+    """Real Telegram refuses http://localhost buttons; the answer was lost with it."""
+
+    def reply(method, body):
+        if "url" in json.dumps(body.get("reply_markup", {})):
+            return (
+                400,
+                {
+                    "ok": False,
+                    "error_code": 400,
+                    "description": "Bad Request: inline "
+                    "keyboard button URL 'http://localhost/x' is invalid: Wrong HTTP URL",
+                },
+                {},
+            )
+        return {"ok": True, "result": {"message_id": 78}}
+
+    calls = Calls(reply)
+    target = Target("telegram", "7", chat_kind="dm")
+    sent = await make(calls).send(
+        target, Message("whole answer", final=True, open_url="http://localhost/x")
+    )
+    first, retry = calls.of("sendMessage")
+    assert "Open in PuppyOne" in json.dumps(first["reply_markup"])
+    assert retry["text"] == "whole answer\n\nOpen in PuppyOne: http://localhost/x"
+    assert retry["reply_markup"] == {"inline_keyboard": []}
+    assert sent.message_id == "78"

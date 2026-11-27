@@ -508,14 +508,15 @@ class Gateway:
                 next_attempt_at=(now + timedelta(seconds=exc.retry_after)).isoformat(),
             )
             return
-        except PlatformError:
+        except PlatformError as exc:
             self.stats["send_failed"] += 1
             attempts = reply["attempts"] + 1
             # A failed edit is retried; only a final that never lands is given up.
             give_up = rendered.finished and attempts >= FAILED_GIVE_UP
             if give_up:
                 logger.warning(
-                    "chat_app_final_undelivered", extra={"chat_app": {"reply": reply["id"]}}
+                    "chat_app_final_undelivered",
+                    extra={"chat_app": {"reply": reply["id"], "error": str(exc)[:300]}},
                 )
             await self._save(
                 reply,

@@ -44,6 +44,10 @@ _MAX_TEXT = 4096
 _OPEN_LABEL = "Open in PuppyOne"
 
 
+class _ButtonRejected(PlatformError):
+    """Telegram refused a link button's URL."""
+
+
 class _NotModified(PlatformError):
     """Telegram refused an edit because nothing changed."""
 
@@ -163,7 +167,7 @@ class TelegramPlatform:
             payload["chat_id"] = target.external_chat_id
             payload["message_id"] = int(sent.message_id or 0)
         with contextlib.suppress(_NotModified):
-            await self._call("editMessageText", payload)
+            await self._call_with_links("editMessageText", payload)
         return sent
 
     async def notify(self, target: Target, text: str) -> None:
@@ -377,9 +381,23 @@ class TelegramPlatform:
                 "message_id": int(target.reply_to),
                 "allow_sending_without_reply": True,
             }
-        result = await self._call("sendMessage", payload)
+        result = await self._call_with_links("sendMessage", payload)
         message_id = str((result or {}).get("message_id"))
         return Sent(message_id, {"mode": "chat"})
+
+    async def _call_with_links(self, method: str, payload: dict[str, Any]) -> Any:
+        """Telegram refuses some link buttons (a local address, for one): say the
+        link in the text instead, so the answer itself always arrives."""
+        try:
+            return await self._call(method, payload)
+        except _ButtonRejected:
+            rows = (payload.get("reply_markup") or {}).get("inline_keyboard") or []
+            links = [b for row in rows for b in row if b.get("url")]
+            kept = [[b for b in row if not b.get("url")] for row in rows]
+            kept = [row for row in kept if row]
+            text = payload.get("text", "") + "".join(f"\n\n{b['text']}: {b['url']}" for b in links)
+            retry = {**payload, "text": text, "reply_markup": {"inline_keyboard": kept}}
+            return await self._call(method, retry)
 
     async def _draft(self, target: Target, draft_id: int, text: str) -> None:
         await self._call(
@@ -415,6 +433,8 @@ class TelegramPlatform:
             raise RateLimited(float(retry))
         if "message is not modified" in description:
             raise _NotModified("not modified")
+        if "button url" in description and "invalid" in description:
+            raise _ButtonRejected(description[:200])
         if any(
             marker in description
             for marker in (
@@ -424,7 +444,7 @@ class TelegramPlatform:
             )
         ):
             raise MessageGone("telegram message is gone")
-        raise PlatformError(f"telegram {method} failed ({code})")
+        raise PlatformError(f"telegram {method} failed ({code}): {description[:200]}")
 
 
 def _drop_none(value: dict[str, Any]) -> dict[str, Any]:
