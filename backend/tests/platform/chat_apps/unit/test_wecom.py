@@ -133,7 +133,7 @@ def test_http_side_is_unused():
 def test_pacing_is_in_bytes_with_a_nine_minute_stream():
     pacing = WeComPlatform().pacing(target())
     assert (pacing.min_edit_seconds, pacing.max_text, pacing.bytes_limit) == (2.0, 20480, True)
-    assert pacing.stream_seconds == 540
+    assert pacing.stream_seconds == 330
 
 
 def test_build_platforms_wires_the_ws_url():
@@ -293,6 +293,19 @@ async def test_single_chat_uses_the_sender_as_chat_and_a_fixed_thread():
     assert event.code is None and event.text == "hello 123456"
 
 
+async def test_a_direct_chat_knocks_with_the_code_alone():
+    body = {
+        "msgid": "M4",
+        "aibotid": BOT,
+        "chattype": "single",
+        "from": {"userid": "U9"},
+        "msgtype": "text",
+        "text": {"content": " 183237 "},
+    }
+    [event] = await delivered_from(msg_frame(body))
+    assert (event.chat_kind, event.code, event.text) == ("dm", "183237", "183237")
+
+
 async def test_mixed_messages_join_text_and_flag_attachments_and_images_alone_have_no_text():
     mixed = {
         **GROUP_TEXT,
@@ -395,6 +408,19 @@ async def test_stop_is_a_separate_template_card_message():
     assert card["body"]["chat_type"] == 2
     assert card["body"]["template_card"]["button_list"][0]["key"] == "stop:r1"
     assert all("template_card" not in f["body"] for f in respond_frames(sock))
+    assert [f["cmd"] for f in sock.sent][-2:] == ["aibot_send_msg", "aibot_respond_msg"]
+    await h.finish()
+
+
+async def test_a_pressed_stop_card_turns_its_button_into_a_label():
+    h, sock = await live_harness()
+    await h.platform.settle_stop(target(handle={"req_id": "E9"}), "r1", "Stopping…")
+    [update] = [f for f in sock.sent if f["cmd"] == "aibot_respond_update_msg"]
+    assert update["headers"]["req_id"] == "E9"
+    card = update["body"]["template_card"]
+    assert update["body"]["response_type"] == "update_template_card"
+    assert card["task_id"] == "stop-r1" and card["main_title"]["title"] == "Stopping…"
+    assert [b["key"] for b in card["button_list"]] == ["done:r1"]  # not a Stop any more
     await h.finish()
 
 

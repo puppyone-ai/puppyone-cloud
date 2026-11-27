@@ -60,7 +60,8 @@ def chat_name(platform: str, payload: dict, asker: str | None) -> str:
     if payload.get("chat_title"):
         return payload["chat_title"]
     if platform == "wecom":
-        return "WeCom group"
+        # WeCom gives no names, only (often encrypted) user ids.
+        return "WeCom direct message" if payload.get("chat_kind") == "dm" else "WeCom group"
     if payload.get("chat_kind") == "dm":
         return asker or "Direct message"
     return "Chat"
@@ -311,13 +312,20 @@ class Gateway:
         info = await self._db("reply_info", id=reply_id, clicker=row.get("asker_external_id"))
         if not info or not info.get("run_id"):
             return
+        # A WeCom Stop card cannot change on its own: it changes when pressed.
+        settle = getattr(platform, "settle_stop", None)
+        target = await self._target(None, row)
+        if info.get("state") == "done":
+            if settle is not None:
+                with suppress(PlatformError):
+                    await settle(target, reply_id, notice_text("finished"))
+            return
         clicker = row.get("asker_external_id")
         allowed = clicker and clicker in (
             info.get("asker_external_id"),
             info.get("owner_external_id"),
         )
         allowed = allowed or info.get("clicker_user_id") == info["owner_user_id"]
-        target = await self._target(None, row)
         if not allowed:
             text = stop_refusal(
                 info.get("asker_label") or "the asker", info.get("owner_name") or "the owner"
@@ -329,10 +337,16 @@ class Gateway:
             await run_blocking(self.agents.command, info["owner_user_id"], info["run_id"], "stop")
         except HTTPException:
             logger.info("chat_app_stop_refused", extra={"chat_app": {"reply": reply_id}})
+            if settle is not None:
+                with suppress(PlatformError):
+                    await settle(target, reply_id, notice_text("finished"))
             return
+        if settle is not None:
+            with suppress(PlatformError):
+                await settle(target, reply_id, notice_text("stopping"))
         # A Telegram button press spins until it is answered; the message
         # itself changes to "Stopped" on the next relay.
-        if target.handle.get("callback_query_id"):
+        elif target.handle.get("callback_query_id"):
             with suppress(PlatformError):
                 await platform.notify(target, notice_text("stopping"))
 
@@ -538,7 +552,11 @@ class Gateway:
                     asker = (inbox or {}).get("asker_label") or ""
                     await platform.send(
                         target,
-                        Message(f"Done · {asker}".strip(" ·"), mention=target.asker_external_id),
+                        Message(
+                            f"Done · {asker}".strip(" ·"),
+                            final=True,  # one whole message, never an open stream
+                            mention=target.asker_external_id,
+                        ),
                     )
                 values["done_notice_sent"] = True
             await self._save(reply, state="done", units=rendered.units, release=True, **values)

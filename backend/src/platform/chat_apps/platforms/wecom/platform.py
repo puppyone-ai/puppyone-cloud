@@ -36,7 +36,9 @@ from .._common import Clock, TokenBucket, fit
 log = logging.getLogger(__name__)
 
 _TEXT_BYTES = 20_480
-_STREAM_SECONDS = 9 * 60
+# A reply stream dies about 6 minutes after the question (pings do not extend
+# it); move to a pushed message before that.
+_STREAM_SECONDS = 330
 _CODE = re.compile(r"(?<!\d)\d{6}(?!\d)")
 _LEADING_MENTION = re.compile(r"^\s*@\S+\s*")
 _MEDIA = {"image", "file", "voice", "video"}
@@ -181,11 +183,13 @@ class WeComPlatform:
             "req_id": reply_id,
             "started_at": self._clock(),
         }
+        # The Stop card goes first so it sits above the answer, as Slack's
+        # status line does; the stream message stays where it was opened.
+        if message.stop_reply_id and not message.final:
+            await self._push_card(session, target, message.stop_reply_id)
         await self._stream_frame(
             session, target, ref, message.text, message.open_url, message.final
         )
-        if message.stop_reply_id and not message.final:
-            await self._push_card(session, target, message.stop_reply_id)
         return Sent(stream_id, ref)
 
     async def edit(self, target: Target, sent: Sent, message: Message) -> Sent:
@@ -399,6 +403,9 @@ class WeComPlatform:
             text = _LEADING_MENTION.sub("", text, count=1)
             found = _CODE.search(text)
             code = found.group(0) if found else None
+        elif _CODE.fullmatch(text.strip()):
+            # A direct chat knocks by sending the code on its own.
+            code = text.strip()
         return Inbound(
             platform=self.name,
             message_key=str(msgid),
@@ -519,6 +526,29 @@ class WeComPlatform:
                         "card_type": "button_interaction",
                         "main_title": {"title": "Working…"},
                         "button_list": [{"text": "Stop", "style": 1, "key": f"stop:{reply_id}"}],
+                        "task_id": f"stop-{reply_id}"[:128],
+                    },
+                },
+            },
+        )
+
+    async def settle_stop(self, target: Target, reply_id: str, title: str) -> None:
+        """Answer a Stop click by changing its card. WeCom allows this only
+        within 5 seconds of the click, so a card cannot change by itself when
+        the answer finishes. The update must keep the card type and one button
+        (no button, or another card type, is refused), so the button turns
+        into a grey label that does nothing."""
+        await self._frame(
+            self._session(target),
+            {
+                "cmd": "aibot_respond_update_msg",
+                "headers": {"req_id": target.handle["req_id"]},
+                "body": {
+                    "response_type": "update_template_card",
+                    "template_card": {
+                        "card_type": "button_interaction",
+                        "main_title": {"title": title},
+                        "button_list": [{"text": title, "style": 2, "key": f"done:{reply_id}"}],
                         "task_id": f"stop-{reply_id}"[:128],
                     },
                 },

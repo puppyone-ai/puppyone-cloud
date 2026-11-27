@@ -169,7 +169,7 @@ def test_one_question_becomes_one_message_that_ends_as_the_answer(world, db):
     welcome = w["platform"].sent[0][1].text
     assert w["platform"].sent[0][1].final  # never a draft or an open stream
     assert len(w["platform"].sent) == 2
-    assert welcome.startswith("I'm in. Reply to me or mention @PuppyOneBot to ask.")
+    assert welcome.startswith("I'm in. Reply to me or send /ask@PuppyOneBot to ask.")
     [run] = w["runs_of_project"]()
     assert run["prompt"] == "[Telegram · Design team · Alex]\nchange the price to 29"
     assert run["user_id"] == w["owner"]
@@ -210,6 +210,56 @@ def test_a_guest_mode_answer_goes_back_through_its_guest_query(world):
     target, _ = w["platform"].sent[-1]
     assert target.handle["guest_query_id"] == "gq-25"
     assert w["platform"].edits[-1][1].final
+
+
+def test_a_long_answer_pings_the_asker_with_a_whole_message(world, db):
+    w = world
+    g = w["gateway"]()
+    w["ask"](95)
+    w["drain"](g)
+    [run] = w["runs_of_project"]()
+    db.sql(f"UPDATE agent_runs SET created_at=now()-interval '3 minutes' WHERE id='{run['id']}'")
+    w["move"](run["id"], "succeeded", text="Monthly is 29 now.")
+    w["drain"](g)
+    ping = w["platform"].sent[-1][1]
+    assert ping.text == "Done · Alex" and ping.mention == "tg-alex"
+    assert ping.final  # a WeCom stream left open spins forever
+
+
+def test_stop_on_a_finished_answer_stops_nothing_and_says_so(world, db):
+    w = world
+    g = w["gateway"]()
+    settled = []
+
+    async def settle_stop(target, reply_id, title):
+        settled.append((reply_id, title))
+
+    w["platform"].settle_stop = settle_stop  # a platform whose Stop card changes when pressed
+    w["ask"](91)
+    w["drain"](g)
+    [run] = w["runs_of_project"]()
+    w["move"](run["id"], "succeeded", text="Monthly is 29 now.")
+    w["drain"](g)
+    reply = db.sql(f"SELECT id FROM chat_app_replies WHERE run_id='{run['id']}'")
+    store(
+        w["repository"],
+        [
+            Inbound(
+                platform="telegram",
+                message_key=f"cb:{uuid4()}",
+                via="action",
+                kind="stop",
+                external_chat_id=w["chat"],
+                asker_external_id="tg-alex",
+                action_value=reply,
+                handle={"req_id": "E1"},
+            )
+        ],
+    )
+    w["drain"](g)
+    assert settled == [(reply, "Already finished.")]
+    [run] = w["runs_of_project"]()
+    assert run["state"] == "succeeded" and not run["stop_requested"]
 
 
 def test_a_new_gateway_keeps_editing_the_same_message(world, db):

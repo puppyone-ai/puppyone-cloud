@@ -41,6 +41,9 @@ _ATTACHMENTS = (
     "sticker",
 )
 _MAX_TEXT = 4096
+# File names Telegram would turn into web links: extensions that are also
+# top-level domains (the same list OpenClaw guards against).
+_FILE_NAME = re.compile(r"(?<![\w\-/.:@])[\w\-./]*\w\.(?:md|go|py|pl|sh|am|at|be|cc)(?![\w\-/])")
 _OPEN_LABEL = "Open in PuppyOne"
 
 
@@ -348,21 +351,29 @@ class TelegramPlatform:
 
     @staticmethod
     def _entities(message: Message, text: str, target: Target) -> list[dict[str, Any]]:
-        """Turn the asker's name inside the text into a real mention."""
-        who = target.asker_external_id
-        if not message.mention or not who or not who.isdigit():
-            return []
-        at = text.find(message.mention)
-        if at < 0:
-            return []
-        return [
+        """Turn the asker's name inside the text into a real mention, and file
+        names whose extension is also a top-level domain (pricing.md) into code,
+        so Telegram does not make them links to websites."""
+        entities = [
             {
-                "type": "text_mention",
-                "offset": utf16_len(text[:at]),
-                "length": utf16_len(message.mention),
-                "user": {"id": int(who)},
+                "type": "code",
+                "offset": utf16_len(text[: found.start()]),
+                "length": utf16_len(found.group(0)),
             }
+            for found in _FILE_NAME.finditer(text)
         ]
+        who = target.asker_external_id
+        at = text.find(message.mention) if message.mention else -1
+        if who and who.isdigit() and at >= 0:
+            entities.append(
+                {
+                    "type": "text_mention",
+                    "offset": utf16_len(text[:at]),
+                    "length": utf16_len(message.mention),
+                    "user": {"id": int(who)},
+                }
+            )
+        return sorted(entities, key=lambda entity: entity["offset"])
 
     async def _send_message(
         self,

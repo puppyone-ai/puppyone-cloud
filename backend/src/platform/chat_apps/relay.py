@@ -21,7 +21,9 @@ OPEN = "Open in PuppyOne"
 NOTICES = {
     "welcome": "I'm in. Mention {mention} to ask. I only read messages that mention me. "
     "Only {name} can ask for now.",
-    "welcome_telegram": "I'm in. Reply to me or mention {mention} to ask. "
+    # Telegram keeps privacy mode on: a plain @mention does not reach a bot that
+    # is in the group, so only promise what arrives (replies and /ask@bot).
+    "welcome_telegram": "I'm in. Reply to me or send /ask{mention} to ask. "
     "I only read messages meant for me. Only {name} can ask for now.",
     "welcome_dm": "I'm in. Send me a message to ask.",
     "new_thread": "New conversation. Ask away.",
@@ -32,6 +34,7 @@ NOTICES = {
     "not_your_stop": "Only {asker} or {name} can stop this.",
     "not_your_stop_one": "Only {name} can stop this.",
     "stopping": "Stopping…",
+    "finished": "Already finished.",
     "queued": "I'll get to this next.",
     "too_many": "Too many waiting. Ask again in a bit.",
     "limit": "Today's limit here is used up. I'll answer again tomorrow.",

@@ -163,3 +163,22 @@ def test_status_lines_are_marked_so_a_stream_never_appends_them():
     assert show(run("running", tools=[{"name": "read", "state": "executing"}])).message.status
     assert not show(run("running", text="The price")).message.status
     assert not show(run("succeeded", text="Done.")).message.status
+
+
+def test_gateway_reports_reach_the_structured_log():
+    """`chat_app_final_undelivered` carries why; the log bridge must keep it."""
+    import logging
+
+    from loguru import logger as loguru_logger
+
+    from src.utils.logging_setup import InterceptHandler
+
+    captured = []
+    sink = loguru_logger.add(lambda message: captured.append(message.record), level="INFO")
+    try:
+        record = logging.LogRecord("chat", logging.WARNING, __file__, 1, "probe", None, None)
+        record.chat_app = {"reply": "r1", "error": "telegram refused"}
+        InterceptHandler().emit(record)
+    finally:
+        loguru_logger.remove(sink)
+    assert captured[-1]["extra"]["chat_app"] == {"reply": "r1", "error": "telegram refused"}

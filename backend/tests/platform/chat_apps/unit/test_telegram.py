@@ -446,6 +446,16 @@ async def test_mention_becomes_a_text_mention_entity():
     ]
 
 
+async def test_file_names_that_look_like_websites_are_code_not_links():
+    calls = Calls(sent_reply)
+    text = "Changed 2 files: pricing.md, docs/plan.sh. See https://x.example/a.md"
+    await make(calls).send(Target("telegram", "-1"), Message(text, final=True))
+    [body] = calls.of("sendMessage")
+    named = [text[e["offset"] : e["offset"] + e["length"]] for e in body["entities"]]
+    assert named == ["pricing.md", "docs/plan.sh"]  # the URL is left alone
+    assert {e["type"] for e in body["entities"]} == {"code"}
+
+
 async def test_a_refused_link_button_moves_into_the_text_and_the_answer_still_arrives():
     """Real Telegram refuses http://localhost buttons; the answer was lost with it."""
 
