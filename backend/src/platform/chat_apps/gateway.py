@@ -44,6 +44,7 @@ from src.platform.chat_apps.relay import (
     FAILED_GIVE_UP,
     digest,
     due,
+    knock_refusal,
     notice_text,
     render,
     stop_refusal,
@@ -301,6 +302,14 @@ class Gateway:
             knock_hint=code if row["platform"] == "wecom" else None,
             owner_external_id=owner,
         )
+        platform = self.platforms.get(row["platform"])
+        if code and not result.get("knocked") and platform is not None:
+            # A scanned QR or a typed code that no longer works must not look ignored.
+            await self._say(
+                platform,
+                await self._target(None, row),
+                notice_text(knock_refusal(row["platform"], result)),
+            )
         await self._finish(
             row,
             "done",

@@ -386,3 +386,49 @@ def test_stop_only_for_the_asker_or_owner(world, db):
     [run] = w["runs_of_project"]()
     assert run["stop_requested"] is True or run["state"] == "stopped"
     assert w["platform"].notices[-1][1] == "Stopping…"
+
+
+def test_a_used_or_unknown_code_gets_a_reply_instead_of_silence(world):
+    w = world
+    g = w["gateway"]()
+
+    def knock(message_id, chat, code):
+        store(
+            w["repository"],
+            [
+                Inbound(
+                    platform="telegram",
+                    message_key=f"{chat}:{message_id}",
+                    via="message",
+                    kind="knock",
+                    code=code,
+                    external_chat_id=chat,
+                    chat_kind="dm",
+                    asker_external_id="tg-alex",
+                    asker_label="Alex",
+                    message_id=str(message_id),
+                )
+            ],
+        )
+        w["drain"](g)
+        return w["platform"].sent[-1][1].text
+
+    # The setup's code was used when the group knocked; a QR scanned after
+    # that, or one that never existed, must not look ignored.
+    assert knock(81, "tg-dm-1", f"knock{w['chat']}") == (
+        "This link has expired or was already used. "
+        "Open PuppyOne → Agents → Add to chat for a new one."
+    )
+    assert knock(82, "tg-dm-2", "never-issued").startswith("This link has expired")
+    # The group already in the project scans a fresh code again.
+    from src.platform.chat_apps import codes
+
+    w["repository"].human(
+        "start_link",
+        w["owner"],
+        project_id=w["project_id"],
+        platform="telegram",
+        purpose="knock",
+        code_hash=codes.code_hash("fresh"),
+    )
+    assert knock(83, w["chat"], "fresh") == "This chat is already added to PuppyOne."

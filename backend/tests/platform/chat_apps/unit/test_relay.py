@@ -9,6 +9,7 @@ from src.platform.chat_apps.relay import (
     changed_files,
     digest,
     due,
+    knock_refusal,
     notice_text,
     render,
     stop_refusal,
@@ -182,3 +183,12 @@ def test_gateway_reports_reach_the_structured_log():
     finally:
         loguru_logger.remove(sink)
     assert captured[-1]["extra"]["chat_app"] == {"reply": "r1", "error": "telegram refused"}
+
+
+def test_a_knock_that_did_not_work_says_why_in_the_platform_s_words():
+    assert knock_refusal("telegram", {"knocked": False}) == "link_expired"
+    assert knock_refusal("wecom", {"knocked": False}) == "code_expired"
+    assert knock_refusal("wecom", {"knocked": False, "reason": "already_connected"}) == (
+        "already_added"
+    )
+    assert "Add to chat" in notice_text("link_expired")

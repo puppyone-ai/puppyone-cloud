@@ -47,11 +47,24 @@ NOTICES = {
     "Open PuppyOne → Agents → Add to chat.",
     "stale": "Something went wrong on our side. Nothing was changed. Ask again.",
     "unconfigured": "The agent isn't set up for this project yet. {name} can set it up in PuppyOne.",
+    "link_expired": "This link has expired or was already used. "
+    "Open PuppyOne → Agents → Add to chat for a new one.",
+    "code_expired": "This code has expired or was already used. "
+    "Open PuppyOne → Agents → Add to chat for a new one.",
+    "already_added": "This chat is already added to PuppyOne.",
 }
 
 
 def notice_text(code: str, **values: str) -> str:
     return NOTICES[code].format_map({key: value or "" for key, value in values.items()})
+
+
+def knock_refusal(platform: str, result: dict) -> str:
+    """Why a code from a link or a typed code did not knock: Telegram's code
+    rides in a link (QR or button), WeCom's is typed."""
+    if result.get("reason") == "already_connected":
+        return "already_added"
+    return "link_expired" if platform == "telegram" else "code_expired"
 
 
 def welcome_code(platform: str, chat_kind: str) -> str:
