@@ -1,14 +1,19 @@
 /** Disposable Linux image acceptance. No network, external model or host mounts. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { scriptedTask, poll } from './workbench-test-task.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { CONTROL_ROOT, STATE, withWorkbenchGitLock } from './workbench-task.mjs';
 import { exists } from './git.mjs';
 import { initializeWorkbench } from './workbench-initialize.mjs';
-const ROOT = '/workspace/repo';
+const exec = promisify(execFile), ROOT = '/workspace/repo';
+async function cleanRoot() {
+  try { await exec('chattr', ['-i', `${ROOT}/.git/HEAD`]); } catch {}
+  await rm(ROOT, { recursive: true, force: true });
+}
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function content(name) { try { return await readFile(`${ROOT}/${name}`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; return ''; } }
@@ -117,7 +122,7 @@ for (const ending of ['stop','finalize','disconnect','lease_expiry','duplicate_c
       }
       for (const child of children) { child.kill('SIGKILL'); await poll(() => child.exitCode !== null || child.signalCode !== null); }
       // Only the two fixed data roots in this disposable acceptance image.
-      await rm(ROOT, { recursive: true, force: true });
+      await cleanRoot();
       await rm(CONTROL_ROOT, { recursive: true, force: true });
     }
   });
