@@ -105,12 +105,7 @@ async def test_native_s3_product_splice_publish_and_read_only_replay(publication
         git.run("fsck", "--full", "--strict")
 
     await asyncio.to_thread(verify)
-    assert (
-        pg.value(
-            f"SELECT count(*) FROM public.version_commits WHERE project_id={literal(auth.project)}"
-        )
-        == "0"
-    )
+    assert pg.value("SELECT to_regclass('public.version_commits') IS NULL") == "t"
     # The committed retry must not allocate a pin, PUT, recompute a splice,
     # require a write lease, or consult a newly missing entitlement.
     pg.sql(

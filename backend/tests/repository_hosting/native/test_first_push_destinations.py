@@ -94,7 +94,7 @@ def listed(app, org):
 
 def test_a_first_push_into_my_personal_space_is_listed_there_only(app, tmp_path):
     personal = app.api("POST", "/auth/personal-space")
-    assert personal["kind"] == "personal" and personal["can_create_projects"]
+    assert personal["kind"] == "space" and personal["can_create_projects"]
     entitle(app, personal["id"])
     team = app.api("POST", "/organizations/", expected=201, json={"name": "Design " + uuid.uuid4().hex})["id"]
     project, commit = first_push(app, personal["id"], tmp_path / "Journal")
