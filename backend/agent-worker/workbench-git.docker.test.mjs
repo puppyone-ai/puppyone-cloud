@@ -11,6 +11,10 @@ import { gitControl } from './workbench-git-layout.mjs';
 import { gitHttpFixture } from './workbench-git-http-fixture.mjs';
 import { CONTROL_ROOT, STATE } from './workbench-task.mjs';
 const exec = promisify(execFile), ROOT = '/workspace/repo';
+async function cleanRoot() {
+  try { await exec('chattr', ['-i', `${ROOT}/.git/HEAD`]); } catch {}
+  await rm(ROOT, { recursive: true, force: true });
+}
 const enabled = process.env.PUPPYONE_WORKBENCH_ACCEPTANCE === '1' && process.platform === 'linux' && process.getuid() === 0;
 function connection(workbench, generation, uid, remote) {
   const command = uid === null
@@ -60,7 +64,7 @@ async function fixture(fn, format = 'sha1', remote = null) {
     await fn(clients, { identity, config, transport });
   } finally {
     for (const { child } of clients) if (child.exitCode === null) { child.stdin.end(); await once(child, 'exit'); }
-    await rm(ROOT, { recursive: true, force: true });
+    await cleanRoot();
     await rm(CONTROL_ROOT, { recursive: true, force: true });
   }
 }
@@ -131,7 +135,7 @@ test('first initialization never overwrites an ignored unique file',
       await assert.rejects(readFile(`${STATE}/binding.json`), { code: 'ENOENT' });
     } finally {
       client.child.stdin.end(); await once(client.child, 'exit');
-      await rm(ROOT, { recursive: true, force: true }); await rm(CONTROL_ROOT, { recursive: true, force: true });
+      await cleanRoot(); await rm(CONTROL_ROOT, { recursive: true, force: true });
       await remote.close();
     }
   });
@@ -324,7 +328,7 @@ for (const format of ['sha1', 'sha256']) {
         assert.equal((await git('save', { message: 'Save' })).status, 'saved');
       } finally {
         if (lifecycle.child.exitCode === null) { lifecycle.child.stdin.end(); await once(lifecycle.child, 'exit'); }
-        await rm(ROOT, { recursive: true, force: true });
+        await cleanRoot();
         await rm(CONTROL_ROOT, { recursive: true, force: true });
         await remote.close();
       }

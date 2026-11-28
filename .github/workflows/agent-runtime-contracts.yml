@@ -85,10 +85,15 @@ jobs:
             agent-worker/workbench-state.test.mjs
           docker build --network=none --no-cache --progress=plain \
             --build-arg WORKBENCH_AGENT_IMAGE=puppyone-cloud-agent:workspace-v3 \
+            -t puppyone-workbench-acceptance:local \
             -f agent-worker/WorkbenchAcceptance.Dockerfile agent-worker
-          docker build --network=none --no-cache --progress=plain \
-            --build-arg WORKBENCH_AGENT_IMAGE=puppyone-cloud-agent:workspace-v3 \
-            -f agent-worker/WorkbenchFileAcceptance.Dockerfile agent-worker
+          for suite in workbench-process.docker.test.mjs workbench-git.docker.test.mjs workbench-shell.docker.test.mjs workbench-files.acceptance.mjs; do
+            docker run --rm --network=none --cap-add=LINUX_IMMUTABLE \
+              --mount type=volume,target=/workspace \
+              -e PUPPYONE_WORKBENCH_ACCEPTANCE=1 \
+              --entrypoint node puppyone-workbench-acceptance:local \
+              --test "/opt/puppyone-agent/$suite"
+          done
           # Execute the actual harness with its pinned Node and Pi artifact.
           docker run --rm --network=none --entrypoint node \
             --mount "type=bind,src=$PWD/agent-worker/worker.integration.test.mjs,dst=/opt/puppyone-agent/worker.integration.test.mjs,readonly" \
