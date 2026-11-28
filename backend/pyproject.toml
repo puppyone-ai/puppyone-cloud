@@ -35,7 +35,6 @@ dependencies = [
     "arq>=0.26.3",
     "aiohttp>=3.13.2",
     "aiohappyeyeballs>=2.6.1",
-    "anthropic>=0.76.0",
     "e2b-code-interpreter>=2.4.1",
     "rich>=14.2.0",
     "apscheduler>=3.10.4",

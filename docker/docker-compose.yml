@@ -217,9 +217,6 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-minioadmin}
       ETL_REDIS_URL: redis://redis:6379
       ENABLE_ETL: "false"
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: https://api.anthropic.com
-      ANTHROPIC_MODEL: claude-sonnet-4-20250514
       SANDBOX_TYPE: ${SANDBOX_TYPE:-docker}
       SANDBOX_TMPDIR: ${SANDBOX_TMPDIR:-/tmp/puppyone-sandbox}
       E2B_API_KEY: ${E2B_API_KEY:-}

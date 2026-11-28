@@ -755,7 +755,6 @@ async def _build_readiness_report(mcp_service) -> dict:
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY")),
         "s3_configured": bool(os.getenv("S3_BUCKET_NAME")),
         "mineru_configured": bool(os.getenv("MINERU_API_KEY")),
-        "anthropic_configured": bool(os.getenv("ANTHROPIC_API_KEY")),
         "e2b_configured": bool(os.getenv("E2B_API_KEY")),
         "internal_api_secret_configured": bool((settings.INTERNAL_API_SECRET or "").strip()),
     }
