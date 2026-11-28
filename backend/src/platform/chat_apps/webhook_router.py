@@ -178,4 +178,3 @@ async def slack_installed(request: Request, repository=Depends(get_chat_app_repo
 def _failed(request: Request) -> HTMLResponse:
     copy = _copy(request)
     return _page(copy["failed"], copy["failed_line"], copy["close"], ok=False, status=400)
-

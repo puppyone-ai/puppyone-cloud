@@ -33,4 +33,3 @@ class ChangeChat(Strict):
     #: Minutes per UTC day; null = no limit. Absent = unchanged.
     daily_limit_units: int | None = Field(default=None, gt=0, le=24 * 60)
     display_name: str | None = Field(default=None, min_length=1, max_length=64)
-

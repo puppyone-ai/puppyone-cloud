@@ -428,7 +428,7 @@ def test_slack_install_and_uninstall(db):
 
 def test_a_denied_knock_leaves_nothing_behind_for_the_knocker(db):
     # The manager's own chat: only the owner may ask.
-    project_id, user, _, own = allowed_chat(db, n=121, chat="-221")
+    project_id, user, _, _ = allowed_chat(db, n=121, chat="-221")
     # Someone else used a second code (a forwarded link); the manager says no.
     _, other = knock_telegram(db, project_id, user, chat="dm-mallory", n=122)
     db.human(
@@ -485,7 +485,9 @@ def test_retention_keeps_recent_rows_and_drops_old_ones(db):
         "WHERE external_chat_id = '-241'"
     )
     assert keys == "-241:new"
-    assert db.sql(f"SELECT count(*) FROM chat_app_link_codes WHERE project_id='{project_id}'") == "0"
+    assert (
+        db.sql(f"SELECT count(*) FROM chat_app_link_codes WHERE project_id='{project_id}'") == "0"
+    )
     # The chat itself stays and still lists.
     assert db.human("list", user, project_id=project_id)["conversations"][0]["id"] == chat
 
@@ -615,9 +617,7 @@ def test_a_wecom_bot_that_failed_elsewhere_can_be_connected_here(db):
             external_id="bot-moved",
             secret="right",
         )
-    db.gateway(
-        "mark_connection", worker="g", id=held["id"], fence=held["fence"], status="failed"
-    )
+    db.gateway("mark_connection", worker="g", id=held["id"], fence=held["fence"], status="failed")
     moved = db.human(
         "connect",
         second_user,
