@@ -335,7 +335,9 @@ class Settings(BaseSettings):
             raise ValueError("HOST_GATEWAY_PUBLIC_URL must be an https origin")
         # Every API worker must sign with the same authority the hosts trust.
         if "BEGIN OPENSSH PRIVATE KEY" not in (self.HOST_SSH_CA_PRIVATE_KEY or ""):
-            raise ValueError("HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled")
+            raise ValueError(
+                "HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled"
+            )
         return self
 
     @model_validator(mode="after")
@@ -410,8 +412,32 @@ class Settings(BaseSettings):
                     raise ValueError("CLOUD_AGENT_SPRITES_SHA256 must pin the worker bundle")
             elif not self.E2B_API_KEY:
                 raise ValueError("E2B_API_KEY is required for hosted E2B Cloud Agent execution")
+            if self.APP_ENV == "production" and self.CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES.strip():
+                raise ValueError("Sandbox preview features are not allowed in production")
             if not self.SANDBOX_REAPER_ENABLED:
                 raise ValueError("Hosted sandbox sessions require SANDBOX_REAPER_ENABLED=true")
+        return self
+
+    @model_validator(mode="after")
+    def enforce_agent_collaboration_safety(self):
+        """Validate pluggable multi-agent collaboration topology requirements."""
+        if self.APP_ENV in {"staging", "production"} and self.SERVICE_ROLE in WORKSPACE_ROLES:
+            if (
+                self.CLOUD_AGENT_COLLAB_MODE == "fly_host_export"
+                and self.CLOUD_AGENT_SANDBOX_PROVIDER != "fly"
+            ):
+                raise ValueError(
+                    "CLOUD_AGENT_COLLAB_MODE='fly_host_export' requires "
+                    "CLOUD_AGENT_SANDBOX_PROVIDER='fly'"
+                )
+            if (
+                self.CLOUD_AGENT_COLLAB_MODE == "juicefs_shared"
+                and not self.CLOUD_AGENT_JUICEFS_META_PREFIX.strip()
+            ):
+                raise ValueError(
+                    "CLOUD_AGENT_COLLAB_MODE='juicefs_shared' requires "
+                    "CLOUD_AGENT_JUICEFS_META_PREFIX"
+                )
         return self
 
     @model_validator(mode="after")
@@ -475,6 +501,34 @@ class Settings(BaseSettings):
     CLOUD_AGENT_SANDBOX_PROVIDER: str = "sprites"
     # Existing bindings remain on their provider; new workspaces use the default above.
     CLOUD_AGENT_EXISTING_SANDBOX_PROVIDERS: str = "fly"
+    # Profile (platform/sandbox/catalog.py) pinned by new workspaces. Existing
+    # bindings keep theirs; bindings without one are "base".
+    CLOUD_AGENT_SANDBOX_PROFILE: str = Field(default="base", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    # Pluggable multi-agent workspace collaboration topology router:
+    # - "shared_machine": Tier 1 — invited external Agents execute directly in
+    #   the Project's shared default Workspace VM (immediate live-file visibility).
+    # - "fly_host_export": Tier 2 — isolated per-Agent Fly MicroVMs mounting
+    #   /workspace/repo over Fly 6pn from the Project default Workspace VM.
+    # - "juicefs_shared": Tier 3 — isolated per-Agent Fly MicroVMs sharing a
+    #   per-Project JuiceFS POSIX volume.
+    # - "isolated_branch": Legacy mode — each external Agent gets its own VM
+    #   and Git branch (refs/heads/agents/<registration_id>).
+    CLOUD_AGENT_COLLAB_MODE: Literal[
+        "shared_machine",
+        "fly_host_export",
+        "juicefs_shared",
+        "isolated_branch",
+    ] = "shared_machine"
+    # Transport protocol for Tier 2 (fly_host_export) mount descriptors.
+    # Default "nfs_ganesha" uses SSH-tunneled kernel NFSv4.1 (full POSIX + hardlinks + cross-VM flock).
+    CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL: Literal["sshfs", "nfs_ganesha"] = "nfs_ganesha"
+    # Metadata namespace prefix for Tier 3 (juicefs_shared) per-project schemas.
+    CLOUD_AGENT_JUICEFS_META_PREFIX: str = ""
+    # Comma-separated Features withdrawn from every workspace without rebuilding machines.
+    CLOUD_AGENT_SANDBOX_DISABLED_FEATURES: str = ""
+    # Comma-separated Features reported as previews on Profiles that lack them, for
+    # client layout work before their image exists. Never set in production.
+    CLOUD_AGENT_SANDBOX_PREVIEW_FEATURES: str = ""
     CLOUD_AGENT_FILE_CHANNEL_IDLE_SECONDS: int = Field(default=300, ge=1, le=3600)
     CLOUD_AGENT_FILE_CHANNEL_LIMIT: int = Field(default=128, ge=1, le=4096)
     CLOUD_AGENT_FLY_APP: str = ""
@@ -484,12 +538,16 @@ class Settings(BaseSettings):
     CLOUD_AGENT_FLY_REGION: str = "sin"
     CLOUD_AGENT_FLY_DISK_GB: int = 10
     CLOUD_AGENT_FLY_IMAGE: str = ""
+    # Image for the "desktop" sandbox profile; empty leaves that profile unavailable.
+    CLOUD_AGENT_FLY_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_FLY_CLI: str = "fly"
     CLOUD_AGENT_SPRITES_TOKEN: str = ""
     # Immutable Linux worker bundle, built by agent-worker/build_sprites_bundle.py.
     CLOUD_AGENT_SPRITES_BUNDLE: str = ""
     CLOUD_AGENT_SPRITES_SHA256: str = ""
     CLOUD_AGENT_IMAGE: str = "puppyone-cloud-agent:workspace-v3"
+    # Local Docker image for the "desktop" sandbox profile (agent-worker --target desktop).
+    CLOUD_AGENT_DESKTOP_IMAGE: str = ""
     CLOUD_AGENT_E2B_TEMPLATE: str = ""
     CLOUD_AGENT_DEFAULT_MODEL: str = ""
     CLOUD_AGENT_MAX_TOKENS: int = Field(default=4096, ge=1, le=32768)
@@ -680,6 +738,12 @@ class Settings(BaseSettings):
     SEAT_PROPOSAL_BATCH_SIZE: int = Field(default=25, ge=1, le=100)
     SEAT_PROPOSAL_LEASE_SECONDS: int = Field(default=60, ge=10, le=3600)
     RUNTIME_DEFAULT_RESERVATION_UNITS: int = Field(default=10, gt=0, le=10_000)
+    RUNTIME_WORKSPACE_MAX_UNITS: int = Field(
+        default=10_080,
+        gt=0,
+        le=1_000_000,
+        description="Upper-bound RU reservation for one uncharged interactive Workspace epoch (7 days at 1 RU/min)",
+    )
     RUNTIME_AGENT_MAX_UNITS: int = Field(
         default=30,
         gt=0,
@@ -730,6 +794,8 @@ class Settings(BaseSettings):
     PUBLISH_CACHE_TTL_SECONDS: int = 10
 
     # Git-native version engine hardening.
+    REPOSITORY_POLICY: Literal["vm-only", "open"] = "vm-only"
+    REPOSITORY_POLICY_FILE: str = ""
     VERSION_OUTBOX_ENABLED: bool = True
     VERSION_OUTBOX_INTERVAL_SECONDS: int = 30
     VERSION_OUTBOX_BATCH_SIZE: int = 50

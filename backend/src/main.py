@@ -111,11 +111,6 @@ content_router_start = time.time()
 
 content_router_duration = time.time() - content_router_start
 
-analytics_router_start = time.time()
-from src.platform.analytics.router import router as analytics_router
-
-analytics_router_duration = time.time() - analytics_router_start
-
 profile_router_start = time.time()
 from src.platform.profile.router import router as profile_router
 
@@ -143,8 +138,10 @@ from src.infra.scheduler.service import get_scheduler_service
 scheduler_import_duration = time.time() - scheduler_start
 
 from src.platform.project.write_lease import install_storage_write_admission
+from src.platform.repository_policy import load_repository_policy
 
 install_storage_write_admission()
+load_repository_policy()
 install_agent()
 install_project_entry_points()
 
@@ -174,7 +171,6 @@ routers_duration = (
     + oauth_router_duration
     + internal_router_duration
     + content_router_duration
-    + analytics_router_duration
     + profile_router_duration
     + imports_router_duration
     + database_import_router_duration
@@ -584,9 +580,6 @@ def create_app() -> FastAPI:
     app.include_router(mcp_v3_router, prefix="/api/v1", tags=["mcp"])
     app.include_router(agent_router, prefix="/api/v1", tags=["agents"])
     app.include_router(agent_config_router, prefix="/api/v1", tags=["agent-config"])
-    from src.platform.agent.chat.router import router as chat_router
-
-    app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
     app.include_router(context_publish_router, prefix="/api/v1", tags=["publishes"])
     # public short link: /p/{publish_key}
     app.include_router(context_publish_public_router, tags=["publishes"])
@@ -678,7 +671,6 @@ def create_app() -> FastAPI:
     from src.platform.onboarding.router import router as onboarding_router
 
     app.include_router(onboarding_router, prefix="/api/v1", tags=["auth"])
-    app.include_router(analytics_router, tags=["analytics"])
     app.include_router(profile_router, tags=["profile"])
     app.include_router(imports_router, prefix="/api/v1", tags=["imports"])
     app.include_router(activity_public_router, prefix="/api/v1", tags=["activity"])

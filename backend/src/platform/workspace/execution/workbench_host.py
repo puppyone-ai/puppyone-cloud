@@ -11,7 +11,8 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from src.platform.sandbox import workspace_event, workspace_stage
+from src.config import settings
+from src.platform.sandbox import binding_profile, enabled_features, workspace_event, workspace_stage
 
 from .control_channel import ControlChannel
 from .runtime_contract import validate_runtime
@@ -23,12 +24,29 @@ class WorkbenchChannel(ControlChannel):
         resource = row["resource"] or {}
         binding = row["binding"]
         # Read by the provider while initializing; a persisted binding then wins.
-        self.dedicated_workspace = (
-            str(UUID(row["id"]))
-            if row.get("is_default") or row.get("agent_registration_id")
-            else None
-        )
+        host_workbench = row.get("host_workbench_id")
+        if host_workbench:
+            self.host_workbench_id = str(UUID(host_workbench))
+            self.dedicated_workspace = None
+            self.shared_network_workspace = self.host_workbench_id
+            self.workspace_mount_env = {
+                "PUPPYONE_WORKSPACE_MOUNT_MODE": "fly_host_export",
+                "PUPPYONE_HOST_EXPORT_PROTOCOL": settings.CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL,
+            }
+        else:
+            self.host_workbench_id = None
+            self.dedicated_workspace = (
+                str(UUID(row["id"]))
+                if row.get("is_default") or row.get("agent_registration_id")
+                else None
+            )
+            self.shared_network_workspace = None
+            self.workspace_mount_env = {}
         self.internet_access = row.get("internet_access") is True
+        # Resolved Profile values for allocation; providers never read the catalog.
+        profile = binding_profile(binding)
+        self.machine_guest = profile.guest.as_dict()
+        self.sandbox_features = enabled_features(profile)
         super().__init__(
             str(UUID(row["generation"])),
             row["project_id"],
@@ -142,12 +160,25 @@ class WorkbenchChannel(ControlChannel):
             yield queue
         finally:
             self.subscribers.discard(queue)
-            async with self.watch_lock:
-                if not self.subscribers and self.watch_started and self.healthy():
-                    with suppress(Exception):
-                        async with asyncio.timeout(5):
-                            await self.control("unwatch")
-                    self.watch_started = False
+            should_unwatch = not self.subscribers and self.watch_started
+            if should_unwatch:
+                # Reset before awaiting unwatch: Starlette/AnyIO cancels SSE tasks on
+                # client disconnect (CancelledError is BaseException, not Exception).
+                # If unwatch is written to SSH and then cancelled before its reply
+                # returns, leaving watch_started=True would permanently blind every
+                # future subscriber reusing this pooled channel.
+                self.watch_started = False
+            if should_unwatch and self.healthy():
+                try:
+                    async with self.watch_lock:
+                        if not self.subscribers and not self.watch_started and self.healthy():
+                            with suppress(Exception):
+                                async with asyncio.timeout(5):
+                                    await self.control("unwatch")
+                except asyncio.CancelledError:
+                    if not self.subscribers:
+                        self.watch_started = False
+                    raise
 
     def healthy(self):
         return bool(self.reader and not self.reader.done() and not self.reconnecting)

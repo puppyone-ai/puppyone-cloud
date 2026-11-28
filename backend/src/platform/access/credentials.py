@@ -142,20 +142,33 @@ class CredentialService:
 
     async def _start_workspace(self, key_hashes, request):
         """Record the intent and return: the client retries once the machine is up."""
+        from src.platform.workspace.collaboration import get_agent_collaboration_router
+
+        router = get_agent_collaboration_router()
+        topology = router.require_ready()
         row = await run_blocking(
             self.repository.call,
             "access_registered_workspace",
             key_hashes=key_hashes,
             grant=str(request.grant_id),
+            mode=topology.sql_mode,
         )
+        if isinstance(row, dict) and row.get("collaboration_mode"):
+            router.require_ready(project_override=row["collaboration_mode"])
         if row["state"] != "running":
             from .composition import build_workbench_service
 
-            await build_workbench_service().request_open(row["user_id"], row["project_id"], row)
+            actor = row.get("actor_user_id") or row["user_id"]
+            await build_workbench_service().request_open(actor, row["project_id"], row)
 
     async def _issue(self, key_hashes, request, public_key):
         from .credential_repository import access_token_hash
 
+        extra = {}
+        if str(request.channel) == "ssh":
+            from src.platform.workspace.collaboration import get_agent_collaboration_router
+
+            extra["mode"] = get_agent_collaboration_router().require_ready().sql_mode
         result = await run_blocking(
             self.repository.call,
             "access_issue_credential",
@@ -170,5 +183,6 @@ class CredentialService:
             public_key=public_key,
             surface=request.surface_id,
             ttl=request.expires_in,
+            **extra,
         )
         return result

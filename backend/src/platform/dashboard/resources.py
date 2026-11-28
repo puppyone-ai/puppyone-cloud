@@ -23,7 +23,14 @@ from src.platform.synchronize.run_repository import NEW_TABLE as SYNCHRONIZE_RUN
 
 
 def _usage(
-    sb, table: str, key: str, ids: list[str], *, project_id: str | None = None, days: int = 14
+    sb,
+    table: str,
+    key: str,
+    ids: list[str],
+    *,
+    project_id: str | None = None,
+    started: str = "started_at",
+    days: int = 14,
 ):
     buckets = {identity: [0] * days for identity in ids}
     if not ids:
@@ -32,16 +39,16 @@ def _usage(
     start = today - timedelta(days=days - 1)
     query = (
         sb.table(table)
-        .select(f"{key}, started_at")
+        .select(f"{key}, {started}")
         .in_(key, ids)
-        .gte("started_at", start.isoformat())
+        .gte(started, start.isoformat())
     )
     if project_id is not None:
         query = query.eq("project_id", project_id)
     for row in query.execute().data or []:
         identity = row.get(key)
         try:
-            timestamp = datetime.fromisoformat(row["started_at"].replace("Z", "+00:00"))
+            timestamp = datetime.fromisoformat(row[started].replace("Z", "+00:00"))
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if timestamp.tzinfo is None:
@@ -71,11 +78,14 @@ def fetch_dashboard_resources(sb, project_id: str) -> list[DashboardResource]:
         [row.id for row in bindings],
         project_id=project_id,
     )
+    # Agent usage counts durable Cloud Agent runs by the day they were submitted.
     agent_usage = _usage(
         sb,
-        "agent_execution_logs",
+        "agent_runs",
         "agent_id",
         [row["id"] for row in surfaces if row["kind"] == "agent"],
+        project_id=project_id,
+        started="created_at",
     )
     result: list[DashboardResource] = []
     for binding in bindings:

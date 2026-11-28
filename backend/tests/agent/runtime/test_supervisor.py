@@ -683,10 +683,8 @@ async def test_native_canonical_publication_and_receipt(prepared):
         )
         == "1"
     )
-    assert (
-        case.postgres.sql(f"SELECT count(*) FROM version_commits WHERE project_id='{case.project}'")
-        == "0"
-    )
+    # The pre-native commit table is gone; no legacy write path can exist.
+    assert case.postgres.sql("SELECT to_regclass('public.version_commits') IS NULL") == "t"
 
 
 async def native_write(case, name, content):
@@ -698,6 +696,7 @@ async def native_write(case, name, content):
     return await case.ops.apply_native_command(
         case.project,
         grant,
+        channel="papi",
         request_key=str(uuid4()),
         base=base,
         input_sha256="b" * 64,
@@ -925,9 +924,10 @@ async def test_native_rewritten_history_cannot_replace_existing_cloud_history(pr
     case = prepared
     await native_write(case, "notes.md", b"human history")
     model = BashModel(
-        "git checkout --orphan unrelated\nprintf rewritten > notes.md\n"
-        "git add -A\ngit commit -m 'unrelated root'\n"
-        "git branch -f main HEAD\ngit checkout main"
+        # Past the one-branch gate on purpose: the Git host refuses this on its own.
+        "/usr/bin/git checkout --orphan unrelated\nprintf rewritten > notes.md\n"
+        "/usr/bin/git add -A\n/usr/bin/git commit -m 'unrelated root'\n"
+        "/usr/bin/git branch -f main HEAD\n/usr/bin/git checkout main"
     )
     result = await approve_to_completion(
         case, asyncio.create_task(case.supervisor(model=model).run_claim(case.run))

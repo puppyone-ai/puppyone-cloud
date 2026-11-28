@@ -13,6 +13,10 @@ import { scriptedTask, poll } from './workbench-test-task.mjs';
 if (process.env.PUPPYONE_WORKBENCH_ACCEPTANCE !== '1' || process.platform !== 'linux' || process.getuid() !== 0)
   throw new Error('Run only inside the owned WorkbenchFileAcceptance image; unsupported environments must not skip green');
 const ROOT = '/workspace/repo', exec = promisify(execFile);
+async function cleanRoot() {
+  try { await exec('chattr', ['-i', `${ROOT}/.git/HEAD`]); } catch {}
+  await rm(ROOT, { recursive: true, force: true });
+}
 
 for (const reader of ['another-agent', 'ordinary-terminal']) {
   test(`private atomic save remains readable by ${reader} without permission repair`, { timeout: 60000 }, async () => {
@@ -50,7 +54,7 @@ for (const reader of ['another-agent', 'ordinary-terminal']) {
         task.expire();
         if (task.child.exitCode === null) { task.child.stdin.end(); await poll(() => task.child.exitCode !== null); }
       }
-      await rm(ROOT, { recursive: true, force: true });
+      await cleanRoot();
       await rm(CONTROL_ROOT, { recursive: true, force: true });
     }
   });
@@ -139,7 +143,7 @@ test('native file channel watches Bash saves before publication and rejects stal
     assert.equal(child.exitCode, 1, 'A lost helper closes its channel; it must not replay an operation');
   } finally {
     child?.stdin.end(); if (child) await poll(() => child.exitCode !== null);
-    await rm(ROOT,{recursive:true,force:true}); await rm(CONTROL_ROOT,{recursive:true,force:true});
+    await cleanRoot(); await rm(CONTROL_ROOT,{recursive:true,force:true});
   }
 });
 
@@ -216,6 +220,6 @@ test('supervised service survives clients, fences epochs and restarts on the sam
   } finally {
     for (const client of clients) { client.child.stdin.end(); await poll(() => client.child.exitCode !== null); }
     supervisor?.kill('SIGTERM'); if (supervisor) await poll(() => supervisor.exitCode !== null || supervisor.signalCode !== null);
-    await rm(ROOT, {recursive: true, force: true}); await rm(CONTROL_ROOT, {recursive: true, force: true});
+    await cleanRoot(); await rm(CONTROL_ROOT, {recursive: true, force: true});
   }
 });

@@ -66,7 +66,7 @@ def test_concurrent_chats_resolve_one_default_but_automations_do_not(postgres, s
     with ThreadPoolExecutor(max_workers=4) as pool:
         rows = list(pool.map(lambda _: default(postgres, args), range(4)))
     assert len({row["id"] for row in rows}) == 1
-    assert rows[0]["target_ref"] == "refs/heads/workspaces/" + args["user"]
+    assert rows[0]["target_ref"] == "refs/heads/workspace"
     context = rpc(postgres, "context", user=args["user"], project=args["project"])
     request = str(uuid4())
     auto = rpc(
@@ -93,14 +93,14 @@ def test_concurrent_chats_resolve_one_default_but_automations_do_not(postgres, s
     )
 
 
-def test_default_is_private_per_user_even_with_same_project(postgres, submitted):
+def test_default_is_shared_per_project_across_members(postgres, submitted):
     args, _ = submitted
     first = default(postgres, args)
     other = str(uuid4())
     postgres.sql(f"INSERT INTO auth.users(id) VALUES ('{other}')")
     second = default(postgres, {**args, "user": other})
-    assert first["id"] != second["id"]
-    assert first["target_ref"] != second["target_ref"]
+    assert first["id"] == second["id"]
+    assert first["target_ref"] == second["target_ref"] == "refs/heads/workspace"
 
 
 def test_provider_binding_cannot_be_changed_by_new_default(postgres, submitted):
@@ -205,9 +205,8 @@ async def test_product_owner_single_flight_native_files_and_revocation(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from src.platform.workspace.errors import WorkspaceError
-
     from src.exceptions import NotFoundException
+    from src.platform.workspace.errors import WorkspaceError
     from src.platform.workspace.filesystem.sandbox import SandboxFilesystem
     from src.platform.workspace.repository import WorkbenchRepository
     from src.platform.workspace.service import WorkbenchService
@@ -362,6 +361,8 @@ async def test_product_owner_single_flight_native_files_and_revocation(
             "content_base64": base64.b64encode(b"human draft").decode(),
         },
     )
+    # Completion is recorded off the reply path; wait for it before reading the log.
+    await service.settle_audits()
     audits = postgres.row(
         f"SELECT jsonb_agg(a ORDER BY id) AS rows FROM audit_logs a WHERE project_id='{args['project']}'"
     )["rows"]

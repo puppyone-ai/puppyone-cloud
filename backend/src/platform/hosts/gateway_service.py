@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket
 
 from src.config import settings
 from src.platform.project.write_lease import install_storage_write_admission
+from src.platform.repository_policy import load_repository_policy
 
 from .tunnel import serve_tunnel
 from .gateway import HostGateway
@@ -21,6 +22,7 @@ from .routing import SECRET_HEADER, gateway_secret_matches, listen_for_revocatio
 # It never writes Project storage, but like every deployed process it runs under
 # the storage write admission, so a future write cannot bypass a Project lease.
 install_storage_write_admission()
+load_repository_policy()
 
 _gateway: HostGateway | None = None
 

@@ -24,6 +24,7 @@ from src.platform.access.filesystem.indexed_grep import (
 )
 from src.platform.access.filesystem.policy import default_mcp_fs_allowed_tools
 from src.platform.access.filesystem.registry import FS_TOOL_BY_NAME
+from src.platform.repository_policy import WriteChannel, require_write
 from src.version_engine.read.tree_reader import VersionEntry, detect_type
 from src.version_engine.write_engine.errors import ConcurrentMutationError
 from src.version_engine.write_engine.path_utils import normalize_path
@@ -56,8 +57,10 @@ class ScopedFsService:
         if name not in FS_TOOL_BY_NAME:
             raise ScopedFsError("UNKNOWN_TOOL", f"Unknown filesystem tool: {name}")
         spec = FS_TOOL_BY_NAME[name]
-        if spec.access in {"write", "delete"} and not ctx.writable:
-            raise ScopedFsPermissionDenied(f"Tool {name} requires a writable MCP endpoint scope")
+        if spec.access in {"write", "delete"}:
+            require_write(WriteChannel.CLI if ctx.channel == "cli" else WriteChannel.MCP)
+            if not ctx.writable:
+                raise ScopedFsPermissionDenied(f"Tool {name} requires a writable MCP endpoint scope")
         allowed_tools = ctx.allowed_tools
         if allowed_tools is None:
             allowed_tools = default_mcp_fs_allowed_tools(writable=ctx.writable)

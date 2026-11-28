@@ -69,10 +69,16 @@ async def test_a_machine_already_there_is_left_alone(state):
 
 async def test_an_agent_admitted_by_its_link_also_gets_its_machine(monkeypatch):
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
+    monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
     monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
     links, workspaces, machine = service()
     request = AgentConnect(invitation="pai_" + "a" * 43, name="Codex", public_key=KEY)
-    assert (await links.connect(request))["status"] == "ready"
+    ready = await links.connect(request)
+    assert ready["status"] == "ready"
+    # Commands go over HTTPS by default; SSH stays offered where it is allowed.
+    assert ready["https"]["url"] == f"https://api.fixture/api/v1/agent-links/connections/{CONNECTION}/exec"
+    assert ready["https"]["command"] == "~/.puppyone/run"
+    assert "ssh" in ready
     await prepared()
     workspaces.request_open.assert_awaited_once_with("owner", "p", machine)
 
@@ -109,6 +115,7 @@ def test_the_instructions_ask_for_exactly_one_picture_from_the_list(monkeypatch)
 
 async def test_connecting_records_the_chosen_picture(monkeypatch):
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.fixture")
+    monkeypatch.setattr(settings, "PUBLIC_URL", "https://api.fixture")
     monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
     links, _, _ = service(decided="pending")
     request = AgentConnect(

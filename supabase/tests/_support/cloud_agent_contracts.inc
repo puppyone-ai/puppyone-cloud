@@ -55,6 +55,8 @@ BEGIN
         'public.cloud_workbench_reclaim_claim(uuid,uuid,bigint)',
         'public.cloud_workbench_disk_lost(uuid,uuid,bigint,uuid)',
         'public.cloud_workbench_save_outcome(uuid,uuid,text,text,text)',
+        'public.cloud_workbench_backup_claim(uuid,uuid,integer,integer)',
+        'public.cloud_workbench_record_sync(uuid,uuid,text)',
         'public.cloud_workbench_idle_claim(uuid,uuid,bigint,text)',
         'public.cloud_workbench_task_acquire(uuid,uuid,bigint,uuid)',
         'public.cloud_workbench_task_released(uuid,uuid,bigint,uuid,uuid)',
@@ -64,6 +66,7 @@ BEGIN
         'public.agent_run_dispatch(jsonb,boolean)',
         'public.agent_run_release(uuid,uuid,bigint,text)',
         'public.cloud_workbench_request_open_in_pool(uuid,uuid,text,jsonb,jsonb,text)',
+        'public.cloud_workbench_set_sandbox_settings(uuid,uuid,text,jsonb,jsonb)',
         'public.cloud_workbench_pending_in_pool(text,text,integer)',
         'public.cloud_workbench_maintenance_in_pool(text,text,integer)',
         'public.agent_run_workspace_due_in_pool(text,integer)',
@@ -117,7 +120,6 @@ BEGIN
             ('public.cloud_workbench_tasks'::regclass,'cloud_workbench_task_delete_guard'),
             ('public.agent_runs'::regclass,'cloud_workbench_run_delete_guard'),
             ('public.agent_runs'::regclass,'agent_run_delete_guard'),
-            ('public.version_transactions'::regclass,'agent_run_legacy_receipt'),
             ('public.version_ref_transactions'::regclass,'agent_run_native_receipt'),
             ('public.agent_session_workspaces'::regclass,'agent_workspace_delete_guard'),
             ('public.chat_sessions'::regclass,'agent_workspace_session_deleted'),
@@ -126,7 +128,7 @@ BEGIN
             ('public.version_ref_transactions'::regclass,'version_publish_object_proofs'),
             ('public.version_ref_transactions'::regclass,'version_transaction_incremental_fence'),
             ('public.version_publication_receipts'::regclass,'version_receipt_incremental_fence')
-        )) <> 18 THEN
+        )) <> 17 THEN
         RAISE EXCEPTION 'CLOUD_AGENT_PUBLICATION_GUARD_MISSING';
     END IF;
     IF to_regclass('public.workspace_ssh_grants') IS NULL

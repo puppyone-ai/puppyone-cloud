@@ -156,8 +156,7 @@ backend/
 │   │   ├── project/           #   Project CRUD & members
 │   │   ├── profile/           #   User profile & onboarding status
 │   │   ├── sandbox/           #   Pluggable compute providers (Fly/E2B/Docker) behind RuntimeProvider
-│   │   ├── workspace/         #   Workspace management
-│   │   └── analytics/         #   Usage analytics
+│   │   └── workspace/         #   Workspace management
 │   │
 │   ├── infra/                 # Infrastructure services
 │   │   ├── supabase/          #   Supabase client & repository facade
@@ -185,7 +184,7 @@ backend/
 - **Synchronous core, async edges**: repositories, Version Engine, storage and `S3Service` are plain `def`; routes/dependencies are `def` unless they do real async work (WebSocket, SSE, async-only clients). Async code calls blocking work only through `run_blocking`/`run_owned` (`src/infra/execution/runner.py`); event loops are created only in process entry points. See [`docs/architecture/18-concurrency-boundary.md`](docs/architecture/18-concurrency-boundary.md)
 - **Pydantic models**: All request/response defined with Pydantic schemas
 - **Naming conventions**: Files `snake_case.py`, classes `PascalCase`, functions/variables `snake_case`
-- **DB table naming**: New tables use **plural snake_case** (e.g. `projects`, `access_surfaces`, `version_transactions`). Deferred physical legacy names may appear only through `backend/src/version_engine/infrastructure/supabase/db_names.py`.
+- **DB table naming**: New tables use **plural snake_case** (e.g. `projects`, `access_surfaces`, `version_repository_refs`). Deferred physical legacy names may appear only through `backend/src/version_engine/infrastructure/supabase/db_names.py`.
 - **Route prefix**: Business APIs under `/api/v1`, internal APIs under `/internal`
 - **Module structure**: Each module typically contains `router.py`, `service.py`, `repository.py`, `schemas.py`
 
@@ -206,27 +205,19 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `synchronize_bindings` / `synchronize_runs` | `platform/synchronize/repository.py`, `platform/synchronize/run_repository.py` | Durable bindings and executions; run parent is `synchronize_binding_id` |
 | `import_database_sources` | `platform/imports/database/repository.py` | Encrypted reusable one-time Import configuration; never inferred from provider or equal IDs |
 | `synchronize_github_bindings` / `synchronize_github_logs` | `platform/synchronize/github/repository.py` | Dedicated GitHub bindings/history, canonical parent, watermarks and inbound/outbound direction |
-| `access_permissions` | `platform/agent/config/repository.py` | Access surface ↔ content node permissions |
 | `access_tools` | `platform/agent/config/repository.py`, `tool/service.py` | Access surface ↔ tool bindings |
-| `content_nodes` | _(dropped — replaced by Version Engine Git trees in object storage)_ | Legacy content tree |
 | `tools` | `supabase/tools/repository.py` | Registered tools |
 | `access_surface_credentials` | `platform/access/credential_repository.py` | Hash-only runtime credentials, including independently revocable user Git credentials; never stores a device, folder, or checkout identity |
-| `chunks` | _(retired — vector search removed; table kept until main stops reading it)_ | Legacy text chunks |
 | `uploads` | `upload/file/tasks/repository.py` | File upload/ingest tasks |
 | `etl_rules` | `upload/file/rules/repository_supabase.py` | ETL transformation rules |
 | `context_publishes` | `supabase/context_publish/repository.py` | Public JSON short links |
 | `oauth_connections` | `provider/oauth/repository.py` | OAuth integrations |
-| `chat_sessions` | `agent/chat/repository.py` | Agent chat sessions |
-| `chat_messages` | `agent/chat/repository.py` | Agent chat messages |
-| `agent_execution_logs` | `agent/config/repository.py`, `platform/agent/schedule.py` | Scheduled agent execution logs |
-| `file_versions` | _(deprecated — no longer used in code)_ | Legacy file version history |
-| `folder_snapshots` | _(deprecated — no longer used in code)_ | Legacy folder snapshots |
+| `chat_sessions` | Cloud Agent run SQL (`agent_run_submit`, `agent_run_write`) | Agent conversations owning durable runs |
+| `chat_messages` | Cloud Agent run SQL (`agent_run_submit`, `agent_run_write`) | Agent conversation messages |
 | `version_repository_refs` and native operation tables | `version_engine/infrastructure/supabase/` | Native ref authority, request journal, admission, billing and GC |
 | `audit_logs` | `version_engine/infrastructure/supabase/audit_repository.py` | Audit trail |
-| `search_index_tasks` | _(retired with Search Tools; no runtime reader)_ | Legacy search indexing tasks |
-| `ingest_tasks` | _(no runtime reader)_ | Ingestion tasks |
-| `agent_logs` | `analytics/service.py` | Agent usage analytics |
-| `access_logs` | `analytics/service.py`, `analytics/router.py` | API access analytics |
+
+Retired tables are dropped by guarded Contracts, never left as "deprecated" rows: unused prototypes, analytics and legacy connector/sync state (`20261114010000_contract_retire_unused_tables.sql`) and the pre-native version engine (`20261114020000_contract_retire_legacy_version_engine.sql`; its history lives in the verified recovery archives).
 
 ### API Routes
 
@@ -259,7 +250,6 @@ All tables use plural snake_case names. The "unified access" architecture serves
 | `/api/v1/oauth` | platform/provider_accounts | OAuth authorization (9+ platforms) |
 | `/api/v1/auth` | auth | Authentication (login/refresh) |
 | `/api/v1/auth/initialize` | onboarding | First sign-in: account, entitlements, demo Project |
-| `/api/v1/analytics` | analytics | Usage statistics |
 | `/api/v1/profile` | profile | User profile & onboarding |
 | `/api/v1/s3` | s3 | File upload/download/presigned URLs |
 | `/internal` | internal | Internal service API |

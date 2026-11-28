@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -11,54 +9,12 @@ from src.config import settings
 from src.platform.billing.gateway import BillingGatewayError
 from src.platform.billing.operations import BillingOperation
 from src.platform.billing.provisioning import EntitlementProvisioningService
-from src.platform.entitlements.models import EntitlementPublicationAck, EntitlementUpsert
-
-
-def _snapshot(org_id: str = "org-1") -> dict[str, Any]:
-    unsigned = {
-        "org_id": org_id,
-        "schema_version": "1.0",
-        "plan_id": "free",
-        "status": "free",
-        "source": "puppypay",
-        "entitlements": {
-            "features": {
-                "access_surface.agent": False,
-                "access_surface.mcp": False,
-                "access_surface.sandbox": False,
-                "automation.hosted": False,
-                "remote_workspace.create": False,
-                "scope_sandbox.connect": False,
-            },
-            "limits": {
-                "projects.max": 1,
-                "repo_scopes.max_per_project": 2,
-                "storage.max_bytes": 500 * 1024**2,
-                "upload.max_single_file_bytes": 50 * 1024**2,
-                "seats.purchased": 1,
-                "runtime.included_units": 0,
-            },
-            "allow": {"access_surface_kinds": ["git_remote", "cli", "direct"]},
-        },
-        "seat_quantity": 1,
-        "catalog_version": "2026-07-14.1",
-        "source_revision": 1,
-        "effective_at": datetime(2026, 7, 14, tzinfo=UTC),
-        "current_period_end": None,
-        "effective_until": None,
-        "source_event_id": None,
-        "event_type": "organization.provisioned",
-    }
-    canonical = json.dumps(
-        EntitlementUpsert.model_construct(**unsigned, payload_hash="0" * 64).model_dump(
-            mode="json",
-            exclude={"payload_hash"},
-        ),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return {**unsigned, "payload_hash": hashlib.sha256(canonical.encode()).hexdigest()}
+from src.platform.entitlements.models import (
+    EntitlementPublicationAck,
+    EntitlementSnapshot,
+    EntitlementUpsert,
+)
+from tests.platform.billing.support import signed_free_snapshot
 
 
 class _Gateway:
@@ -70,7 +26,7 @@ class _Gateway:
         self.calls.append({"method": method, "path": path, **kwargs})
         if self.failure:
             raise BillingGatewayError(503, {"error": {"code": "unavailable"}})
-        return _snapshot(str(kwargs["body"]["org_id"]))
+        return signed_free_snapshot(str(kwargs["body"]["org_id"]))
 
 
 class _Operations:
@@ -151,3 +107,57 @@ async def test_provisioning_failure_is_redacted_and_left_for_retry(monkeypatch) 
     assert failed["last_error"] == "BillingGatewayError"
     assert "unavailable" not in json.dumps(failed)
     assert failed["next_attempt_at"]
+
+
+class _Published(_Entitlements):
+    """The table already holds ``stored``; publishing an older or conflicting revision fails."""
+
+    def __init__(self, stored: dict[str, Any] | None) -> None:
+        super().__init__()
+        self.stored = stored
+
+    def publish(self, snapshot: EntitlementUpsert) -> EntitlementPublicationAck:
+        self.received = snapshot
+        raise RuntimeError("stale entitlement revision")
+
+    def published_snapshot(self, org_id: str):
+        return None if self.stored is None else EntitlementSnapshot(**self.stored)
+
+
+def _provisioning(
+    entitlements: _Entitlements,
+) -> tuple[EntitlementProvisioningService, _Operations]:
+    operations = _Operations()
+    service = EntitlementProvisioningService(
+        gateway=_Gateway(), operation_repository=operations, entitlement_service=entitlements
+    )
+    return service, operations
+
+
+@pytest.mark.asyncio
+async def test_provisioning_superseded_by_a_purchase_is_complete(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "ENTITLEMENTS_MODE", "db", raising=False)
+    paid = {**signed_free_snapshot(), "plan_id": "team_v2", "source_revision": 2}
+    service, operations = _provisioning(_Published(paid))
+
+    assert await service.ensure(org_id="org-1", actor_user_id="user-1") is True
+
+    confirmed = operations.updates[-1]
+    assert (confirmed["status"], confirmed["confirmed_revision"]) == ("confirmed", 2)
+    assert confirmed["response_payload"]["payload_hash"] == paid["payload_hash"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_revision", [None, 1])
+async def test_provisioning_that_could_not_publish_is_retried(monkeypatch, stored_revision) -> None:
+    # Nothing published yet, or the same revision with other content: both
+    # are real failures, not a newer plan.
+    monkeypatch.setattr(settings, "ENTITLEMENTS_MODE", "db", raising=False)
+    stored = None
+    if stored_revision is not None:
+        stored = {**signed_free_snapshot(), "source_revision": stored_revision}
+    service, operations = _provisioning(_Published(stored))
+
+    assert await service.ensure(org_id="org-1", actor_user_id="user-1") is False
+    assert operations.updates[-1]["status"] == "failed"
+    assert operations.updates[-1]["last_error"] == "RuntimeError"

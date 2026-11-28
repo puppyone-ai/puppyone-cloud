@@ -26,6 +26,7 @@ from src.platform.project.write_lease import ProjectWriteLease
 from tests.agent.runtime.conftest import claimant
 from tests.agent.runtime.test_data_access import FileQuestionModel
 from tests.agent.runtime.test_supervisor import prepared as prepared_fixture
+from tests.repository_hosting.harness.git import Git
 from tests.repository_hosting.harness.http_server import _serve_git_app
 
 prepared = prepared_fixture
@@ -74,11 +75,6 @@ async def test_desktop_renders_real_worker_file_answers_and_restores_session(
     )
     application = FastAPI()
     application.include_router(router, prefix="/api/v1")
-    from src.platform.agent.chat import dependencies as chat_dependencies
-    from src.platform.agent.chat.router import router as chat_router
-
-    monkeypatch.setattr(chat_dependencies, "_chat_service", None)
-    application.include_router(chat_router, prefix="/api/v1")
     application.add_middleware(AgentDatabaseTelemetry)
     application.dependency_overrides[get_agent_service] = lambda: c.service
     reports = []
@@ -186,3 +182,123 @@ async def test_desktop_renders_real_worker_file_answers_and_restores_session(
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         c.repo.client.transport.aggregate = None
+
+
+def _project_git(container, project, org, user):
+    """The Project's canonical native repository over smart HTTP, as Desktop's Git reaches it.
+
+    The routes are the production adapter's own calls, each fenced by the Project write
+    lease as src.main fences /git; only credential resolution is replaced by the member's
+    grant, since the credential flow has its own acceptance.
+    """
+    from fastapi import Depends, Request
+
+    from src.platform.access.adapters.git import router as git_router
+    from src.platform.access.adapters.git.native import NativeGitEndpoint
+    from src.shared_types.grants import GrantSource, ProjectCapability, ProjectGrant, ProjectRole
+
+    grant = ProjectGrant(project, org, user, ProjectRole.ADMIN, GrantSource.PROJECT_MEMBER,
+                         frozenset({ProjectCapability.CONTENT_READ, ProjectCapability.CONTENT_WRITE}))
+    manager = container.repo_manager
+    endpoint = NativeGitEndpoint(manager.get_native_service(project), grant, manager.get_audit(project))
+
+    async def leased(request: Request):
+        async with ProjectWriteLease(project, f"git.{request.method.lower()}"):
+            yield
+
+    app = FastAPI(dependencies=[Depends(leased)])
+
+    @app.get("/repo.git/info/refs")
+    async def info(service: str, request: Request):
+        return await git_router._native_call(endpoint.info_refs, service,
+                                             protocol=request.headers.get("git-protocol", ""))
+
+    @app.post("/repo.git/git-upload-pack")
+    async def upload(request: Request):
+        return await git_router._native_rpc(endpoint, request, upload=True, project_id=project)
+
+    @app.post("/repo.git/git-receive-pack")
+    async def receive(request: Request):
+        return await git_router._native_rpc(endpoint, request, upload=False, project_id=project)
+
+    return _serve_git_app(app)
+
+
+@pytest.mark.asyncio
+async def test_core_loop_from_first_push_through_web_and_agent_edits_to_a_resolved_conflict(
+    prepared, services, tmp_path
+):
+    """One Project's round trip between a folder and the Cloud, on real storage, Pi and Git.
+
+    The folder's Git plays Desktop: it pushes first, a web edit and an Agent's edit
+    land in the Cloud, the folder receives both without its own files being touched,
+    sends its own change, and a change made on both sides is refused until merged.
+    The model is the deterministic fixture; nothing here calls a paid model.
+    """
+    c = prepared
+    container = services[2]
+    org = c.postgres.row(f"SELECT org_id FROM projects WHERE id='{c.project}'")["org_id"]
+
+    async def web_edit(files):
+        # The product write path the web editor saves through: one version, as the member.
+        async with ProjectWriteLease(c.project, "fixture.web-edit"):
+            await c.ops.bulk_write(c.project, files, who="user:" + c.user, source_channel="upload")
+
+    folder = Git.init(tmp_path / "folder")
+    for key, value in (("user.name", "Folder owner"), ("user.email", "owner@example.test")):
+        folder.run("config", "--local", key, value)
+    folder.run("branch", "-m", "main")
+    with _project_git(container, c.project, org, c.user) as address:
+        remote = address + "/repo.git"
+        folder.run("remote", "add", "origin", remote)
+
+        # J2 - the folder's first push becomes the Cloud project's first version.
+        first = folder.commit({"README.md": b"# Plans\n"})
+        folder.run("push", "-u", "origin", "main")
+        assert folder.text("ls-remote", "origin", "refs/heads/main").split()[0] == first
+
+        # J3 - a web edit is saved as a version in the Cloud.
+        await web_edit({"notes.md": b"edited on the web\n"})
+
+        # J4 - an Agent changes a file and publishes it (deterministic fixture model).
+        supervisor = c.supervisor()
+        await supervisor.run_claim(c.run)
+        assert supervisor.outcome["state"] == "succeeded", supervisor.outcome
+
+        # J5 - receiving shows what changed and leaves the folder's own files alone until merged.
+        (folder.path / "draft.md").write_text("not yet sent\n")
+        folder.run("fetch", "origin")
+        incoming = folder.text("log", "--format=%s", "main..origin/main").splitlines()
+        assert len(incoming) >= 2, incoming
+        changed = set(folder.text("diff", "--name-only", "main", "origin/main").split())
+        assert changed == {"notes.md", "result.txt"}
+        assert not (folder.path / "notes.md").exists() and (folder.path / "draft.md").read_text() == "not yet sent\n"
+        folder.run("merge", "--ff-only", "origin/main")
+        assert (folder.path / "result.txt").read_text() == "durable result"
+        assert (folder.path / "notes.md").read_text() == "edited on the web\n"
+
+        # J6 - the folder sends its own change; the Cloud takes it as its head.
+        sent = folder.commit({"draft.md": b"sent\n"})
+        folder.run("push", "origin", "main")
+        assert folder.text("ls-remote", "origin", "refs/heads/main").split()[0] == sent
+
+        # J6 - both sides changed: the folder's push is refused, never silently overwrites the Cloud.
+        await web_edit({"notes.md": b"edited on the web again\n"})
+        stale = folder.commit({"README.md": b"# Plans, revised locally\n"})
+        refused = folder.run("push", "origin", "main", check=False)
+        assert refused.returncode != 0
+        assert folder.text("ls-remote", "origin", "refs/heads/main").split()[0] != stale
+        folder.run("pull", "--no-rebase", "--no-edit", "origin", "main")
+        folder.run("push", "origin", "main")
+        head = folder.text("rev-parse", "HEAD")
+        assert folder.text("ls-remote", "origin", "refs/heads/main").split()[0] == head
+        assert len(folder.text("rev-list", "--parents", "-n", "1", head).split()) == 3
+
+    # Everything both sides wrote is in the Cloud's head.
+    clone = Git.init(tmp_path / "check", bare=True)
+    with _project_git(container, c.project, org, c.user) as address:
+        clone.run("fetch", address + "/repo.git", "+refs/heads/main:refs/heads/main")
+    assert clone.run("show", "main:notes.md").stdout == b"edited on the web again\n"
+    assert clone.run("show", "main:README.md").stdout == b"# Plans, revised locally\n"
+    assert clone.run("show", "main:result.txt").stdout == b"durable result"
+    assert clone.run("show", "main:draft.md").stdout == b"sent\n"

@@ -79,6 +79,9 @@ PROJECT_ROUTE_AUTHORIZATION: dict[
     ("POST", "/api/v1/projects/{project_id}/workbench/sync/finish"): _human(ProjectAction.CONTENT_WRITE),
     ("POST", "/api/v1/projects/{project_id}/workbench/sync/abort"): _human(ProjectAction.CONTENT_WRITE),
     ("POST", "/api/v1/projects/{project_id}/workbench/publish"): _human(ProjectAction.CONTENT_WRITE),
+    # The owner's own Cloud Computer: same authority as opening it.
+    ("PUT", "/api/v1/projects/{project_id}/workbench/sandbox"): _human(ProjectAction.AGENT_RUN),
+    ("POST", "/api/v1/projects/{project_id}/workbench/screen/session"): _human(ProjectAction.AGENT_RUN),
 
     # Content and History surfaces.
     # Managed Office sessions are resource-owner operations, not project grants.
@@ -194,12 +197,6 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("PUT", "/api/v1/agent-config/{agent_id}/bash/{bash_id}"): _human(ProjectAction.AGENT_MANAGE),
     ("DELETE", "/api/v1/agent-config/{agent_id}/bash/{bash_id}"): _human(ProjectAction.AGENT_MANAGE),
     ("GET", "/api/v1/agent-config/{agent_id}/executions"): _human(ProjectAction.AGENT_READ),
-    ("POST", "/api/v1/chat/sessions"): _human(ProjectAction.AGENT_RUN),
-    ("GET", "/api/v1/chat/sessions"): _human(ProjectAction.AGENT_READ),
-    ("GET", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_READ),
-    ("PATCH", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_RUN),
-    ("DELETE", "/api/v1/chat/sessions/{session_id}"): _human(ProjectAction.AGENT_RUN),
-    ("GET", "/api/v1/chat/sessions/{session_id}/messages"): _human(ProjectAction.AGENT_READ),
     ("GET", "/api/v1/mcp/agents/{agent_id}/status"): _human(ProjectAction.AGENT_READ),
     ("POST", "/api/v1/mcp/agents/{agent_id}/regenerate-key"): _human(ProjectAction.CREDENTIAL_MANAGE),
     ("GET", "/api/v1/mcp/agents/{agent_id}/tools"): _human(ProjectAction.AGENT_READ),
@@ -222,9 +219,7 @@ PROJECT_ROUTE_AUTHORIZATION.update({
 })
 
 PROJECT_ROUTE_AUTHORIZATION.update({
-    # Scope policy, Sandbox sessions, analytics and activity.
-    ("GET", "/api/v1/analytics/access-timeseries"): _human(ProjectAction.HISTORY_READ),
-    ("GET", "/api/v1/analytics/access-summary"): _human(ProjectAction.HISTORY_READ),
+    # Scope policy, Sandbox sessions and activity.
     ("GET", "/api/v1/activity/items"): _human(ProjectAction.HISTORY_READ),
 })
 
@@ -344,4 +339,5 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("GET", "/agent/{invitation}"): _runtime("access.agent_link"),
     ("POST", "/api/v1/agent-links/connect"): _runtime("access.agent_link"),
     ("GET", "/api/v1/agent-links/connections/{connection_id}"): _runtime("access.agent_link"),
+    ("POST", "/api/v1/agent-links/connections/{connection_id}/exec"): _runtime("access.agent_link"),
 })

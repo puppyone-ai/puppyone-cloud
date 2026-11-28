@@ -97,6 +97,9 @@ jobs:
         # Match the other workflows without GHCR's shared pull limit.
         run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io" >> "$GITHUB_ENV"
 
+      - name: Select a reachable Ubuntu-signed package mirror
+        run: bash harness/e2e/desktop-login/configure-ubuntu-mirrors.sh
+
       - name: Start auth-only Supabase
         run: supabase start --workdir harness/e2e/desktop-login
 

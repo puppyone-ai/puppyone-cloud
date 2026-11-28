@@ -14,8 +14,16 @@ from src.config import settings
 from src.exceptions import NotFoundException
 from src.infra.dependency_diagnostics import dependency_failure
 from src.infra.execution.runner import run_blocking
+from src.platform.repository_policy import get_repository_policy
+from src.platform.sandbox import (
+    WorkspaceDiskLost,
+    profile_artifact,
+    profile_provider,
+    settings_profile,
+    workspace_providers,
+    workspace_stage,
+)
 from src.shared_types.grants import ProjectAction
-from src.platform.sandbox import WorkspaceDiskLost, workspace_providers, workspace_stage
 
 from .errors import access_failure, context_changed
 from .execution.runtime_contract import WorkspaceUnavailable, validate_runtime
@@ -30,6 +38,16 @@ SAVE_RETRY_SECONDS = 5
 SAVE_BUDGET_SECONDS = 150
 # Past this a pause stops retrying: the machine goes back to running, or to retained.
 PAUSE_LIMIT_SECONDS = 600
+# Bounded fast-path settlement window after the local outbox row is durably sealed.
+FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS = 5
+
+
+def _is_fly_host_export(row) -> bool:
+    return bool(
+        isinstance(row, dict)
+        and row.get("collaboration_mode") == "fly_host_export"
+        and row.get("host_workbench_id")
+    )
 
 
 def meter_source(row):
@@ -50,6 +68,19 @@ def meter_id(row):
     return f"cloud-workbench:{row['id']}:{row['generation']}:{row['compute_epoch']}"
 
 
+def meter_max_units(row) -> int:
+    """Upper-bound RU reservation for one compute epoch.
+
+    Interactive default Workspaces (``workspace``) are metered cost-only without
+    drawing credit and stay open across hours or days, so they must not use the
+    10-minute default reservation ceiling. Charged agent/automation Workspaces
+    reserve ``RUNTIME_AGENT_MAX_UNITS``.
+    """
+    if meter_source(row) == "workspace":
+        return settings.RUNTIME_WORKSPACE_MAX_UNITS
+    return settings.RUNTIME_AGENT_MAX_UNITS
+
+
 def failure(exc):
     if isinstance(exc, WorkspaceUnavailable):
         return exc.code, exc.retryable
@@ -65,6 +96,23 @@ def failure(exc):
     if isinstance(exc, WorkerLost):
         return "workbench_requires_recovery", False
     return "workbench_connection_unavailable", True
+
+
+def new_binding(provider, row=None):
+    """A new computer pins provider, sandbox Profile and that Profile's image.
+
+    The owner's install choice selects the Profile; an existing binding is
+    never rebuilt to follow a later change.
+    """
+    selected = settings_profile((row or {}).get("sandbox_settings"))
+    # A Profile the default provider does not ship (a desktop on Sprites) goes
+    # to a configured provider that does; preflight then validates that one.
+    name = profile_provider(selected, provider.name, workspace_providers(provider.name))
+    return {
+        "provider": name,
+        "profile": selected.id,
+        "artifact": profile_artifact(selected, provider, name),
+    }
 
 
 def pending_snapshot(rows):
@@ -99,12 +147,13 @@ class WorkbenchLifecycle:
 
     async def preflight(self, row=None, *, connected=False):
         provider = self.providers(None)
-        binding = (
-            (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
-        ) or {
-            "provider": provider.name,
-            "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
-        }
+        try:
+            binding = (
+                (row or {}).get("binding") if (row or {}).get("state") != "retired" else None
+            ) or new_binding(provider, row)
+        except ValueError as exc:
+            await provider.aclose()
+            raise WorkspaceUnavailable("workbench_provider_not_configured") from exc
         if binding["provider"] not in workspace_providers(provider.name):
             raise WorkspaceUnavailable("workbench_provider_not_configured")
         if binding["provider"] != provider.name:
@@ -165,8 +214,10 @@ class WorkbenchLifecycle:
             or context["workbench"]
             or await run_blocking(self.repository.default, user, project, context["revision"])
         )
-        if row["user_id"] != user or row["project_id"] != project:
+        shared_default = bool(row.get("is_default")) and not row.get("agent_registration_id")
+        if row["project_id"] != project or (not shared_default and row["user_id"] != user):
             raise PermissionError("Workbench ownership mismatch")
+        user_kw = {"user": user} if user != row["user_id"] else {}
         provider = await self.preflight(
             row, connected=row["state"] == "running" and self.channels.is_healthy(row)
         )
@@ -174,13 +225,15 @@ class WorkbenchLifecycle:
             raise WorkspaceUnavailable("workbench_requires_recovery")
         if row["state"] == "running":
             try:
-                row = await run_blocking(self.repository.activity, row, context["revision"])
+                row = await run_blocking(
+                    self.repository.activity, row, context["revision"], **user_kw
+                )
                 async with asyncio.timeout(35):
                     with workspace_stage("opening.files_ready"):
                         await self.ready(row)
                 # Recheck the same identity/epoch and current authorization
                 # after potentially slow network I/O, before reporting ready.
-                await self.check(row)
+                await self.check(row, **user_kw)
             except WorkerLost as exc:
                 # Compute is gone and the disk is the workspace: maintenance
                 # pauses it within one pass, and the retried open recreates
@@ -190,16 +243,16 @@ class WorkbenchLifecycle:
                 code, retryable = failure(exc)
                 raise WorkspaceUnavailable(code, retryable=retryable) from exc
             return row
-        binding = (row["binding"] if row["state"] != "retired" else None) or {
-            "provider": provider.name,
-            "artifact": provider.artifact(settings.CLOUD_AGENT_IMAGE),
-        }
+        binding = (row["binding"] if row["state"] != "retired" else None) or new_binding(
+            provider, row
+        )
         return await run_blocking(
             self.repository.request_open,
             row,
             binding,
             context["revision"],
             settings.AGENT_WORKER_POOL,
+            **user_kw,
         )
 
     async def ensure_running(self, run, row, *, base=None):
@@ -219,7 +272,8 @@ class WorkbenchLifecycle:
                     break
                 await asyncio.sleep(0.25)
                 row = await run_blocking(self.repository.get, row["id"])
-            await self.check(row)
+            user_kw = {"user": run["user_id"]} if run["user_id"] != row["user_id"] else {}
+            await self.check(row, **user_kw)
             await self.ready(row)
             return row
 
@@ -315,10 +369,19 @@ class WorkbenchLifecycle:
                                 self.repository.pending, name, settings.AGENT_WORKER_POOL
                             )
                         )
-                    rows.sort(key=lambda row: (row.get("updated_at", ""), row["id"]))
+                    rows.sort(
+                        key=lambda row: (
+                            not bool(row.get("is_default")),
+                            row.get("updated_at", ""),
+                            row["id"],
+                        )
+                    )
                     self.pending_snapshot = pending_snapshot(rows)
                     for row in rows:
-                        if row["id"] not in self.active and len(self.active) < 4:
+                        # Reserve extra capacity for Project default Host VMs so
+                        # Tier 2 Agent VMs waiting on their Host can never starve it.
+                        cap = 8 if row.get("is_default") else 4
+                        if row["id"] not in self.active and len(self.active) < cap:
                             task = asyncio.create_task(run(row))
                             self.active[row["id"]] = task
                             task.add_done_callback(
@@ -339,6 +402,105 @@ class WorkbenchLifecycle:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def ensure_host_running(self, agent_row):
+        """Ensure the Project default Host Workspace is running before mounting over Fly 6pn."""
+        host_id = agent_row.get("host_workbench_id")
+        host_row = await run_blocking(self.repository.get, host_id) if host_id else None
+        if not host_row or host_row.get("owner_deleted_at"):
+            raise WorkspaceUnavailable("workbench_host_unavailable", retryable=False)
+        if host_row["state"] != "running" or host_row.get("open_requested"):
+            host_row = await self.ensure_running(
+                {"user_id": agent_row["user_id"], "project_id": agent_row["project_id"]},
+                host_row,
+            )
+        return host_row
+
+    async def ensure_host_export_mounted(self, agent_row, *, agent_host=None, host_row=None):
+        """Start the Host VM exporter, grant this Agent's VM-local key, and mount /workspace/repo."""
+        host_row = host_row or await self.ensure_host_running(agent_row)
+        protocol = settings.CLOUD_AGENT_FLY_HOST_EXPORT_PROTOCOL
+        project_host = self.channel_factory(host_row)
+        owned_agent = agent_host is None
+        agent_channel = agent_host or self.channel_factory(agent_row)
+        try:
+            await project_host.connect()
+            host_cap = await project_host.control("capabilities")
+            if host_cap.get("host_export") != 1:
+                raise WorkspaceUnavailable("workbench_host_export_unsupported", retryable=False)
+            export_info = await project_host.control("host-export-start", {"protocol": protocol})
+
+            if owned_agent:
+                await agent_channel.connect()
+            agent_cap = await agent_channel.control("capabilities")
+            validate_runtime(agent_cap.get("runtime"))
+            if agent_cap.get("host_export") != 1:
+                raise WorkspaceUnavailable("workbench_host_export_unsupported", retryable=False)
+            client_key = await agent_channel.control("host-export-client-key")
+            await project_host.control(
+                "host-export-grant",
+                {
+                    "agent_id": agent_row["id"],
+                    "public_key": client_key["public_key"],
+                    "protocol": export_info["protocol"],
+                    "agent_ip": client_key.get("agent_ip"),
+                },
+            )
+            mount_info = await agent_channel.control(
+                "host-export-mount",
+                {
+                    "protocol": export_info["protocol"],
+                    "host_ip": export_info["host_ip"],
+                    "port": export_info["port"],
+                    "host_public_key": export_info["host_public_key"],
+                    "export_path": export_info["export_path"],
+                    "target_ref": "refs/heads/workspace",
+                },
+            )
+            return {
+                "host_workbench_id": host_row["id"],
+                "host_generation": host_row["generation"],
+                "host_compute_epoch": host_row.get("compute_epoch"),
+                "protocol": export_info["protocol"],
+                "host_ip": export_info["host_ip"],
+                "agent_ip": client_key.get("agent_ip"),
+                "fstype": mount_info.get("fstype"),
+                "reused": bool(mount_info.get("reused")),
+            }
+        finally:
+            await project_host.close()
+            if owned_agent:
+                await agent_channel.close()
+
+    async def revoke_host_export_agent(self, agent_row):
+        """Best-effort revoke one Tier 2 Agent's mount key & tunnel on its Project Host VM."""
+        if not _is_fly_host_export(agent_row):
+            return
+        host_row = await run_blocking(self.repository.get, agent_row["host_workbench_id"])
+        if not host_row or host_row.get("owner_deleted_at") or host_row.get("state") != "running":
+            return
+        host_export = (agent_row.get("resource") or {}).get("host_export") or {}
+        project_host = self.channel_factory(host_row)
+        try:
+            async with asyncio.timeout(15):
+                await project_host.connect()
+                await project_host.control(
+                    "host-export-revoke",
+                    {
+                        "agent_id": agent_row["id"],
+                        "agent_ip": host_export.get("agent_ip"),
+                        "protocol": host_export.get("protocol"),
+                    },
+                )
+        except Exception:
+            logger.warning(
+                "host_export_revoke_skipped",
+                extra={"workbench_id": agent_row["id"], "host_workbench_id": host_row["id"]},
+                exc_info=True,
+            )
+        finally:
+            with suppress(Exception):
+                await project_host.close()
+
     async def _start(self, row, grant):
         host = self.channel_factory(row)
         try:
@@ -355,20 +517,33 @@ class WorkbenchLifecycle:
                 "project_id": row["project_id"],
                 "user_id": row["user_id"],
                 "org_id": grant.org_id,
+                "maximum_runtime_units": meter_max_units(row),
             }
         )
         await self.billing.check_session(meter_id(row))
+        if _is_fly_host_export(row):
+            return await self._start_fly_host_export(row, grant, host)
         if row["state"] == "allocating":
             fresh = row["resource"] is None
             if fresh:
-                target = await run_blocking(
-                    self.transport.describe, row["project_id"], grant, target_ref=row["target_ref"]
-                )
-                source = (
-                    target
-                    if target["expected_oid"]
-                    else await run_blocking(self.transport.describe, row["project_id"], grant)
-                )
+                if (
+                    row.get("is_default")
+                    and not row.get("agent_registration_id")
+                    and get_repository_policy().backup.target == "project"
+                ):
+                    source = await run_blocking(self.transport.describe, row["project_id"], grant)
+                else:
+                    target = await run_blocking(
+                        self.transport.describe,
+                        row["project_id"],
+                        grant,
+                        target_ref=row["target_ref"],
+                    )
+                    source = (
+                        target
+                        if target["expected_oid"]
+                        else await run_blocking(self.transport.describe, row["project_id"], grant)
+                    )
                 host.resource["initialization"] = {
                     "project_id": row["project_id"],
                     "object_format": source["object_format"],
@@ -439,6 +614,53 @@ class WorkbenchLifecycle:
             return await run_blocking(self.repository.ready, row, host.resource)
         return row
 
+    async def _start_fly_host_export(self, row, grant, host):
+        """Start/resume an isolated Tier 2 Agent VM mounted onto the Project Host VM's disk."""
+        host_row = await self.ensure_host_running(row)
+        host_app = (host_row.get("resource") or {}).get("app")
+        if row["state"] == "allocating":
+            fresh = row["resource"] is None
+            if fresh:
+                if host_app:
+                    host.resource["app"] = host_app
+                host.resource["host_workbench_id"] = host_row["id"]
+                row = await run_blocking(
+                    self.repository.transition, row, "allocating", host.resource
+                )
+                await host.create()
+                row = await run_blocking(
+                    self.repository.transition, row, "allocating", host.resource
+                )
+            else:
+                matches = await host.runtime.resolve(host.resource)
+                if len(matches) != 1:
+                    raise WorkerDisconnected(
+                        "Allocation outcome is ambiguous; preserve the original intent"
+                    )
+                host.resource = matches[0]
+                await host.runtime.resume(host)
+        elif row["state"] == "resuming":
+            try:
+                await host.runtime.resume(host)
+            except WorkerLost:
+                row = await self._recreate(row, host)
+        else:
+            raise WorkerDisconnected("Workspace lifecycle transition is not startable")
+
+        await host._open_control()
+        await self.progress(row, "connecting")
+        await self.progress(row, "initializing")
+        mount_receipt = await self.ensure_host_export_mounted(
+            row, agent_host=host, host_row=host_row
+        )
+        host.resource["initialized"] = True
+        host.resource["host_export"] = mount_receipt
+        row = await run_blocking(self.repository.transition, row, row["state"], host.resource)
+        await self.progress(row, "checking_files")
+        await self.ready({**row, "resource": host.resource})
+        await run_blocking(self.context, row["user_id"], row["project_id"], ProjectAction.AGENT_RUN)
+        return await run_blocking(self.repository.ready, row, host.resource)
+
     async def _recreate(self, row, host):
         """Compute is replaceable; the disk is the workspace.
 
@@ -459,21 +681,90 @@ class WorkbenchLifecycle:
         logger.warning("workbench_compute_recreated", extra={"workbench_id": row["id"]})
         return await run_blocking(self.repository.transition, row, "resuming", host.resource)
 
+    async def _seal_billing(self, row) -> None:
+        """Freeze usage durably in local PostgreSQL before releasing the control plane."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        seal = getattr(self.billing, "seal_session", None)
+        if callable(seal):
+            await seal(meter_id(row))
+
+    async def _try_settle_billing(self, row) -> None:
+        """Best-effort fast-path settlement after the workspace transition is durable.
+
+        The outbox row is already sealed in PostgreSQL, so transport failures,
+        timeouts, or PuppyPay outages never block ``paused`` / ``retired``;
+        ``RuntimeMeteringService.recover_once()`` settles deferred rows with
+        exponential backoff.
+        """
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        run_id = meter_id(row)
+        try:
+            async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                settled = await self.billing.finish_session(run_id, retry=True)
+        except Exception:
+            logger.warning(
+                "workbench_settlement_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+                exc_info=True,
+            )
+            return
+        if not settled:
+            logger.warning(
+                "workbench_settlement_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+            )
+
+    async def _seal_cancel_billing(self, row) -> None:
+        """Record cancellation intent locally before retiring a never-started workspace."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        seal_cancel = getattr(self.billing, "seal_cancel_session", None)
+        if callable(seal_cancel):
+            await seal_cancel(meter_id(row))
+
+    async def _try_cancel_billing(self, row) -> None:
+        """Best-effort fast-path cancellation after local cancel intent is durable."""
+        if settings.RUNTIME_METERING_MODE == "disabled":
+            return
+        run_id = meter_id(row)
+        try:
+            async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                await self.billing.cancel_session(run_id, retry=True)
+        except TypeError:
+            # Test fakes or older wrappers may not accept ``retry``.
+            try:
+                async with asyncio.timeout(FAST_PATH_SETTLEMENT_TIMEOUT_SECONDS):
+                    await self.billing.cancel_session(run_id)
+            except Exception:
+                logger.warning(
+                    "workbench_cancellation_deferred_to_outbox",
+                    extra={"workbench_id": row["id"], "run_id": run_id},
+                    exc_info=True,
+                )
+        except Exception:
+            logger.warning(
+                "workbench_cancellation_deferred_to_outbox",
+                extra={"workbench_id": row["id"], "run_id": run_id},
+                exc_info=True,
+            )
+
     async def destroy(self, row):
         """Destroy compute and disk: the owner was deleted, or the work is on its branch."""
         await self.channels.invalidate(row["id"])
+        if _is_fly_host_export(row):
+            await self.revoke_host_export_agent(row)
         if row["resource"] is not None:
             host = self.channel_factory(row)
             try:
                 await host.runtime.destroy_workspace(row["resource"])
             finally:
                 await host.runtime.aclose()
-        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
-            meter_id(row), retry=True
-        ):
-            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        await self._seal_billing(row)
         await run_blocking(self.repository.transition, row, "retired")
         logger.info("workbench_destroyed", extra={"workbench_id": row["id"]})
+        await self._try_settle_billing(row)
 
     async def _preserve_failed_start(self, row):
         """Bring a failed start to rest, then out of retained once it can be checked.
@@ -486,13 +777,13 @@ class WorkbenchLifecycle:
                 # Intent is persisted before allocation, so no provider resource exists.
                 if row["resource"] is not None and await host.runtime.resolve(host.resource):
                     raise WorkerDisconnected("Allocation outcome requires reconciliation")
-                if settings.RUNTIME_METERING_MODE != "disabled":
-                    await self.billing.cancel_session(meter_id(row))
+                await self._seal_cancel_billing(row)
                 await run_blocking(
                     self.repository.transition,
                     row,
                     "retired" if row["state"] == "retained" else "retained",
                 )
+                await self._try_cancel_billing(row)
                 return
             matches = await host.runtime.resolve(host.resource)
             if len(matches) != 1:
@@ -505,27 +796,59 @@ class WorkbenchLifecycle:
                 host.resource["initialized"] = True  # Only an initialized disk resumes.
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
-            if (
-                settings.RUNTIME_METERING_MODE != "disabled"
-                and not await self.billing.finish_session(meter_id(row), retry=True)
-            ):
-                raise WorkerDisconnected("Workspace settlement awaits confirmation")
+            await self._seal_billing(row)
             if row["state"] != "retained":
                 await run_blocking(self.repository.transition, row, "retained", host.resource)
             elif host.resource.get("initialized"):
                 # The one original resource is confirmed stopped: an ordinary paused disk.
-                await run_blocking(self.repository.transition, row, "paused", host.resource)
+                paused = await run_blocking(
+                    self.repository.transition, row, "paused", host.resource
+                )
+                await run_blocking(self.repository.progress, paused, "paused")
             else:
                 logger.error("workspace_requires_operator", extra={"workbench_id": row["id"]})
+            await self._try_settle_billing(row)
         finally:
             await host.runtime.aclose()
 
     @staticmethod
     def _never_created(row):
         resource = row["resource"] or {}
-        return row["state"] == "retained" and bool(resource.get("allocation_pending")) and (
-            not resource.get("volume_id")
+        return (
+            row["state"] == "retained"
+            and bool(resource.get("allocation_pending"))
+            and (not resource.get("volume_id"))
         )
+
+    @staticmethod
+    def _backup_due(row, interval_seconds: int) -> bool:
+        if interval_seconds <= 0 or row.get("owner_deleted_at") or row.get("open_requested"):
+            return False
+        now = datetime.now(UTC)
+        backup_until = row.get("backup_until")
+        if backup_until:
+            with suppress(TypeError, ValueError):
+                if datetime.fromisoformat(backup_until) > now:
+                    return False
+        save_finished_at = row.get("save_finished_at")
+        if not save_finished_at:
+            return bool(row.get("unpublished_changes"))
+        try:
+            saved_at = datetime.fromisoformat(save_finished_at)
+        except (TypeError, ValueError):
+            return bool(row.get("unpublished_changes"))
+        if (now - saved_at).total_seconds() < interval_seconds:
+            return False
+        if row.get("unpublished_changes"):
+            return True
+        last_activity_at = row.get("last_activity_at")
+        if not last_activity_at:
+            return False
+        try:
+            activity_at = datetime.fromisoformat(last_activity_at)
+        except (TypeError, ValueError):
+            return False
+        return activity_at > saved_at
 
     async def _attempt_save(self, row):
         """One save with its retries: the status and error to record, and the commit."""
@@ -549,18 +872,50 @@ class WorkbenchLifecycle:
                 return "saved", None, saved.get("tip")
             if saved["status"] == "merging":
                 return "merging", "workbench_save_merging", None
+            if saved["status"] == "diverged":
+                # Not retried: main moved without this Workspace. It stays
+                # unsaved and is kept until main is brought in (sync).
+                return "rejected", "workbench_backup_diverged", None
             return "rejected", "workbench_save_rejected", None
         return "failed", "workbench_save_failed", None
 
-    async def _save_agent_work(self, row):
-        """An external Agent's branch is the only way its work leaves the machine.
+    async def _save_work(self, row, *, on_pause: bool = True):
+        """Snapshot working files to the repository and record the outcome.
 
-        This runs while pausing, when no new connection can start. A pause keeps the
-        disk, and unsaved work is never reclaimed, so a failed save loses nothing and
-        cannot hold the pause: the machine sleeps, the Agent can come back, and the
-        result is recorded for its owner.
+        On pause, external Agent workspaces always save to their own branch and
+        other workspaces save when ``backup.on_pause`` is enabled. During
+        periodic running backups, ``on_pause=False`` skips the pause-phase lease
+        extension. A failed save never blocks pausing and leaves
+        ``unpublished_changes`` set.
         """
-        if not row.get("agent_registration_id"):
+        if _is_fly_host_export(row):
+            # Edits already live on the Project Host VM's NVMe disk and are backed
+            # up to ``main`` by the Host VM; cleanly unmount and revoke mount creds.
+            if on_pause:
+                agent_host = self.channel_factory(row)
+                try:
+                    async with asyncio.timeout(15):
+                        await agent_host.connect()
+                        await agent_host.control("host-export-unmount")
+                except Exception:
+                    logger.warning(
+                        "host_export_unmount_skipped",
+                        extra={"workbench_id": row["id"]},
+                        exc_info=True,
+                    )
+                finally:
+                    with suppress(Exception):
+                        await agent_host.close()
+                await self.revoke_host_export_agent(row)
+            await run_blocking(self.repository.save_outcome, row, "saved", error=None, oid=None)
+            if on_pause:
+                await self.progress(row, "pausing")
+            return
+        if (
+            on_pause
+            and not row.get("agent_registration_id")
+            and not get_repository_policy().backup.on_pause
+        ):
             return
         try:
             async with asyncio.timeout(SAVE_BUDGET_SECONDS):
@@ -573,28 +928,38 @@ class WorkbenchLifecycle:
                 extra={"workbench_id": row["id"], "save_status": status, "save_error": error},
             )
         await run_blocking(self.repository.save_outcome, row, status, error=error, oid=oid)
-        await self.progress(row, "pausing")  # The save may have used most of the lease.
+        if on_pause:
+            await self.progress(row, "pausing")  # The save may have used most of the lease.
+
+    async def _maybe_backup_running(self, row):
+        interval = get_repository_policy().backup.interval_seconds
+        if not self._backup_due(row, interval):
+            return
+        claimed = await run_blocking(self.repository.backup_claim, row, interval)
+        if claimed and claimed.get("acquired"):
+            await self._save_work(claimed["workbench"], on_pause=False)
 
     async def pause(self, row):
-        await self._save_agent_work(row)
+        await self._save_work(row, on_pause=True)
         await self.channels.invalidate(row["id"])
         host = self.channel_factory(row)
         try:
             result = await host.runtime.pause_resource(host)
             host.resource["preservation"] = result.receipt(host.resource)
         except WorkspaceDiskLost:
+            await self._seal_billing(row)
             await run_blocking(self.repository.disk_lost, row)
             logger.error("workbench_disk_lost", extra={"workbench_id": row["id"]})
+            await self._try_settle_billing(row)
             return
         finally:
             await host.runtime.aclose()
-        # Settlement precedes paused ACK and the next compute epoch.
-        if settings.RUNTIME_METERING_MODE != "disabled" and not await self.billing.finish_session(
-            meter_id(row), retry=True
-        ):
-            raise WorkerDisconnected("Workspace settlement awaits confirmation")
+        # Local durable outbox seal precedes the paused ACK; fast-path
+        # settlement runs afterwards so PuppyPay outages never trap a workspace.
+        await self._seal_billing(row)
         paused = await run_blocking(self.repository.transition, row, "paused", host.resource)
         await run_blocking(self.repository.progress, paused, "paused")
+        await self._try_settle_billing(row)
 
     @staticmethod
     def _pause_expired(row):
@@ -681,6 +1046,7 @@ class WorkbenchLifecycle:
                             await host.runtime.renew(host)
                         finally:
                             await host.runtime.aclose()
+                        await self._maybe_backup_running(row)
                     except Exception as exc:
                         # Revoked access and lost compute both end the session.
                         # Pausing lost compute verifies the disk survives; the

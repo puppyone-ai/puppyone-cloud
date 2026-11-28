@@ -7,6 +7,7 @@ the instructions cannot drift from the gateway, the API or the workspace.
 import asyncio
 import base64
 import json
+import os
 import re
 import secrets
 import shlex
@@ -22,6 +23,7 @@ from fastapi import FastAPI
 
 from src.config import settings
 from src.platform.access import agent_link_router as routes
+from src.platform.access.adapters.https.commands import AgentCommands, SeenSignatures
 from src.platform.access.agent_links import AgentLinkRepository, AgentLinkService
 from src.platform.access.grant_repository import AccessRepository, GrantRepository
 from src.platform.access.grants import GrantService
@@ -55,6 +57,8 @@ async def stack(live, monkeypatch):  # noqa: F811
         user_id=live.args["user"], role="authenticated", is_anonymous=False
     )
     app.dependency_overrides[routes.agent_link_service] = lambda: links
+    commands = AgentCommands(live.service, seen=SeenSignatures(url=""))
+    app.dependency_overrides[routes.agent_commands] = lambda: commands
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
@@ -93,6 +97,29 @@ def new_link():
 def blocks(page):
     """Commands exactly as the page gives them, in order."""
     return [line.strip() for line in page.splitlines() if line.startswith("    ")]
+
+
+def fenced(page, marker):
+    """The fenced script on the page that contains ``marker``, as written."""
+    for block in page.split("```")[1::2]:
+        if marker in block:
+            return block.strip("\n") + "\n"
+    raise AssertionError(f"no fenced block with {marker}")
+
+
+async def run_at(command, home, *, check=True):
+    """A command on the Agent's own computer: ``home`` is its ``~``, with no proxy settings."""
+    result = await asyncio.to_thread(
+        subprocess.run,
+        ["sh", "-c", command],
+        capture_output=True,
+        text=True,
+        timeout=FIRST_CONNECTION_S,
+        env={"PATH": os.environ["PATH"], "HOME": str(home)},
+    )
+    if check:
+        assert result.returncode == 0, result.stdout + result.stderr
+    return result
 
 
 async def agent_applies(owner, tmp_path, name, secret):
@@ -165,11 +192,11 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
         assert first.stdout.strip() == "/workspace/repo"
         again = await run(command + " " + shlex.quote("cat agent.txt"))
         assert again.stdout.strip() == "written-by-agent"
-        # The Agent is on its own machine: nothing crosses until Git carries it.
+        # Default Tier 1 (shared_machine): the Agent runs in the Project's shared
+        # workspace VM, so edits from either side appear immediately without a separate VM.
         files = f"/api/v1/projects/{live.args['project']}/workbench/file"
         generation = {"generation": live.row["generation"]}
-        hidden = await live.api.get(files, params={**generation, "path": "agent.txt"})
-        assert hidden.status_code == 404
+        assert (await read_file(live, "agent.txt")) == b"written-by-agent\n"
         written = await live.api.put(
             files,
             params={**generation, "path": "owner.txt"},
@@ -181,15 +208,14 @@ async def test_the_page_alone_connects_an_agent_through_a_sign_in(live, tmp_path
         )
         assert written.status_code == 200, written.text
         assert (await read_file(live, "owner.txt")) == b"owner"
-        unseen = await run(command + " " + shlex.quote("test -e owner.txt"), check=False)
-        assert unseen.returncode == 1
-        machine = await asyncio.to_thread(
+        seen = await run(command + " " + shlex.quote("cat owner.txt"))
+        assert seen.stdout.strip() == "owner"
+        separate = await asyncio.to_thread(
             live.db.row,
-            f"""SELECT resource->>'resource_id' AS machine, target_ref FROM cloud_workbenches
+            f"""SELECT count(*) AS n FROM cloud_workbenches
             WHERE project_id='{live.args['project']}' AND agent_registration_id IS NOT NULL""",
         )
-        assert machine["machine"] and machine["machine"] != live.row["resource"]["resource_id"]
-        assert machine["target_ref"].startswith("refs/heads/agents/")
+        assert separate["n"] == 0
 
         # A different key on the same stable user is refused. It comes from another
         # computer, so it has no open connection of this Agent's to reuse.
@@ -244,3 +270,50 @@ async def test_a_page_is_only_served_for_a_well_formed_link(live, monkeypatch): 
         response = await owner.get(f"/agent/{new_link()}")
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["x-robots-tag"] == "noindex"
+
+
+async def test_the_page_alone_runs_commands_over_https(live, tmp_path, monkeypatch):  # noqa: F811
+    link = new_link()
+    monkeypatch.setattr(settings, "AGENT_OPEN_LINKS_ENABLED", True)
+    async with stack(live, monkeypatch) as owner:
+        created = await owner.post(
+            f"/api/v1/projects/{live.args['project']}/agent-links",
+            json={
+                "id": str(uuid4()),
+                "secret": link,
+                "workbench_id": live.row["id"],
+                "admission": "link",
+            },
+        )
+        assert created.status_code == 200, created.text
+        reply, _, _, page = await agent_applies(owner, tmp_path, "agent-three", link)
+        assert reply["status"] == "ready"
+        # The Agent's home: its key where the page put it, and nothing else.
+        home = tmp_path / "agent-three-home"
+        home.mkdir()
+        (home / ".ssh").symlink_to(tmp_path / "agent-three")
+        await run_at(reply["https"]["install"], home)
+        await run_at(fenced(page, "PUPPYONE_RUN"), home)
+        helper = reply["https"]["command"]
+
+        first = await run_at(helper + " " + shlex.quote("pwd && echo written > agent.txt"), home)
+        assert first.stdout.splitlines()[-2:] == ["/workspace/repo", "[exit 0]"]
+        again = await run_at(helper + " " + shlex.quote("cat agent.txt"), home)
+        assert again.stdout.splitlines()[-2:] == ["written", "[exit 0]"]
+        failed = await run_at(helper + " " + shlex.quote("exit 3"), home, check=False)
+        assert failed.returncode == 3
+        assert failed.stdout.endswith("[exit 3]\n")
+
+        # Each command was a session of the Agent's grant, as the owner's app sees it.
+        sessions = await asyncio.to_thread(
+            live.db.row,
+            f"""SELECT count(*) AS n FROM access_sessions s JOIN access_agent_connections c
+            ON c.grant_id=s.grant_id WHERE c.id='{reply["https"]["url"].split("/")[-2]}'""",
+        )
+        assert sessions["n"] >= 3
+
+        stopped = await owner.delete(f"/api/v1/projects/{live.args['project']}/agent-links")
+        assert stopped.status_code == 200, stopped.text
+        refused = await run_at(helper + " true", home, check=False)
+        assert refused.returncode == 1
+        assert "access to this workspace is not available" in refused.stdout

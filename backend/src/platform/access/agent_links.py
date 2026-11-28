@@ -3,7 +3,9 @@
 The Agent generates an SSH key and applies with the link. A ``sign_in`` link gives
 it a URL to pass to its person, and the Workspace owner allows it once; a ``link``
 invitation admits it at once. From then on its SSH key is the only thing it keeps.
-Grants, sessions, revocation and audit are the existing lifecycle records.
+It runs commands over HTTPS, signing each one with that key, or over SSH where
+its network allows. Grants, sessions, revocation and audit are the existing
+lifecycle records.
 """
 
 import asyncio
@@ -15,6 +17,7 @@ from fastapi import HTTPException
 
 from src.config import settings
 from src.infra.execution.runner import run_blocking
+from src.platform.workspace.collaboration import get_agent_collaboration_router
 from src.platform.workspace.errors import WorkspaceError
 
 from .credential_repository import (
@@ -39,58 +42,29 @@ CONNECTION_OPTIONS = (
 POLL_INTERVAL_SECONDS = 3
 INVITATION_PATTERN = re.compile(r"pai_[A-Za-z0-9_-]{43,128}")
 
-PROXY_HELPER_PATH = "~/.ssh/puppyone_proxy.py"
-# For an Agent that reaches the internet only through an HTTP proxy. ssh runs it
-# as ProxyCommand; it needs nothing beyond Python, unlike nc or socat.
-PROXY_HELPER = r'''"""Reach HOST PORT through the HTTP proxy in HTTPS_PROXY; ssh runs this as ProxyCommand."""
-import base64, os, socket, ssl, sys, threading
-from urllib.parse import unquote, urlsplit
-
-host, port = sys.argv[1], sys.argv[2]
-names = ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy")
-proxy = next((os.environ[name] for name in names if os.environ.get(name)), None)
-if not proxy:
-    sys.exit("No HTTP proxy is set in HTTPS_PROXY.")
-url = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-sock = socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)))
-if url.scheme == "https":
-    sock = ssl.create_default_context().wrap_socket(sock, server_hostname=url.hostname)
-auth = ""
-if url.username:
-    secret = f"{unquote(url.username)}:{unquote(url.password or '')}".encode()
-    auth = "Proxy-Authorization: Basic " + base64.b64encode(secret).decode() + "\r\n"
-sock.sendall(f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n{auth}\r\n".encode())
-reply = b""
-while b"\r\n\r\n" not in reply:
-    chunk = sock.recv(4096)
-    if not chunk:
-        sys.exit("The proxy closed the connection.")
-    reply += chunk
-head, _, early = reply.partition(b"\r\n\r\n")
-status = head.split(b"\r\n")[0]
-if status.split()[1:2] != [b"200"]:
-    sys.exit("The proxy refused the connection: " + status.decode(errors="replace"))
-out = sys.stdout.buffer
-out.write(early)
-out.flush()
-
-
-def upstream():
-    try:
-        while data := os.read(0, 65536):
-            sock.sendall(data)
-    finally:
-        try:
-            sock.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
-
-
-threading.Thread(target=upstream, daemon=True).start()
-while data := sock.recv(65536):
-    out.write(data)
-    out.flush()
-'''
+RUN_PATH = "~/.puppyone/run"
+RUN_CONNECTION_PATH = "~/.puppyone/connection"
+# What an Agent saves once to run commands over HTTPS. It signs each command with
+# the Agent's SSH key (``ssh-keygen -Y sign``) and sends it with curl, which uses
+# the computer's HTTP proxy by itself; its exit status is the command's.
+RUN_HELPER = r"""#!/bin/sh
+# Runs one command in your PuppyOne workspace over HTTPS: ~/.puppyone/run 'pwd && ls'
+[ $# -eq 1 ] || { echo "usage: $0 'command'" >&2; exit 2; }
+{ read -r connection && read -r url; } < ~/.puppyone/connection ||
+  { echo "PuppyOne: run https.install first." >&2; exit 2; }
+dir=$(mktemp -d) || exit 1
+trap 'rm -rf "$dir"' EXIT
+printf '%s' "$1" > "$dir/command"
+now=$(date +%s)
+{ printf 'puppyone-agent-exec-v1\n%s\n%s\n' "$connection" "$now"; cat "$dir/command"; } > "$dir/message"
+ssh-keygen -Y sign -f ~/.ssh/puppyone_agent -n puppyone-agent "$dir/message" 2> "$dir/error" ||
+  { cat "$dir/error" >&2; exit 1; }
+signature=$(sed '1d;$d' "$dir/message.sig" | tr -d '\n')
+curl -sS -N -X POST "$url" -H "X-PuppyOne-Time: $now" -H "X-PuppyOne-Signature: $signature" \
+  -H 'Content-Type: text/plain' --data-binary @"$dir/command" | tee "$dir/output"
+status=$(tail -n 1 "$dir/output" | sed -n 's/^\[exit \([0-9]*\)\]$/\1/p')
+exit "${status:-1}"
+"""
 
 logger = logging.getLogger(__name__)
 # Machines being prepared for Agents just let in; held so the loop keeps them.
@@ -107,17 +81,18 @@ def public_origin():
 AVATAR_CHOICES = ", ".join(AGENT_AVATARS)
 
 
-def agent_instructions(invitation):
+def agent_instructions(invitation, *, mode=None):
     """The only thing an Agent reads, so it stays plain text it can run unchanged.
 
     A person pasted the link and asked the Agent to follow it. This page describes
     what is possible; it carries no authority until those steps finish.
     """
     api = public_origin() + "/api/v1/agent-links"
+    topology = get_agent_collaboration_router().resolve(mode)
     return f"""# Connect to a PuppyOne hosted workspace
 
-Someone shared this link so that you can work in their PuppyOne hosted workspace
-over SSH. It needs `ssh`, `ssh-keygen` and `curl`, and nothing else to install.
+Someone shared this link so that you can work in their PuppyOne hosted workspace.
+It needs `ssh-keygen` and `curl`, and nothing else to install.
 
 ## 1. Create a key
 
@@ -137,7 +112,7 @@ of these, or other if none of them is you:
 
 ## 3. Follow the response
 
-- `status` is `ready`: go to step 4 with its `ssh` object.
+- `status` is `ready`: go to step 4 with its `https` object.
 - `status` is `pending`: tell your person you are waiting for them to allow you in
   PuppyOne, and give them `sign_in_url` in case they are away from the app.
   Then repeat this every `poll_interval` seconds until `status` changes:
@@ -147,34 +122,39 @@ of these, or other if none of them is you:
   Use `connection_id` and `poll_secret` from the response. The sign-in link lasts
   10 minutes. `rejected`, `expired` or `revoked` means stop and tell your person.
 
-## 4. Connect
+## 4. Run commands
 
-Run `ssh.install_known_hosts` once. Then use `ssh.command`, adding what to run:
+Run `https.install` once. Then save this helper once:
+
+```
+mkdir -p ~/.puppyone && cat > {RUN_PATH} <<'PUPPYONE_RUN' && chmod 700 {RUN_PATH}
+{RUN_HELPER}PUPPYONE_RUN
+```
+
+Run each command with it:
+
+    {RUN_PATH} 'pwd && ls'
+
+It signs the command with your key and sends it over HTTPS, through this computer's
+HTTP proxy if it has one. The output arrives as the command runs and ends with
+`[exit N]`; the helper exits with the same status. Lines that start with
+`PuppyOne:` come from PuppyOne, not from your command: while it prepares your
+machine, and every 30 seconds a command prints nothing, to keep the connection open.
+One command runs for at most 10 minutes, and nothing it starts keeps running after
+it ends.
+
+### Or over SSH
+
+Where `ssh` can reach the internet, the `ssh` object in the response works too and
+keeps a terminal open. Run `ssh.install_known_hosts` once, then use `ssh.command`,
+adding what to run:
 
     SSH_COMMAND 'pwd && ls'
 
-Keep using `ssh.command` exactly as given. The first command signs in and keeps
-one connection open in the background for 30 minutes, so every later command
-starts at once over it without signing in again. If it closes, the next command
-opens a new one by itself.
+If `ssh` says `Connection closed` or `kex_exchange_identification`, this network only
+lets HTTPS out: use {RUN_PATH} instead.
 
-If this computer reaches the internet only through an HTTP proxy (`HTTPS_PROXY`
-is set and `ssh` cannot connect), save this helper once; it needs only Python:
-
-```
-cat > {PROXY_HELPER_PATH} <<'PUPPYONE_PROXY'
-{PROXY_HELPER}PUPPYONE_PROXY
-```
-
-Then add `-o ProxyCommand='python3 {PROXY_HELPER_PATH} %h %p'` to `ssh.command`.
-
-Each command starts in your own copy of the project, on a machine only you use.
-Your home directory is kept from one command to the next, so settings such as
-`git config --global` stay. Your files are saved to your own branch when the machine goes to sleep, and your
-person decides when they join the project. Your first connection can take a few
-minutes while the machine is prepared, and says so while it waits; after that,
-waking takes up to a minute.
-"""
+{topology.instructions_footer()}"""
 
 
 def agent_connection(identity):
@@ -185,6 +165,18 @@ def agent_connection(identity):
         return str(UUID(identity.removeprefix(AGENT_USER_PREFIX)))
     except ValueError:
         return None
+
+
+def https_access(connection):
+    """How an Agent runs commands over HTTPS, in a form it can run unchanged."""
+    url = f"{public_origin()}/api/v1/agent-links/connections/{connection}/exec"
+    return {
+        "url": url,
+        "install": (
+            f"mkdir -p ~/.puppyone && printf '%s\\n' '{connection}' '{url}' > {RUN_CONNECTION_PATH}"
+        ),
+        "command": RUN_PATH,
+    }
 
 
 def ssh_access(connection, endpoint):
@@ -205,24 +197,42 @@ def ssh_access(connection, endpoint):
 
 class AgentLinkRepository(AccessRepository):
     def agent_saves(self, project):
-        """The last save of each Agent's Workspace, by its branch."""
+        """The last save of each Agent's Workspace (and the shared default), by branch."""
         rows = (
             self.client.table("cloud_workbenches")
-            .select("target_ref,save_status,save_error,save_finished_at,unpublished_changes")
+            .select(
+                "target_ref,save_status,save_error,save_finished_at,unpublished_changes,"
+                "is_default,collaboration_mode"
+            )
             .eq("project_id", project)
-            .not_.is_("agent_registration_id", "null")
+            .is_("owner_deleted_at", "null")
+            .or_("agent_registration_id.not.is.null,is_default.eq.true")
             .execute()
             .data
         )
-        return {
-            row["target_ref"]: {
+        saves = {}
+        for row in rows or []:
+            if row.get("collaboration_mode") == "fly_host_export" and not row.get("is_default"):
+                continue
+            saves[row["target_ref"]] = {
                 "status": row["save_status"],
                 "error": row["save_error"],
                 "finished_at": row["save_finished_at"],
                 "unsaved_work": row["unpublished_changes"],
             }
-            for row in rows or []
-        }
+        return saves
+
+    def project_collab_mode(self, project):
+        """Return optional per-project collaboration mode override, if set."""
+        rows = (
+            self.client.table("projects")
+            .select("agent_collab_mode")
+            .eq("id", project)
+            .limit(1)
+            .execute()
+            .data
+        )
+        return (rows[0] or {}).get("agent_collab_mode") if rows else None
 
     def command(self, action, user, **payload):
         return self.call("access_agent_link_command", action=action, user=user, payload=payload)
@@ -241,10 +251,11 @@ class AgentLinkRepository(AccessRepository):
 
 
 class AgentLinkService:
-    def __init__(self, repository=None, endpoint=None, workspaces=None):
+    def __init__(self, repository=None, endpoint=None, workspaces=None, collaboration_router=None):
         self.repository = repository or AgentLinkRepository()
         self._endpoint = endpoint
         self._workspaces = workspaces
+        self.collaboration = collaboration_router or get_agent_collaboration_router()
 
     def endpoint(self):
         if self._endpoint is not None:
@@ -257,6 +268,7 @@ class AgentLinkService:
         return {
             "status": "ready",
             "expires_at": expires_at,
+            "https": https_access(connection),
             "ssh": ssh_access(connection, self.endpoint()),
         }
 
@@ -281,6 +293,12 @@ class AgentLinkService:
     async def inventory(self, user, project):
         row = await run_blocking(self.repository.command, "inventory", user, project_id=project)
         saves = await run_blocking(self.repository.agent_saves, project)
+        project_mode = None
+        if callable(getattr(self.repository, "project_collab_mode", None)):
+            try:
+                project_mode = await run_blocking(self.repository.project_collab_mode, project)
+            except Exception:
+                project_mode = None
         connections = [
             {**connection, "save": saves.get(connection.get("branch"))}
             for connection in row.get("connections") or []
@@ -289,6 +307,7 @@ class AgentLinkService:
             **row,
             "connections": connections,
             "open_links_enabled": settings.AGENT_OPEN_LINKS_ENABLED,
+            "collaboration_mode": self.collaboration.resolve(project_override=project_mode).mode,
         }
 
     async def stop(self, user, project):
@@ -327,7 +346,14 @@ class AgentLinkService:
                 from .composition import build_workbench_service
 
                 self._workspaces = build_workbench_service()
-            await self._workspaces.request_open(row["user_id"], row["project_id"], row)
+            actor = row.get("actor_user_id") or row["user_id"]
+            if row.get("collaboration_mode") == "fly_host_export" and row.get("host_workbench_id"):
+                host_row = await run_blocking(
+                    self._workspaces.repository.get, row["host_workbench_id"]
+                )
+                if host_row and host_row["state"] != "running" and not host_row.get("open_requested"):
+                    await self._workspaces.request_open(actor, row["project_id"], host_row)
+            await self._workspaces.request_open(actor, row["project_id"], row)
         except Exception:
             logger.warning("agent_workspace_prepare_failed", exc_info=True)
 
@@ -339,6 +365,8 @@ class AgentLinkService:
         web = settings.FRONTEND_URL.rstrip("/")
         if not web:
             raise HTTPException(503, detail={"code": "agent_link_not_configured"})
+        # Where its commands go: checked before anything is recorded.
+        public_origin()
         self.endpoint()
         key_hashes = access_token_hash_candidates(request.invitation.get_secret_value())
         # Links issued before admission closed stay refused, in the same words
@@ -393,15 +421,28 @@ class AgentLinkService:
             self.repository.call, "access_agent_ssh_admit", id=connection, public_key=key
         )
 
-    async def workspace(self, connection):
-        """The Agent's own machine; it may not have been started yet."""
-        return await run_blocking(
-            self.repository.call, "access_agent_workspace", id=connection
+    async def workspace(self, connection, *, mode=None):
+        """The Workspace routed for this Agent by the active collaboration topology."""
+        topology = self.collaboration.require_ready(mode)
+        row = await run_blocking(
+            self.repository.call,
+            "access_agent_workspace",
+            id=connection,
+            mode=topology.sql_mode,
         )
+        if isinstance(row, dict) and row.get("collaboration_mode"):
+            self.collaboration.require_ready(project_override=row["collaboration_mode"])
+        return row
 
-    async def ticket(self, connection):
+    async def ticket(self, connection, *, mode=None):
+        topology = self.collaboration.require_ready(mode)
         try:
-            row = await run_blocking(self.repository.call, "access_agent_ssh_ticket", id=connection)
+            row = await run_blocking(
+                self.repository.call,
+                "access_agent_ssh_ticket",
+                id=connection,
+                mode=topology.sql_mode,
+            )
         except HTTPException as exc:
             if exc.detail == {"code": "access_workspace_unavailable"}:
                 raise WorkspaceError(409, {"code": "workbench_not_running"}) from exc

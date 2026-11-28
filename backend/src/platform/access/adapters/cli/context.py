@@ -15,7 +15,12 @@ from src.platform.access.filesystem.errors import ScopedFsError
 from src.version_engine.admission.auth_context import repository_view_from_auth
 from src.shared_types.repository_target import repository_target_scope_id
 from src.platform.access.channel_pause import enforce_channel_pause
-from src.platform.access.connector_policy import admit_cli_fs_command
+from src.platform.access.connector_policy import (
+    CLI_FS_DELETE_COMMANDS,
+    CLI_FS_WRITE_COMMANDS,
+    admit_cli_fs_command,
+)
+from src.platform.repository_policy import WriteChannel, is_write_allowed, require_write
 from src.platform.access.permission import (
     ensure_mode_writable,
     ensure_repo_readable,
@@ -102,9 +107,14 @@ async def _resolve_auth(
             detail="AP-FS requires X-Puppy-Client: cli",
         )
     if command:
+        if command.strip().lower() in CLI_FS_WRITE_COMMANDS | CLI_FS_DELETE_COMMANDS:
+            require_write(WriteChannel.CLI)
         admit_cli_fs_command(auth, command, normalized_client, log_prefix="[AP-FS]")
     else:
         enforce_channel_pause(auth, normalized_client, log_prefix="[AP-FS]")
+
+    if not is_write_allowed(WriteChannel.CLI):
+        mode = "r"
 
     normalized_scope = {
         "id": repository_target_scope_id(view.target) or auth.get("agent"),
@@ -120,6 +130,7 @@ async def _resolve_auth(
 
 
 def _ensure_writable(scope: dict) -> None:
+    require_write(WriteChannel.CLI)
     ensure_mode_writable(str(scope.get("mode", "r")))
 
 

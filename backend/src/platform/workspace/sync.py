@@ -13,17 +13,24 @@ sandbox as stock Git, so a conflict is left as marked files in the Workspace. Ev
 write goes through the same Git admission, ref CAS and receipts as a Run.
 """
 
+import logging
 from contextlib import suppress
 from uuid import uuid4
 
 from src.infra.execution.runner import run_blocking
-from src.shared_types.grants import ProjectAction
 from src.platform.project.write_lease import ProjectWriteLease
+from src.platform.repository_policy import WriteChannel, get_repository_policy, require_write
+from src.shared_types.grants import ProjectAction
 
 from .errors import WorkspaceError
 
+logger = logging.getLogger(__name__)
+
 SAVE_MESSAGE = "Save workspace changes"
+BACKUP_MESSAGE = "Workspace backup"
 SYNC_MESSAGE = "Bring in {source}"
+# A sync after which the Workspace holds the source branch's tip.
+SYNCED = frozenset({"up_to_date", "fast_forward", "merged"})
 # The sandbox artifact that can save without using a task's HEAD and index.
 SNAPSHOT_PROTOCOL = 2
 
@@ -64,6 +71,7 @@ class WorkspaceGit:
                 return await self.transport.exchange(
                     project, grant, frame, base=base, publication=binding
                 )
+            require_write(WriteChannel.WORKSPACE)
             lease = ProjectWriteLease(project, "workspace.git.push", reuse_active=False)
             lease.holder_id = f"workspace:{row['id']}:{binding.request_key}"
             async with lease:
@@ -73,7 +81,7 @@ class WorkspaceGit:
 
         return exchange
 
-    async def _operate(self, row, base, action, value, exchange, *, protocol=1):
+    async def _operate(self, row, base, action, value, exchange, *, protocol=1, target_ref=None):
         host = self.service.channel_factory(row)
         host.git_handler = exchange
         try:
@@ -87,7 +95,7 @@ class WorkspaceGit:
             config = {
                 "project_id": row["project_id"],
                 "object_format": base["object_format"],
-                "target_ref": row["target_ref"],
+                "target_ref": target_ref or row["target_ref"],
             }
             return await host.control(
                 "workspace-git", {"action": action, "config": config, "value": value}
@@ -101,7 +109,18 @@ class WorkspaceGit:
         if await run_blocking(self.service.repository.has_active_runs, row):
             raise WorkspaceError(409, {"code": "workspace_busy"})
 
-    async def _push(self, row, grant, base, candidate, *, action="publish", value=None, protocol=1):
+    async def _push(
+        self,
+        row,
+        grant,
+        base,
+        candidate,
+        *,
+        action="publish",
+        value=None,
+        protocol=1,
+        target_ref=None,
+    ):
         binding = self.transport.publication(str(uuid4()), base, candidate)
         pushed = await self._operate(
             row,
@@ -110,6 +129,7 @@ class WorkspaceGit:
             value or {"destination_ref": base["target_ref"]},
             self._writer(row, base, binding),
             protocol=protocol,
+            target_ref=target_ref,
         )
         if pushed["status"] != "pushed":
             return pushed["status"]
@@ -135,18 +155,63 @@ class WorkspaceGit:
         status = await self._push(row, grant, base, tip)
         return {"status": "saved" if status == "pushed" else status, "tip": tip}
 
-    async def snapshot(self, row):
-        """Save the working files to the Workspace's branch, whatever its Git state."""
+    async def snapshot(self, row, target_ref=None, *, message=None):
+        """Save the working files to ``target_ref`` or the configured backup branch."""
         grant = await self._grant(row)
-        base = await self._describe(row, grant, row["target_ref"])
+        use_project_default = (
+            target_ref is None
+            and not row.get("agent_registration_id")
+            and bool(row.get("is_default"))
+            and get_repository_policy().backup.target == "project"
+        )
+        if use_project_default:
+            base = await self._describe(row, grant)
+        else:
+            base = await self._describe(row, grant, target_ref or row["target_ref"])
+        destination_ref = base["target_ref"]
+        is_project_backup = use_project_default or (
+            target_ref is not None and destination_ref != row["target_ref"]
+        )
         tip = base["expected_oid"]
+        if is_project_backup:
+            # The backup's tree is the Workspace's files. Landing it on a main
+            # that moved without this Workspace would roll that work back, so
+            # it lands only on a commit the Workspace knows: the one it booted
+            # from, its last backup, or one it took in through sync.
+            saved_oid = row.get("saved_oid")
+            init_base_oid = ((row.get("resource") or {}).get("initialization") or {}).get(
+                "base_oid"
+            )
+            synced_oid = row.get("synced_oid")
+            known = {oid for oid in (saved_oid, init_base_oid, synced_oid) if oid is not None}
+            if (tip is not None and tip not in known) or (tip is None and bool(known)):
+                logger.error(
+                    "workspace_backup_diverged",
+                    extra={
+                        "workbench_id": row["id"],
+                        "project_id": row["project_id"],
+                        "target_ref": destination_ref,
+                        "remote_tip": tip,
+                        "saved_oid": saved_oid,
+                        "base_oid": init_base_oid,
+                        "synced_oid": synced_oid,
+                    },
+                )
+                return {"status": "diverged", "tip": None}
+        snapshot_value = {
+            "message": message or (BACKUP_MESSAGE if is_project_backup else SAVE_MESSAGE),
+            "tip": tip,
+        }
+        if is_project_backup:
+            snapshot_value["include_changed_count"] = True
         made = await self._operate(
             row,
             base,
             "snapshot",
-            {"message": SAVE_MESSAGE, "tip": tip},
+            snapshot_value,
             self._reader(row, base),
             protocol=SNAPSHOT_PROTOCOL,
+            target_ref=destination_ref,
         )
         if made["status"] == "merging":
             return {"status": "merging", "tip": None}
@@ -161,6 +226,7 @@ class WorkspaceGit:
             action="push-snapshot",
             value={"candidate": candidate},
             protocol=SNAPSHOT_PROTOCOL,
+            target_ref=destination_ref,
         )
         return {"status": "saved" if status == "pushed" else status, "tip": candidate}
 
@@ -177,7 +243,15 @@ class WorkspaceGit:
             "source_ref": source,
             "message": SYNC_MESSAGE.format(source=source.removeprefix("refs/heads/")),
         }
-        return await self._operate(row, base, "sync", value, self._reader(row, base))
+        result = await self._operate(row, base, "sync", value, self._reader(row, base))
+        # The Project's branch is in the Workspace now: its backups may land on it again.
+        if (
+            source == project["target_ref"]
+            and project["expected_oid"]
+            and result.get("status") in SYNCED
+        ):
+            await run_blocking(self.service.repository.record_sync, row, project["expected_oid"])
+        return result
 
     async def finish(self, row):
         """Commit a resolved merge."""

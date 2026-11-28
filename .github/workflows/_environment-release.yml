@@ -172,6 +172,25 @@ jobs:
           printf '%s' "$FLY_API_TOKEN" | docker login registry.fly.io --username x --password-stdin >/dev/null
           trap 'docker logout registry.fly.io >/dev/null 2>&1' EXIT
           python3 backend/scripts/sandbox_image_release.py --image "puppyone-sandbox:$GITHUB_SHA" --app "$FLY_APP"
+      # The desktop Profile layers on the base stage built above, so this build
+      # reuses its cache; its own content tag and CLOUD_AGENT_FLY_DESKTOP_IMAGE
+      # pin never touch the base image.
+      - name: Build the desktop sandbox image
+        if: steps.config.outputs.enabled == 'true'
+        run: docker build --platform linux/amd64 --target desktop -t "puppyone-sandbox-desktop:$GITHUB_SHA" backend/agent-worker
+      - name: Publish, verify the desktop profile and pin
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.CLOUD_AGENT_FLY_TOKEN }}
+          FLY_APP: ${{ vars.CLOUD_AGENT_FLY_APP }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SANDBOX_IMAGE_SERVICES: ${{ vars.RAILWAY_SANDBOX_IMAGE_SERVICES }}
+        run: |
+          printf '%s' "$FLY_API_TOKEN" | docker login registry.fly.io --username x --password-stdin >/dev/null
+          trap 'docker logout registry.fly.io >/dev/null 2>&1' EXIT
+          python3 backend/scripts/sandbox_image_release.py --image "puppyone-sandbox-desktop:$GITHUB_SHA" --app "$FLY_APP" --profile desktop
   images:
     name: Build and publish application images
     # One build per commit, before any deployment. The release job points every

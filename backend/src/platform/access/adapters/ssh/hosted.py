@@ -1,6 +1,7 @@
 """Public-key delegation to one existing private Hosted Workspace."""
 
 import asyncio
+import logging
 import time
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
@@ -9,7 +10,8 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
-from src.exceptions import PermissionException
+from src.config import settings
+from src.exceptions import AppException, PermissionException
 from src.infra.execution.runner import run_blocking
 from src.platform.access.agent_links import AgentLinkService, agent_connection
 from src.platform.access.composition import build_workbench_service
@@ -17,11 +19,14 @@ from src.platform.access.credential_repository import SshCredentialRepository
 from src.platform.access.credentials import normalize_ssh_public_key
 from src.platform.access.grants import GrantService
 from src.platform.access.sessions import AccessSessions
-from src.shared_types.grants import AccessCapability, ProjectAction
+from src.platform.workspace.collaboration import get_agent_collaboration_router
 from src.platform.workspace.connections import RESUMABLE_STATES, WorkspaceConnections
 from src.platform.workspace.errors import WorkspaceError
+from src.shared_types.grants import AccessCapability, ProjectAction
 
 from .config import ssh_settings
+
+logger = logging.getLogger(__name__)
 
 
 def public_key(value):
@@ -254,9 +259,10 @@ class HostedSshAccess:
             raise WorkspaceError(409, {"code": "workbench_not_running", "state": row["state"]})
         if notify:
             await notify("Resuming the workspace; this can take up to a minute.\r\n")
+        actor = grant.get("user_id") or row["user_id"]
         row = await while_telling(
             self.workspace.ensure_running(
-                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+                {"user_id": actor, "project_id": row["project_id"]}, row
             ),
             notify,
             "Still resuming the workspace ({seconds}s)...\r\n",
@@ -266,16 +272,44 @@ class HostedSshAccess:
         if row["generation"] != grant["generation"]:
             raise WorkspaceError(409, {"code": "workbench_generation_changed"})
 
+    async def _ensure_fly_host_ready(self, row, notify=None):
+        """Ensure the Project default Host VM is running for a Tier 2 Agent VM."""
+        if (
+            not isinstance(row, dict)
+            or row.get("collaboration_mode") != "fly_host_export"
+            or not row.get("host_workbench_id")
+        ):
+            return None
+        host_row = await run_blocking(self.workspace.repository.get, row["host_workbench_id"])
+        if not host_row or host_row.get("owner_deleted_at"):
+            raise WorkspaceError(409, {"code": "workbench_host_unavailable"})
+        if host_row["state"] != "running" or host_row.get("open_requested"):
+            if notify:
+                await notify("Waking the project workspace; this can take up to a minute.\r\n")
+            actor = row.get("actor_user_id") or row["user_id"]
+            host_row = await while_telling(
+                self.workspace.ensure_running(
+                    {"user_id": actor, "project_id": host_row["project_id"]}, host_row
+                ),
+                notify,
+                "Still waking the project workspace ({seconds}s)...\r\n",
+                seconds=self.first_start_seconds,
+                refusal="workspace_preparing",
+            )
+        return host_row
+
     async def start_agent_workspace(self, connection, notify=None):
         """A ticket binds one generation, so a machine must exist before it is minted."""
         row = await self.linked_agents().workspace(connection)
+        await self._ensure_fly_host_ready(row, notify)
         if row["state"] == "running" or row["state"] in RESUMABLE_STATES:
             return
         if notify:
             await notify("Preparing your workspace; this can take a few minutes.\r\n")
+        actor = row.get("actor_user_id") or row["user_id"]
         await while_telling(
             self.workspace.ensure_running(
-                {"user_id": row["user_id"], "project_id": row["project_id"]}, row
+                {"user_id": actor, "project_id": row["project_id"]}, row
             ),
             notify,
             "Still preparing your workspace ({seconds}s)...\r\n",
@@ -309,6 +343,17 @@ class HostedSshAccess:
                 identity = await self.linked_agents().ticket(connection)
         grant, may_wake = await self._admit(identity, unused=True, running=False)
         await run_blocking(self.grants.consume, identity)
+        if connection or grant.get("access_grant_id"):
+            router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
+            wb = None
+            repo = getattr(self.workspace, "repository", None)
+            if repo is not None and callable(getattr(repo, "get", None)):
+                with suppress(Exception):
+                    wb = await run_blocking(repo.get, grant["workbench_id"])
+            project_mode = wb.get("collaboration_mode") if isinstance(wb, dict) else None
+            await router.resolve(project_override=project_mode).before_agent_session(
+                self.workspace, grant
+            )
         return SshSession(identity, grant, may_wake)
 
     @asynccontextmanager
@@ -316,15 +361,110 @@ class HostedSshAccess:
         """One command: its own shell, under the connection's session."""
         grant = session.grant
         await self.resume(grant, session.may_wake, notify)
-        async with self.connections.open(
-            str(uuid4()),
-            grant["user_id"],
-            grant["project_id"],
-            grant["workbench_id"],
-            grant["generation"],
-            session=session.id if session.delegated else None,
-        ) as connection:
-            yield connection
+        connection_id = str(uuid4())
+        router = getattr(self.agent_links, "collaboration", None) or get_agent_collaboration_router()
+        wb = None
+        repo = getattr(self.workspace, "repository", None)
+        if repo is not None and callable(getattr(repo, "get", None)):
+            with suppress(Exception):
+                wb = await run_blocking(repo.get, grant["workbench_id"])
+        project_mode = wb.get("collaboration_mode") if isinstance(wb, dict) else None
+        collab_mode = router.resolve(project_override=project_mode).mode
+        if isinstance(wb, dict) and collab_mode == "fly_host_export" and wb.get("host_workbench_id"):
+            host_row = await self._ensure_fly_host_ready(wb, notify)
+            mounted = (wb.get("resource") or {}).get("host_export") or {}
+            if host_row and (
+                mounted.get("host_compute_epoch") != host_row.get("compute_epoch")
+                or mounted.get("host_generation") != host_row.get("generation")
+            ):
+                await self.workspace.lifecycle.ensure_host_export_mounted(wb, host_row=host_row)
+        # Tier 1 (shared_machine) external Agents share the project's default
+        # Workspace VM whose compute epoch is metered as non-billable "workspace".
+        # Meter each delegated command as "external_agent" so Tier 1 accounts for
+        # Agent Runtime hours without double-charging Tier 2/0 dedicated Agent VMs
+        # (whose compute epochs already bill as "external_agent").
+        billing = getattr(self.workspace, "billing", None)
+        meter_command = (
+            session.delegated
+            and isinstance(wb, dict)
+            and not wb.get("agent_registration_id")
+            and billing is not None
+            and callable(getattr(billing, "start_session", None))
+            and callable(getattr(billing, "finish_session", None))
+            and callable(getattr(billing, "cancel_session", None))
+        )
+        activity_run_id = None
+        if meter_command:
+            try:
+                activity_run_id = await billing.start_session(
+                    audit_context={
+                        "source": "external_agent",
+                        "run_id": f"external-agent-cmd:{connection_id}",
+                        "project_id": grant["project_id"],
+                        "user_id": grant["user_id"],
+                        "maximum_runtime_units": settings.RUNTIME_AGENT_MAX_UNITS,
+                    }
+                )
+            except AppException as exc:
+                if exc.status_code in (402, 403):
+                    raise WorkspaceError(402, {"code": "workbench_plan_required"}) from exc
+                raise
+        shell_opened = False
+        try:
+            async with self.connections.open(
+                connection_id,
+                grant["user_id"],
+                grant["project_id"],
+                grant["workbench_id"],
+                grant["generation"],
+                session=session.id if session.delegated else None,
+            ) as connection:
+                shell_opened = True
+                if session.delegated:
+                    logger.info(
+                        "external_agent_shell_opened",
+                        extra={
+                            "project_id": grant["project_id"],
+                            "workbench_id": grant["workbench_id"],
+                            "access_grant_id": grant.get("access_grant_id"),
+                            "session_id": session.id,
+                            "connection_id": connection_id,
+                            "collaboration_mode": collab_mode,
+                        },
+                    )
+                try:
+                    yield connection
+                finally:
+                    if session.delegated:
+                        logger.info(
+                            "external_agent_shell_closed",
+                            extra={
+                                "project_id": grant["project_id"],
+                                "workbench_id": grant["workbench_id"],
+                                "access_grant_id": grant.get("access_grant_id"),
+                                "session_id": session.id,
+                                "connection_id": connection_id,
+                                "collaboration_mode": collab_mode,
+                            },
+                        )
+        finally:
+            if activity_run_id:
+                try:
+                    if shell_opened:
+                        await asyncio.shield(
+                            billing.finish_session(activity_run_id, retry=True)
+                        )
+                    else:
+                        await asyncio.shield(billing.cancel_session(activity_run_id))
+                except Exception:
+                    logger.exception(
+                        "external_agent_command_settlement_failed",
+                        extra={
+                            "run_id": activity_run_id,
+                            "project_id": grant["project_id"],
+                            "connection_id": connection_id,
+                        },
+                    )
 
     async def renew_session(self, session):
         """The connection's heartbeat: admission's authority, with no command required.

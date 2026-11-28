@@ -179,7 +179,9 @@ def test_protocol_command_budget_cannot_be_used_for_pack_bytes(tmp_path):
     request = tmp_path / "request"
     request.write_bytes(pkt_line(f"{old} {new} refs/heads/main\0report-status\n".encode())
                         + b"0000" + payload)
-    response = NativeGitRepository(service).receive(grant("p"), request, max_pack_bytes=len(payload) - 1)
+    response = NativeGitRepository(service).receive(
+        grant("p"), request, channel="git_push", max_pack_bytes=len(payload) - 1
+    )
     assert b"unpack invalid pack:" in response.body and b"byte limit" in response.body
     # The stable code Desktop relies on (contracts/cloud-git-acceptance-v1.json).
     assert b"(puppyone-refusal=git_pack_too_large)" in response.body

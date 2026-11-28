@@ -7,9 +7,15 @@ Run by the environment release workflow after the image was built locally as
    and file protocols and capabilities match what this backend expects.
 2. Tag it by content (``build-<build_id>``) in the Fly registry; an existing tag
    is reused, never overwritten.
-3. Pin ``CLOUD_AGENT_FLY_IMAGE`` (``registry@sha256:...``) on the configured
-   Railway services with ``skipDeploys``. The next application deployment
-   applies it. Existing workspaces keep the artifact they were bound to.
+3. Pin the Profile's image variable (``CLOUD_AGENT_FLY_IMAGE`` for ``base``,
+   ``CLOUD_AGENT_FLY_DESKTOP_IMAGE`` for ``desktop``; ``registry@sha256:...``)
+   on the configured Railway services with ``skipDeploys``. The next
+   application deployment applies it. Existing workspaces keep the artifact
+   they were bound to.
+
+``--profile`` names the sandbox Profile the image was built for
+(``agent-worker/Dockerfile`` target); its manifest must declare that Profile
+and the capabilities ``agent-worker/sandbox-profiles.json`` lists for it.
 
 Pinning needs ``RAILWAY_TOKEN`` (a project token scoped to one environment).
 Without it the image is still verified and published, and the summary states
@@ -34,7 +40,9 @@ MANIFEST = "/opt/puppyone-agent/runtime-manifest.json"
 CONTRACT = (
     Path(__file__).resolve().parents[1] / "src/platform/workspace/execution/runtime_contract.py"
 )
+PROFILES_FILE = Path(__file__).resolve().parents[1] / "agent-worker/sandbox-profiles.json"
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}")
+PROFILE_VARIABLES = {"base": "CLOUD_AGENT_FLY_IMAGE", "desktop": "CLOUD_AGENT_FLY_DESKTOP_IMAGE"}
 
 
 class ReleaseError(RuntimeError):
@@ -54,7 +62,7 @@ def expected_contract(path: Path = CONTRACT) -> dict:
     return values
 
 
-def check_manifest(manifest: dict, contract: dict) -> str:
+def check_manifest(manifest: dict, contract: dict, profile: str = "base") -> str:
     """Return the build id when the image implements this backend's contract."""
     build_id = manifest.get("build_id")
     if not isinstance(build_id, str) or not re.fullmatch(r"[a-f0-9]{64}", build_id):
@@ -66,6 +74,12 @@ def check_manifest(manifest: dict, contract: dict) -> str:
     missing = set(contract["REQUIRED_CAPABILITIES"]) - set(manifest.get("capabilities") or [])
     if missing:
         raise ReleaseError("Image lacks required capabilities: " + ", ".join(sorted(missing)))
+    if manifest.get("profile", "base") != profile:
+        raise ReleaseError("Image was built for another sandbox profile")
+    declared = json.loads(PROFILES_FILE.read_text()).get(profile, {}).get("capabilities", [])
+    lacking = set(declared) - set(manifest.get("capabilities") or [])
+    if lacking:
+        raise ReleaseError("Image lacks profile capabilities: " + ", ".join(sorted(lacking)))
     return build_id
 
 
@@ -110,13 +124,21 @@ def publish(image: str, repository: str, build_id: str) -> tuple[str, bool]:
 
 
 class Railway:
-    def __init__(self, token: str, project: str, environment: str, opener=urllib.request.urlopen):
+    def __init__(
+        self,
+        token: str,
+        project: str,
+        environment: str,
+        opener=urllib.request.urlopen,
+        variable: str = PROFILE_VARIABLES["base"],
+    ):
         self.token, self.project, self.environment, self.opener = (
             token,
             project,
             environment,
             opener,
         )
+        self.variable = variable
 
     def query(self, query: str, variables: dict) -> dict:
         request = urllib.request.Request(
@@ -141,7 +163,7 @@ class Railway:
             "query($p:String!,$e:String!,$s:String!){variables(projectId:$p,environmentId:$e,serviceId:$s)}",
             {"p": self.project, "e": self.environment, "s": service},
         )
-        return (data.get("variables") or {}).get("CLOUD_AGENT_FLY_IMAGE")
+        return (data.get("variables") or {}).get(self.variable)
 
     def pin(self, service: str, reference: str) -> None:
         self.query(
@@ -152,7 +174,7 @@ class Railway:
                     "environmentId": self.environment,
                     "serviceId": service,
                     "skipDeploys": True,
-                    "variables": {"CLOUD_AGENT_FLY_IMAGE": reference},
+                    "variables": {self.variable: reference},
                 }
             },
         )
@@ -178,11 +200,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--image", required=True, help="locally built image reference")
     parser.add_argument("--app", required=True, help="Fly app owning the registry repository")
+    parser.add_argument("--profile", choices=sorted(PROFILE_VARIABLES), default="base")
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
     args = parser.parse_args(argv)
 
     contract = expected_contract()
-    build_id = check_manifest(read_manifest(args.image), contract)
+    build_id = check_manifest(read_manifest(args.image), contract, args.profile)
     reference, pushed = publish(args.image, f"registry.fly.io/{args.app}", build_id)
     token = os.environ.get("RAILWAY_TOKEN", "").strip()
     services = [
@@ -193,14 +216,23 @@ def main(argv=None) -> int:
     railway = None
     if token and services:
         railway = Railway(
-            token, os.environ["RAILWAY_PROJECT_ID"], os.environ["RAILWAY_ENVIRONMENT_ID"]
+            token,
+            os.environ["RAILWAY_PROJECT_ID"],
+            os.environ["RAILWAY_ENVIRONMENT_ID"],
+            variable=PROFILE_VARIABLES[args.profile],
         )
     pins = pin_all(railway, services, reference)
-    report = {"build_id": build_id, "image": reference, "pushed": pushed, "pin": pins}
+    report = {
+        "profile": args.profile,
+        "build_id": build_id,
+        "image": reference,
+        "pushed": pushed,
+        "pin": pins,
+    }
     print(json.dumps(report, indent=2))
     if args.summary:
         lines = [
-            "### Sandbox image",
+            f"### Sandbox image ({args.profile})",
             f"- build `{build_id[:16]}`",
             f"- `{reference}` ({'pushed' if pushed else 'already published'})",
         ]

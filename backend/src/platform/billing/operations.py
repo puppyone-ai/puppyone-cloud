@@ -106,10 +106,36 @@ class BillingOperation(BaseModel):
         )
 
 
+def settled_on_acceptance(quote: dict[str, Any]) -> bool:
+    """Whether PuppyPay accepting this applied quote is the whole change.
+
+    A change that waits for renewal, or one that only withdraws such a change,
+    publishes no entitlement now. Its operation would otherwise stay open and
+    hold the Desktop plan page busy until renewal, and the renewal itself runs
+    under a quote of its own, so no entitlement would ever confirm it.
+    """
+    target = (quote.get("target_plan_id"), quote.get("target_seats"))
+    if None in target:
+        return False
+    return quote.get("effective") == "next_period" or target == (
+        quote.get("current_plan_id"),
+        quote.get("current_seats"),
+    )
+
+
 def _public_lifecycle(
     operation: BillingOperation,
 ) -> tuple[BillingOperationState, bool, bool, bool]:
     if operation.status == "confirmed" and operation.completed_at is not None:
+        return "succeeded", True, False, False
+    application = operation.response_payload.get("application")
+    if (
+        operation.status == "submitted"
+        and operation.kind in {"plan_change", "seat_decrease"}
+        and isinstance(application, dict)
+        and settled_on_acceptance(application)
+    ):
+        # Submitted before acceptance settled such changes.
         return "succeeded", True, False, False
     if operation.status == "confirmed":
         # Seat admission reserves capacity before the capability mutation and

@@ -980,26 +980,14 @@ def test_object_gc_sync_rpc_ambiguity_has_forward_fix_and_execution_smoke() -> N
     assert "ROLLBACK;" in smoke
 
 
-def test_irrecoverable_root_incidents_are_private_and_durable() -> None:
-    migration = (
-        REPO_ROOT
-        / "supabase/archive/before_b1/migrations/20260711140000_version_project_root_integrity_incidents.sql"
+def test_pre_native_root_repair_tools_are_retired_with_the_legacy_engine() -> None:
+    # Root-hash repair needed the pre-native CAS publisher, which no longer exists.
+    for name in ("repair_missing_project_roots.py", "repair_damaged_folders.py"):
+        assert not (BACKEND_ROOT / "scripts" / name).exists()
+    contract = (
+        REPO_ROOT / "supabase/migrations/20261114020000_contract_retire_legacy_version_engine.sql"
     ).read_text(encoding="utf-8")
-    assert "version_project_root_integrity_incidents" in migration
-    assert "REFERENCES public.projects(id) ON DELETE CASCADE" in migration
-    assert "^[0-9a-f]{40}$" in migration
-    assert "ENABLE ROW LEVEL SECURITY" in migration
-    assert "FOR ALL TO service_role" in migration
-    assert "FROM PUBLIC, anon, authenticated" in migration
-
-    repair = (BACKEND_ROOT / "scripts/repair_missing_project_roots.py").read_text(encoding="utf-8")
-    assert "mark_project_root_irrecoverable" in repair
-    assert (
-        "cas_update_root_hash"
-        not in repair.split("def mark_project_root_irrecoverable", 1)[1].split(
-            "def _project_ids", 1
-        )[0]
-    )
+    assert "public.version_project_root_integrity_incidents" in contract.split("DROP TABLE", 1)[1]
 
 
 def test_legacy_mcp_and_sandbox_runtime_packages_are_retired() -> None:

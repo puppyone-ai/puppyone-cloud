@@ -531,6 +531,56 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in classification["schemas"].items():
         assert expected["contract"]["schemas"][name] == change["before"]
         expected["contract"]["schemas"][name] = change["after"]
+    # The Cloud Computer adds its owner settings and the screen ticket; the
+    # screen stream itself is a WebSocket and has no OpenAPI operation.
+    computer = json.loads(Path(__file__).with_name("cloud_computer_contract_delta.json").read_text())
+    assert set(computer["paths"]) == {
+        "/api/v1/projects/{project_id}/workbench/sandbox",
+        "/api/v1/projects/{project_id}/workbench/screen/session",
+    }
+    assert set(computer["schemas"]) == {"SandboxSettings"}
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & computer[category].keys()
+        expected["contract"][category].update(computer[category])
+    # Access analytics (never written, no client) and the session-only chat API
+    # (no client; Cloud Agent runs own chat_sessions/chat_messages) retire exactly.
+    retired = json.loads(
+        Path(__file__).with_name("analytics_chat_retirement_contract_delta.json").read_text()
+    )
+    assert set(retired["paths"]["removed"]) == {
+        "/api/v1/analytics/access-summary",
+        "/api/v1/analytics/access-timeseries",
+        "/api/v1/chat/sessions",
+        "/api/v1/chat/sessions/{session_id}",
+        "/api/v1/chat/sessions/{session_id}/messages",
+    }
+    assert set(retired["schemas"]["removed"]) == {
+        "CreateSessionRequest", "UpdateSessionRequest", "TimeSeriesBucket", "TimeSeriesResponse",
+    }
+    for category in ("paths", "schemas"):
+        assert retired[category]["added"] == retired[category]["changed"] == {}
+        for name, digest in retired[category]["removed"].items():
+            assert expected["contract"][category].pop(name) == digest
+    # A linked Agent runs commands over HTTPS too: one new path, signed by its SSH
+    # key in headers, with a plain-text body both ways, so no new schema.
+    https = json.loads(
+        Path(__file__).with_name("agent_https_commands_contract_delta.json").read_text()
+    )
+    assert set(https["paths"]) == {"/api/v1/agent-links/connections/{connection_id}/exec"}
+    assert https["schemas"] == {}
+    assert not expected["contract"]["paths"].keys() & https["paths"].keys()
+    expected["contract"]["paths"].update(https["paths"])
+    # Cloud Computer settings exposes the per-project Tier 2 isolated Agent
+    # sandbox toggle (isolated_agent_sandboxes) on SandboxSettings only.
+    isolated_sandboxes = json.loads(
+        Path(__file__).with_name("isolated_agent_sandboxes_contract_delta.json").read_text()
+    )
+    assert isolated_sandboxes["paths"] == {} and set(isolated_sandboxes["schemas"]) == {
+        "SandboxSettings"
+    }
+    for name, change in isolated_sandboxes["schemas"].items():
+        assert expected["contract"]["schemas"][name] == change["before"]
+        expected["contract"]["schemas"][name] = change["after"]
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }

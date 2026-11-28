@@ -35,7 +35,12 @@ class SharedTasks:
 
     async def workbench(self, run):
         row = await run_blocking(self.repository.workbench, run["workbench_id"])
-        if not row or row["user_id"] != run["user_id"] or row["project_id"] != run["project_id"]:
+        shared_default = bool(row and row.get("is_default") and not row.get("agent_registration_id"))
+        if (
+            not row
+            or row["project_id"] != run["project_id"]
+            or (not shared_default and row["user_id"] != run["user_id"])
+        ):
             raise PermissionError("Shared workbench ownership mismatch")
         return row
 
@@ -59,7 +64,8 @@ class SharedTasks:
         if row["state"] != "running" or not (row.get("resource") or {}).get("resource_id"):
             raise WorkerLost("Workbench must already be running before task admission")
         self.row = row
-        await self.owner.check(row)
+        user_kw = {"user": run["user_id"]} if run["user_id"] != row["user_id"] else {}
+        await self.owner.check(row, **user_kw)
         # SQL acquisition revalidates state/generation and occupancy atomically.
         # Only ensure_running above may change resource state; task attachment cannot.
         bound = await run_blocking(self.repository.acquire, run, self.row["generation"])

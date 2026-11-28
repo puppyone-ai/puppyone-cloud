@@ -243,37 +243,11 @@ def test_capacity_tables_and_private_context_have_no_application_write_bypass(wr
         WHERE pronamespace='public'::regnamespace
           AND prosrc ~* 'INSERT INTO public.version_repository_(object_capacity|capacity_inflight)'
     """))
-    assert writers == sorted([
-        "reserve_version_object_capacity_page", "finish_repository_recovery_archive",
-        "activate_native_repository_migrations", "activate_prepared_native_repository_projects",
-    ])
-    for signature in (
-        "finish_repository_recovery_archive(text)", "activate_native_repository_migrations(text)",
-        "activate_prepared_native_repository_projects(text,text[],uuid)",
-    ):
-        assert a.pg.value(f"SELECT has_function_privilege('service_role',{literal('public.' + signature)},'EXECUTE')") == "f"
+    assert writers == ["reserve_version_object_capacity_page"]
+    # The one-time inventory/archive operator writers retired with the legacy engine.
+    assert a.pg.value("""
+        SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace
+          AND proname IN ('finish_repository_recovery_archive', 'activate_native_repository_migrations',
+                          'activate_prepared_native_repository_projects')
+    """) == "0"
 
-
-def test_owner_archive_keeps_verified_inventory_exception_and_runtime_is_denied(writer):
-    a = writer
-    # Owner-installed SQL fixture, not S3 verification. Historical bytes may
-    # exceed today's per-file policy without becoming published Git roots.
-    a.pg.sql(f"""
-        INSERT INTO public.version_repository_archives(project_id,source)
-            VALUES({literal(a.project)},'{{}}');
-        INSERT INTO public.version_repository_archive_git_objects
-            (project_id,source_id,source_kind,object_id,object_kind,body_bytes,source_sha256)
-            VALUES({literal(a.project)},'old-object','blob',{literal('b' * 40)},'blob',16,{literal('f' * 64)});
-    """)
-    finish = f"SELECT public.finish_repository_recovery_archive({literal(a.project)})"
-    denied = a.pg.sql(finish, check=False)
-    assert denied.returncode and "verified_archive_required" in denied.stderr
-    assert usage(a.authority) == [0, 0]
-    a.pg.sql(f"UPDATE public.version_repository_archives SET state='verified',manifest_sha256={literal('f' * 64)} "
-             f"WHERE project_id={literal(a.project)}")
-    denied = a.pg.sql("SET ROLE service_role;" + finish, check=False)
-    assert denied.returncode and "permission denied" in denied.stderr
-    a.pg.sql(finish)
-    a.pg.sql(finish)
-    assert usage(a.authority) == [16, 1] and counts(a) == [1, 0, 0]
-    assert a.authority.count("version_ref_transactions") == 0

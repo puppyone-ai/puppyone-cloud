@@ -10,6 +10,7 @@ import base64
 import re
 import shlex
 import shutil
+from contextlib import suppress
 from urllib.parse import quote
 from uuid import UUID
 
@@ -23,8 +24,10 @@ from src.platform.sandbox.errors import (
     WorkspaceUnavailable,
 )
 from src.platform.sandbox.port import (
+    STREAM_COMMANDS,
     RuntimeCapabilities,
     RuntimeConnection,
+    RuntimeStream,
     RuntimeTransition,
     close_process,
     read_process,
@@ -32,17 +35,33 @@ from src.platform.sandbox.port import (
 )
 from src.platform.sandbox.timing import workspace_stage
 
-from .naming import dedicated, workspace_app
+from .naming import dedicated, isolated_app, shared_dedicated_network, workspace_app
 from .transport import acquire_transport, close_transports
 
 # A deleted app frees its name asynchronously, and two owners can race to create it.
 APP_CREATE_ATTEMPTS = 15
 APP_CREATE_RETRY_SECONDS = 2
+# Compute when the channel carries no resolved Profile (the "base" shape).
+DEFAULT_GUEST = {"cpus": 1, "memory_mb": 1024}
+
+
+def _after_boot(command):
+    """Fly's started event is earlier than our firewall/mount initialization.
+    Only this boot's root-written receipt admits an in-machine process."""
+    return [
+        "sh",
+        "-c",
+        "boot=$(cat /proc/sys/kernel/random/boot_id); i=0; "
+        'until [ "$(cat /run/puppyone-fly-ready 2>/dev/null)" = "$boot" ]; do '
+        'i=$((i+1)); [ "$i" -lt 150 ] || exit 1; sleep 0.2; done; exec "$@"',
+        "fly-control",
+        *command,
+    ]
 
 
 def _transport_app(resource):
     # One agent carries a tunnel per private network, so dedicated apps share it.
-    return settings.CLOUD_AGENT_FLY_APP if dedicated(resource) else resource["app"]
+    return settings.CLOUD_AGENT_FLY_APP if isolated_app(resource) else resource["app"]
 
 
 class FlyRuntimeProvider:
@@ -52,6 +71,7 @@ class FlyRuntimeProvider:
         file_retention="volume",
         preserves_processes=False,
         connection_preparation=True,
+        streams=frozenset(STREAM_COMMANDS),
     )
 
     def __init__(self, *, client=None):
@@ -76,11 +96,20 @@ class FlyRuntimeProvider:
 
     def initialize(self, host):
         workspace = getattr(host, "dedicated_workspace", None)
-        host.resource["app"] = (
-            workspace_app(workspace)
-            if workspace and settings.CLOUD_AGENT_FLY_ORG
-            else settings.CLOUD_AGENT_FLY_APP
-        )
+        shared_host = getattr(host, "shared_network_workspace", None)
+        if shared_host:
+            host.resource["host_workbench_id"] = shared_host
+            host.resource["app"] = (
+                workspace_app(shared_host)
+                if settings.CLOUD_AGENT_FLY_ORG
+                else settings.CLOUD_AGENT_FLY_APP
+            )
+        else:
+            host.resource["app"] = (
+                workspace_app(workspace)
+                if workspace and settings.CLOUD_AGENT_FLY_ORG
+                else settings.CLOUD_AGENT_FLY_APP
+            )
         host.resource["image_id"] = host.artifact
 
     def bind_recovery(self, host):
@@ -156,6 +185,19 @@ class FlyRuntimeProvider:
                 raise
 
     async def _ensure_app(self, resource):
+        if shared_dedicated_network(resource):
+            app = resource["app"]
+            try:
+                row = await self._request(resource, "GET", "")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    raise WorkerDisconnected(
+                        "Project host Fly Workspace app is not ready yet; retry"
+                    ) from exc
+                raise
+            if row.get("network") != app:
+                raise PermissionError("Fly Workspace app is on another private network")
+            return
         if not dedicated(resource):
             return
         app = resource["app"]
@@ -190,6 +232,15 @@ class FlyRuntimeProvider:
         resource = host.resource
         # Only a machine alone on its private network may open the internet.
         internet = getattr(host, "internet_access", False) and dedicated(resource)
+        env = {"PUPPYONE_TASK_INTERNET": "open"} if internet else {}
+        features = getattr(host, "sandbox_features", ())
+        if features:
+            # fly-init.mjs starts in-machine services for the enabled Features.
+            env["PUPPYONE_SANDBOX_FEATURES"] = ",".join(features)
+        mount_env = getattr(host, "workspace_mount_env", None) or {}
+        for key, value in mount_env.items():
+            if key.startswith("PUPPYONE_") and key not in env and isinstance(value, str) and value:
+                env[key] = value
         machine = await self._request(
             resource,
             "POST",
@@ -200,13 +251,16 @@ class FlyRuntimeProvider:
                 "config": {
                     "image": host.artifact,
                     "metadata": self._metadata(resource),
-                    "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": 1024},
+                    "guest": {
+                        "cpu_kind": "shared",
+                        **getattr(host, "machine_guest", DEFAULT_GUEST),
+                    },
                     "mounts": [{"volume": volume["id"], "path": "/data"}],
                     "services": [],
                     "auto_destroy": False,
                     "restart": {"policy": "no"},
                     "init": {"exec": ["node", "/opt/puppyone-agent/fly-init.mjs"]},
-                    "env": {"PUPPYONE_TASK_INTERNET": "open"} if internet else {},
+                    "env": env,
                 },
             },
         )
@@ -270,7 +324,7 @@ class FlyRuntimeProvider:
             )
         except httpx.HTTPStatusError as exc:
             # The intent is persisted first, so a crash can precede the app.
-            if exc.response.status_code == 404 and dedicated(resource):
+            if exc.response.status_code == 404 and isolated_app(resource):
                 return []
             raise
         matching = [
@@ -369,12 +423,20 @@ class FlyRuntimeProvider:
             await self._delete(resource, "", params={"force": "true"})
             return
         metadata = self._metadata(resource)
-        rows = await self._request(
-            resource,
-            "GET",
-            "/machines",
-            params={"metadata." + key: value for key, value in metadata.items()},
-        )
+        try:
+            rows = await self._request(
+                resource,
+                "GET",
+                "/machines",
+                params={"metadata." + key: value for key, value in metadata.items()},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # The Fly app itself is already gone (for example, a Tier 2
+                # Project Host app was already force-deleted), so every machine
+                # and volume in it is already destroyed.
+                return
+            raise
         machines = {
             row["id"]
             for row in rows
@@ -387,7 +449,13 @@ class FlyRuntimeProvider:
                 resource, "/machines/" + quote(machine, safe=""), params={"force": "true"}
             )
         name = self._volume_name(resource["workbench_generation"])
-        for volume in await self._request(resource, "GET", "/volumes"):
+        try:
+            volumes = await self._request(resource, "GET", "/volumes")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return
+            raise
+        for volume in volumes:
             if volume.get("id") != resource.get("volume_id") and volume.get("name") != name:
                 continue
             if volume.get("state") in {"destroyed", "destroying", "pending_destroy"}:
@@ -478,17 +546,7 @@ class FlyRuntimeProvider:
             host.connection = await self.running_connection(host)
         host.connection.validate(host.resource)
         connection = host.connection
-        # Fly's started event is earlier than our firewall/mount initialization.
-        # Only this boot's root-written receipt admits a control process.
-        command = [
-            "sh",
-            "-c",
-            "boot=$(cat /proc/sys/kernel/random/boot_id); i=0; "
-            'until [ "$(cat /run/puppyone-fly-ready 2>/dev/null)" = "$boot" ]; do '
-            'i=$((i+1)); [ "$i" -lt 150 ] || exit 1; sleep 0.2; done; exec "$@"',
-            "fly-control",
-            *host.control_command(),
-        ]
+        command = _after_boot(host.control_command())
         if self._transport is not None:
             await self.close_channel(host)
             host.connection = connection
@@ -516,6 +574,44 @@ class FlyRuntimeProvider:
         if service != "files":
             raise ValueError("Unsupported workspace service")
         await self.open_channel(host)
+
+    async def open_stream(self, host, service):
+        if service not in STREAM_COMMANDS:
+            raise ValueError("Unsupported workspace stream")
+        if getattr(host, "connection", None) is None:
+            host.connection = await self.running_connection(host)
+        host.connection.validate(host.resource)
+        # Each stream owns its SSH channel and transport reference, apart from
+        # the control channel, so a viewer closing never touches file service.
+        transport = await acquire_transport(
+            _transport_app(host.resource),
+            settings.CLOUD_AGENT_FLY_TOKEN,
+            settings.CLOUD_AGENT_FLY_CLI,
+        )
+        try:
+            lease = await transport.ssh_connections().open(
+                host.resource,
+                host.connection.handle,
+                shlex.join(_after_boot(STREAM_COMMANDS[service])),
+                epoch=getattr(host, "compute_epoch", None),
+            )
+        except BaseException:
+            transport.release()
+            raise
+        process = lease.process
+
+        async def close():
+            try:
+                process.stdin.write_eof()
+                process.close()
+                with suppress(Exception):
+                    async with asyncio.timeout(5):
+                        await process.wait_closed()
+            finally:
+                lease.release()
+                transport.release()
+
+        return RuntimeStream(process.stdout, process.stdin, close)
 
     async def send(self, host, data, *, timeout):
         host.process.stdin.write(data.encode())

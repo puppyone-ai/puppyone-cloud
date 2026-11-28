@@ -119,10 +119,7 @@ def assert_native_product_reads(app, pg, project, commit, format):
         )
         == sequence
     )
-    assert (
-        pg.value(f"SELECT count(*) FROM public.version_commits WHERE project_id={literal(project)}")
-        == "0"
-    )
+    assert pg.value("SELECT to_regclass('public.version_commits') IS NULL") == "t"
 
 
 @pytest.mark.parametrize("format", ["sha1", "sha256"])

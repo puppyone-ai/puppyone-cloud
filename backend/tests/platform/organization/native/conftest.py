@@ -49,5 +49,6 @@ def database():
         sql(f"BEGIN; INSERT INTO projects(id,name,org_id,created_by,lifecycle_status) VALUES('{personal_project}','Private before expansion','{personal}','{owner}','ready');"
             f"INSERT INTO project_members(project_id,org_id,user_id,role) VALUES('{personal_project}','{personal}','{owner}','admin'); COMMIT;")
         sql((ROOT / "supabase/migrations/20261109140000_expand_unified_spaces.sql").read_text())
+        sql((ROOT / "supabase/migrations/20261128010000_expand_restrict_viewer_project_create.sql").read_text())
         yield SimpleNamespace(sql=sql, url=cluster["url"], owner=owner, colleague=colleague, team=team, project=project,
                               personal=personal, personal_project=personal_project, before=before)

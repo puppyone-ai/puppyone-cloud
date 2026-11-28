@@ -18,9 +18,30 @@ class GrantService:
         await run_blocking(
             self.authorization.authorize, project, user, ProjectAction.CREDENTIAL_MANAGE
         )
-        return await run_blocking(
+        result = await run_blocking(
             self.repository.command, action, user, project_id=project, **payload
         )
+        if action == "grant_state" and payload.get("state") == "revoked" and isinstance(result, dict):
+            await self._revoke_host_export_if_needed(result.get("workbench_id"))
+        return result
+
+    async def _revoke_host_export_if_needed(self, workbench_id):
+        if not workbench_id:
+            return
+        try:
+            from .composition import build_workbench_service
+
+            workspaces = build_workbench_service()
+            row = await run_blocking(workspaces.repository.get, workbench_id)
+            if (
+                isinstance(row, dict)
+                and row.get("collaboration_mode") == "fly_host_export"
+                and row.get("host_workbench_id")
+            ):
+                await workspaces.lifecycle.revoke_host_export_agent(row)
+        except Exception:
+            # Best-effort immediate tunnel revocation; DB grant revocation already fences shells.
+            return
 
     async def invite(self, user, project, request):
         values = request.model_dump(mode="json", exclude={"secret"})

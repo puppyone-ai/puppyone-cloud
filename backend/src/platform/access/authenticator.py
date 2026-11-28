@@ -261,8 +261,8 @@ def get_version_auth(
     CLI / daemon installs that don't send X-Puppy-Client continue to
     work unchanged. The "Pause" toggle in the access-page UI becomes a
     hard gate progressively as clients roll out the header — for the
-    in-app agent path the same enforcement happens inside the agent
-    chat router (see src/platform/agent/chat/...).
+    in-app agent path the same enforcement happens at Cloud Agent run
+    admission (see src/platform/agent/runtime/control/admission.py).
     """
     if not credentials:
         raise HTTPException(status_code=401, detail="Missing Authorization header")

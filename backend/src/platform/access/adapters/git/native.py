@@ -14,6 +14,7 @@ from src.platform.access.adapters.git.native_repository import (
     NativeGitRepository,
     PublicationIndeterminateError,
 )
+from src.platform.repository_policy import WriteChannel, is_write_allowed
 from src.version_engine.read.repository_snapshot import repository_snapshot
 from src.version_engine.storage.git_pack_limits import (
     MAX_RECEIVE_COMMAND_BYTES,
@@ -40,8 +41,13 @@ class NativeGitEndpoint:
 
     def receive(self, path, *, initial_attempt=None, max_pack_bytes=None):
         try:
-            return self.repository.receive(self.grant, path, initial_attempt=initial_attempt,
-                                           max_pack_bytes=max_pack_bytes)
+            return self.repository.receive(
+                self.grant,
+                path,
+                channel=WriteChannel.GIT_PUSH,
+                initial_attempt=initial_attempt,
+                max_pack_bytes=max_pack_bytes,
+            )
         except PublicationIndeterminateError as exc:
             causes = []
             error = exc
@@ -67,11 +73,12 @@ class NativeGitEndpoint:
             if snapshot.roots:
                 service.verifier.verify(snapshot.roots, progress=snapshot.check_live)
             revision = snapshot.revision(allow_absent=True)
-            writable = True
-            try:
-                admitted_actor(self.grant, service.project_id, write=True)
-            except PermissionError:
-                writable = False
+            writable = is_write_allowed(WriteChannel.GIT_PUSH)
+            if writable:
+                try:
+                    admitted_actor(self.grant, service.project_id, write=True)
+                except PermissionError:
+                    writable = False
             wire = snapshot.to_wire()
             empty = revision.commit_oid is None
             return {

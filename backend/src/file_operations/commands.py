@@ -106,13 +106,17 @@ class VersionWriteCommandService:
         return content
 
     async def native_operation(self, project_id: str, grant, *, operation: str,
-                               arguments: dict, request_key: str, base: dict, byte_paths: dict | None = None):
+                               arguments: dict, request_key: str, base: dict,
+                               byte_paths: dict | None = None,
+                               source_channel: str = "papi"):
+        from src.platform.repository_policy import channel_from_source
+        from src.version_engine.write_engine.errors import NativeRevisionConflictError
+
         from .native_commands import (
             apply_byte_paths,
             compile_native_command,
             response_paths,
         )
-        from src.version_engine.write_engine.errors import NativeRevisionConflictError
 
         arguments = apply_byte_paths(arguments, byte_paths)
         supplied = arguments.get("base_commit_id")
@@ -120,7 +124,8 @@ class VersionWriteCommandService:
             raise NativeRevisionConflictError("Product base and native starting revision differ")
         digest, splice, response = compile_native_command(self, operation, arguments)
         result = await self._ops.apply_native_command(
-            project_id, grant, request_key=request_key, base=base, input_sha256=digest,
+            project_id, grant, channel=channel_from_source(source_channel),
+            request_key=request_key, base=base, input_sha256=digest,
             splice=splice, message=arguments.get("message") or operation,
         )
         if result["status"] != "committed":

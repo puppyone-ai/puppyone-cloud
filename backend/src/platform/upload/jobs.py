@@ -524,7 +524,9 @@ async def finalize_upload_to_version(
         raise
 
     except Exception as e:
-        err = f"Finalize failed: {e}"
+        from src.platform.repository_policy import RepositoryWriteBlockedError
+
+        err = e.message if isinstance(e, RepositoryWriteBlockedError) else f"Finalize failed: {e}"
         logger.error(f"finalize_upload_to_version failed task_id={task_id}: {e}", exc_info=True)
         task.mark_failed(err)
         task.metadata["error_stage"] = "finalize"
@@ -536,6 +538,8 @@ async def finalize_upload_to_version(
         state.progress = 0
         state.updated_at = datetime.now(UTC)
         await state_repo.set_terminal(state)
+        if isinstance(e, RepositoryWriteBlockedError):
+            raise
         return {"ok": False, "stage": "finalize", "error": err}
 
 
@@ -548,6 +552,8 @@ async def etl_finalize_upload_job(ctx: dict, task_id: str | int) -> dict:
     don't have to remember to start the worker. Kept registered for
     when we add a "huge file async path" flag.
     """
+    from src.platform.repository_policy import RepositoryWriteBlockedError
+
     try:
         return await finalize_upload_to_version(
             task_id=task_id,
@@ -555,6 +561,8 @@ async def etl_finalize_upload_job(ctx: dict, task_id: str | int) -> dict:
             s3=ctx["s3_service"],
             state_repo=ctx["state_repo"],
         )
+    except RepositoryWriteBlockedError as exc:
+        return {"ok": False, "stage": "finalize", "error": exc.message}
     except asyncio.CancelledError:
         # finalize_upload_to_version already recorded the timeout state.
         # Convert the re-raise into a structured failure dict so ARQ
@@ -784,9 +792,11 @@ async def finalize_uploads_to_version_batch(
             source_channel="upload",
         )
     except Exception as e:
+        from src.platform.repository_policy import RepositoryWriteBlockedError
+
         # Whole-batch push failure → mark every survivor FAILED.
         # The durable source uploads remain available for an explicit retry.
-        err = f"Bulk push failed: {e}"
+        err = e.message if isinstance(e, RepositoryWriteBlockedError) else f"Bulk push failed: {e}"
         logger.error(
             f"finalize_uploads_to_version_batch: bulk push failed: {e}",
             exc_info=True,
@@ -806,6 +816,8 @@ async def finalize_uploads_to_version_batch(
             await state_repo.set_terminal(state)
 
             results.append({"ok": False, "task_id": str(task.task_id), "error": err})
+        if isinstance(e, RepositoryWriteBlockedError):
+            raise
         return results
 
     # Phase 4: mark all survivors COMPLETED.

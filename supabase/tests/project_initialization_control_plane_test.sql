@@ -81,7 +81,7 @@ INSERT INTO public.org_members (id, org_id, user_id, role) VALUES
 
 COMMIT;
 
-SELECT plan(79);
+SELECT plan(77);
 
 CREATE TEMP TABLE issue039_results (
     lane text NOT NULL,
@@ -497,11 +497,11 @@ SELECT hasnt_column(
     'credential operation records never persist plaintext'
 );
 
--- Abandon is fail-closed: both roots, every committed write, Scope state,
--- membership, and every other cascading Project resource must still be the
--- exact empty/bootstrap state before any compensating mutation is applied.
+-- Abandon is fail-closed: the root, membership, and every other cascading
+-- Project resource must still be the exact empty/bootstrap state before any
+-- compensating mutation is applied.
 UPDATE public.projects
-SET mut_root_hash = repeat('1', 40)
+SET version_root_hash = repeat('1', 40)
 WHERE org_id = 'issue039-same-key-org';
 SELECT is(
     (
@@ -514,59 +514,11 @@ SELECT is(
         )->>'outcome'
     ),
     'not_abandonable',
-    'a non-empty legacy/canonical root prevents initialization Abandon'
+    'a non-empty root prevents initialization Abandon'
 );
 UPDATE public.projects
 SET version_root_hash = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 WHERE org_id = 'issue039-same-key-org';
-
-INSERT INTO public.version_transactions (
-    project_id, scope_path, source_channel, intent_type, status
-) VALUES (
-    (SELECT project_id FROM public.project_create_operations
-     WHERE operation_key = '11111111-1111-4111-8111-111111111111'),
-    'docs', 'api', 'operation', 'committed'
-);
-SELECT is(
-    (
-        public.abandon_project_initialization(
-            (SELECT project_id FROM public.project_create_operations
-             WHERE operation_key = '11111111-1111-4111-8111-111111111111'),
-            '11111111-1111-4111-8111-111111111111',
-            '00000000-0000-4000-8000-000000039001'::uuid,
-            1800
-        )->>'outcome'
-    ),
-    'not_abandonable',
-    'a committed transaction from any channel or Scope prevents Abandon'
-);
-DELETE FROM public.version_transactions
-WHERE project_id = (SELECT project_id FROM public.project_create_operations
-                     WHERE operation_key = '11111111-1111-4111-8111-111111111111');
-
-INSERT INTO public.version_scope_state (
-    project_id, scope_path, scope_hash, head_commit_id
-) VALUES (
-    (SELECT project_id FROM public.project_create_operations
-     WHERE operation_key = '11111111-1111-4111-8111-111111111111'),
-    'docs', repeat('2', 40), repeat('3', 40)
-);
-SELECT is(
-    (
-        public.abandon_project_initialization(
-            (SELECT project_id FROM public.project_create_operations
-             WHERE operation_key = '11111111-1111-4111-8111-111111111111'),
-            '11111111-1111-4111-8111-111111111111',
-            '00000000-0000-4000-8000-000000039001'::uuid,
-            1800
-        )->>'outcome'
-    ),
-    'not_abandonable',
-    'non-empty repository Scope state prevents Abandon'
-);
-DELETE FROM public.version_scope_state
-WHERE project_id = (SELECT project_id FROM public.project_create_operations
-                     WHERE operation_key = '11111111-1111-4111-8111-111111111111');
 
 INSERT INTO public.project_members (
     id, org_id, project_id, user_id, role, granted_by
@@ -1031,13 +983,12 @@ SELECT ok(
 BEGIN;
 INSERT INTO public.projects (
     id, name, org_id, created_by, share_token, lifecycle_status,
-    version_root_hash, mut_root_hash
+    version_root_hash
 ) VALUES (
     'issue039-delete-race-project', 'Delete authorization race',
     'issue039-same-key-org',
     '00000000-0000-4000-8000-000000039001'::uuid,
     'issue039-delete-race-share', 'ready',
-    '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
     '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 );
 INSERT INTO public.project_members (

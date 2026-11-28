@@ -1,0 +1,11 @@
+api_version: 1
+id: 20261114_retire_unused_tables
+description: Keep retired Search Tool task owners for Project deletion and prove unused tables have no dependents before their Contract
+kind: sql
+entrypoint: run.sql
+verify: verify.sql
+requires_schema:
+  - "20260926000000"
+required_env: []
+timeout_seconds: 300
+legacy: false

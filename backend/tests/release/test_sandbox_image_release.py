@@ -205,3 +205,29 @@ def test_main_pins_configured_services(monkeypatch, tmp_path, capsys):
         ("worker", f"registry.fly.io/app@{DIGEST}"),
     ]
     assert "secret-token" not in json.dumps(report)
+
+
+def test_desktop_images_must_declare_their_profile_and_capabilities():
+    desktop = {
+        **MANIFEST,
+        "profile": "desktop",
+        "capabilities": [*MANIFEST["capabilities"], "desktop", "screen_stream", "browser"],
+    }
+    assert release.check_manifest(desktop, release.expected_contract(), "desktop") == BUILD_ID
+    with pytest.raises(release.ReleaseError, match="another sandbox profile"):
+        release.check_manifest(desktop, release.expected_contract())
+    lacking = {**desktop, "capabilities": MANIFEST["capabilities"]}
+    with pytest.raises(release.ReleaseError, match="profile capabilities"):
+        release.check_manifest(lacking, release.expected_contract(), "desktop")
+
+
+def test_desktop_images_pin_their_own_variable():
+    opener_calls = []
+
+    def opener(request, timeout):
+        opener_calls.append(json.loads(request.data))
+        return io.BytesIO(json.dumps({"data": {"variables": {}}}).encode())
+
+    railway = release.Railway("t", "p", "e", opener=opener, variable="CLOUD_AGENT_FLY_DESKTOP_IMAGE")
+    railway.pin("service", "ref")
+    assert opener_calls[0]["variables"]["i"]["variables"] == {"CLOUD_AGENT_FLY_DESKTOP_IMAGE": "ref"}

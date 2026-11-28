@@ -2,6 +2,7 @@
 import { fork } from 'node:child_process';
 import { unlink } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { relockHead } from './workbench-head-lock.mjs';
 
 export function superviseFiles() {
   let child, restart;
@@ -51,7 +52,7 @@ export function superviseFiles() {
         });
       } catch (error) { fail(error); }
     };
-    void start();
+    relockHead().then(start, fail);
   });
 }
 
