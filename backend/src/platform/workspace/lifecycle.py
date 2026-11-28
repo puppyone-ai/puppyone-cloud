@@ -332,7 +332,18 @@ class WorkbenchLifecycle:
                 with suppress(Exception):
                     await run_blocking(self.repository.progress, current, "failed", code, retryable)
             logger.exception(
-                "workbench_start_failed", extra={"workbench_id": row["id"], "code": code}
+                "workbench_start_failed",
+                extra={
+                    "workbench_open": {
+                        "stage": "start",
+                        "project_id": row.get("project_id"),
+                        "workbench_id": row["id"],
+                        "operation_id": row.get("operation_id"),
+                        "code": code,
+                        "retryable": retryable,
+                        "error_type": type(exc).__name__,
+                    }
+                },
             )
         finally:
             operation.cancel()

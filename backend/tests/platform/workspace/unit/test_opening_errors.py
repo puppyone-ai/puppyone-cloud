@@ -15,12 +15,14 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from loguru import logger as loguru_logger
 from postgrest.exceptions import APIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.exception_handler import http_exception_handler
 from src.platform.access.adapters.api.workbench_router import (
     get_workbench_service,
+    public_workbench,
     router,
     workspace_error_handler,
 )
@@ -29,6 +31,7 @@ from src.platform.sandbox import WorkerDisconnected, WorkerLost, WorkspaceDiskLo
 from src.platform.workspace.errors import WorkspaceError, opening_failure
 from src.platform.workspace.execution.runtime_contract import WorkspaceUnavailable
 from src.platform.workspace.lifecycle import WorkbenchLifecycle
+from src.utils.logging_setup import InterceptHandler
 
 
 def sql_refusal(code, message):
@@ -285,3 +288,100 @@ async def test_a_failed_handoff_leaves_the_opening_for_the_next_request_to_finis
     assert row["state"] == "running" and root == {"entries": []}
     service.repository.finish_open.assert_called_once()
     service.repository.progress.assert_not_called()
+
+
+def test_workbench_open_report_survives_loguru_intercept_bridge():
+    captured = []
+    sink_id = loguru_logger.add(lambda message: captured.append(message.record))
+    router_logger = logging.getLogger("src.platform.access.adapters.api.workbench_router")
+    saved = (router_logger.handlers[:], router_logger.level, router_logger.propagate)
+    try:
+        router_logger.handlers = [InterceptHandler()]
+        router_logger.setLevel(logging.WARNING)
+        router_logger.propagate = False
+        response = call("open", WorkspaceUnavailable("workbench_connection_unavailable", retryable=True))
+    finally:
+        router_logger.handlers, router_logger.propagate = saved[0], saved[2]
+        router_logger.setLevel(saved[1])
+        loguru_logger.remove(sink_id)
+
+    assert response.status_code == 503
+    records = [r for r in captured if r["message"] == "workbench_open_failed"]
+    assert len(records) == 1
+    report = records[0]["extra"].get("workbench_open")
+    assert report is not None
+    assert report["stage"] == "open"
+    assert report["project_id"] == "project"
+    assert report["code"] == "workbench_connection_unavailable"
+    assert report["status"] == 503
+    assert report["retryable"] is True
+    assert report["error_type"] == "WorkspaceUnavailable"
+    assert "request_id" in report
+
+
+@pytest.mark.asyncio
+async def test_background_start_failure_logs_allowlisted_workbench_open_report():
+    owner, service, row = lifecycle_with(Mock())
+    row["open_requested"] = True
+    row["operation_id"] = "op-start-failure-1"
+    service.repository.begin_open.return_value = {
+        "acquired": True,
+        "workbench": row,
+        "facts": {},
+    }
+    service.repository.get.return_value = row
+    service.billing.detach_session = AsyncMock()
+    service.authorization.authorize_facts.side_effect = WorkspaceUnavailable(
+        "workbench_connection_unavailable", retryable=True
+    )
+
+    captured = []
+    sink_id = loguru_logger.add(lambda message: captured.append(message.record))
+    lifecycle_logger = logging.getLogger("src.platform.workspace.lifecycle")
+    saved = (lifecycle_logger.handlers[:], lifecycle_logger.level, lifecycle_logger.propagate)
+    try:
+        lifecycle_logger.handlers = [InterceptHandler()]
+        lifecycle_logger.setLevel(logging.ERROR)
+        lifecycle_logger.propagate = False
+        await owner.execute(row)
+    finally:
+        lifecycle_logger.handlers, lifecycle_logger.propagate = saved[0], saved[2]
+        lifecycle_logger.setLevel(saved[1])
+        loguru_logger.remove(sink_id)
+
+    records = [r for r in captured if r["message"] == "workbench_start_failed"]
+    assert len(records) == 1
+    assert records[0]["extra"].get("workbench_open") == {
+        "stage": "start",
+        "project_id": "project",
+        "workbench_id": "workspace",
+        "operation_id": "op-start-failure-1",
+        "code": "workbench_connection_unavailable",
+        "retryable": True,
+        "error_type": "WorkspaceUnavailable",
+    }
+    assert records[0]["exception"] is not None
+
+
+def test_public_workbench_exposes_operation_id_for_status_polling_correlation():
+    row = {
+        "id": "wb-1",
+        "generation": "gen-1",
+        "project_id": "proj-1",
+        "state": "paused",
+        "target_ref": "refs/heads/main",
+        "operation_id": "op-poll-123",
+        "open_requested": False,
+        "operation_phase": "failed",
+        "operation_error": "workbench_connection_unavailable",
+        "operation_retryable": True,
+    }
+    result = public_workbench(row)
+    assert result["operation"] == {
+        "id": "op-poll-123",
+        "pending": False,
+        "phase": "failed",
+        "deadline": None,
+        "error": "workbench_connection_unavailable",
+        "retryable": True,
+    }

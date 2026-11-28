@@ -42,6 +42,7 @@ def public_workbench(row, *, collab_mode=None):
     return {
         **{key: row[key] for key in ("id", "generation", "project_id", "state", "target_ref")},
         "operation": {
+            "id": row.get("operation_id"),
             "pending": row.get("open_requested", False) and not expired,
             "phase": "failed" if expired else row.get("operation_phase"),
             "deadline": row.get("open_deadline"),
