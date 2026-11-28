@@ -24,7 +24,6 @@ import { GetStartedPanel } from './components/GetStartedPanel';
 import { ApChip } from './components/ApChip';
 import { ProjectPageLoadingShell } from '@/components/loading';
 import { ProjectGitHealthBadge } from '@/components/ProjectGitHealthBadge';
-import { ProjectChatAppActivity } from '@/features/chat-apps/ProjectChatAppActivity';
 import { CountBadge } from '@/components/ui/CountBadge';
 
 // ConnectionsCanvas (the old xyflow wiring board) used to mount here.
@@ -458,7 +457,6 @@ export default function HomePage({
             * for scope-bounded runtime credentials.
             */}
           <ProjectGitHealthBadge projectId={projectId} />
-          <ProjectChatAppActivity projectId={projectId} />
           {/* ============================================================
               BAND 1 — HEADER.  Pixel-borrowed from the OLD GitHub-style
               page so users carry over their existing mental model:

@@ -2,7 +2,7 @@
 
 Intake deduplicates by platform message identity; leases and fences decide who
 may write; a chat is connected to one project; only managers change chats; and
-management actions appear in project activity without changing the old kinds.
+only the person who brought a chat in with its code is recorded as its owner there.
 """
 
 import pytest
@@ -157,14 +157,15 @@ def test_settings_change_and_are_validated(db):
         user,
         project_id=project_id,
         conversation_id=chat,
-        who_can_ask="project",
+        who_can_ask="anyone",
         daily_limit_units=None,
         display_name="  Launch  ",
     )
-    assert changed["who_can_ask"] == "project" and changed["daily_limit_units"] is None
+    assert changed["who_can_ask"] == "anyone" and changed["daily_limit_units"] is None
     assert changed["display_name"] == "Launch"
     for bad in [
         {"who_can_ask": "everyone"},
+        {"who_can_ask": "project"},
         {"display_name": "x" * 65},
         {"daily_limit_units": 0},
         {},
@@ -425,80 +426,68 @@ def test_slack_install_and_uninstall(db):
     assert db.sql("SELECT secret IS NULL FROM chat_app_connections WHERE external_id='T1'") == "t"
 
 
-def test_linking_an_identity_releases_the_held_question(db):
-    drain_inbox(db)
-    project_id, _, org, chat = allowed_chat(db, n=121, chat="-221")
-    mia = member(db, project_id, org, "editor")
-    db.gateway(
-        "receive",
-        platform="telegram",
-        message_key="-221:1",
-        via="message",
-        kind="question",
-        external_chat_id="-221",
-        asker_external_id="tg-mia",
-        asker_label="Mia",
+def test_a_denied_knock_leaves_nothing_behind_for_the_knocker(db):
+    # The manager's own chat: only the owner may ask.
+    project_id, user, _, own = allowed_chat(db, n=121, chat="-221")
+    # Someone else used a second code (a forwarded link); the manager says no.
+    _, other = knock_telegram(db, project_id, user, chat="dm-mallory", n=122)
+    db.human(
+        "decide",
+        user,
+        project_id=project_id,
+        conversation_id=other["conversation_id"],
+        decision="deny",
     )
-    row = db.gateway("claim_inbox")
-    db.gateway(
-        "finish_inbox",
-        id=row["id"],
-        fence=row["fence"],
-        state="held",
-        outcome="link_account",
-        conversation_id=chat,
-    )
-    db.gateway(
-        "identity_code",
-        platform="telegram",
-        scope="telegram",
-        external_user_id="tg-mia",
-        external_label="Mia",
-        conversation_id=chat,
-        code_hash=code(122),
-    )
-    assert db.gateway("claim_inbox") is None
-    # The page first says whose account this is; looking links nothing.
-    preview = db.human("identity_preview", mia, code_hash=code(122))
-    assert (preview["platform"], preview["name"], preview["chat"]) == (
-        "telegram",
-        "Mia",
-        "Design team",
-    )
-    assert db.gateway("claim_inbox") is None
-    db.human("link_identity", mia, code_hash=code(122))
-    assert db.gateway("claim_inbox")["id"] == row["id"]
     context = db.gateway(
-        "context", platform="telegram", external_chat_id="-221", asker_external_id="tg-mia"
+        "context",
+        platform="telegram",
+        external_chat_id="-221",
+        asker_external_id="tg-mallory",
+        external_thread_key="t1",
     )
-    assert context["asker_user_id"] == mia and context["asker_can_run"] is True
-    with pytest.raises(CommandError, match="chat_app_link_expired"):
-        db.human("link_identity", mia, code_hash=code(122))
-    with pytest.raises(CommandError, match="chat_app_link_expired"):
-        db.human("identity_preview", mia, code_hash=code(122))
+    assert context["conversation"]["owner_external_id"] == "tg-alex"
+    assert "asker_user_id" not in context
+    assert db.sql("SELECT count(*) FROM pg_class WHERE relname = 'chat_app_identities'") == "0"
 
 
-def test_activity_keeps_the_old_kinds_and_adds_chat_app(db):
-    project_id, user, _, chat = allowed_chat(db, n=131, chat="-231")
-    db.human("update", user, project_id=project_id, conversation_id=chat, enabled=False)
-    rows = db.json(
-        "SELECT jsonb_agg(jsonb_build_object('status',status,'phase',phase,'label',label) "
-        f"ORDER BY created_at) FROM context_activity_items WHERE project_id='{project_id}'"
+def test_take_over_forgets_the_old_owners_chat_account(db):
+    project_id, creator, org = project(db)
+    owner = member(db, project_id, org, "admin")
+    _, result = knock_telegram(db, project_id, owner, n=125, chat="-225")
+    chat = result["conversation_id"]
+    db.human("decide", owner, project_id=project_id, conversation_id=chat, decision="allow")
+    db.sql(f"UPDATE project_members SET role='viewer' WHERE user_id='{owner}'")
+    listed = db.human("list", creator, project_id=project_id)
+    assert listed["conversations"][0]["stopped_reason"] == "owner_left"
+    taken = db.human("take_over", creator, project_id=project_id, conversation_id=chat)
+    assert taken["owner_user_id"] == creator and taken["owner_known"] is False
+    context = db.gateway("context", platform="telegram", external_chat_id="-225")
+    assert context["conversation"]["owner_external_id"] is None
+
+
+def test_retention_keeps_recent_rows_and_drops_old_ones(db):
+    drain_inbox(db)
+    project_id, user, _, chat = allowed_chat(db, n=141, chat="-241")
+    for key in ("-241:old", "-241:new"):
+        receive(db, key, chat="-241")
+    drain_inbox(db)
+    db.sql(
+        "UPDATE chat_app_inbox SET finished_at = now() - interval '31 days' "
+        "WHERE message_key = '-241:old'"
     )
-    assert [r["status"] for r in rows] == ["added", "allowed", "updated"]
-    assert {r["phase"] for r in rows} == {"telegram"} and rows[0]["label"] == "Design team"
-    columns = db.sql(
-        "SELECT string_agg(column_name||':'||data_type, ',' ORDER BY ordinal_position) "
-        "FROM information_schema.columns WHERE table_name='context_activity_items'"
+    db.sql(
+        "UPDATE chat_app_link_codes SET expires_at = now() - interval '2 days' "
+        f"WHERE project_id = '{project_id}'"
     )
-    assert columns == (
-        "id:text,kind:text,project_id:text,created_by:uuid,label:text,status:text,phase:text,"
-        "progress:integer,message:text,error_message:text,result_path:text,result_commit_id:text,"
-        "created_at:timestamp with time zone,completed_at:timestamp with time zone"
+    db.gateway("scrub")
+    keys = db.sql(
+        "SELECT string_agg(message_key, ',' ORDER BY message_key) FROM chat_app_inbox "
+        "WHERE external_chat_id = '-241'"
     )
-    kinds = db.sql("SELECT pg_get_viewdef('context_activity_items'::regclass)")
-    for kind in ("'upload'", "'import'", "'synchronize_run'", "'chat_app'"):
-        assert kind in kinds
+    assert keys == "-241:new"
+    assert db.sql(f"SELECT count(*) FROM chat_app_link_codes WHERE project_id='{project_id}'") == "0"
+    # The chat itself stays and still lists.
+    assert db.human("list", user, project_id=project_id)["conversations"][0]["id"] == chat
 
 
 def test_clients_have_no_direct_access(db):
@@ -515,7 +504,7 @@ def test_clients_have_no_direct_access(db):
     )
 
 
-def test_a_slack_invite_says_why_it_was_not_matched(db):
+def test_a_slack_invite_knocks_only_for_the_installer(db):
     project_id, alex, org = project(db)
     mia = member(db, project_id, org, "admin")
     db.human(
@@ -546,9 +535,49 @@ def test_a_slack_invite_says_why_it_was_not_matched(db):
             owner_external_id=by,
         )
 
-    # Alex is linked but nobody is waiting in PuppyOne.
+    # Alex installed it but is not waiting in PuppyOne.
     assert invite("U-alex2", "C2") == {"knocked": False, "reason": "no_wait"}
-    # Mia waits in PuppyOne, but her Slack account is not linked yet.
+    db.human(
+        "start_link",
+        alex,
+        project_id=project_id,
+        platform="slack",
+        purpose="slack_wait",
+        connection_id=installed["id"],
+        code_hash=code(932),
+    )
+    # Someone else's invite during Alex's wait is not matched to it.
+    assert invite("U-mia2", "C3") == {"knocked": False, "reason": "not_installer"}
+    # Mia did not install it, so she cannot wait in it: she installs it again.
+    assert db.human("list", mia, project_id=project_id)["connections"][0]["linked_me"] is False
+    with pytest.raises(CommandError, match="chat_app_connection_not_ready"):
+        db.human(
+            "start_link",
+            mia,
+            project_id=project_id,
+            platform="slack",
+            purpose="slack_wait",
+            connection_id=installed["id"],
+            code_hash=code(933),
+        )
+    assert invite("U-alex2", "C3")["knocked"] is True
+    db.human(
+        "start_link",
+        mia,
+        project_id=project_id,
+        platform="slack",
+        purpose="slack_install",
+        code_hash=code(934),
+    )
+    db.gateway(
+        "install_slack",
+        code_hash=code(934),
+        external_id="T2",
+        display_name="Acme",
+        secret="ciphertext-placeholder",
+        installer_external_id="U-mia2",
+    )
+    assert db.human("list", mia, project_id=project_id)["connections"][0]["linked_me"] is True
     db.human(
         "start_link",
         mia,
@@ -556,16 +585,49 @@ def test_a_slack_invite_says_why_it_was_not_matched(db):
         platform="slack",
         purpose="slack_wait",
         connection_id=installed["id"],
-        code_hash=code(932),
+        code_hash=code(935),
     )
-    assert invite("U-mia2", "C3") == {"knocked": False, "reason": "unlinked"}
+    assert invite("U-mia2", "C4")["knocked"] is True
+
+
+def test_a_wecom_bot_that_failed_elsewhere_can_be_connected_here(db):
+    first, first_user, _ = project(db)
+    db.human(
+        "connect",
+        first_user,
+        project_id=first,
+        platform="wecom",
+        external_id="bot-moved",
+        secret="wrong",
+    )
+    held = None
+    while (claimed := db.gateway("claim_connection", worker="g")) is not None:
+        if claimed["external_id"] == "bot-moved":
+            held = claimed
+    second, second_user, _ = project(db)
+    # While the first space is still checking it (or using it), it stays there.
+    with pytest.raises(CommandError, match="chat_app_connection_taken"):
+        db.human(
+            "connect",
+            second_user,
+            project_id=second,
+            platform="wecom",
+            external_id="bot-moved",
+            secret="right",
+        )
     db.gateway(
-        "identity_code",
-        platform="slack",
-        scope="T2",
-        external_user_id="U-mia2",
-        external_label="Mia",
-        code_hash=code(933),
+        "mark_connection", worker="g", id=held["id"], fence=held["fence"], status="failed"
     )
-    db.human("link_identity", mia, code_hash=code(933))
-    assert invite("U-mia2", "C3")["knocked"] is True
+    moved = db.human(
+        "connect",
+        second_user,
+        project_id=second,
+        platform="wecom",
+        external_id="bot-moved",
+        secret="right",
+    )
+    assert moved["status"] == "pending" and moved["linked_me"] is True
+    assert db.human("list", first_user, project_id=first)["connections"] == []
+    # The old holder's lease is gone with its fence.
+    with pytest.raises(CommandError, match="chat_app_stale_fence"):
+        db.gateway("heartbeat", worker="g", id=held["id"], fence=held["fence"])

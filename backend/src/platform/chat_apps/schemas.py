@@ -29,11 +29,8 @@ class Decision(Strict):
 
 class ChangeChat(Strict):
     enabled: bool | None = None
-    who_can_ask: Literal["owner", "project", "anyone"] | None = None
+    who_can_ask: Literal["owner", "anyone"] | None = None
     #: Minutes per UTC day; null = no limit. Absent = unchanged.
     daily_limit_units: int | None = Field(default=None, gt=0, le=24 * 60)
     display_name: str | None = Field(default=None, min_length=1, max_length=64)
 
-
-class LinkIdentity(Strict):
-    code: str = Field(min_length=16, max_length=128, repr=False)

@@ -47,8 +47,6 @@ def chat(**changes):
 def situation(**changes):
     return {
         "conversation": chat(),
-        "asker_user_id": None,
-        "asker_can_run": None,
         "used_today_units": 18,
         "asked_last_hour": 1,
         "notified_last_hour": [],
@@ -89,24 +87,6 @@ def test_checks_stop_at_the_first_that_fails(changes, context, expected):
     assert (decision.action, decision.notice) == expected
 
 
-def test_people_in_the_project_link_once_then_need_agent_run():
-    project = chat(who_can_ask="project")
-    unlinked = decide(event(asker_external_id="tg-mia"), situation(conversation=project), NOW)
-    assert (unlinked.action, unlinked.notice) == ("hold", "link_account")
-    outsider = decide(
-        event(asker_external_id="tg-mia"),
-        situation(conversation=project, asker_user_id="u2", asker_can_run=False),
-        NOW,
-    )
-    assert outsider.notice == "not_in_project"
-    member = decide(
-        event(asker_external_id="tg-mia"),
-        situation(conversation=project, asker_user_id="u2", asker_can_run=True),
-        NOW,
-    )
-    assert member.action == "submit"
-
-
 def test_anyone_can_ask_but_strangers_never_can():
     anyone = situation(conversation=chat(who_can_ask="anyone"))
     assert decide(event(asker_external_id="x"), anyone, NOW).action == "submit"
@@ -114,9 +94,14 @@ def test_anyone_can_ask_but_strangers_never_can():
     assert decide(stranger, anyone, NOW).notice == "outsider"
 
 
-def test_the_owner_is_also_recognised_by_linked_account():
-    context = situation(conversation=chat(owner_external_id=None), asker_user_id=OWNER)
-    assert decide(event(), context, NOW).action == "submit"
+def test_an_owner_not_known_in_the_chat_lets_nobody_ask():
+    # After a take over the new owner's chat account is unknown: only "anyone"
+    # chats keep answering until the new owner brings the chat in again.
+    unknown = situation(conversation=chat(owner_external_id=None))
+    assert decide(event(), unknown, NOW).notice == "only_owner"
+    assert decide(event(asker_external_id=None), unknown, NOW).notice == "only_owner"
+    anyone = situation(conversation=chat(owner_external_id=None, who_can_ask="anyone"))
+    assert decide(event(), anyone, NOW).action == "submit"
 
 
 def test_paused_limit_and_who_can_ask_are_said_once_an_hour():

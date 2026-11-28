@@ -224,7 +224,7 @@ class Gateway:
             await self._say(platform, target, notice_text(decision.notice, **names))
             await self._finish(row, "done", decision.outcome, conversation_id=chat)
         elif action == "knock":
-            await self._knock(row, decision, payload, situation)
+            await self._knock(row, decision, payload)
         elif action == "joined":
             await self._finish(row, "done", decision.outcome)
         elif action == "removed_there":
@@ -250,9 +250,6 @@ class Gateway:
             target = await self._target(conversation, row)
             await self._say(platform, target, notice_text(decision.notice, **names))
             await self._finish(row, "done", decision.outcome, conversation_id=chat)
-        elif action == "hold":
-            await self._ask_to_link(platform, row, conversation, situation["identity_scope"])
-            await self._finish(row, "held", decision.outcome, conversation_id=chat)
         elif action == "wait":
             thread = await self._db("thread", conversation_id=chat, external_thread_key=key)
             sent = await self._say(
@@ -302,26 +299,7 @@ class Gateway:
     def _sent_json(sent: Sent | None) -> dict | None:
         return None if sent is None else {"message_id": sent.message_id, "ref": sent.ref}
 
-    async def _ask_to_link(self, platform, row, conversation, scope) -> None:
-        """Hold this event and post a Link account button; linking releases it."""
-        raw = codes.link_code()
-        await self._db(
-            "identity_code",
-            platform=row["platform"],
-            scope=scope,
-            external_user_id=row["asker_external_id"],
-            external_label=row.get("asker_label"),
-            conversation_id=(conversation or {}).get("id"),
-            code_hash=codes.code_hash(raw),
-        )
-        await self._say(
-            platform,
-            await self._target(conversation, row),
-            notice_text("link_account"),
-            button=("Link account", f"{self.web_origin}/chat-apps/link?code={raw}"),
-        )
-
-    async def _knock(self, row, decision, payload, situation=None) -> None:
+    async def _knock(self, row, decision, payload) -> None:
         code = decision.values.get("code")
         owner = decision.values.get("owner") or row.get("asker_external_id")
         name = chat_name(row["platform"], payload, row.get("asker_label"))
@@ -350,14 +328,9 @@ class Gateway:
                     await self._target(None, row),
                     notice_text(knock_refusal(row["platform"], result)),
                 )
-            elif reason == "unlinked" and owner:
-                # Slack: whoever invited it has not linked their account yet. Linking
-                # releases this event and the invite is matched again.
-                scope = (situation or {}).get("identity_scope")
-                await self._ask_to_link(platform, {**row, "asker_external_id": owner}, None, scope)
-                await self._finish(row, "held", "link_account")
-                return
-            elif reason == "no_wait":
+            elif reason in ("no_wait", "not_installer"):
+                # Slack: the invite came while nobody waited for it in PuppyOne, or
+                # from someone other than the person who installed it there.
                 await self._say(
                     platform, await self._target(None, row), notice_text("not_connected")
                 )
@@ -385,7 +358,6 @@ class Gateway:
             info.get("asker_external_id"),
             info.get("owner_external_id"),
         )
-        allowed = allowed or info.get("clicker_user_id") == info["owner_user_id"]
         if not allowed:
             text = stop_refusal(
                 info.get("asker_label") or "the asker", info.get("owner_name") or "the owner"

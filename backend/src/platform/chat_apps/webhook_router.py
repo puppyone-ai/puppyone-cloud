@@ -1,7 +1,7 @@
 """Platform callbacks: verify, keep only what is addressed to the agent, store, 200.
 
 No Agent work happens here. A redelivered event hits the inbox's unique key
-and is acknowledged again. Also the signed-in "Link account" call.
+and is acknowledged again.
 """
 
 from __future__ import annotations
@@ -14,15 +14,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.config import settings
 from src.infra.execution.runner import run_blocking
-from src.platform.auth.dependencies import get_current_user
 from src.platform.chat_apps import credentials
 from src.platform.chat_apps.dependencies import (
     get_chat_app_repository,
-    get_chat_app_service,
     get_platforms,
 )
 from src.platform.chat_apps.ports import Inbound, NotVerified
-from src.platform.chat_apps.schemas import LinkIdentity
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat-apps", tags=["chat-apps"])
@@ -182,16 +179,3 @@ def _failed(request: Request) -> HTMLResponse:
     copy = _copy(request)
     return _page(copy["failed"], copy["failed_line"], copy["close"], ok=False, status=400)
 
-
-@router.post("/identities/preview")
-def preview_identity(
-    body: LinkIdentity, user=Depends(get_current_user), service=Depends(get_chat_app_service)
-):
-    return service.preview_identity(user.user_id, body.code)
-
-
-@router.post("/identities")
-def link_identity(
-    body: LinkIdentity, user=Depends(get_current_user), service=Depends(get_chat_app_service)
-):
-    return service.link_identity(user.user_id, body.code)

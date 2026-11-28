@@ -13,7 +13,7 @@ from src.platform.auth.dependencies import get_current_user
 from src.platform.auth.models import CurrentUser
 from src.platform.query_contract import strict_query
 
-ActivityKind = Literal["upload", "import", "synchronize_run", "chat_app"]
+ActivityKind = Literal["upload", "import", "synchronize_run"]
 
 
 class ContextActivityItem(ActivityItemResponse):

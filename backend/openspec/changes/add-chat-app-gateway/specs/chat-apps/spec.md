@@ -50,17 +50,22 @@ allowed in PuppyOne and that is currently enabled.
   the manager allows it
 
 ### Requirement: The asker is checked against the chat's setting
-The system SHALL apply "who can ask" (owner, project, anyone) to every
-message before submitting a Run.
+The system SHALL apply "who can ask" (owner, anyone) to every message
+before submitting a Run. The owner is the chat account that brought the chat
+in with its code; nothing about a knocking chat is recorded until a manager
+allows it.
 
 #### Scenario: Only the owner may ask
 - **WHEN** the setting is owner and another person asks
 - **THEN** no Run is created and the person is told who can ask
 
-#### Scenario: Project people may ask
-- **WHEN** the setting is project and the asker's linked PuppyOne account
-  lacks AGENT_RUN on the project
-- **THEN** no Run is created
+#### Scenario: A denied knock leaves nothing behind
+- **WHEN** a manager denies a chat that knocked with a forwarded code
+- **THEN** the person who knocked cannot ask in any other chat of the project
+
+#### Scenario: After a take over
+- **WHEN** a manager takes over a chat whose owner left
+- **THEN** the old owner's chat account can no longer ask
 
 ### Requirement: Runs execute as the responsible person
 The system SHALL submit every chat Run as the chat's owner through
@@ -151,13 +156,17 @@ carries an unexpired, unused code shown in PuppyOne.
   the code
 - **THEN** no conversation is created and nothing is posted
 
-### Requirement: Management actions appear in project activity
-The system SHALL record adding, allowing, denying, updating, taking over
-and removing a chat as project activity, without message text.
+### Requirement: A failed bot does not lock out other spaces
+The system SHALL let another space connect a WeCom bot whose connection
+failed, was displaced or was revoked, and SHALL end the old space's chats on it.
 
-#### Scenario: A chat is allowed
-- **WHEN** a manager allows a chat
-- **THEN** the project's activity list shows one chat_app item for it
+#### Scenario: The first space typed a wrong secret
+- **WHEN** a WeCom bot failed its check in one space and another space connects it
+- **THEN** the second space holds the bot and the first space's chats on it end
+
+### Requirement: Chat data does not grow without bound
+The system SHALL delete finished inbox rows and chat messages after 30 days
+and spent one-time codes after a day.
 
 ### Requirement: Open in PuppyOne reveals nothing to outsiders
 The system SHALL open the linked project session only for a signed-in

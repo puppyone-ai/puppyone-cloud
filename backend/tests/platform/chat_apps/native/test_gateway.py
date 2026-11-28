@@ -334,21 +334,19 @@ def test_the_owner_left_so_the_next_question_gets_paused(world, db):
     assert w["runs_of_project"]() == []
 
 
-def test_strangers_and_unlinked_people_do_not_start_runs(world, db):
+def test_only_the_owner_asks_until_anyone_may(world, db):
     w = world
     g = w["gateway"]()
     w["ask"](71, asker="tg-mia")
     w["drain"](g)
     assert w["platform"].sent[-1][1].text == "Only Alex can ask me here."
+    assert w["runs_of_project"]() == []
     db.sql(
-        f"UPDATE chat_app_conversations SET who_can_ask='project' WHERE project_id='{w['project_id']}'"
+        f"UPDATE chat_app_conversations SET who_can_ask='anyone' WHERE project_id='{w['project_id']}'"
     )
     w["ask"](72, asker="tg-mia")
     w["drain"](g)
-    link = w["platform"].sent[-1][1]
-    assert link.text == "Link your PuppyOne account to ask."
-    assert link.button[1].startswith("https://web.example.test/chat-apps/link?code=")
-    assert w["runs_of_project"]() == []
+    assert len(w["runs_of_project"]()) == 1
 
 
 def test_stop_only_for_the_asker_or_owner(world, db):

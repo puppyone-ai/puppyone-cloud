@@ -241,36 +241,6 @@
       "noAccess": "You don't have access to this project.",
       "failed": "Could not open this project. Try again.",
       "retry": "Try again"
-    },
-    "link": {
-      "linking": "Linking your account…",
-      "linked": "Your account is linked. Your question will start in the chat.",
-      "expired": "This link expired. Ask the agent again in the chat to get a new one.",
-      "missingCode": "This link is incomplete. Ask the agent again in the chat to get a new one.",
-      "failed": "Could not link your account. Try again.",
-      "retry": "Try again",
-      "signIn": "Sign in to link your account…",
-      "checking": "Checking the link…",
-      "confirmTitle": "Link {app} account “{name}” to your PuppyOne account?",
-      "confirmChat": "From {chat}.",
-      "confirmHint": "Only do this if that {app} account is yours. It can then ask the agent with your access to this project.",
-      "confirm": "Link account",
-      "someone": "this person"
-    },
-    "activity": {
-      "added": "Added to {name} ({platform})",
-      "allowed": "Allowed {name}",
-      "denied": "Denied {name}",
-      "updated": "Settings changed in {name}",
-      "taken_over": "Took over {name}",
-      "removed": "Removed from {name}",
-      "removed_there": "Removed in {platform}: {name}",
-      "unknown": "Chat changed: {name}",
-      "telegram": "Telegram",
-      "slack": "Slack",
-      "wecom": "WeCom",
-      "chat": "chat"
-    },
-    "activityTitle": "Activity"
+    }
   }
 }

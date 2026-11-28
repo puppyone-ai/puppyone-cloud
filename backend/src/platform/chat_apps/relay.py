@@ -33,8 +33,6 @@ NOTICES = {
     "new_thread": "New conversation. Ask away.",
     "only_owner": "Only {name} can ask me here.",
     "outsider": "Only people in {workspace} can ask me.",
-    "link_account": "Link your PuppyOne account to ask.",
-    "not_in_project": "You're not in this project. Ask {name} to invite you.",
     "not_your_stop": "Only {asker} or {name} can stop this.",
     "not_your_stop_one": "Only {name} can stop this.",
     "stopping": "Stopping…",

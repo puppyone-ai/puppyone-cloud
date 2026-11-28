@@ -1,5 +1,5 @@
 ## 1. Data
-- [x] 1.1 Additive migration: eight tables, RLS, two command functions, activity view kind
+- [x] 1.1 Additive migration: six tables, RLS, two command functions, indexes and retention
 - [x] 1.2 Feature keys (shadow)
 - [x] 1.3 Native PostgreSQL tests for the command functions
 
@@ -15,8 +15,7 @@
 - [x] 3.3 WeCom (long connection lease, code knock, streaming, rate limits)
 
 ## 4. Web
-- [x] 4.1 `/open/projects/{id}` landing page and `/chat-apps/link`
-- [x] 4.2 `chat_app` activity kind
+- [x] 4.1 `/open/projects/{id}` landing page
 
 ## 5. Verification
 - [x] 5.1 Unit, contract, native and architecture tests

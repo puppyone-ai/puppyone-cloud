@@ -18,7 +18,6 @@ Action = Literal[
     "knock",
     "submit",
     "wait",
-    "hold",
     "stop",
     "removed_there",
     "revoke",
@@ -31,7 +30,7 @@ WECOM_THREAD_IDLE = timedelta(minutes=30)
 DM_THREAD_IDLE = timedelta(days=1)
 MAX_WAITING = 5
 MAX_PER_HOUR = 60
-ONCE_AN_HOUR = frozenset({"paused", "limit", "only_owner", "not_in_project"})
+ONCE_AN_HOUR = frozenset({"paused", "limit", "only_owner"})
 
 
 @dataclass(frozen=True)
@@ -135,23 +134,13 @@ def decide(event: dict, situation: dict, now: datetime) -> Decision:
     if conversation.get("stopped_reason") or not conversation.get("enabled", True):
         return _once("paused", situation)
     # 5. Plan and Agent hours: checked by AgentService.submit (see gateway).
-    # 6. May this person ask?
-    who = conversation["who_can_ask"]
+    # 6. May this person ask? The owner is the chat account that brought the
+    # chat in with its code; "anyone" is everyone the chat app lets speak.
     asker = event.get("asker_external_id")
-    if who == "owner":
-        if not (
-            (asker and asker == conversation.get("owner_external_id"))
-            or (
-                situation.get("asker_user_id")
-                and situation["asker_user_id"] == conversation["owner_user_id"]
-            )
-        ):
-            return _once("only_owner", situation)
-    elif who == "project":
-        if not situation.get("asker_user_id"):
-            return Decision("hold", "link_account", "link_account")
-        if not situation.get("asker_can_run"):
-            return _once("not_in_project", situation)
+    if conversation["who_can_ask"] != "anyone" and not (
+        asker and asker == conversation.get("owner_external_id")
+    ):
+        return _once("only_owner", situation)
     # 7. Today's limit (and the hourly guard).
     limit = conversation.get("daily_limit_units")
     if limit is not None and situation.get("used_today_units", 0) >= limit:

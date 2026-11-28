@@ -6,7 +6,7 @@ import messages from '@/messages/en.json';
 
 const fixture = vi.hoisted(() => ({
   session: { user: { id: 'u1' } } as any, ready: true, query: '',
-  getProject: vi.fn(), link: vi.fn(), preview: vi.fn(),
+  getProject: vi.fn(),
 }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'p1' }),
@@ -16,11 +16,8 @@ vi.mock('@/contexts/SupabaseAuthProvider', () => ({
   useAuth: () => ({ session: fixture.session, isAuthReady: fixture.ready }),
 }));
 vi.mock('@/lib/projectsApi', () => ({ getProject: fixture.getProject }));
-vi.mock('@/features/chat-apps/chatAppsApi', () => ({ linkChatIdentity: fixture.link, previewChatIdentity: fixture.preview }));
 
 import { OpenInPuppyOnePage } from '@/features/chat-apps/OpenInPuppyOnePage';
-import { AccountLinkPage } from '@/features/chat-apps/AccountLinkPage';
-import { ChatAppActivityList } from '@/features/chat-apps/ChatAppActivityList';
 import { desktopProjectUrl, desktopSchemeForHost, webAgentUrl } from '@/features/chat-apps/desktop-link';
 
 const intl = (ui: ReactElement) => <NextIntlClientProvider locale="en" messages={messages}>{ui}</NextIntlClientProvider>;
@@ -31,8 +28,6 @@ let mobile = false;
 beforeEach(() => {
   fixture.session = { user: { id: 'u1' } }; fixture.ready = true; fixture.query = 'session=s1';
   fixture.getProject.mockResolvedValue({ id: 'p1' });
-  fixture.link.mockResolvedValue({});
-  fixture.preview.mockResolvedValue({ platform: 'telegram', name: 'Mia', chat: 'Design team' });
   mobile = false;
   Object.defineProperty(window, 'location', { configurable: true, value: {
     pathname: '/open/projects/p1', search: '?session=s1', hostname: 'localhost', assign, replace } });
@@ -88,48 +83,4 @@ it('mobile goes straight to the Web Agent without the app scheme', async () => {
   render(intl(<OpenInPuppyOnePage />));
   await waitFor(() => expect(replace).toHaveBeenCalledWith('/projects/p1/data?agent=open'));
   expect(assign).not.toHaveBeenCalled();
-});
-
-it('link page says whose chat account it is and links only on confirm', async () => {
-  fixture.query = 'code=abc';
-  render(intl(<AccountLinkPage />));
-  await screen.findByText('Link Telegram account “Mia” to your PuppyOne account?');
-  screen.getByText('From Design team.');
-  expect(fixture.preview).toHaveBeenCalledExactlyOnceWith('abc');
-  expect(fixture.link).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Link account' }));
-  await screen.findByText('Your account is linked. Your question will start in the chat.');
-  expect(fixture.link).toHaveBeenCalledExactlyOnceWith('abc');
-});
-
-it('link page reports an expired code before asking', async () => {
-  fixture.query = 'code=abc'; fixture.preview.mockRejectedValue({ status: 409 });
-  render(intl(<AccountLinkPage />));
-  await screen.findByText('This link expired. Ask the agent again in the chat to get a new one.');
-  expect(fixture.link).not.toHaveBeenCalled();
-});
-
-it('link page sends signed-out users to login', () => {
-  fixture.session = null; fixture.query = 'code=abc';
-  Object.defineProperty(window.location, 'pathname', { value: '/chat-apps/link' });
-  Object.defineProperty(window.location, 'search', { value: '?code=abc' });
-  render(intl(<AccountLinkPage />));
-  expect(replace).toHaveBeenCalledWith('/login?redirect=%2Fchat-apps%2Flink%3Fcode%3Dabc');
-  expect(fixture.preview).not.toHaveBeenCalled();
-  expect(fixture.link).not.toHaveBeenCalled();
-});
-
-it('renders chat_app activity rows', () => {
-  const row = (id: string, status: string, phase = 'telegram') => ({
-    id, kind: 'chat_app' as const, project_id: 'p1', label: 'Design team', status, phase, created_at: '2026-01-01T00:00:00Z',
-  });
-  render(intl(<ChatAppActivityList items={[
-    row('1', 'added'), row('2', 'allowed'), row('3', 'updated'), row('4', 'taken_over'),
-    row('5', 'removed'), row('6', 'removed_there'),
-    { ...row('7', 'added'), kind: 'upload' as const },
-  ]} />));
-  for (const text of ['Added to Design team (Telegram)', 'Allowed Design team', 'Settings changed in Design team',
-    'Took over Design team', 'Removed from Design team', 'Removed in Telegram: Design team'])
-    expect(screen.getByText(text)).toBeTruthy();
-  expect(screen.getAllByRole('listitem')).toHaveLength(6);
 });
