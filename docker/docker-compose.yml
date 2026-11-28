@@ -146,6 +146,7 @@ services:
     environment: &backend-environment
       APP_ENV: development
       ENTITLEMENTS_MODE: ${ENTITLEMENTS_MODE:-disabled}
+      REPOSITORY_POLICY: ${REPOSITORY_POLICY:-open}
       DEBUG: "false"
       SUPABASE_URL: http://kong:8000
       SUPABASE_KEY: ${SERVICE_ROLE_KEY:?Copy .env.example to .env}

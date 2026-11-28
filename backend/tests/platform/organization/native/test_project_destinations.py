@@ -110,14 +110,14 @@ def test_a_team_is_offered_as_a_destination_exactly_when_creation_admits_it(data
             if not admitted(result):
                 # Refused before anything is written: no empty Project, no pending operation.
                 assert footprint(database, database.team) == before, role
-    # Today every member of a team, a viewer included, may start a Project in it.
-    assert outcomes == {"member": "admitted", "viewer": "admitted", "owner": "admitted", "outsider": "forbidden"}
+    # Owners and members may start a Project in a Space; read-only viewers and outsiders cannot.
+    assert outcomes == {"member": "admitted", "viewer": "forbidden", "owner": "admitted", "outsider": "forbidden"}
 
 
 def test_a_personal_space_takes_projects_from_its_owner_only(database, monkeypatch):
     with api_as(database, monkeypatch) as api:
         personal = api(database.owner).post("/auth/personal-space").json()["data"]
-        assert personal["kind"] == "personal" and offered(api(database.owner), personal["id"])
+        assert personal["kind"] == "space" and offered(api(database.owner), personal["id"])
         created = create_project(database, personal["id"], database.owner)
         assert admitted(created), created
         project = created["project"]["id"]
