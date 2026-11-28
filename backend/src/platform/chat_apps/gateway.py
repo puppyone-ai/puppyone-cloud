@@ -95,6 +95,7 @@ class Gateway:
         web_origin="",
         clock=_now,
         mentions=None,
+        max_wecom=200,
     ):
         self.repository = repository
         self.agents = agents
@@ -103,6 +104,8 @@ class Gateway:
         self.worker = worker or f"chat-gateway-{socket.gethostname()}-{os.getpid()}"
         self.web_origin = web_origin.rstrip("/")
         self.clock = clock
+        # Past this, other instances claim the rest instead of one process holding all.
+        self.max_wecom = max_wecom
         # How people mention the bot in each app (Telegram: the bot's username).
         self.mentions = {"slack": "@PuppyOne", "wecom": "@PuppyOne", **(mentions or {})}
         self.stats: Counter[str] = Counter()
@@ -211,7 +214,7 @@ class Gateway:
             await self._say(platform, target, notice_text(decision.notice, **names))
             await self._finish(row, "done", decision.outcome, conversation_id=chat)
         elif action == "knock":
-            await self._knock(row, decision, payload)
+            await self._knock(row, decision, payload, situation)
         elif action == "joined":
             await self._finish(row, "done", decision.outcome)
         elif action == "removed_there":
@@ -238,23 +241,7 @@ class Gateway:
             await self._say(platform, target, notice_text(decision.notice, **names))
             await self._finish(row, "done", decision.outcome, conversation_id=chat)
         elif action == "hold":
-            raw = codes.link_code()
-            await self._db(
-                "identity_code",
-                platform=row["platform"],
-                scope=situation["identity_scope"],
-                external_user_id=row["asker_external_id"],
-                external_label=row.get("asker_label"),
-                conversation_id=chat,
-                code_hash=codes.code_hash(raw),
-            )
-            target = await self._target(conversation, row)
-            await self._say(
-                platform,
-                target,
-                notice_text("link_account"),
-                button=("Link account", f"{self.web_origin}/chat-apps/link?code={raw}"),
-            )
+            await self._ask_to_link(platform, row, conversation, situation["identity_scope"])
             await self._finish(row, "held", decision.outcome, conversation_id=chat)
         elif action == "wait":
             thread = await self._db("thread", conversation_id=chat, external_thread_key=key)
@@ -283,7 +270,26 @@ class Gateway:
     def _sent_json(sent: Sent | None) -> dict | None:
         return None if sent is None else {"message_id": sent.message_id, "ref": sent.ref}
 
-    async def _knock(self, row, decision, payload) -> None:
+    async def _ask_to_link(self, platform, row, conversation, scope) -> None:
+        """Hold this event and post a Link account button; linking releases it."""
+        raw = codes.link_code()
+        await self._db(
+            "identity_code",
+            platform=row["platform"],
+            scope=scope,
+            external_user_id=row["asker_external_id"],
+            external_label=row.get("asker_label"),
+            conversation_id=(conversation or {}).get("id"),
+            code_hash=codes.code_hash(raw),
+        )
+        await self._say(
+            platform,
+            await self._target(conversation, row),
+            notice_text("link_account"),
+            button=("Link account", f"{self.web_origin}/chat-apps/link?code={raw}"),
+        )
+
+    async def _knock(self, row, decision, payload, situation=None) -> None:
         code = decision.values.get("code")
         owner = decision.values.get("owner") or row.get("asker_external_id")
         name = chat_name(row["platform"], payload, row.get("asker_label"))
@@ -303,13 +309,26 @@ class Gateway:
             owner_external_id=owner,
         )
         platform = self.platforms.get(row["platform"])
-        if code and not result.get("knocked") and platform is not None:
-            # A scanned QR or a typed code that no longer works must not look ignored.
-            await self._say(
-                platform,
-                await self._target(None, row),
-                notice_text(knock_refusal(row["platform"], result)),
-            )
+        reason = result.get("reason")
+        if not result.get("knocked") and platform is not None:
+            if code:
+                # A scanned QR or a typed code that no longer works must not look ignored.
+                await self._say(
+                    platform,
+                    await self._target(None, row),
+                    notice_text(knock_refusal(row["platform"], result)),
+                )
+            elif reason == "unlinked" and owner:
+                # Slack: whoever invited it has not linked their account yet. Linking
+                # releases this event and the invite is matched again.
+                scope = (situation or {}).get("identity_scope")
+                await self._ask_to_link(platform, {**row, "asker_external_id": owner}, None, scope)
+                await self._finish(row, "held", "link_account")
+                return
+            elif reason == "no_wait":
+                await self._say(
+                    platform, await self._target(None, row), notice_text("not_connected")
+                )
         await self._finish(
             row,
             "done",
@@ -609,6 +628,8 @@ class Gateway:
         platform = self.platforms.get("wecom")
         if platform is None:
             return False
+        if len(tasks) >= self.max_wecom:
+            return False
         row = await self._db("claim_connection", lease_seconds=LEASE_SECONDS * 3)
         if not row:
             return False
@@ -728,6 +749,7 @@ async def main() -> None:
         EntitlementService(),
         web_origin=settings.FRONTEND_URL,
         mentions=mentions(),
+        max_wecom=settings.CHAT_APPS_WECOM_MAX_CONNECTIONS,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

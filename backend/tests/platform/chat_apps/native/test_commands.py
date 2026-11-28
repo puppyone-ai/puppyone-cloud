@@ -513,3 +513,59 @@ def test_clients_have_no_direct_access(db):
         )
         == "t"
     )
+
+
+def test_a_slack_invite_says_why_it_was_not_matched(db):
+    project_id, alex, org = project(db)
+    mia = member(db, project_id, org, "admin")
+    db.human(
+        "start_link",
+        alex,
+        project_id=project_id,
+        platform="slack",
+        purpose="slack_install",
+        code_hash=code(931),
+    )
+    installed = db.gateway(
+        "install_slack",
+        code_hash=code(931),
+        external_id="T2",
+        display_name="Acme",
+        secret="ciphertext-placeholder",
+        installer_external_id="U-alex2",
+    )
+
+    def invite(by, channel):
+        return db.gateway(
+            "knock",
+            platform="slack",
+            connection_id=installed["id"],
+            external_chat_id=channel,
+            chat_kind="group",
+            display_name="#" + channel,
+            owner_external_id=by,
+        )
+
+    # Alex is linked but nobody is waiting in PuppyOne.
+    assert invite("U-alex2", "C2") == {"knocked": False, "reason": "no_wait"}
+    # Mia waits in PuppyOne, but her Slack account is not linked yet.
+    db.human(
+        "start_link",
+        mia,
+        project_id=project_id,
+        platform="slack",
+        purpose="slack_wait",
+        connection_id=installed["id"],
+        code_hash=code(932),
+    )
+    assert invite("U-mia2", "C3") == {"knocked": False, "reason": "unlinked"}
+    db.gateway(
+        "identity_code",
+        platform="slack",
+        scope="T2",
+        external_user_id="U-mia2",
+        external_label="Mia",
+        code_hash=code(933),
+    )
+    db.human("link_identity", mia, code_hash=code(933))
+    assert invite("U-mia2", "C3")["knocked"] is True

@@ -1003,6 +1003,8 @@ class Settings(BaseSettings):
     CHAT_APPS_SLACK_API_BASE: str = "https://slack.com/api"
     CHAT_APPS_SLACK_AUTHORIZE_URL: str = "https://slack.com/oauth/v2/authorize"
     CHAT_APPS_WECOM_WS_URL: str = "wss://openws.work.weixin.qq.com"
+    # WeCom long connections one gateway process holds; more instances share the rest.
+    CHAT_APPS_WECOM_MAX_CONNECTIONS: int = 200
 
     @property
     def chat_app_platforms(self) -> frozenset[str]:

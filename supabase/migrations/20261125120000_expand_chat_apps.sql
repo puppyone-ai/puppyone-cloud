@@ -572,6 +572,12 @@ BEGIN
 
   ELSIF p_action = 'knock' THEN
     IF platform_name = 'slack' THEN
+      -- Only someone whose Slack account is linked can be matched to a wait.
+      IF NOT EXISTS (SELECT 1 FROM public.chat_app_identities
+          WHERE platform = 'slack' AND scope = (SELECT external_id FROM public.chat_app_connections WHERE id = connection)
+            AND external_user_id = p_payload->>'owner_external_id') THEN
+        RETURN jsonb_build_object('knocked', false, 'reason', 'unlinked');
+      END IF;
       SELECT * INTO l FROM public.chat_app_link_codes k
       WHERE k.purpose = 'slack_wait' AND k.connection_id = connection AND k.consumed_at IS NULL
         AND k.expires_at > clock_timestamp()
@@ -579,6 +585,9 @@ BEGIN
           WHERE platform = 'slack' AND scope = (SELECT external_id FROM public.chat_app_connections WHERE id = connection)
             AND external_user_id = p_payload->>'owner_external_id')
       ORDER BY k.created_at DESC LIMIT 1 FOR UPDATE;
+      IF NOT FOUND THEN
+        RETURN jsonb_build_object('knocked', false, 'reason', 'no_wait');
+      END IF;
     ELSE
       SELECT * INTO l FROM public.chat_app_link_codes
       WHERE code_hash = p_payload->>'code_hash' AND purpose = 'knock' AND platform = platform_name
