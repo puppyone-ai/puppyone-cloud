@@ -116,18 +116,19 @@ def test_a_team_is_offered_as_a_destination_exactly_when_creation_admits_it(data
 
 def test_a_personal_space_takes_projects_from_its_owner_only(database, monkeypatch):
     with api_as(database, monkeypatch) as api:
-        personal = api(database.owner).post("/auth/personal-space").json()["data"]
-        assert personal["kind"] == "space" and offered(api(database.owner), personal["id"])
-        created = create_project(database, personal["id"], database.owner)
+        default_space = api(database.owner).post("/auth/personal-space").json()["data"]
+        assert default_space["kind"] == "space" and offered(api(database.owner), default_space["id"])
+        assert offered(api(database.owner), database.personal)
+        created = create_project(database, database.personal, database.owner)
         assert admitted(created), created
         project = created["project"]["id"]
-        assert database.sql(f"SELECT org_id FROM projects WHERE id='{project}'") == personal["id"]
+        assert database.sql(f"SELECT org_id FROM projects WHERE id='{project}'") == database.personal
 
-        # Someone else's personal space is never offered, and creating in it is refused without a trace.
-        assert not offered(api(database.colleague), personal["id"])
-        before = footprint(database, personal["id"])
-        assert create_project(database, personal["id"], database.colleague)["outcome"] == "forbidden"
-        assert footprint(database, personal["id"]) == before
+        # Someone outside this Space is never offered it, and creating in it is refused without a trace.
+        assert not offered(api(database.colleague), database.personal)
+        before = footprint(database, database.personal)
+        assert create_project(database, database.personal, database.colleague)["outcome"] == "forbidden"
+        assert footprint(database, database.personal) == before
 
 
 def add_team(database):
