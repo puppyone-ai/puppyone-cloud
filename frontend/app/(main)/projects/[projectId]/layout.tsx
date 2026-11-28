@@ -9,11 +9,13 @@ import { VersionWebSocketProvider } from '@/contexts/VersionWebSocketContext';
 import { ProjectSessionProvider } from '@/features/workspace/session';
 import { useProjectInvalidation } from '@/features/workspace/useProjectInvalidation';
 import { ProjectAuxiliarySidebar } from './_components/ProjectAuxiliarySidebar';
+import { useOpenAgentFromUrl } from '@/features/chat-apps/useOpenAgentFromUrl';
 import { ProjectWorkspaceShell } from '@/components/project/ProjectWorkspaceShell';
 
 
 function ProjectLayoutInner({ children, projectId }: { children: React.ReactNode; projectId: string }) {
   useProjectInvalidation(projectId);
+  useOpenAgentFromUrl();
   return (
     <ProjectWorkspaceShell projectId={projectId} auxiliary={<ProjectAuxiliarySidebar projectId={projectId} />}>
       {children}

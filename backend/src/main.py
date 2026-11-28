@@ -671,6 +671,11 @@ def create_app() -> FastAPI:
     from src.platform.onboarding.router import router as onboarding_router
 
     app.include_router(onboarding_router, prefix="/api/v1", tags=["auth"])
+    from src.platform.chat_apps.router import router as chat_apps_router
+    from src.platform.chat_apps.webhook_router import router as chat_apps_webhook_router
+
+    app.include_router(chat_apps_router, prefix="/api/v1")
+    app.include_router(chat_apps_webhook_router, prefix="/api/v1")
     app.include_router(profile_router, tags=["profile"])
     app.include_router(imports_router, prefix="/api/v1", tags=["imports"])
     app.include_router(activity_public_router, prefix="/api/v1", tags=["activity"])
@@ -714,6 +719,7 @@ def create_app() -> FastAPI:
     exception_handler_start = time.time()
     from src.exception_handler import execution_capacity_handler
     from src.infra.execution.admission import ExecutionCapacityError
+
     app.add_exception_handler(ExecutionCapacityError, execution_capacity_handler)
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore
     from src.platform.access.adapters.api.workbench_router import workspace_error_handler

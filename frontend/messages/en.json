@@ -230,5 +230,17 @@
   "projectSettings": {
     "boundGitBranch": "Default git branch",
     "boundGitBranchHint": "Used as the default ref for new GitHub bindings and for the clone command. Doesn't affect existing bindings."
+  },
+  "chatApps": {
+    "open": {
+      "opening": "Opening PuppyOne…",
+      "openingHint": "If PuppyOne does not open, continue in the browser.",
+      "openInBrowser": "Open in the browser",
+      "checking": "Checking your access…",
+      "signIn": "Sign in to continue…",
+      "noAccess": "You don't have access to this project.",
+      "failed": "Could not open this project. Try again.",
+      "retry": "Try again"
+    }
   }
 }

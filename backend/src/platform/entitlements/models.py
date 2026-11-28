@@ -16,6 +16,15 @@ REQUIRED_ENTITLEMENT_FEATURES = frozenset(
         "scope_sandbox.connect",
     }
 )
+# Observed, never enforced: logged when a plan lacks them, until the product
+# decides which plans include them. Not required in the PuppyPay payload.
+OBSERVED_ENTITLEMENT_FEATURES = frozenset(
+    {
+        "chat_app.telegram",
+        "chat_app.slack",
+        "chat_app.wecom",
+    }
+)
 REQUIRED_ENTITLEMENT_LIMITS = frozenset(
     {
         "projects.max",

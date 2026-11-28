@@ -30,6 +30,8 @@ REPORT_FIELDS = (
     "agent_performance",
     "agent_api_performance",
     "agent_dispatch",
+    "chat_app",
+    "chat_gateway",
     "dependency_failure",
     "provider_failure",
     "worker_stats",
@@ -92,9 +94,7 @@ def _console_formatter(record: dict[str, Any]) -> str:
 
 def _add_console_sink(log_level: str, json_console: bool) -> None:
     if json_console:
-        logger.add(
-            sys.stderr, level=log_level, serialize=True, backtrace=True, diagnose=False
-        )
+        logger.add(sys.stderr, level=log_level, serialize=True, backtrace=True, diagnose=False)
     else:
         logger.add(
             sys.stderr,
@@ -107,7 +107,9 @@ def _add_console_sink(log_level: str, json_console: bool) -> None:
         )
 
 
-def _add_file_sink(log_path: str, log_level: str, log_rotation: str, log_retention: str, json_file: bool) -> None:
+def _add_file_sink(
+    log_path: str, log_level: str, log_rotation: str, log_retention: str, json_file: bool
+) -> None:
     logger.add(
         log_path,
         level=log_level,

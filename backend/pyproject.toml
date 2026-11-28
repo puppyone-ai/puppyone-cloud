@@ -120,7 +120,7 @@ forbidden_modules = ["fastapi", "starlette"]
 name = "Business modules point downward"
 type = "layers"
 layers = [
-    "src.platform.dashboard : src.platform.onboarding",
+    "src.platform.dashboard : src.platform.onboarding : src.platform.chat_apps",
     "src.platform.agent",
     "src.platform.access : src.internal",
     "src.ingest : src.platform.upload : src.platform.imports : src.platform.synchronize : src.platform.workspace : src.platform.hosts : src.platform.sandbox : src.platform.landing",

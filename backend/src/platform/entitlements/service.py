@@ -12,6 +12,7 @@ from typing import Any
 from src.config import settings
 from src.exceptions import AppException, ErrorCode
 from src.platform.entitlements.models import (
+    OBSERVED_ENTITLEMENT_FEATURES,
     EntitlementPublicationAck,
     EntitlementSnapshot,
     EntitlementUpsert,
@@ -283,6 +284,21 @@ class EntitlementService:
             reason="feature_not_enabled",
             feature=feature_key,
         )
+
+    def observe_feature(self, org_id: str, feature_key: str) -> None:
+        """Log a missing observed feature without ever denying (shadow by design)."""
+
+        if feature_key not in OBSERVED_ENTITLEMENT_FEATURES:
+            raise ValueError(f"{feature_key} is not an observed entitlement feature")
+        if not self.enabled:
+            return
+        try:
+            snapshot = self.get_snapshot(org_id)
+        except AppException as exc:
+            self._log_shadow_unavailable(org_id, exc)
+            return
+        if not (snapshot.entitlements.get("features") or {}).get(feature_key):
+            self._log_shadow_denial(org_id, "feature_not_enabled", feature=feature_key)
 
     def limit_value(self, org_id: str, limit_key: str) -> int | float | None:
         if not self.enabled:

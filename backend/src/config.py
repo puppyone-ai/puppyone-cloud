@@ -18,6 +18,8 @@ from src.shared_types.managed_ai_provider import (
 
 # Roles that operate Agent workspaces (open, files, SSH, lifecycle).
 WORKSPACE_ROLES = frozenset({"api", "agent_worker", "ssh_gateway"})
+# Roles that hold chat platform secrets (never workspace provider secrets for chat_gateway).
+CHAT_APP_ROLES = frozenset({"api", "chat_gateway"})
 
 
 class Settings(BaseSettings):
@@ -338,6 +340,60 @@ class Settings(BaseSettings):
             raise ValueError(
                 "HOST_SSH_CA_PRIVATE_KEY (an OpenSSH Ed25519 key) is required when device hosts are enabled"
             )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_chat_apps_safety(self):
+        """Chat platform secrets are read and checked only by api and chat_gateway."""
+        platforms = self.chat_app_platforms
+        if not platforms or self.SERVICE_ROLE not in CHAT_APP_ROLES:
+            return self
+        unknown = platforms - {"telegram", "slack", "wecom"}
+        if unknown:
+            raise ValueError(
+                "CHAT_APPS_PLATFORMS has unknown platforms: " + ",".join(sorted(unknown))
+            )
+        required = {
+            "CHAT_APPS_ENCRYPTION_KEY": self.CHAT_APPS_ENCRYPTION_KEY,
+            "CHAT_APPS_CODE_HASH_SECRET": self.CHAT_APPS_CODE_HASH_SECRET,
+            "FRONTEND_URL": self.FRONTEND_URL,
+            "PUBLIC_URL": self.PUBLIC_URL,
+        }
+        if "telegram" in platforms:
+            required |= {
+                "CHAT_APPS_TELEGRAM_BOT_TOKEN": self.CHAT_APPS_TELEGRAM_BOT_TOKEN,
+                "CHAT_APPS_TELEGRAM_BOT_USERNAME": self.CHAT_APPS_TELEGRAM_BOT_USERNAME,
+                "CHAT_APPS_TELEGRAM_WEBHOOK_SECRET": self.CHAT_APPS_TELEGRAM_WEBHOOK_SECRET,
+            }
+        if "slack" in platforms:
+            required |= {
+                "CHAT_APPS_SLACK_CLIENT_ID": self.CHAT_APPS_SLACK_CLIENT_ID,
+                "CHAT_APPS_SLACK_CLIENT_SECRET": self.CHAT_APPS_SLACK_CLIENT_SECRET,
+                "CHAT_APPS_SLACK_SIGNING_SECRET": self.CHAT_APPS_SLACK_SIGNING_SECRET,
+            }
+        missing = sorted(name for name, value in required.items() if not (value or "").strip())
+        if missing:
+            raise ValueError("Chat apps are enabled but missing: " + ", ".join(missing))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", self.CHAT_APPS_TELEGRAM_WEBHOOK_SECRET or "x"):
+            raise ValueError("CHAT_APPS_TELEGRAM_WEBHOOK_SECRET must be 1-256 of A-Za-z0-9_-")
+        if self.APP_ENV not in {"development", "test"}:
+            if len(
+                self.CHAT_APPS_CODE_HASH_SECRET.strip()
+            ) < 32 or self.CHAT_APPS_CODE_HASH_SECRET in {
+                self.JWT_SECRET,
+                self.INTERNAL_API_SECRET,
+                self.ACCESS_CREDENTIAL_HASH_SECRET,
+            }:
+                raise ValueError("CHAT_APPS_CODE_HASH_SECRET must be dedicated and >=32 chars")
+            for name in (
+                "CHAT_APPS_TELEGRAM_API_BASE",
+                "CHAT_APPS_SLACK_API_BASE",
+                "CHAT_APPS_SLACK_AUTHORIZE_URL",
+            ):
+                if not getattr(self, name).startswith("https://"):
+                    raise ValueError(f"{name} must be https outside development/test")
+            if not self.CHAT_APPS_WECOM_WS_URL.startswith("wss://"):
+                raise ValueError("CHAT_APPS_WECOM_WS_URL must be wss outside development/test")
         return self
 
     @model_validator(mode="after")
@@ -927,6 +983,32 @@ class Settings(BaseSettings):
     UPLOAD_JOB_REAPER_INTERVAL_SECONDS: int = 5 * 60
     UPLOAD_JOB_STALE_SECONDS: int = 60 * 60
     UPLOAD_JOB_REAPER_MAX_PER_RUN: int = 100
+
+    # Chat apps (Telegram, Slack, WeCom). Empty CHAT_APPS_PLATFORMS turns the
+    # feature off: platform callbacks answer 404 and chat_gateway idles.
+    CHAT_APPS_PLATFORMS: str = ""
+    # Base64 of 32 bytes (AES-256-GCM) for customer platform secrets, with its key id.
+    CHAT_APPS_ENCRYPTION_KEY: str = ""
+    CHAT_APPS_ENCRYPTION_KID: str = "chat-1"
+    # HMAC key for one-time link codes; only hashes are stored.
+    CHAT_APPS_CODE_HASH_SECRET: str = ""
+    CHAT_APPS_TELEGRAM_BOT_TOKEN: str = ""
+    CHAT_APPS_TELEGRAM_BOT_USERNAME: str = ""
+    CHAT_APPS_TELEGRAM_WEBHOOK_SECRET: str = ""
+    CHAT_APPS_TELEGRAM_API_BASE: str = "https://api.telegram.org"
+    CHAT_APPS_TELEGRAM_LINK_BASE: str = "https://t.me"
+    CHAT_APPS_SLACK_CLIENT_ID: str = ""
+    CHAT_APPS_SLACK_CLIENT_SECRET: str = ""
+    CHAT_APPS_SLACK_SIGNING_SECRET: str = ""
+    CHAT_APPS_SLACK_API_BASE: str = "https://slack.com/api"
+    CHAT_APPS_SLACK_AUTHORIZE_URL: str = "https://slack.com/oauth/v2/authorize"
+    CHAT_APPS_WECOM_WS_URL: str = "wss://openws.work.weixin.qq.com"
+    # WeCom long connections one gateway process holds; more instances share the rest.
+    CHAT_APPS_WECOM_MAX_CONNECTIONS: int = 200
+
+    @property
+    def chat_app_platforms(self) -> frozenset[str]:
+        return frozenset(p.strip() for p in self.CHAT_APPS_PLATFORMS.split(",") if p.strip())
 
     # Database provider sensitive config encryption (AES-256-GCM)
     # Base64-encoded string of 32-byte key

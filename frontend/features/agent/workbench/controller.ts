@@ -182,6 +182,19 @@ export class AgentWorkbenchController {
       if (this.historyRequest === request) { this.historyRequest = null; this.patch({ historyLoading: false }); }
     }
   };
+  /** Opens a session from a deep link; unknown or foreign ids just open the agent (no error). */
+  openSessionById = async (sessionId: string, fallbackAgentId?: string | null) => {
+    const find = () => this.state.sessions.find(row => row.id === sessionId);
+    if (!find()) {
+      while (this.historyRequest) await new Promise(resolve => setTimeout(resolve, 20));
+      await this.refreshHistory();
+    }
+    const session = find();
+    if (session) return this.openSession(session);
+    const agentId = fallbackAgentId && this.state.agents.some(agent => agent.id === fallbackAgentId)
+      ? fallbackAgentId : this.state.agents[0]?.id;
+    if (agentId && this.state.tabs.length === 0) return this.openAgent(agentId);
+  };
   private historyVisible() {
     return this.state.tabs.some(tab => tab.id === this.state.activeId && tab.kind === 'launcher' && tab.history);
   }

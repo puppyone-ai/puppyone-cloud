@@ -1,4 +1,4 @@
-"""Application-layer encryption helpers for db_connector configs."""
+"""Application-layer AES-256-GCM envelopes for stored secrets (db connectors, chat apps)."""
 
 import base64
 import json
@@ -25,20 +25,47 @@ def is_encrypted_db_connection_config(config: dict[str, Any]) -> bool:
     return all(k in envelope for k in ("v", "alg", "kid", "nonce", "ciphertext"))
 
 
+def encrypt_secret(plain: bytes, *, key: bytes, kid: str) -> dict[str, Any]:
+    """One versioned envelope; the caller owns which key and key id."""
+    nonce = os.urandom(12)
+    return {
+        "v": _ENVELOPE_VERSION,
+        "alg": _ENVELOPE_ALGORITHM,
+        "kid": kid,
+        "nonce": _b64encode(nonce),
+        "ciphertext": _b64encode(AESGCM(key).encrypt(nonce, plain, None)),
+    }
+
+
+def decrypt_secret(envelope: dict[str, Any], *, key: bytes) -> bytes:
+    if envelope.get("v") != _ENVELOPE_VERSION:
+        raise ValueError("Unsupported secret envelope version")
+    if envelope.get("alg") != _ENVELOPE_ALGORITHM:
+        raise ValueError("Unsupported secret envelope algorithm")
+    return AESGCM(key).decrypt(
+        _b64decode(envelope["nonce"]), _b64decode(envelope["ciphertext"]), None
+    )
+
+
+def load_aes_key(encoded_key: str, name: str) -> bytes:
+    encoded_key = encoded_key.strip()
+    if not encoded_key:
+        raise ValueError(f"{name} is required for encryption")
+    try:
+        key = base64.b64decode(encoded_key, validate=True)
+    except Exception as exc:
+        raise ValueError(f"{name} must be valid base64") from exc
+    if len(key) != 32:
+        raise ValueError(f"{name} must decode to 32 bytes")
+    return key
+
+
 def encrypt_db_connection_config(plain: dict[str, Any]) -> dict[str, Any]:
     payload = json.dumps(plain, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    aesgcm = AESGCM(_load_encryption_key())
-    nonce = os.urandom(12)
-    ciphertext = aesgcm.encrypt(nonce, payload, None)
-
     return {
-        _ENVELOPE_ROOT: {
-            "v": _ENVELOPE_VERSION,
-            "alg": _ENVELOPE_ALGORITHM,
-            "kid": settings.DB_CONNECTOR_ENCRYPTION_KID,
-            "nonce": _b64encode(nonce),
-            "ciphertext": _b64encode(ciphertext),
-        },
+        _ENVELOPE_ROOT: encrypt_secret(
+            payload, key=_load_encryption_key(), kid=settings.DB_CONNECTOR_ENCRYPTION_KID
+        ),
         _MASKED_ROOT: mask_db_connection_config(plain),
     }
 
@@ -47,16 +74,7 @@ def decrypt_db_connection_config(stored: dict[str, Any]) -> dict[str, Any]:
     if not is_encrypted_db_connection_config(stored):
         return stored
 
-    envelope = stored[_ENVELOPE_ROOT]
-    if envelope.get("v") != _ENVELOPE_VERSION:
-        raise ValueError("Unsupported db_connection config encryption version")
-    if envelope.get("alg") != _ENVELOPE_ALGORITHM:
-        raise ValueError("Unsupported db_connection config encryption algorithm")
-
-    nonce = _b64decode(envelope["nonce"])
-    ciphertext = _b64decode(envelope["ciphertext"])
-    aesgcm = AESGCM(_load_encryption_key())
-    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+    plaintext = decrypt_secret(stored[_ENVELOPE_ROOT], key=_load_encryption_key())
     payload = json.loads(plaintext.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Decrypted db_connection config must be an object")
@@ -72,18 +90,7 @@ def mask_db_connection_config(plain: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_encryption_key() -> bytes:
-    encoded_key = settings.DB_CONNECTOR_ENCRYPTION_KEY.strip()
-    if not encoded_key:
-        raise ValueError("DB_CONNECTOR_ENCRYPTION_KEY is required for db_connector encryption")
-
-    try:
-        key = base64.b64decode(encoded_key, validate=True)
-    except Exception as exc:
-        raise ValueError("DB_CONNECTOR_ENCRYPTION_KEY must be valid base64") from exc
-
-    if len(key) != 32:
-        raise ValueError("DB_CONNECTOR_ENCRYPTION_KEY must decode to 32 bytes")
-    return key
+    return load_aes_key(settings.DB_CONNECTOR_ENCRYPTION_KEY, "DB_CONNECTOR_ENCRYPTION_KEY")
 
 
 def _b64encode(raw: bytes) -> str:

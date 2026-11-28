@@ -341,3 +341,19 @@ PROJECT_ROUTE_AUTHORIZATION.update({
     ("GET", "/api/v1/agent-links/connections/{connection_id}"): _runtime("access.agent_link"),
     ("POST", "/api/v1/agent-links/connections/{connection_id}/exec"): _runtime("access.agent_link"),
 })
+# Chat apps (09-chat-apps.md › Route manifest). Platform callbacks prove their
+# origin with signatures and are not Project-scoped routes.
+PROJECT_ROUTE_AUTHORIZATION.update({
+    ("GET", "/api/v1/projects/{project_id}/chat-apps"): _human(ProjectAction.AGENT_READ),
+    ("POST", "/api/v1/projects/{project_id}/chat-apps/links"): _human(ProjectAction.AGENT_MANAGE),
+    ("GET", "/api/v1/projects/{project_id}/chat-apps/links/{link_id}"): _human(ProjectAction.AGENT_MANAGE),
+    ("POST", "/api/v1/projects/{project_id}/chat-apps/connections"): _human(ProjectAction.AGENT_MANAGE),
+    ("POST", "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}/decision"):
+        _human(ProjectAction.AGENT_MANAGE),
+    ("PATCH", "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}"):
+        _human(ProjectAction.AGENT_MANAGE),
+    ("POST", "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}/owner"):
+        _human(ProjectAction.AGENT_MANAGE),
+    ("DELETE", "/api/v1/projects/{project_id}/chat-apps/conversations/{conversation_id}"):
+        _human(ProjectAction.AGENT_MANAGE),
+})

@@ -581,6 +581,14 @@ def test_exact_resource_retirement_preserves_every_unrelated_contract():
     for name, change in isolated_sandboxes["schemas"].items():
         assert expected["contract"]["schemas"][name] == change["before"]
         expected["contract"]["schemas"][name] = change["after"]
+    # Chat apps: Desktop project routes and signed platform callbacks are new;
+    # no existing path or schema changes.
+    chat_apps = json.loads(Path(__file__).with_name("chat_apps_contract_delta.json").read_text())
+    assert set(chat_apps) == {"added"}
+    assert all("chat-apps" in path for path in chat_apps["added"]["paths"])
+    for category in ("paths", "schemas"):
+        assert not expected["contract"][category].keys() & chat_apps["added"][category].keys()
+        expected["contract"][category].update(chat_apps["added"][category])
     assert app.openapi()["components"]["schemas"]["OrganizationOut"]["properties"]["kind"] == {
         "const": "space", "default": "space", "title": "Kind", "type": "string",
     }

@@ -13,7 +13,7 @@ import styles from './workbench.module.css';
 
 export function AgentWorkbench({ projectId, active, tableData, onDataUpdate, onConfigure, request }: {
   projectId: string; active: boolean; tableData?: unknown;
-  request?: { agentId?: string };
+  request?: { agentId?: string; sessionId?: string };
   onDataUpdate?: (data: unknown) => void; onConfigure?: () => void;
 }) {
   const { userId, isAuthReady } = useAuth();
@@ -25,7 +25,12 @@ export function AgentWorkbench({ projectId, active, tableData, onDataUpdate, onC
   const handledRequest = useRef<typeof request>();
   useEffect(() => { store?.setAgents(agents, request?.agentId ?? currentAgentId); }, [store, agents, currentAgentId, request?.agentId]);
   useEffect(() => {
-    if (!active || !store || !request?.agentId || handledRequest.current === request) return;
+    if (!active || !store || !request?.sessionId || handledRequest.current === request || agents.length === 0) return;
+    handledRequest.current = request;
+    void store.openSessionById(request.sessionId, request.agentId ?? currentAgentId);
+  }, [store, active, request, agents, currentAgentId]);
+  useEffect(() => {
+    if (!active || !store || request?.sessionId || !request?.agentId || handledRequest.current === request) return;
     if (!agents.some(agent => agent.id === request.agentId)) return;
     handledRequest.current = request;
     store.openAgent(request.agentId);

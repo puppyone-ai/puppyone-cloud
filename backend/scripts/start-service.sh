@@ -33,6 +33,9 @@ case "${SERVICE_ROLE:-api}" in
   ssh_gateway)
     exec python -m src.platform.access.adapters.ssh.gateway
     ;;
+  chat_gateway)
+    exec python -m src.platform.chat_apps.gateway
+    ;;
   # Exactly one worker: this process owns every device socket it accepted.
   # Reached only over Railway's private network (IPv6), never publicly, so it
   # listens on "::". asyncio makes that socket IPv6-only: no public proxy, and
