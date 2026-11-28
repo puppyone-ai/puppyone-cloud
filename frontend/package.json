@@ -28,8 +28,6 @@
     "test:readability-gates": "node --test scripts/readability/tests/*.test.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.76",
-    "@anthropic-ai/sdk": "^0.71.2",
     "@codemirror/commands": "^6.10.0",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.0",
@@ -45,7 +43,6 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@uiw/react-codemirror": "^4.25.3",
     "@xyflow/react": "^12.10.2",
-    "all": "^0.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.15.0",
     "geist": "^1.7.0",

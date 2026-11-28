@@ -38,7 +38,7 @@ def _assert_skip_auth_safe() -> None:
 
 _MOCK_TEST_USER = {
     "user_id": "c389d596-e7c1-4fd7-900b-f760a0f1c89f",
-    "email": "cagurzhan@gmail.com",
+    "email": "dev-mock@example.test",
     "phone": None,
     "role": "authenticated",
     "is_anonymous": False,

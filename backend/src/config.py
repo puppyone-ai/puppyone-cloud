@@ -539,11 +539,6 @@ class Settings(BaseSettings):
     # private key). Development and test generate one per process when unset.
     HOST_SSH_CA_PRIVATE_KEY: str = ""
 
-    # Anthropic configuration
-    ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_BASE_URL: str = ""
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-5-20250929"
-
     # Sandbox configuration
     # - "e2b": Use E2B cloud sandbox (requires E2B_API_KEY)
     # - "docker": Use local Docker container sandbox

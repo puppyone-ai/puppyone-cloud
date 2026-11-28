@@ -168,3 +168,9 @@ e2e/test-results/
 
 # Puppyone Desktop workspace state
 /.puppyone/
+
+# Local Claude Code settings and scratch writes (keep shared slash commands)
+.claude/*
+**/.claude/*
+!.claude/commands/
+!**/.claude/commands/
