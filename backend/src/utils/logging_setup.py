@@ -34,6 +34,7 @@ REPORT_FIELDS = (
     "chat_gateway",
     "dependency_failure",
     "provider_failure",
+    "workbench_open",
     "worker_stats",
     "workspace_performance",
 )
