@@ -569,3 +569,20 @@ def test_a_slack_invite_says_why_it_was_not_matched(db):
     )
     db.human("link_identity", mia, code_hash=code(933))
     assert invite("U-mia2", "C3")["knocked"] is True
+
+
+def test_a_rotated_platform_token_is_kept_once(db):
+    assert db.gateway("platform_token", name="slack_config") is None
+    assert db.gateway("save_platform_token", name="slack_config", secret="sealed-1")["saved"]
+    # A second first-time save (another instance) does not overwrite the first.
+    assert not db.gateway("save_platform_token", name="slack_config", secret="sealed-x")["saved"]
+    row = db.gateway("platform_token", name="slack_config")
+    assert row == {"secret": "sealed-1", "version": 1}
+    assert db.gateway("save_platform_token", name="slack_config", secret="sealed-2", version=1)[
+        "saved"
+    ]
+    # A stale version loses: someone rotated in between.
+    assert not db.gateway("save_platform_token", name="slack_config", secret="sealed-3", version=1)[
+        "saved"
+    ]
+    assert db.gateway("platform_token", name="slack_config")["secret"] == "sealed-2"

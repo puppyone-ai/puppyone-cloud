@@ -176,9 +176,19 @@ CREATE TABLE public.chat_app_events (
 );
 CREATE INDEX chat_app_events_project ON public.chat_app_events (project_id, created_at DESC);
 
+-- Platform credentials that rotate on use (Slack's app configuration refresh
+-- token): sealed like connection secrets; version guards concurrent rotation.
+CREATE TABLE public.chat_app_platform_tokens (
+    name text PRIMARY KEY CHECK (name IN ('slack_config')),
+    secret text NOT NULL,
+    version bigint NOT NULL DEFAULT 1,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 DO $$ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['chat_app_connections','chat_app_conversations','chat_app_threads',
-    'chat_app_inbox','chat_app_replies','chat_app_link_codes','chat_app_identities','chat_app_events'] LOOP
+    'chat_app_inbox','chat_app_replies','chat_app_link_codes','chat_app_identities','chat_app_events',
+    'chat_app_platform_tokens'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated, service_role', t);
     EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
@@ -758,6 +768,22 @@ BEGIN
       RAISE EXCEPTION 'chat_app_invalid_request' USING ERRCODE = '22023';
     END IF;
     RETURN jsonb_build_object('released', FOUND);
+
+  ELSIF p_action = 'platform_token' THEN
+    RETURN (SELECT jsonb_build_object('secret', secret, 'version', version)
+            FROM public.chat_app_platform_tokens WHERE name = p_payload->>'name');
+
+  ELSIF p_action = 'save_platform_token' THEN
+    -- Saved only over the version that was read (or when none existed yet).
+    IF p_payload->>'version' IS NULL THEN
+      INSERT INTO public.chat_app_platform_tokens (name, secret) VALUES (p_payload->>'name', p_payload->>'secret')
+      ON CONFLICT (name) DO NOTHING;
+    ELSE
+      UPDATE public.chat_app_platform_tokens
+      SET secret = p_payload->>'secret', version = version + 1, updated_at = clock_timestamp()
+      WHERE name = p_payload->>'name' AND version = (p_payload->>'version')::bigint;
+    END IF;
+    RETURN jsonb_build_object('saved', FOUND);
 
   ELSIF p_action = 'claim_connection' THEN
     -- One WeCom bot has one long connection: whoever holds the lease.

@@ -1005,6 +1005,10 @@ class Settings(BaseSettings):
     CHAT_APPS_WECOM_WS_URL: str = "wss://openws.work.weixin.qq.com"
     # WeCom long connections one gateway process holds; more instances share the rest.
     CHAT_APPS_WECOM_MAX_CONNECTIONS: int = 200
+    # The Slack app the gateway keeps pointed at PUBLIC_URL, and the app configuration
+    # refresh token that bootstraps it (rotated on use, then kept sealed in the database).
+    CHAT_APPS_SLACK_APP_ID: str = ""
+    CHAT_APPS_SLACK_CONFIG_REFRESH_TOKEN: str = ""
 
     @property
     def chat_app_platforms(self) -> frozenset[str]:

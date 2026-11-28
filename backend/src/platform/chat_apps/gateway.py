@@ -810,7 +810,26 @@ async def main() -> None:
         logger.info("chat_gateway_idle", extra={"chat_gateway": {"reason": "no platforms"}})
         await stop.wait()
         return
-    await gateway.serve(stop)
+    callbacks = asyncio.create_task(keep_callbacks(settings, platforms, repository, gateway, stop))
+    try:
+        await gateway.serve(stop)
+    finally:
+        callbacks.cancel()
+
+
+async def keep_callbacks(settings, platforms, repository, gateway, stop, attempts=5) -> None:
+    """Point the platforms at PUBLIC_URL; retry while the API of this release comes up
+    (Slack checks the event URL when it is saved)."""
+    from src.platform.chat_apps.callbacks import sync_callbacks
+
+    for _ in range(attempts):
+        results = await sync_callbacks(settings, platforms, repository, gateway.worker)
+        if "failed" not in results.values():
+            return
+        with suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), 60)
+        if stop.is_set():
+            return
 
 
 if __name__ == "__main__":
