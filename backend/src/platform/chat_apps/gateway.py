@@ -73,6 +73,7 @@ STATS_INTERVAL_SECONDS = 60
 SCRUB_INTERVAL_SECONDS = 3600
 IDLE_SECONDS = 1.0
 MAX_INBOX_ATTEMPTS = 5
+PREWAKE_SECONDS = 60.0
 
 
 def _now() -> datetime:
@@ -96,6 +97,7 @@ class Gateway:
         clock=_now,
         mentions=None,
         max_wecom=200,
+        prewake=None,
     ):
         self.repository = repository
         self.agents = agents
@@ -106,6 +108,11 @@ class Gateway:
         self.clock = clock
         # Past this, other instances claim the rest instead of one process holding all.
         self.max_wecom = max_wecom
+        # Wake the project's workspace while the question is admitted: resuming a
+        # paused machine is the slow part of the first answer. Async (user, project).
+        self.prewake = prewake
+        self._woken: dict[str, float] = {}
+        self._wakes: set[asyncio.Task] = set()
         # How people mention the bot in each app (Telegram: the bot's username).
         self.mentions = {"slack": "@PuppyOne", "wecom": "@PuppyOne", **(mentions or {})}
         self.stats: Counter[str] = Counter()
@@ -204,6 +211,9 @@ class Gateway:
             "asker": row.get("asker_label") or "",
         }
         action = decision.action
+        if action in ("wait", "submit") and platform is not None:
+            # Checked, allowed and from someone who may ask: only now wake compute.
+            self._wake(conversation)
         if platform is None:
             await self._finish(row, "done", "platform_off")
             return
@@ -258,6 +268,28 @@ class Gateway:
             )
         elif action == "submit":
             await self._submit(row, conversation, decision, names, platform)
+
+    def _wake(self, conversation) -> None:
+        """Resume the project's workspace in the background, once a minute per project."""
+        if self.prewake is None or not conversation:
+            return
+        project, now = conversation["project_id"], time.monotonic()
+        if now - self._woken.get(project, -PREWAKE_SECONDS) < PREWAKE_SECONDS:
+            return
+        self._woken[project] = now
+
+        async def wake():
+            try:
+                await self.prewake(conversation["owner_user_id"], project)
+                self.stats["prewoken"] += 1
+            except Exception:
+                # Only a head start: the Run opens the workspace itself anyway.
+                self.stats["prewake_failed"] += 1
+                logger.info("chat_app_prewake_failed", extra={"chat_app": {"project": project}})
+
+        task = asyncio.create_task(wake())
+        self._wakes.add(task)
+        task.add_done_callback(self._wakes.discard)
 
     async def _say(self, platform, target, text, *, button=None) -> Sent | None:
         try:
@@ -508,6 +540,9 @@ class Gateway:
             open_url=self._open_url(conversation["project_id"], run.get("session_id")),
             pacing=pacing,
             now=now,
+            follow_up=notice_text("continue_slack", mention=names["mention"])
+            if conversation["platform"] == "slack" and conversation["chat_kind"] != "dm"
+            else "",
         )
         payload = reply.get("payload") or {}
         sent_json = payload.get("sent")
@@ -728,6 +763,21 @@ def preflight(repository: ChatAppRepository) -> None:
     repository.gateway("scrub", "preflight")
 
 
+def workbench_waker():
+    """The project's shared workspace: record an open intent (paused) or touch
+    its activity (running). The sandbox worker does the actual resume."""
+    from src.platform.access.composition import build_workbench_service
+
+    service = None
+
+    async def wake(user, project):
+        nonlocal service
+        service = service or build_workbench_service()
+        await service.request_open(user, project)
+
+    return wake
+
+
 async def main() -> None:
     from src.config import settings
     from src.platform.agent.dependencies import get_agent_service
@@ -750,6 +800,7 @@ async def main() -> None:
         web_origin=settings.FRONTEND_URL,
         mentions=mentions(),
         max_wecom=settings.CHAT_APPS_WECOM_MAX_CONNECTIONS,
+        prewake=workbench_waker(),
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import posixpath
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from src.platform.chat_apps.ports import Message, Pacing
@@ -26,6 +26,10 @@ NOTICES = {
     "welcome_telegram": "I'm in. Reply to me or send /ask{mention} to ask. "
     "I only read messages meant for me. Only {name} can ask for now.",
     "welcome_dm": "I'm in. Send me a message to ask.",
+    # Slack only delivers mentions, in a thread too; a thread is one conversation.
+    "welcome_slack": "I'm in. Mention {mention} to ask, and mention me in the same thread "
+    "to continue. I only read messages that mention me. Only {name} can ask for now.",
+    "continue_slack": "Mention {mention} in this thread to continue.",
     "new_thread": "New conversation. Ask away.",
     "only_owner": "Only {name} can ask me here.",
     "outsider": "Only people in {workspace} can ask me.",
@@ -72,7 +76,7 @@ def welcome_code(platform: str, chat_kind: str) -> str:
     group a mention, and on Telegram a reply too."""
     if chat_kind == "dm":
         return "welcome_dm"
-    return "welcome_telegram" if platform == "telegram" else "welcome"
+    return {"telegram": "welcome_telegram", "slack": "welcome_slack"}.get(platform, "welcome")
 
 
 def stop_refusal(asker: str, owner: str) -> str:
@@ -153,6 +157,7 @@ def render(
     open_url: str,
     pacing: Pacing,
     now: datetime,
+    follow_up: str = "",
 ) -> Render:
     state = run["state"]
     snapshot = run.get("snapshot") or {}
@@ -195,6 +200,10 @@ def render(
     started = datetime.fromisoformat(run["created_at"])
     ended = datetime.fromisoformat(run.get("updated_at") or run["created_at"])
     seconds = max(0.0, (ended - started).total_seconds())
+    if follow_up and state == "succeeded":
+        # Below the answer and within the platform's limit; cut the answer, not this.
+        body = truncate(body, replace(pacing, max_text=pacing.max_text - len(follow_up) - 2), OPEN)
+        body = f"{body}\n\n{follow_up}"
     return Render(
         Message(truncate(body, pacing, OPEN), open_url=open_url, final=True),
         True,

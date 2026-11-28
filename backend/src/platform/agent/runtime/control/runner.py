@@ -95,6 +95,8 @@ class RunSupervisor:
         self.metrics = None
         self.started_at = None
         self.first_text_seconds = None
+        # Seconds from claim to each startup step: where a slow first answer goes.
+        self.startup: dict[str, float] = {}
         self.elapsed_seconds = None
         self.worker_started_at = None
         self.tool_started_at = {}
@@ -229,6 +231,7 @@ class RunSupervisor:
                             **self.metrics.report(),
                             "elapsed_seconds": time.monotonic() - self.started_at,
                             "first_text_seconds": self.first_text_seconds,
+                            "startup_seconds": self.startup,
                         }
                     },
                 )
@@ -543,9 +546,11 @@ class RunSupervisor:
                 self.value["recovery"] = None if self.shared_tasks else old.get("recovery")
             self.value.update(self.loop.begin_run(self.value))
             self.durable = await self.checkpoints.save(self.run, self.value)
+        self.mark("prepared")
         if self.shared_tasks:
             await self.check()  # Recheck the Run fence/revision before resource-owner admission.
             self.worker, self.value = await self.shared_tasks.acquire(self.run, self.value)
+            self.mark("workspace_acquired")
             self.durable = await self.checkpoints.save(self.run, self.value)
             billing_id = None  # The lifecycle owner reserved/checks the one shared meter.
             self.activity_meter = await self.start_activity_meter()
@@ -591,9 +596,7 @@ class RunSupervisor:
                 )
         await self.write("resource", {}, resource=resource)
         definitions = (
-            await run_blocking(self.bound_tools.definitions, self.run)
-            if self.bound_tools
-            else []
+            await run_blocking(self.bound_tools.definitions, self.run) if self.bound_tools else []
         )
         self.worker_started_at = time.monotonic()
         config = {
@@ -610,7 +613,9 @@ class RunSupervisor:
         self.value["recovery"] = await self.filesystem.prepare(
             self.worker, self.value["workspace"], resume=config["resume_workspace"]
         )
+        self.mark("files_ready")
         await self.loop.start(self.worker, config)
+        self.mark("agent_started")
         await self.consume()
         await self.publish(self.context.grant)
 
@@ -652,6 +657,10 @@ class RunSupervisor:
             }
         )
 
+    def mark(self, step: str) -> None:
+        if self.started_at is not None:
+            self.startup[step] = round(time.monotonic() - self.started_at, 3)
+
     async def consume(self):
         while True:
             try:
@@ -659,6 +668,8 @@ class RunSupervisor:
             except LoopProtocolError as exc:
                 raise EndRun("failed", exc.code) from exc
             kind = frame.get("type")
+            if "first_event" not in self.startup:
+                self.mark("first_event")
             if kind in {
                 "checkpoint",
                 "tool_start",

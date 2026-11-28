@@ -432,3 +432,20 @@ def test_a_used_or_unknown_code_gets_a_reply_instead_of_silence(world):
         code_hash=codes.code_hash("fresh"),
     )
     assert knock(83, w["chat"], "fresh") == "This chat is already added to PuppyOne."
+
+
+def test_only_a_question_that_will_run_wakes_the_workspace(world):
+    w = world
+    g = w["gateway"]()
+    woken = []
+
+    async def wake(user, project):
+        woken.append((user, project))
+
+    g.prewake = wake
+    w["ask"](91, asker="tg-mia")  # not allowed to ask here: nothing wakes
+    w["drain"](g)
+    assert woken == []
+    w["ask"](92)
+    w["drain"](g)
+    assert woken == [(w["owner"], w["project_id"])]

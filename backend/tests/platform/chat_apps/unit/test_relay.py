@@ -142,7 +142,8 @@ def test_unchanged_content_has_the_same_digest():
 
 def test_the_hello_says_how_to_ask_there():
     assert welcome_code("telegram", "group") == "welcome_telegram"
-    assert welcome_code("slack", "group") == "welcome"
+    assert welcome_code("slack", "group") == "welcome_slack"
+    assert welcome_code("wecom", "group") == "welcome"
     assert welcome_code("telegram", "dm") == welcome_code("slack", "dm") == "welcome_dm"
     assert notice_text("welcome_dm") == "I'm in. Send me a message to ask."
 
@@ -192,3 +193,27 @@ def test_a_knock_that_did_not_work_says_why_in_the_platform_s_words():
         "already_added"
     )
     assert "Add to chat" in notice_text("link_expired")
+
+
+def test_a_slack_answer_says_how_to_continue_and_keeps_it_within_the_limit():
+    hint = notice_text("continue_slack", mention="@PuppyOne")
+    assert hint == "Mention @PuppyOne in this thread to continue."
+
+    def answer(text, state="succeeded", pacing=TELEGRAM):
+        return render(
+            run(state, text=text),
+            reply_id="rep",
+            owner="Alex",
+            asker="Mia",
+            open_url="https://web/open/projects/p",
+            pacing=pacing,
+            now=NOW,
+            follow_up=hint,
+        ).message.text
+
+    assert answer("Done.") == f"Done.\n\n{hint}"
+    tight = Pacing(min_edit_seconds=1.0, max_text=120)
+    long = answer("x" * 500, pacing=tight)
+    assert long.endswith(hint) and len(long) <= 120
+    assert hint not in answer("", state="failed")
+    assert "same thread" in notice_text("welcome_slack", mention="@PuppyOne", name="Alex")
